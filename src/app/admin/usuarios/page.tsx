@@ -1,0 +1,301 @@
+import { AlertCircle, CheckCircle2, Clock3, Link2, ShieldCheck, UserPlus, Users } from "lucide-react";
+import { createAdminUserAction, updateAdminUserStatusAction } from "./actions";
+import { DashboardCard } from "@/components/admin/DashboardCard";
+import { StatusBadge } from "@/components/admin/StatusBadge";
+import { Button } from "@/components/ui/button";
+import { listAdminUsers, type AdminUserListItem, type AdminUserStatus } from "@/lib/admin/repository";
+import { cn } from "@/lib/utils";
+
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
+const dateFormatter = new Intl.DateTimeFormat("pt-BR", {
+  dateStyle: "short",
+  timeStyle: "short",
+});
+
+function formatDate(value: string | null) {
+  if (!value) return "Nunca";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Nunca";
+  return dateFormatter.format(date);
+}
+
+function accessLabel(user: AdminUserListItem) {
+  if (user.status !== "active") return "Bloqueado";
+  if (user.authUserId) return "Liberado";
+  return "Aguardando Auth";
+}
+
+function accessTone(user: AdminUserListItem): "green" | "yellow" | "red" | "muted" {
+  if (user.status !== "active") return user.status === "suspended" || user.status === "disabled" ? "red" : "muted";
+  if (user.authUserId) return "green";
+  return "yellow";
+}
+
+function countBy(users: AdminUserListItem[], predicate: (user: AdminUserListItem) => boolean) {
+  return users.filter(predicate).length;
+}
+
+function Message({ status, message }: { status?: string; message?: string }) {
+  if (!message) return null;
+  const isSuccess = status === "success";
+  const Icon = isSuccess ? CheckCircle2 : AlertCircle;
+
+  return (
+    <div
+      className={cn(
+        "mb-4 flex gap-2 rounded-lg border px-3 py-2 text-sm",
+        isSuccess
+          ? "border-[rgba(34,197,94,0.28)] bg-[rgba(34,197,94,0.08)] text-green-100"
+          : "border-[rgba(239,68,68,0.32)] bg-[rgba(239,68,68,0.08)] text-red-100"
+      )}
+    >
+      <Icon size={16} className="mt-0.5 shrink-0" />
+      <span>{message}</span>
+    </div>
+  );
+}
+
+function StatusAction({ user, nextStatus, label }: { user: AdminUserListItem; nextStatus: AdminUserStatus; label: string }) {
+  return (
+    <form action={updateAdminUserStatusAction}>
+      <input type="hidden" name="id" value={user.id} />
+      <input type="hidden" name="status" value={nextStatus} />
+      <Button
+        type="submit"
+        size="sm"
+        variant={nextStatus === "active" ? "outline" : "destructive"}
+        className={cn(
+          "h-7 rounded-md text-xs",
+          nextStatus === "active"
+            ? "border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] text-white hover:text-white"
+            : "border-[rgba(239,68,68,0.26)] text-red-200"
+        )}
+      >
+        {label}
+      </Button>
+    </form>
+  );
+}
+
+export default async function AdminUsersPage({
+  searchParams,
+}: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const paramsPromise: Promise<Record<string, string | string[] | undefined>> = searchParams || Promise.resolve({});
+  const [usersResult, params] = await Promise.all([listAdminUsers(), paramsPromise]);
+  const users = usersResult.data;
+  const status = typeof params.status === "string" ? params.status : undefined;
+  const message = typeof params.message === "string" ? params.message : undefined;
+  const activeCount = countBy(users, (user) => user.status === "active");
+  const linkedCount = countBy(users, (user) => user.status === "active" && Boolean(user.authUserId));
+  const pendingAuthCount = countBy(users, (user) => user.status === "active" && !user.authUserId);
+
+  return (
+    <div className="mx-auto max-w-[1600px] px-4 py-4 lg:px-5">
+      <Message status={status} message={message} />
+
+      <section className="mb-4 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] px-4 py-5">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+          <div>
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <StatusBadge tone="green">RBAC</StatusBadge>
+              <StatusBadge tone={usersResult.source === "supabase" ? "green" : "yellow"}>{usersResult.source}</StatusBadge>
+            </div>
+            <h1 className="text-2xl font-semibold tracking-tight text-white">Usuarios administrativos</h1>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--admin-muted)]">
+              Cadastre o perfil interno, mantenha status e papel sob controle, e vincule o acesso ao Supabase Auth pelo
+              mesmo email.
+            </p>
+            {usersResult.reason && <p className="mt-2 text-xs text-[var(--admin-yellow)]">{usersResult.reason}</p>}
+          </div>
+          <div className="grid grid-cols-3 gap-2 text-right">
+            <div className="rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] px-3 py-2">
+              <div className="font-mono text-xl font-bold text-white">{activeCount}</div>
+              <div className="text-[10px] uppercase tracking-[0.12em] text-[var(--admin-muted)]">ativos</div>
+            </div>
+            <div className="rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] px-3 py-2">
+              <div className="font-mono text-xl font-bold text-[var(--admin-green)]">{linkedCount}</div>
+              <div className="text-[10px] uppercase tracking-[0.12em] text-[var(--admin-muted)]">liberados</div>
+            </div>
+            <div className="rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] px-3 py-2">
+              <div className="font-mono text-xl font-bold text-[var(--admin-yellow)]">{pendingAuthCount}</div>
+              <div className="text-[10px] uppercase tracking-[0.12em] text-[var(--admin-muted)]">auth</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="grid gap-4 xl:grid-cols-[minmax(360px,0.72fr)_minmax(0,1.28fr)]">
+        <DashboardCard
+          title="Novo usuario"
+          eyebrow="admin / acesso"
+          action={<UserPlus size={18} className="text-[var(--admin-cyan)]" />}
+        >
+          <form action={createAdminUserAction} className="grid gap-4">
+            <div className="grid gap-2">
+              <label htmlFor="displayName" className="text-xs font-semibold text-[var(--admin-soft)]">
+                Nome
+              </label>
+              <input
+                id="displayName"
+                name="displayName"
+                required
+                placeholder="Betel Admin"
+                className="h-10 rounded-md border border-[var(--admin-border)] bg-[rgba(0,0,0,0.28)] px-3 text-sm text-white outline-none transition placeholder:text-[var(--admin-muted)] focus:border-[var(--admin-cyan)]"
+              />
+            </div>
+            <div className="grid gap-2">
+              <label htmlFor="email" className="text-xs font-semibold text-[var(--admin-soft)]">
+                Email
+              </label>
+              <input
+                id="email"
+                name="email"
+                type="email"
+                required
+                placeholder="admin@betel.ai"
+                className="h-10 rounded-md border border-[var(--admin-border)] bg-[rgba(0,0,0,0.28)] px-3 text-sm text-white outline-none transition placeholder:text-[var(--admin-muted)] focus:border-[var(--admin-cyan)]"
+              />
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <div className="grid gap-2">
+                <label htmlFor="role" className="text-xs font-semibold text-[var(--admin-soft)]">
+                  Papel
+                </label>
+                <select
+                  id="role"
+                  name="role"
+                  defaultValue="admin"
+                  className="h-10 rounded-md border border-[var(--admin-border)] bg-[#050505] px-3 text-sm text-white outline-none transition focus:border-[var(--admin-cyan)]"
+                >
+                  <option value="owner">Owner</option>
+                  <option value="admin">Admin</option>
+                  <option value="manager">Manager</option>
+                  <option value="analyst">Analyst</option>
+                  <option value="viewer">Viewer</option>
+                </select>
+              </div>
+              <div className="grid gap-2">
+                <label htmlFor="status" className="text-xs font-semibold text-[var(--admin-soft)]">
+                  Status
+                </label>
+                <select
+                  id="status"
+                  name="status"
+                  defaultValue="active"
+                  className="h-10 rounded-md border border-[var(--admin-border)] bg-[#050505] px-3 text-sm text-white outline-none transition focus:border-[var(--admin-cyan)]"
+                >
+                  <option value="active">Ativo</option>
+                  <option value="invited">Convidado</option>
+                  <option value="suspended">Suspenso</option>
+                  <option value="disabled">Desativado</option>
+                </select>
+              </div>
+            </div>
+            <div className="grid gap-2">
+              <label htmlFor="organizationName" className="text-xs font-semibold text-[var(--admin-soft)]">
+                Organizacao
+              </label>
+              <input
+                id="organizationName"
+                name="organizationName"
+                defaultValue="Betel Leiloes"
+                className="h-10 rounded-md border border-[var(--admin-border)] bg-[rgba(0,0,0,0.28)] px-3 text-sm text-white outline-none transition placeholder:text-[var(--admin-muted)] focus:border-[var(--admin-cyan)]"
+              />
+            </div>
+            <Button
+              type="submit"
+              className="h-10 bg-[var(--admin-cyan)] font-bold text-black hover:bg-white"
+            >
+              <UserPlus size={16} />
+              Cadastrar usuario
+            </Button>
+          </form>
+
+          <div className="mt-4 grid gap-2 rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] p-3 text-xs leading-5 text-[var(--admin-muted)]">
+            <div className="flex items-start gap-2">
+              <ShieldCheck size={15} className="mt-0.5 shrink-0 text-[var(--admin-green)]" />
+              <span>Senha e sessao continuam no Supabase Auth.</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <Link2 size={15} className="mt-0.5 shrink-0 text-[var(--admin-cyan)]" />
+              <span>O vinculo acontece no primeiro login quando o email for igual.</span>
+            </div>
+          </div>
+        </DashboardCard>
+
+        <DashboardCard
+          title="Equipe cadastrada"
+          eyebrow="usuarios / permissoes"
+          action={<Users size={18} className="text-[var(--admin-green)]" />}
+          contentClassName="p-0"
+        >
+          <div className="overflow-x-auto">
+            <table className="min-w-[860px] w-full border-separate border-spacing-0 text-left">
+              <thead>
+                <tr className="border-b border-[var(--admin-border)] text-[10px] uppercase tracking-[0.14em] text-[var(--admin-muted)]">
+                  <th className="px-4 py-3 font-semibold">Usuario</th>
+                  <th className="px-4 py-3 font-semibold">Papel</th>
+                  <th className="px-4 py-3 font-semibold">Acesso</th>
+                  <th className="px-4 py-3 font-semibold">Ultimo acesso</th>
+                  <th className="px-4 py-3 text-right font-semibold">Acao</th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map((user) => (
+                  <tr key={user.id} className="border-t border-[var(--admin-border)]">
+                    <td className="border-t border-[var(--admin-border)] px-4 py-3">
+                      <div className="font-semibold text-white">{user.displayName}</div>
+                      <div className="mt-0.5 max-w-xs truncate text-xs text-[var(--admin-muted)]">{user.email}</div>
+                      <div className="mt-1 text-[10px] uppercase tracking-[0.12em] text-[var(--admin-muted)]">
+                        {user.organizationName}
+                      </div>
+                    </td>
+                    <td className="border-t border-[var(--admin-border)] px-4 py-3">
+                      <StatusBadge tone={user.role === "owner" || user.role === "admin" ? "cyan" : "muted"}>
+                        {user.role}
+                      </StatusBadge>
+                    </td>
+                    <td className="border-t border-[var(--admin-border)] px-4 py-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <StatusBadge tone={accessTone(user)}>{accessLabel(user)}</StatusBadge>
+                        {!user.authUserId && user.status === "active" && (
+                          <span className="inline-flex items-center gap-1 text-xs text-[var(--admin-yellow)]">
+                            <Clock3 size={13} />
+                            Supabase
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="border-t border-[var(--admin-border)] px-4 py-3 text-sm text-[var(--admin-soft)]">
+                      {formatDate(user.lastSeenAt)}
+                    </td>
+                    <td className="border-t border-[var(--admin-border)] px-4 py-3">
+                      <div className="flex justify-end gap-2">
+                        {user.status === "active" ? (
+                          <StatusAction user={user} nextStatus="suspended" label="Suspender" />
+                        ) : (
+                          <StatusAction user={user} nextStatus="active" label="Ativar" />
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {!users.length && (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-10 text-center text-sm text-[var(--admin-muted)]">
+                      Nenhum usuario administrativo cadastrado.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </DashboardCard>
+      </section>
+    </div>
+  );
+}

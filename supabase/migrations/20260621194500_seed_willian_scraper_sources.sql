@@ -1,0 +1,51 @@
+-- Fontes recorrentes na planilha manual "Controle GERAL.xlsx".
+-- O objetivo e aproximar a Renata do fluxo do Willian: buscar imoveis de leilao
+-- em cobertura nacional e deixar a curadoria/juridico decidir depois.
+insert into public.scraper_targets (
+  target_code,
+  name,
+  url,
+  target_type,
+  coverage,
+  scrape_strategy,
+  priority,
+  max_pages,
+  rate_limit_ms,
+  notes
+) values
+  ('centralsul-leiloes', 'Central Sul de Leiloes', 'https://www.centralsuldeleiloes.com.br/', 'auctioneer', 'nacional', 'playwright', 66, 10, 2500, 'Fonte recorrente na planilha manual Controle GERAL.'),
+  ('pestana-leiloes', 'Pestana Leiloes', 'https://www.pestanaleiloes.com.br/', 'auctioneer', 'nacional', 'playwright', 64, 10, 3000, 'Fonte recorrente na planilha manual; pode exigir navegador/proxy por protecao HTTP.'),
+  ('fb-leiloes', 'FB Leiloes', 'https://fbleiloes.com.br/', 'auctioneer', 'nacional', 'playwright', 64, 10, 2500, 'Fonte recorrente na planilha manual Controle GERAL.'),
+  ('mazzolli-leiloes', 'Mazzolli Leiloes', 'https://mazzollileiloes.com.br/', 'auctioneer', 'nacional', 'playwright', 64, 10, 2500, 'Fonte recorrente na planilha manual Controle GERAL.'),
+  ('daniel-garcia-leiloes', 'Daniel Garcia Leiloes', 'https://www.danielgarcialeiloes.com.br/', 'auctioneer', 'nacional', 'playwright', 64, 10, 2500, 'Fonte recorrente na planilha manual Controle GERAL.'),
+  ('krobel-leiloes', 'Krobel Leiloes', 'https://krobelleiloes.com.br/', 'auctioneer', 'nacional', 'playwright', 62, 10, 2500, 'Fonte recorrente na planilha manual Controle GERAL.'),
+  ('top-leiloes', 'Top Leiloes', 'https://topleiloes.com.br/', 'auctioneer', 'nacional', 'playwright', 62, 10, 2500, 'Fonte recorrente na planilha manual Controle GERAL.'),
+  ('e-leiloes', 'E-Leiloes', 'https://www.e-leiloes.com.br/', 'auctioneer', 'nacional', 'playwright', 62, 10, 2500, 'Fonte recorrente na planilha manual Controle GERAL.'),
+  ('rocha-leiloes', 'Rocha Leiloes', 'https://www.rochaleiloes.com.br/', 'auctioneer', 'nacional', 'playwright', 62, 10, 2500, 'Fonte recorrente na planilha manual Controle GERAL.'),
+  ('fidalgo-leiloes', 'Fidalgo Leiloes', 'https://www.fidalgoleiloes.com.br/', 'auctioneer', 'nacional', 'playwright', 62, 10, 2500, 'Fonte recorrente na planilha manual Controle GERAL.'),
+  ('oa-leiloes', 'OA Leiloes', 'https://www.oaleiloes.com.br/', 'auctioneer', 'nacional', 'playwright', 60, 10, 2500, 'Fonte recorrente na planilha manual Controle GERAL.'),
+  ('leiloeiro-publico', 'Leiloeiro Publico', 'https://www.leiloeiropublico.com.br/', 'auctioneer', 'nacional', 'playwright', 60, 10, 2500, 'Fonte recorrente na planilha manual Controle GERAL.'),
+  ('agencia-leilao', 'Agencia Leilao', 'https://www.agencialeilao.com.br/', 'auctioneer', 'nacional', 'playwright', 60, 10, 2500, 'Fonte recorrente na planilha manual Controle GERAL.'),
+  ('saraiva-leiloes', 'Saraiva Leiloes', 'https://www.saraivaleiloes.com.br/', 'auctioneer', 'nacional', 'playwright', 60, 10, 2500, 'Fonte recorrente na planilha manual Controle GERAL.'),
+  ('gestor-de-leiloes', 'Gestor de Leiloes', 'https://gestordeleiloes.com.br/', 'auctioneer', 'nacional', 'playwright', 60, 10, 2500, 'Fonte recorrente na planilha manual Controle GERAL.'),
+  ('biasi-leiloes', 'Biasi Leiloes', 'https://www.biasileiloes.com.br/', 'auctioneer', 'nacional', 'playwright', 60, 10, 2500, 'Fonte recorrente na planilha manual Controle GERAL.'),
+  ('moacira-leiloes', 'Moacira Leiloes', 'https://moacira.lel.br/', 'auctioneer', 'nacional', 'playwright', 58, 10, 2500, 'Fonte recorrente na planilha manual Controle GERAL.'),
+  ('mult-leiloes', 'Mult Leiloes', 'https://multleiloes.com/', 'auctioneer', 'nacional', 'playwright', 58, 10, 2500, 'Fonte recorrente na planilha manual Controle GERAL.'),
+  ('bomvalor', 'Bomvalor', 'https://mercado.bomvalor.com.br/', 'portal', 'nacional', 'playwright', 58, 10, 2500, 'Fonte recorrente na planilha manual Controle GERAL.'),
+  ('sato-leiloes', 'Sato Leiloes', 'https://satoleiloes.com.br/', 'auctioneer', 'nacional', 'playwright', 58, 10, 2500, 'Fonte recorrente na planilha manual Controle GERAL.'),
+  ('bampi-leiloes', 'Bampi Leiloes', 'https://www.bampileiloes.com.br/', 'auctioneer', 'nacional', 'playwright', 58, 10, 2500, 'Fonte recorrente na planilha manual Controle GERAL.'),
+  ('lider-leiloes', 'Lider Leiloes', 'https://www.liderleiloes.com.br/', 'auctioneer', 'nacional', 'playwright', 58, 10, 2500, 'Fonte recorrente na planilha manual Controle GERAL.'),
+  ('destak-leiloes', 'Destak Leiloes', 'https://www.destakleiloes.com.br/', 'auctioneer', 'nacional', 'playwright', 58, 10, 2500, 'Fonte recorrente na planilha manual Controle GERAL.')
+on conflict (target_code) do update set
+  name = excluded.name,
+  url = excluded.url,
+  target_type = excluded.target_type,
+  coverage = excluded.coverage,
+  scrape_strategy = excluded.scrape_strategy,
+  priority = excluded.priority,
+  max_pages = excluded.max_pages,
+  rate_limit_ms = excluded.rate_limit_ms,
+  notes = excluded.notes,
+  enabled = true,
+  consecutive_errors = 0,
+  updated_at = now();

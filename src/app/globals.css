@@ -1,0 +1,179 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  color-scheme: dark;
+
+  --radius: 0.65rem;
+  --radius-sm: calc(var(--radius) - 0.25rem);
+  --radius-md: calc(var(--radius) - 0.125rem);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 0.25rem);
+
+  --betel-black: #08090b;
+  --betel-ink: #101114;
+  --betel-panel: #15171b;
+  --betel-panel-soft: #1d2026;
+  --betel-line: rgba(226, 214, 185, 0.16);
+  --betel-muted: #b8ad98;
+  --betel-gold: #d8ad58;
+  --betel-gold-soft: #f1d28a;
+  --betel-green: #51c878;
+  --betel-red: #ef6b5e;
+  --betel-cyan: #6ec7d6;
+
+  --background: var(--betel-black);
+  --foreground: #f8f1df;
+  --card: #121419;
+  --card-foreground: #f8f1df;
+  --popover: #15171b;
+  --popover-foreground: #f8f1df;
+  --primary: var(--betel-gold);
+  --primary-foreground: #161007;
+  --secondary: #1d2026;
+  --secondary-foreground: #f8f1df;
+  --muted: var(--betel-muted);
+  --muted-bg: #1a1c21;
+  --muted-foreground: var(--betel-muted);
+  --accent: rgba(216, 173, 88, 0.14);
+  --accent-foreground: #fff3cf;
+  --destructive: var(--betel-red);
+  --border: var(--betel-line);
+  --input: rgba(226, 214, 185, 0.18);
+  --ring: rgba(216, 173, 88, 0.5);
+
+  --chart-1: #d8ad58;
+  --chart-2: #51c878;
+  --chart-3: #6ec7d6;
+  --chart-4: #f1d28a;
+  --chart-5: #ef6b5e;
+
+  --sidebar: #101114;
+  --sidebar-foreground: #f8f1df;
+  --sidebar-primary: var(--betel-gold);
+  --sidebar-primary-foreground: #161007;
+  --sidebar-accent: rgba(216, 173, 88, 0.13);
+  --sidebar-accent-foreground: #fff3cf;
+  --sidebar-border: rgba(226, 214, 185, 0.14);
+  --sidebar-ring: rgba(216, 173, 88, 0.5);
+
+  --panel: var(--betel-panel);
+  --panel-soft: var(--betel-panel-soft);
+  --line: var(--betel-line);
+  --gold: var(--betel-gold);
+  --green: var(--betel-green);
+  --red: var(--betel-red);
+  --cyan: var(--betel-cyan);
+
+  --admin-bg: #050505;
+  --admin-sidebar: #080808;
+  --admin-card: #0d0d0d;
+  --admin-card-2: #14110f;
+  --admin-border: #24201d;
+  --admin-foreground: #f7f2ec;
+  --admin-soft: #d8d0c7;
+  --admin-muted: #8d8580;
+  --admin-cyan: #ff5a1f;
+  --admin-green: #20c878;
+  --admin-yellow: #ffb020;
+  --admin-red: #ff4d38;
+  --admin-purple: #c47a2c;
+
+  --ch-bg: var(--betel-black);
+  --ch-surface: rgba(18, 20, 25, 0.88);
+  --ch-surface-2: rgba(29, 32, 38, 0.88);
+  --ch-surface-3: #23262d;
+  --ch-border: var(--betel-line);
+  --ch-accent: var(--betel-gold);
+  --ch-accent-rgb: 216, 173, 88;
+  --ch-text: #fff7e4;
+  --ch-text-rgb: 255, 247, 228;
+  --ch-muted: var(--betel-muted);
+  --ch-subtle: #8f826c;
+  --ch-hover: rgba(216, 173, 88, 0.12);
+  --ch-dropdown-bg: #15171b;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted-bg);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --font-sans: "Geist", "Geist Fallback", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", "Geist Mono Fallback", ui-monospace, monospace;
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+}
+
+* {
+  border-color: var(--border);
+}
+
+html {
+  background: var(--background);
+}
+
+body {
+  min-height: 100svh;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: "Geist", "Geist Fallback", ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: 0;
+}
+
+button,
+a {
+  outline-color: var(--gold);
+}
+
+::selection {
+  background: rgba(216, 173, 88, 0.35);
+}
+
+.betel-panel {
+  background: linear-gradient(180deg, rgba(21, 23, 27, 0.96), rgba(14, 15, 18, 0.96));
+  border: 1px solid var(--line);
+  box-shadow: 0 20px 80px rgba(0, 0, 0, 0.22);
+}
+
+.betel-gold-text {
+  color: var(--betel-gold);
+}
+
+.betel-grid-bg {
+  background-image:
+    linear-gradient(rgba(216, 173, 88, 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(216, 173, 88, 0.07) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
