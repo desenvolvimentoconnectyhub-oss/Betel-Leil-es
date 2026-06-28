@@ -9,6 +9,9 @@ import { DashboardCard } from "@/components/admin/DashboardCard";
 import { StatusBadge } from "@/components/admin/StatusBadge";
 import { cn } from "@/lib/utils";
 
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
 const inputClass =
   "h-10 border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] text-white placeholder:text-[var(--admin-muted)]";
 
