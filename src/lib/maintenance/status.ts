@@ -37,6 +37,8 @@ export type MaintenancePayload = {
   integrations: MaintenanceIntegration[];
 };
 
+const IBGE_LOCALIDADES_API_BASE_URL = "https://servicodados.ibge.gov.br/api/v1/localidades";
+
 function envItem(name: string, label = name, secret = false, configKey?: string) {
   const value = String(process.env[name] || "").trim();
   return {
@@ -240,6 +242,31 @@ function staticCheck(
   } satisfies MaintenanceIntegration;
 }
 
+function checkIbge(): MaintenanceIntegration {
+  const value = String(process.env.BETEL_IBGE_API_BASE_URL || IBGE_LOCALIDADES_API_BASE_URL).trim();
+
+  return {
+    id: "ibge",
+    title: "IBGE Cidades",
+    status: "ok",
+    message: "API publica gratuita configurada com endpoint padrao.",
+    items: [
+      {
+        name: "BETEL_IBGE_API_BASE_URL",
+        label: "BETEL_IBGE_API_BASE_URL",
+        configured: true,
+        value,
+        editable: true,
+        secret: false,
+        configKey: "betel_ibge_api_base_url",
+      },
+    ],
+    group: "Dados de Mercado e Avaliacao",
+    usedBy: "Helena (Curadora), Igor (Risco)",
+    site: "servicodados.ibge.gov.br",
+  };
+}
+
 export async function getMaintenanceStatus(): Promise<MaintenancePayload> {
   const [supabase, r2, gemini] = await Promise.all([
     checkSupabase(),
@@ -289,9 +316,7 @@ export async function getMaintenanceStatus(): Promise<MaintenancePayload> {
       "BETEL_FIPEZAP_API_KEY",
     ], { group: "Dados de Mercado e Avaliacao", usedBy: "Helena (Curadora), Rafael (Estrategia)", site: "fipezap.zapimoveis.com.br" }),
 
-    staticCheck("ibge", "IBGE Cidades", "Dados demograficos das cidades.", [
-      "BETEL_IBGE_API_BASE_URL",
-    ], { group: "Dados de Mercado e Avaliacao", usedBy: "Helena (Curadora), Igor (Risco)", site: "servicodados.ibge.gov.br" }),
+    checkIbge(),
 
     // --- Prioridade 4: Verificacao juridica ---
     staticCheck("datajud", "CNJ DataJud", "Consulta de processos judiciais.", [
