@@ -267,30 +267,50 @@ function FieldInput({
 }) {
   const [visible, setVisible] = useState(false);
   const configKey = item.configKey || item.name.toLowerCase();
+  const configuredSecret = Boolean(item.secret && item.configured && !item.value);
+  const placeholder = configuredSecret
+    ? "Chave salva. Cole uma nova para substituir."
+    : item.configured
+      ? "Valor configurado. Edite para substituir."
+      : "Cole o valor aqui...";
 
   return (
     <div className="py-3">
-      <label className="mb-1.5 block text-xs font-semibold text-[var(--gold)]">
-        {item.label}
-      </label>
+      <div className="mb-1.5 flex items-center justify-between gap-3">
+        <label className="block text-xs font-semibold text-[var(--gold)]">
+          {item.label}
+        </label>
+        {configuredSecret && (
+          <span className="inline-flex items-center gap-1 rounded-full border border-[rgba(81,200,120,0.35)] bg-[rgba(81,200,120,0.12)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--green)]">
+            <CheckCircle2 size={11} />
+            Salva
+          </span>
+        )}
+      </div>
       <div className="relative">
         <input
           type={item.secret && !visible ? "password" : "text"}
           value={value}
           onChange={(e) => onChange(configKey, e.target.value)}
-          placeholder={item.configured ? "" : "Cole o valor aqui..."}
+          placeholder={placeholder}
           className="w-full rounded-lg border border-[var(--line)] bg-[var(--bg)] px-4 py-2.5 pr-10 font-mono text-sm text-white placeholder-[var(--muted)] outline-none transition focus:border-[var(--gold)]"
         />
         {item.secret && (
           <button
             type="button"
             onClick={() => setVisible((v) => !v)}
+            aria-label={visible ? "Ocultar valor" : "Mostrar valor digitado"}
             className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted)] transition hover:text-white"
           >
             {visible ? <EyeOff size={16} /> : <Eye size={16} />}
           </button>
         )}
       </div>
+      {configuredSecret && (
+        <p className="mt-1.5 text-[11px] leading-5 text-[var(--muted)]">
+          O valor esta salvo no app_config e fica oculto por seguranca. Para trocar, cole uma nova chave e salve.
+        </p>
+      )}
     </div>
   );
 }
@@ -582,7 +602,9 @@ export default function MaintenanceClient({
         body: JSON.stringify({ credentials }),
       });
       const data = await res.json();
-      if (!data.success) throw new Error(data.message);
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || "Nao foi possivel salvar as credenciais.");
+      }
       setSuccessMsg(`${credentials.length} credencial(is) salva(s) com sucesso.`);
       setTimeout(() => setSuccessMsg(""), 5000);
       await loadStatus();

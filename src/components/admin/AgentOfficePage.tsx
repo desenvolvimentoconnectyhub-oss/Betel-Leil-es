@@ -609,7 +609,9 @@ function AgentDetailPanel({
       )}
 
       {/* Prompt do agente — editavel */}
-      <AgentPromptPanel agentKey={agent.key} promptName={agent.promptName} promptVersion={agent.promptVersion} />
+      {agent.key !== "multichannel-dispatch" && (
+        <AgentPromptPanel agentKey={agent.key} promptName={agent.promptName} promptVersion={agent.promptVersion} />
+      )}
 
       {/* Dados tecnicos */}
       <div className="mt-6 rounded-xl border border-[var(--admin-border)] bg-[var(--admin-card)] p-5">

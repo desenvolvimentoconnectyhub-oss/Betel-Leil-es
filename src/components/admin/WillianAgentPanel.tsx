@@ -73,7 +73,6 @@ const tabs: Array<{ key: WillianAgentConfigTab; label: string; subtitle: string;
   { key: "behavior", label: "Comportamento", subtitle: "Modos e timers", icon: SlidersHorizontal },
   { key: "multichannel", label: "Multicanal", subtitle: "Grupos e campanhas", icon: Send },
   { key: "files", label: "Arquivos", subtitle: "Conhecimento", icon: Paperclip },
-  { key: "memory", label: "Memoria/CRM", subtitle: "Leads e eventos", icon: Database },
 ];
 
 type ElevenLabsVoice = {
@@ -454,83 +453,97 @@ export function WillianAgentPanel({
     }
   }
 
+  const selectedAgentLabel = `${config.agentName} Atendimento`;
+  const statusLabel = config.behavior.active ? "active" : "paused";
+  const changeLabel = config.status === "saved" ? "Salvo" : "Revisar";
+
   return (
-    <section className="mt-6 overflow-hidden rounded-xl border border-[var(--admin-border)] bg-[var(--admin-card)]">
-      <div className="border-b border-[var(--admin-border)] bg-[linear-gradient(120deg,rgba(0,243,255,0.08),rgba(229,178,74,0.05),rgba(255,255,255,0.02))] p-5">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+    <section className="mt-6">
+      <div className="mb-4 rounded-xl border border-[var(--admin-border)] bg-[linear-gradient(180deg,rgba(255,90,31,0.08),rgba(13,13,13,0.98))]">
+        <div className="flex items-center justify-between gap-3 border-b border-[var(--admin-border)] px-4 py-4 sm:px-5">
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--admin-cyan)]">
-              Agentes / WhatsApp comercial
-            </p>
-            <h3 className="mt-1 text-xl font-bold text-white">Conexao, prompt e comportamento</h3>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--admin-muted)]">
-              Willian distribui oportunidades por WhatsApp e email, qualifica investidores e registra historico para o CRM da Betel.
-            </p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--admin-muted)]">Criar / alternar</p>
+            <h3 className="mt-1 text-base font-bold text-white">Agente Willian</h3>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <StatusPill ok={connected} label={connected ? "WhatsApp online" : "WhatsApp pendente"} />
-            <StatusPill ok={config.status === "saved"} label={config.status === "saved" ? "Salvo" : "Alteracoes"} />
-            <ActionButton
-              icon={<Save size={14} />}
-              label="Salvar tudo"
-              loading={savingConfig}
-              onClick={saveConfig}
-            />
-          </div>
+          <StatusPill ok label="1 agente" />
         </div>
 
-        <div className="mt-5 grid gap-3 xl:grid-cols-[1.5fr_1fr]">
-          <div className="grid gap-3 md:grid-cols-2">
-            <AgentCard active title="Willian" detail="Betel / Distribuicao WhatsApp e Email" status={config.behavior.active ? "ABERTO" : "RASCUNHO"} />
-            <AgentCard title="Novo agente" detail="Atendimento WhatsApp futuro" status="EM BREVE" disabled />
+        <div className="grid gap-3 p-4 sm:p-5 xl:grid-cols-[minmax(0,1fr)_10rem_9rem_auto] xl:items-end">
+          <label className="grid gap-1">
+            <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Agente / setor ativo</span>
+            <select
+              value="willian"
+              onChange={() => undefined}
+              className="h-12 rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.04)] px-3 text-sm font-semibold text-white outline-none transition focus:border-[var(--admin-cyan)]"
+            >
+              <option value="willian">{selectedAgentLabel}</option>
+            </select>
+          </label>
+          <InfoBox label="Setor selecionado" value="Comercial Betel" />
+          <InfoBox label="Status" value={statusLabel} tone={config.behavior.active ? "green" : "yellow"} />
+          <ActionButton
+            icon={<Save size={14} />}
+            label="Salvar tudo"
+            loading={savingConfig}
+            onClick={saveConfig}
+          />
+        </div>
+      </div>
+
+      <div className="mb-4 rounded-xl border border-[var(--admin-border)] bg-[linear-gradient(180deg,rgba(255,255,255,0.035),rgba(13,13,13,0.96))] p-3 shadow-2xl shadow-black/20">
+        <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+            <InfoBox label="Agente" value={config.agentName} />
+            <InfoBox label="Empresa" value={config.companyName} />
+            <InfoBox label="WhatsApp" value={connected ? "conectado" : "pendente"} tone={connected ? "green" : "yellow"} />
+            <InfoBox label="Conversa" value={conversationModeLabels[config.behavior.conversationMode]} />
+            <InfoBox label="Alteracoes" value={changeLabel} tone={config.status === "saved" ? "green" : "yellow"} />
           </div>
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-2 sm:grid-cols-3 xl:w-[360px]">
             <MiniKpi label="Pronto" value={`${readyScore}%`} tone={readyScore >= 70 ? "green" : "yellow"} />
-            <MiniKpi label="Score VIP" value={`${config.qualification.vipScore}+`} tone="cyan" />
+            <MiniKpi label="VIP" value={`${config.qualification.vipScore}+`} tone="cyan" />
             <MiniKpi label="Perguntas" value={String(config.qualification.questionsLimit)} tone="purple" />
           </div>
         </div>
       </div>
 
-      <div className="border-b border-[var(--admin-border)] p-4">
-        <div className="grid gap-3 lg:grid-cols-5">
-          <InfoBox label="Agente" value="Willian" />
-          <InfoBox label="Empresa" value={config.companyName} />
-          <InfoBox label="WhatsApp" value={connected ? "conectado" : "pendente"} tone={connected ? "green" : "yellow"} />
-          <InfoBox label="Conversa" value={conversationModeLabels[config.behavior.conversationMode]} />
-          <InfoBox label="Alteracoes" value={config.status === "saved" ? "Salvo" : "Revisar"} tone={config.status === "saved" ? "green" : "yellow"} />
+      <div
+        className="mb-4 overflow-hidden rounded-xl border border-[var(--admin-border)] bg-[rgba(255,255,255,0.025)] p-1"
+        role="tablist"
+        aria-label="Secoes do agente Willian"
+      >
+        <div className="grid min-w-0 grid-cols-2 gap-1 md:grid-cols-3 xl:grid-cols-6">
+          {tabs.map((tab) => {
+            const Icon = tab.icon;
+            const active = activeTab === tab.key;
+            return (
+              <button
+                key={tab.key}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setActiveTab(tab.key)}
+                className={cn(
+                  "grid min-h-[58px] grid-cols-[18px_minmax(0,1fr)] items-center gap-2 rounded-lg px-3 text-left transition",
+                  active
+                    ? "bg-[linear-gradient(135deg,var(--admin-cyan),var(--admin-yellow))] text-black shadow-[0_0_24px_rgba(255,90,31,0.16)]"
+                    : "text-[var(--admin-muted)] hover:bg-[rgba(255,255,255,0.05)] hover:text-white"
+                )}
+              >
+                <Icon size={17} className={active ? "text-black" : "text-[var(--admin-muted)]"} />
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-semibold">{tab.label}</span>
+                  <span className={cn("mt-0.5 hidden truncate text-[9px] font-bold uppercase tracking-[0.12em] sm:block", active ? "text-black/70" : "text-[var(--admin-muted)]")}>
+                    {tab.subtitle}
+                  </span>
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      <div className="grid border-b border-[var(--admin-border)] lg:grid-cols-7">
-        {tabs.map((tab) => {
-          const Icon = tab.icon;
-          const active = activeTab === tab.key;
-          return (
-            <button
-              key={tab.key}
-              type="button"
-              onClick={() => setActiveTab(tab.key)}
-              className={cn(
-                "flex min-h-16 items-center gap-3 border-b border-[var(--admin-border)] px-4 py-3 text-left transition lg:border-b-0 lg:border-r",
-                active
-                  ? "bg-[rgba(0,243,255,0.1)] text-white"
-                  : "text-[var(--admin-muted)] hover:bg-[rgba(255,255,255,0.03)] hover:text-white"
-              )}
-            >
-              <Icon size={17} className={active ? "text-[var(--admin-cyan)]" : "text-[var(--admin-muted)]"} />
-              <span>
-                <span className="block text-sm font-semibold">{tab.label}</span>
-                <span className="block text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--admin-muted)]">
-                  {tab.subtitle}
-                </span>
-              </span>
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="p-5">
+      <div>
         {activeTab === "connection" && (
           <ConnectionTab
             connection={connection}
@@ -544,7 +557,16 @@ export function WillianAgentPanel({
             state={state}
           />
         )}
-        {activeTab === "prompt" && <PromptTab config={config.prompt} setPrompt={setPrompt} />}
+        {activeTab === "prompt" && (
+          <PromptTab
+            agentName={config.agentName}
+            companyName={config.companyName}
+            config={config.prompt}
+            setPrompt={setPrompt}
+            status={config.status}
+            updatedAt={config.updatedAt}
+          />
+        )}
         {activeTab === "qualification" && (
           <QualificationTab config={config.qualification} setQualification={setQualification} />
         )}
@@ -552,8 +574,9 @@ export function WillianAgentPanel({
         {activeTab === "multichannel" && (
           <MultichannelTab config={config.multichannel} setMultichannel={setMultichannel} />
         )}
-        {activeTab === "files" && <FilesTab config={config.files} setFiles={setFiles} />}
-        {activeTab === "memory" && <MemoryTab config={config.memory} setMemory={setMemory} />}
+        {activeTab === "files" && (
+          <FilesTab config={config.files} memory={config.memory} setFiles={setFiles} setMemory={setMemory} />
+        )}
 
         {feedback && (
           <p
@@ -740,28 +763,74 @@ function ConnectionTab({
   );
 }
 
-function PromptTab({ config, setPrompt }: { config: WillianPromptConfig; setPrompt: (patch: Partial<WillianPromptConfig>) => void }) {
+function PromptTab({
+  agentName,
+  companyName,
+  config,
+  setPrompt,
+  status,
+  updatedAt,
+}: {
+  agentName: string;
+  companyName: string;
+  config: WillianPromptConfig;
+  setPrompt: (patch: Partial<WillianPromptConfig>) => void;
+  status: WillianAgentConfig["status"];
+  updatedAt: string;
+}) {
+  const charCount = config.agentPrompt.length;
+
   return (
     <div className="grid gap-5 xl:grid-cols-[1.35fr_0.65fr]">
-      <Panel title="Prompt do agente" eyebrow="Atendimento / distribuicao">
-        <TextAreaField label="Prompt principal" rows={12} value={config.agentPrompt} onChange={(value) => setPrompt({ agentPrompt: value })} />
-        <div className="mt-3 grid gap-3 md:grid-cols-2">
-          <TextAreaField label="DNA manual do agente" rows={5} value={config.dnaManual} onChange={(value) => setPrompt({ dnaManual: value })} />
-          <TextAreaField label="Memoria do clone" rows={5} value={config.cloneMemory} onChange={(value) => setPrompt({ cloneMemory: value })} />
+      <Panel title="Prompt do agente" eyebrow="Atendimento / vendas" action={<StatusPill ok={status === "saved"} label={status === "saved" ? "Salvo" : "Revisar"} />}>
+        <div className="grid gap-3 lg:grid-cols-4">
+          <InfoBox label="Agente" value={agentName} />
+          <InfoBox label="Empresa" value={companyName} />
+          <InfoBox label="Plano" value="internal / active" />
+          <InfoBox label="Ultima edicao" value={formatDateTime(updatedAt) || "Pendente"} />
         </div>
-        <div className="mt-3">
-          <TextAreaField label="Metrica de humanizacao" rows={4} value={config.humanizationMetric} onChange={(value) => setPrompt({ humanizationMetric: value })} />
+
+        <div className="mt-4">
+          <TextAreaField label="Prompt do agente" rows={14} value={config.agentPrompt} onChange={(value) => setPrompt({ agentPrompt: value })} />
+          <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--admin-muted)]">
+            {charCount.toLocaleString("pt-BR")} / 8.000 caracteres
+          </p>
+        </div>
+
+        <div className="mt-4 space-y-2">
+          <PromptDrawer title="DNA manual do agente">
+            <TextAreaField label="DNA manual" rows={5} value={config.dnaManual} onChange={(value) => setPrompt({ dnaManual: value })} />
+          </PromptDrawer>
+          <PromptDrawer title="Memoria do clone">
+            <TextAreaField label="Memoria do clone" rows={5} value={config.cloneMemory} onChange={(value) => setPrompt({ cloneMemory: value })} />
+          </PromptDrawer>
+          <PromptDrawer title="Metrica de humanizacao">
+            <TextAreaField label="Metrica de humanizacao" rows={4} value={config.humanizationMetric} onChange={(value) => setPrompt({ humanizationMetric: value })} />
+          </PromptDrawer>
+        </div>
+
+        <div className="mt-4 rounded-xl border border-[var(--admin-border)] bg-[rgba(255,255,255,0.02)] p-4">
+          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Tags do prompt</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {config.tags.map((tag) => (
+              <span key={tag} className="rounded-md border border-[rgba(255,90,31,0.28)] bg-[rgba(255,90,31,0.08)] px-3 py-1.5 font-mono text-[10px] font-bold text-[var(--admin-cyan)]">
+                {`{{${tag}}}`}
+              </span>
+            ))}
+          </div>
+          <div className="mt-3">
+            <TextAreaField label="Editar tags" rows={3} value={config.tags.join(", ")} onChange={(value) => setPrompt({ tags: csvToArray(value) })} />
+          </div>
         </div>
       </Panel>
 
-      <Panel title="Links e botoes" eyebrow="Tags / produto">
+      <Panel title="Links e botoes" eyebrow="Produto / rastreio">
         <ToggleTile title="Enviar como botao" detail="Usar botao quando o canal permitir." checked={config.sendButton} onChange={(sendButton) => setPrompt({ sendButton })} />
         <div className="mt-3 grid gap-3">
           <Field label="Nome do botao" value={config.buttonLabel} onChange={(buttonLabel) => setPrompt({ buttonLabel })} />
           <Field label="URL do botao" value={config.buttonUrl} onChange={(buttonUrl) => setPrompt({ buttonUrl })} />
           <Field label="Link do produto" value={config.productLink} onChange={(productLink) => setPrompt({ productLink })} />
           <TextAreaField label="Notas do produto" rows={5} value={config.productNotes} onChange={(productNotes) => setPrompt({ productNotes })} />
-          <TextAreaField label="Tags do prompt" rows={4} value={config.tags.join(", ")} onChange={(value) => setPrompt({ tags: csvToArray(value) })} />
         </div>
       </Panel>
     </div>
@@ -1391,33 +1460,47 @@ function MultichannelTab({ config, setMultichannel }: { config: WillianMultichan
   );
 }
 
-function FilesTab({ config, setFiles }: { config: WillianFilesConfig; setFiles: (patch: Partial<WillianFilesConfig>) => void }) {
+function FilesTab({
+  config,
+  memory,
+  setFiles,
+  setMemory,
+}: {
+  config: WillianFilesConfig;
+  memory: WillianMemoryConfig;
+  setFiles: (patch: Partial<WillianFilesConfig>) => void;
+  setMemory: (patch: Partial<WillianMemoryConfig>) => void;
+}) {
   return (
-    <div className="grid gap-5 xl:grid-cols-[0.8fr_1.2fr]">
-      <Panel title="Arquivos da empresa" eyebrow="Base de conhecimento" action={<StatusPill ok={config.uploadEnabled} label={`${config.companyFiles.length} arquivos`} />}>
-        <ToggleTile title="Upload habilitado" detail="Pode anexar documentos quando storage for ligado." checked={config.uploadEnabled} onChange={(uploadEnabled) => setFiles({ uploadEnabled })} />
-        <div className="mt-4 rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.02)] p-4">
-          {config.companyFiles.length ? (
-            <ul className="space-y-2">
-              {config.companyFiles.map((file) => (
-                <li key={file} className="flex items-center gap-2 text-sm text-[var(--admin-muted)]">
-                  <Paperclip size={14} className="text-[var(--admin-cyan)]" />
-                  {file}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="py-8 text-center text-sm text-[var(--admin-muted)]">Nenhum arquivo anexado.</p>
-          )}
-        </div>
-      </Panel>
+    <div className="space-y-5">
+      <div className="grid gap-5 xl:grid-cols-[0.8fr_1.2fr]">
+        <Panel title="Arquivos da empresa" eyebrow="Base de conhecimento" action={<StatusPill ok={config.uploadEnabled} label={`${config.companyFiles.length} arquivos`} />}>
+          <ToggleTile title="Upload habilitado" detail="Pode anexar documentos quando storage for ligado." checked={config.uploadEnabled} onChange={(uploadEnabled) => setFiles({ uploadEnabled })} />
+          <div className="mt-4 rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.02)] p-4">
+            {config.companyFiles.length ? (
+              <ul className="space-y-2">
+                {config.companyFiles.map((file) => (
+                  <li key={file} className="flex items-center gap-2 text-sm text-[var(--admin-muted)]">
+                    <Paperclip size={14} className="text-[var(--admin-cyan)]" />
+                    {file}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="py-8 text-center text-sm text-[var(--admin-muted)]">Nenhum arquivo anexado.</p>
+            )}
+          </div>
+        </Panel>
 
-      <Panel title="Conhecimento operacional" eyebrow="Notas / arquivos planejados">
-        <TextAreaField label="Notas da base de conhecimento" rows={8} value={config.knowledgeNotes} onChange={(knowledgeNotes) => setFiles({ knowledgeNotes })} />
-        <div className="mt-3">
-          <TextAreaField label="Lista de arquivos" rows={8} value={arrayToLines(config.companyFiles)} onChange={(value) => setFiles({ companyFiles: linesToArray(value) })} />
-        </div>
-      </Panel>
+        <Panel title="Conhecimento operacional" eyebrow="Notas / arquivos planejados">
+          <TextAreaField label="Notas da base de conhecimento" rows={8} value={config.knowledgeNotes} onChange={(knowledgeNotes) => setFiles({ knowledgeNotes })} />
+          <div className="mt-3">
+            <TextAreaField label="Lista de arquivos" rows={8} value={arrayToLines(config.companyFiles)} onChange={(value) => setFiles({ companyFiles: linesToArray(value) })} />
+          </div>
+        </Panel>
+      </div>
+
+      <MemoryTab config={memory} setMemory={setMemory} />
     </div>
   );
 }
@@ -1451,19 +1534,16 @@ function MemoryTab({ config, setMemory }: { config: WillianMemoryConfig; setMemo
   );
 }
 
-function AgentCard({ active, detail, disabled, status, title }: { active?: boolean; detail: string; disabled?: boolean; status: string; title: string }) {
+function PromptDrawer({ children, title }: { children: ReactNode; title: string }) {
   return (
-    <div className={cn("rounded-lg border p-4", active ? "border-[rgba(0,243,255,0.28)] bg-[rgba(0,243,255,0.06)]" : "border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)]", disabled && "opacity-60")}>
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="font-semibold text-white">{title}</p>
-          <p className="mt-1 text-xs text-[var(--admin-muted)]">{detail}</p>
-        </div>
-        <span className="rounded-full border border-[rgba(0,243,255,0.22)] bg-[rgba(0,243,255,0.08)] px-2 py-1 text-[10px] font-bold text-[var(--admin-cyan)]">
-          {status}
-        </span>
-      </div>
-    </div>
+    <details className="group rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.02)]">
+      <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
+        <span className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-white">{title}</span>
+        <span className="font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)] group-open:hidden">Abrir</span>
+        <span className="hidden font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--admin-cyan)] group-open:inline">Fechar</span>
+      </summary>
+      <div className="border-t border-[var(--admin-border)] p-4">{children}</div>
+    </details>
   );
 }
 

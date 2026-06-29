@@ -46,6 +46,7 @@ export async function POST(request: NextRequest) {
           {
             key,
             value,
+            description: `Credencial administrativa ${key}.`,
             is_secret: Boolean(cred.secret),
             updated_at: new Date().toISOString(),
           },
