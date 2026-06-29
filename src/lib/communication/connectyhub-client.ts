@@ -528,22 +528,86 @@ function extractInstanceId(payload: unknown) {
   const data = asRecord(payload);
   const instance = asRecord(data.instance);
   const item = asRecord(data.data);
-  return cleanString(data.id || data.instanceId || data.instance_id || instance.id || instance.instanceId || item.id || item.instanceId);
+  const nestedInstance = asRecord(item.instance);
+  const listedInstance = asRecord(data.instances);
+  return cleanString(
+    data.id ||
+      data.instanceId ||
+      data.instance_id ||
+      instance.id ||
+      instance.instanceId ||
+      instance.instance_id ||
+      item.id ||
+      item.instanceId ||
+      item.instance_id ||
+      nestedInstance.id ||
+      nestedInstance.instanceId ||
+      nestedInstance.instance_id ||
+      listedInstance.id ||
+      listedInstance.instanceId ||
+      listedInstance.instance_id
+  );
 }
 
 function extractInstanceName(payload: unknown, fallback = "") {
   const data = asRecord(payload);
   const instance = asRecord(data.instance);
   const item = asRecord(data.data);
-  return cleanString(data.name || data.instanceName || instance.name || instance.instanceName || item.name || item.instanceName, fallback);
+  const nestedInstance = asRecord(item.instance);
+  const listedInstance = asRecord(data.instances);
+  return cleanString(
+    data.displayName ||
+      data.display_name ||
+      data.name ||
+      data.instanceName ||
+      data.instance_name ||
+      instance.displayName ||
+      instance.display_name ||
+      instance.name ||
+      instance.instanceName ||
+      instance.instance_name ||
+      item.displayName ||
+      item.display_name ||
+      item.name ||
+      item.instanceName ||
+      item.instance_name ||
+      nestedInstance.displayName ||
+      nestedInstance.display_name ||
+      nestedInstance.name ||
+      nestedInstance.instanceName ||
+      nestedInstance.instance_name ||
+      listedInstance.displayName ||
+      listedInstance.display_name ||
+      listedInstance.name ||
+      listedInstance.instanceName ||
+      listedInstance.instance_name,
+    fallback
+  );
 }
 
 function asArrayPayload(payload: unknown) {
   if (Array.isArray(payload)) return payload;
   const data = asRecord(payload);
-  for (const key of ["instances", "data", "items", "results"]) {
+  for (const key of ["instances", "webhooks", "items", "results"]) {
     const value = data[key];
     if (Array.isArray(value)) return value;
+    if (value && typeof value === "object") return [value];
+  }
+
+  const nestedData = asRecord(data.data);
+  if (Array.isArray(data.data)) return data.data;
+  for (const key of ["instances", "webhooks", "items", "results"]) {
+    const value = nestedData[key];
+    if (Array.isArray(value)) return value;
+    if (value && typeof value === "object") return [value];
+  }
+
+  if (
+    Object.keys(nestedData).some((key) =>
+      ["id", "instanceId", "instance_id", "webhookId", "webhook_id", "url", "name", "instanceName", "instance_name"].includes(key)
+    )
+  ) {
+    return [nestedData];
   }
   return [];
 }
