@@ -132,24 +132,6 @@ async function handleJson(request: NextRequest) {
     });
   }
 
-  if (action === "select_default_voice") {
-    const voiceId = cleanString(body.voiceId);
-    if (!voiceId) {
-      return NextResponse.json(
-        { success: false, message: "voiceId obrigatorio." },
-        { status: 400 }
-      );
-    }
-
-    await upsertElevenLabsConfigValue("elevenlabs_default_voice_id", voiceId);
-
-    return NextResponse.json({
-      success: true,
-      message: "Voz padrao vinculada.",
-      voiceId,
-    });
-  }
-
   if (action === "synthesize_preview") {
     const audio = await synthesizeElevenLabsPreview({
       voiceId: body.voiceId,

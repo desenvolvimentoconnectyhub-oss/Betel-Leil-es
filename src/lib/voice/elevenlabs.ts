@@ -258,7 +258,7 @@ export async function createElevenLabsVoiceClone(input: {
   const description = cleanString(input.description);
   if (description) form.set("description", description);
 
-  form.set("labels", JSON.stringify({ project: "betel", agent: "willian", source: "maintenance" }));
+  form.set("labels", JSON.stringify({ project: "betel", agent: "willian", source: "agent" }));
 
   for (const file of input.files) {
     form.append("files[]", file, file.name || "willian-sample.mp3");

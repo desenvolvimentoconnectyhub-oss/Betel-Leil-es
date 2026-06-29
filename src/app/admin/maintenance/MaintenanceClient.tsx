@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
-  AudioLines,
   BarChart3,
   Building2,
   CheckCircle2,
@@ -20,8 +19,6 @@ import {
   Mail,
   MapPin,
   MessageSquare,
-  MicVocal,
-  Play,
   RefreshCw,
   Save,
   Scale,
@@ -91,38 +88,6 @@ type TestResult = {
   latencyMs: number;
 };
 
-type ElevenLabsVoice = {
-  voiceId: string;
-  name: string;
-  category: string;
-  description: string;
-  previewUrl: string;
-  labels: Record<string, string>;
-};
-
-type ElevenLabsPanelProps = {
-  voices: ElevenLabsVoice[];
-  loading: boolean;
-  error: string;
-  action: string | null;
-  previewUrl: string;
-  cloneName: string;
-  cloneDescription: string;
-  files: File[];
-  authorized: boolean;
-  willianVoiceId: string;
-  defaultVoiceId: string;
-  onRefresh: () => void;
-  onPreview: (voiceId?: string) => void;
-  onSelectWillian: (voiceId: string) => void;
-  onSelectDefault: (voiceId: string) => void;
-  onCloneNameChange: (value: string) => void;
-  onCloneDescriptionChange: (value: string) => void;
-  onFilesChange: (files: File[]) => void;
-  onAuthorizedChange: (value: boolean) => void;
-  onClone: () => void;
-};
-
 const icons: Record<string, typeof Database> = {
   supabase: Database,
   r2: Cloud,
@@ -130,7 +95,7 @@ const icons: Record<string, typeof Database> = {
   connectyhub: MessageSquare,
   gemini: Sparkles,
   resend: Mail,
-  elevenlabs: MicVocal,
+  elevenlabs: Sparkles,
   datazap: TrendingUp,
   fipezap: BarChart3,
   ibge: MapPin,
@@ -149,7 +114,7 @@ const integrationDescriptions: Record<string, string> = {
   connectyhub: "Ponte WhatsApp: instancias, mensagens, webhooks e automacoes.",
   gemini: "Google Gemini para analise IA, diagnosticos e agentes.",
   resend: "Email transacional. Gratis ate 3k emails/mes.",
-  elevenlabs: "Voz IA, clonagem autorizada e sintese de audio para agentes.",
+  elevenlabs: "Token da conta ElevenLabs usado pelos agentes para voz IA.",
   datazap: "Avaliacao de imoveis, preco/m² e comparaveis. Contrato comercial OLX Group.",
   fipezap: "Indice de precos de imoveis por cidade e regiao.",
   ibge: "Dados demograficos das cidades brasileiras. API publica gratuita.",
@@ -339,7 +304,6 @@ function IntegrationCard({
   onTest,
   geminiModels,
   geminiModelsLoading,
-  elevenLabsPanel,
 }: {
   integration: Integration;
   fieldValues: Record<string, string>;
@@ -349,7 +313,6 @@ function IntegrationCard({
   onTest: (id: string) => void;
   geminiModels: GeminiModelOption[];
   geminiModelsLoading: boolean;
-  elevenLabsPanel?: ElevenLabsPanelProps;
 }) {
   const Icon = icons[integration.id] || HeartPulse;
   const tone = statusTone(integration.status);
@@ -421,10 +384,6 @@ function IntegrationCard({
         })}
       </div>
 
-      {integration.id === "elevenlabs" && elevenLabsPanel && (
-        <ElevenLabsVoicePanel {...elevenLabsPanel} />
-      )}
-
       {/* Test result */}
       {testResult && (
         <div
@@ -456,188 +415,6 @@ function IntegrationCard({
         </button>
       </div>
     </article>
-  );
-}
-
-function ElevenLabsVoicePanel({
-  voices,
-  loading,
-  error,
-  action,
-  previewUrl,
-  cloneName,
-  cloneDescription,
-  files,
-  authorized,
-  willianVoiceId,
-  defaultVoiceId,
-  onRefresh,
-  onPreview,
-  onSelectWillian,
-  onSelectDefault,
-  onCloneNameChange,
-  onCloneDescriptionChange,
-  onFilesChange,
-  onAuthorizedChange,
-  onClone,
-}: ElevenLabsPanelProps) {
-  const selectedWillian = voices.find((voice) => voice.voiceId === willianVoiceId);
-  const selectedDefault = voices.find((voice) => voice.voiceId === defaultVoiceId);
-  const canClone = files.length > 0 && authorized && action !== "clone";
-
-  return (
-    <div className="mt-5 border-t border-[var(--line)] pt-5">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex items-center gap-3">
-          <div className="grid size-10 shrink-0 place-items-center rounded-lg border border-[rgba(216,173,88,0.28)] bg-[rgba(216,173,88,0.08)]">
-            <AudioLines size={19} className="text-[var(--gold)]" />
-          </div>
-          <div>
-            <div className="text-sm font-semibold text-white">Vozes ElevenLabs</div>
-            <div className="mt-0.5 text-xs text-[var(--muted)]">
-              {voices.length > 0 ? `${voices.length} voz(es) disponiveis` : "Nenhuma voz carregada"}
-            </div>
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={onRefresh}
-            disabled={loading}
-            className="inline-flex h-9 items-center gap-2 rounded-lg border border-[var(--line)] bg-[var(--panel-soft)] px-3 text-xs font-semibold text-[var(--muted)] transition hover:border-[var(--gold)] hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
-            Atualizar vozes
-          </button>
-          <button
-            type="button"
-            onClick={() => onPreview(willianVoiceId || defaultVoiceId)}
-            disabled={action === "preview" || (!willianVoiceId && !defaultVoiceId)}
-            className="inline-flex h-9 items-center gap-2 rounded-lg border border-[rgba(81,200,120,0.35)] bg-[rgba(81,200,120,0.08)] px-3 text-xs font-semibold text-[var(--green)] transition hover:bg-[rgba(81,200,120,0.16)] disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {action === "preview" ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-            Preview
-          </button>
-        </div>
-      </div>
-
-      {error && (
-        <div className="mt-4 rounded-lg border border-[rgba(239,107,94,0.35)] bg-[rgba(239,107,94,0.08)] px-4 py-3 text-xs text-[var(--red)]">
-          {error}
-        </div>
-      )}
-
-      <div className="mt-4 grid gap-3 lg:grid-cols-2">
-        <label className="block">
-          <span className="mb-1.5 block text-xs font-semibold text-[var(--gold)]">Voz Willian</span>
-          <select
-            value={willianVoiceId}
-            onChange={(event) => event.target.value && onSelectWillian(event.target.value)}
-            disabled={loading || action === "select_willian"}
-            className="h-10 w-full rounded-lg border border-[var(--line)] bg-[var(--bg)] px-3 font-mono text-sm text-white outline-none transition focus:border-[var(--gold)] disabled:opacity-60"
-          >
-            <option value="">Selecione uma voz</option>
-            {voices.map((voice) => (
-              <option key={voice.voiceId} value={voice.voiceId}>
-                {voice.name}
-              </option>
-            ))}
-          </select>
-          <span className="mt-1 block truncate text-[11px] text-[var(--muted)]">
-            {selectedWillian ? selectedWillian.voiceId : willianVoiceId || "Aguardando voice_id"}
-          </span>
-        </label>
-
-        <label className="block">
-          <span className="mb-1.5 block text-xs font-semibold text-[var(--gold)]">Voz padrao</span>
-          <select
-            value={defaultVoiceId}
-            onChange={(event) => event.target.value && onSelectDefault(event.target.value)}
-            disabled={loading || action === "select_default"}
-            className="h-10 w-full rounded-lg border border-[var(--line)] bg-[var(--bg)] px-3 font-mono text-sm text-white outline-none transition focus:border-[var(--gold)] disabled:opacity-60"
-          >
-            <option value="">Selecione uma voz</option>
-            {voices.map((voice) => (
-              <option key={voice.voiceId} value={voice.voiceId}>
-                {voice.name}
-              </option>
-            ))}
-          </select>
-          <span className="mt-1 block truncate text-[11px] text-[var(--muted)]">
-            {selectedDefault ? selectedDefault.voiceId : defaultVoiceId || "Opcional"}
-          </span>
-        </label>
-      </div>
-
-      {previewUrl && (
-        <audio
-          controls
-          src={previewUrl}
-          className="mt-4 h-10 w-full"
-        />
-      )}
-
-      <div className="mt-5 rounded-lg border border-[var(--line)] bg-[var(--panel-soft)] p-4">
-        <div className="grid gap-3 lg:grid-cols-[1fr_1fr]">
-          <label className="block">
-            <span className="mb-1.5 block text-xs font-semibold text-[var(--gold)]">Nome da voz</span>
-            <input
-              type="text"
-              value={cloneName}
-              onChange={(event) => onCloneNameChange(event.target.value)}
-              className="h-10 w-full rounded-lg border border-[var(--line)] bg-[var(--bg)] px-3 text-sm text-white outline-none transition focus:border-[var(--gold)]"
-            />
-          </label>
-          <label className="block">
-            <span className="mb-1.5 block text-xs font-semibold text-[var(--gold)]">Amostras</span>
-            <input
-              type="file"
-              accept="audio/*"
-              multiple
-              onChange={(event) => onFilesChange(Array.from(event.target.files || []))}
-              className="block h-10 w-full cursor-pointer rounded-lg border border-[var(--line)] bg-[var(--bg)] text-xs text-[var(--muted)] file:mr-3 file:h-10 file:border-0 file:bg-[rgba(216,173,88,0.18)] file:px-3 file:text-xs file:font-semibold file:text-[var(--gold)]"
-            />
-          </label>
-        </div>
-
-        <label className="mt-3 block">
-          <span className="mb-1.5 block text-xs font-semibold text-[var(--gold)]">Descricao</span>
-          <textarea
-            value={cloneDescription}
-            onChange={(event) => onCloneDescriptionChange(event.target.value)}
-            rows={3}
-            className="w-full resize-none rounded-lg border border-[var(--line)] bg-[var(--bg)] px-3 py-2 text-sm text-white outline-none transition focus:border-[var(--gold)]"
-          />
-        </label>
-
-        <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <label className="flex items-start gap-2 text-xs leading-5 text-[var(--muted)]">
-            <input
-              type="checkbox"
-              checked={authorized}
-              onChange={(event) => onAuthorizedChange(event.target.checked)}
-              className="mt-1 size-4 rounded border-[var(--line)] bg-[var(--bg)]"
-            />
-            Confirmo autorizacao do titular da voz.
-          </label>
-          <button
-            type="button"
-            onClick={onClone}
-            disabled={!canClone}
-            className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-[var(--gold)] bg-[rgba(216,173,88,0.18)] px-4 text-xs font-semibold text-[var(--gold)] transition hover:bg-[rgba(216,173,88,0.28)] disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {action === "clone" ? <Loader2 size={14} className="animate-spin" /> : <MicVocal size={14} />}
-            Clonar voz Willian
-          </button>
-        </div>
-
-        {files.length > 0 && (
-          <div className="mt-3 truncate text-[11px] text-[var(--muted)]">
-            {files.map((file) => file.name).join(", ")}
-          </div>
-        )}
-      </div>
-    </div>
   );
 }
 
@@ -691,18 +468,6 @@ export default function MaintenanceClient({
 
   const [geminiModels, setGeminiModels] = useState<GeminiModelOption[]>([]);
   const [geminiModelsLoading, setGeminiModelsLoading] = useState(true);
-  const [elevenLabsVoices, setElevenLabsVoices] = useState<ElevenLabsVoice[]>([]);
-  const [elevenLabsLoading, setElevenLabsLoading] = useState(false);
-  const [elevenLabsError, setElevenLabsError] = useState("");
-  const [elevenLabsAction, setElevenLabsAction] = useState<string | null>(null);
-  const [elevenLabsPreviewUrl, setElevenLabsPreviewUrl] = useState("");
-  const [elevenLabsCloneName, setElevenLabsCloneName] = useState("Willian - Betel");
-  const [elevenLabsCloneDescription, setElevenLabsCloneDescription] = useState(
-    "Voz autorizada do agente Willian para atendimento Betel."
-  );
-  const [elevenLabsFiles, setElevenLabsFiles] = useState<File[]>([]);
-  const [elevenLabsAuthorized, setElevenLabsAuthorized] = useState(false);
-  const elevenLabsAutoLoadRef = useRef(false);
 
   useEffect(() => {
     async function fetchModels() {
@@ -720,47 +485,6 @@ export default function MaintenanceClient({
     }
     fetchModels();
   }, []);
-
-  const loadElevenLabsVoices = useCallback(async () => {
-    setElevenLabsLoading(true);
-    setElevenLabsError("");
-    try {
-      const res = await fetch("/api/admin/maintenance/elevenlabs/voices", { cache: "no-store" });
-      const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.message || "Falha ao buscar vozes ElevenLabs.");
-
-      setElevenLabsVoices(Array.isArray(data.voices) ? data.voices : []);
-      if (data.config) {
-        setFieldValues((prev) => ({
-          ...prev,
-          elevenlabs_default_model_id: data.config.defaultModelId || prev.elevenlabs_default_model_id || "",
-          elevenlabs_default_voice_id: data.config.defaultVoiceId || prev.elevenlabs_default_voice_id || "",
-          elevenlabs_willian_voice_id: data.config.willianVoiceId || prev.elevenlabs_willian_voice_id || "",
-        }));
-      }
-    } catch (err: unknown) {
-      setElevenLabsError(getErrorMessage(err));
-    } finally {
-      setElevenLabsLoading(false);
-    }
-  }, []);
-
-  const elevenLabsConfigured = useMemo(() => {
-    const integration = status?.integrations.find((item) => item.id === "elevenlabs");
-    return Boolean(integration?.items.find((item) => item.configKey === "elevenlabs_api_key")?.configured);
-  }, [status]);
-
-  useEffect(() => {
-    if (!elevenLabsConfigured) {
-      elevenLabsAutoLoadRef.current = false;
-      return;
-    }
-
-    if (!elevenLabsAutoLoadRef.current && !elevenLabsLoading) {
-      elevenLabsAutoLoadRef.current = true;
-      void loadElevenLabsVoices();
-    }
-  }, [elevenLabsConfigured, elevenLabsLoading, loadElevenLabsVoices]);
 
   const loadStatus = useCallback(async () => {
     setLoadingStatus(true);
@@ -823,105 +547,6 @@ export default function MaintenanceClient({
   const handleFieldChange = useCallback((configKey: string, value: string) => {
     setFieldValues((prev) => ({ ...prev, [configKey]: value }));
   }, []);
-
-  const handleElevenLabsSelectVoice = useCallback(async (voiceId: string, target: "willian" | "default") => {
-    setElevenLabsAction(target === "willian" ? "select_willian" : "select_default");
-    setElevenLabsError("");
-    setSuccessMsg("");
-    try {
-      const res = await fetch("/api/admin/maintenance/elevenlabs/voices", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: target === "willian" ? "select_willian_voice" : "select_default_voice",
-          voiceId,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.message || "Falha ao vincular voz.");
-
-      setFieldValues((prev) => ({
-        ...prev,
-        [target === "willian" ? "elevenlabs_willian_voice_id" : "elevenlabs_default_voice_id"]: voiceId,
-      }));
-      setSuccessMsg(target === "willian" ? "Voz do Willian vinculada." : "Voz padrao vinculada.");
-      setTimeout(() => setSuccessMsg(""), 4000);
-      await loadStatus();
-    } catch (err: unknown) {
-      setElevenLabsError(getErrorMessage(err));
-    } finally {
-      setElevenLabsAction(null);
-    }
-  }, [loadStatus]);
-
-  const handleElevenLabsPreview = useCallback(async (voiceId?: string) => {
-    setElevenLabsAction("preview");
-    setElevenLabsError("");
-    setElevenLabsPreviewUrl("");
-    try {
-      const res = await fetch("/api/admin/maintenance/elevenlabs/voices", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "synthesize_preview",
-          voiceId,
-          modelId: fieldValues.elevenlabs_default_model_id,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.message || "Falha ao gerar audio.");
-
-      const audio = data.audio || {};
-      if (!audio.audioBase64) throw new Error("Audio nao retornado pela ElevenLabs.");
-      setElevenLabsPreviewUrl(`data:${audio.contentType || "audio/mpeg"};base64,${audio.audioBase64}`);
-    } catch (err: unknown) {
-      setElevenLabsError(getErrorMessage(err));
-    } finally {
-      setElevenLabsAction(null);
-    }
-  }, [fieldValues.elevenlabs_default_model_id]);
-
-  const handleElevenLabsClone = useCallback(async () => {
-    setElevenLabsAction("clone");
-    setElevenLabsError("");
-    setSuccessMsg("");
-    try {
-      const form = new FormData();
-      form.set("action", "clone_willian");
-      form.set("name", elevenLabsCloneName);
-      form.set("description", elevenLabsCloneDescription);
-      form.set("authorized", String(elevenLabsAuthorized));
-      for (const file of elevenLabsFiles) {
-        form.append("files[]", file, file.name);
-      }
-
-      const res = await fetch("/api/admin/maintenance/elevenlabs/voices", {
-        method: "POST",
-        body: form,
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.message || "Falha ao clonar voz.");
-
-      const voiceId = String(data.voiceId || "");
-      setFieldValues((prev) => ({ ...prev, elevenlabs_willian_voice_id: voiceId }));
-      setElevenLabsFiles([]);
-      setElevenLabsAuthorized(false);
-      setSuccessMsg("Voz do Willian criada e vinculada.");
-      setTimeout(() => setSuccessMsg(""), 5000);
-      await Promise.all([loadElevenLabsVoices(), loadStatus()]);
-    } catch (err: unknown) {
-      setElevenLabsError(getErrorMessage(err));
-    } finally {
-      setElevenLabsAction(null);
-    }
-  }, [
-    elevenLabsAuthorized,
-    elevenLabsCloneDescription,
-    elevenLabsCloneName,
-    elevenLabsFiles,
-    loadElevenLabsVoices,
-    loadStatus,
-  ]);
 
   const handleSaveAll = useCallback(async () => {
     setSaving(true);
@@ -1055,32 +680,6 @@ export default function MaintenanceClient({
                   onTest={handleTest}
                   geminiModels={geminiModels}
                   geminiModelsLoading={geminiModelsLoading}
-                  elevenLabsPanel={
-                    integration.id === "elevenlabs"
-                      ? {
-                          voices: elevenLabsVoices,
-                          loading: elevenLabsLoading,
-                          error: elevenLabsError,
-                          action: elevenLabsAction,
-                          previewUrl: elevenLabsPreviewUrl,
-                          cloneName: elevenLabsCloneName,
-                          cloneDescription: elevenLabsCloneDescription,
-                          files: elevenLabsFiles,
-                          authorized: elevenLabsAuthorized,
-                          willianVoiceId: fieldValues.elevenlabs_willian_voice_id || "",
-                          defaultVoiceId: fieldValues.elevenlabs_default_voice_id || "",
-                          onRefresh: loadElevenLabsVoices,
-                          onPreview: handleElevenLabsPreview,
-                          onSelectWillian: (voiceId) => handleElevenLabsSelectVoice(voiceId, "willian"),
-                          onSelectDefault: (voiceId) => handleElevenLabsSelectVoice(voiceId, "default"),
-                          onCloneNameChange: setElevenLabsCloneName,
-                          onCloneDescriptionChange: setElevenLabsCloneDescription,
-                          onFilesChange: setElevenLabsFiles,
-                          onAuthorizedChange: setElevenLabsAuthorized,
-                          onClone: handleElevenLabsClone,
-                        }
-                      : undefined
-                  }
                 />
               ))}
             </div>

@@ -221,7 +221,6 @@ async function checkGemini(): Promise<MaintenanceIntegration> {
 async function checkElevenLabs(): Promise<MaintenanceIntegration> {
   const config = await getElevenLabsConfig();
   const apiKeyConfigured = Boolean(config.apiKey.value);
-  const willianVoiceConfigured = Boolean(config.willianVoiceId.value);
 
   const items: MaintenanceItem[] = [
     {
@@ -233,53 +232,13 @@ async function checkElevenLabs(): Promise<MaintenanceIntegration> {
       secret: true,
       configKey: "elevenlabs_api_key",
     },
-    {
-      name: "ELEVENLABS_API_BASE_URL",
-      label: "Base URL",
-      configured: Boolean(config.baseUrl.value),
-      value: config.baseUrl.value,
-      editable: true,
-      secret: false,
-      configKey: "elevenlabs_api_base_url",
-    },
-    {
-      name: "ELEVENLABS_DEFAULT_MODEL_ID",
-      label: "Modelo TTS",
-      configured: Boolean(config.defaultModelId.value),
-      value: config.defaultModelId.value,
-      editable: true,
-      secret: false,
-      configKey: "elevenlabs_default_model_id",
-    },
-    {
-      name: "ELEVENLABS_DEFAULT_VOICE_ID",
-      label: "Voz padrao",
-      configured: Boolean(config.defaultVoiceId.value),
-      value: config.defaultVoiceId.value,
-      editable: true,
-      secret: false,
-      configKey: "elevenlabs_default_voice_id",
-    },
-    {
-      name: "ELEVENLABS_WILLIAN_VOICE_ID",
-      label: "Voz Willian",
-      configured: willianVoiceConfigured,
-      value: config.willianVoiceId.value,
-      editable: true,
-      secret: false,
-      configKey: "elevenlabs_willian_voice_id",
-    },
   ];
 
   return {
     id: "elevenlabs",
-    title: "ElevenLabs",
-    status: !apiKeyConfigured ? "missing" : willianVoiceConfigured ? "ok" : "warning",
-    message: !apiKeyConfigured
-      ? "API key pendente."
-      : willianVoiceConfigured
-        ? "Voz IA configurada."
-        : "Conta conectada; voz do Willian pendente.",
+    title: "ElevenLabs / Voz e clonagem",
+    status: apiKeyConfigured ? "ok" : "missing",
+    message: apiKeyConfigured ? "Token ElevenLabs configurado." : "API key pendente.",
     items,
     group: "Voz e Midia IA",
     usedBy: "Willian e futuros agentes de voz",

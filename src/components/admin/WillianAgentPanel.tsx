@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -76,6 +76,17 @@ const tabs: Array<{ key: WillianAgentConfigTab; label: string; subtitle: string;
   { key: "memory", label: "Memoria/CRM", subtitle: "Leads e eventos", icon: Database },
 ];
 
+type ElevenLabsVoice = {
+  voiceId: string;
+  name: string;
+  category: string;
+  description: string;
+  previewUrl: string;
+  labels: Record<string, string>;
+};
+
+const WILLIAN_VOICE_ENDPOINT = "/api/admin/agentes-ia/communication/willian-voice";
+
 function linesToArray(value: string) {
   return value
     .split("\n")
@@ -124,12 +135,6 @@ type BehaviorNumberSpec = {
   key: BehaviorNumberKey;
   label: string;
 };
-
-const voiceOptions = [
-  { id: "clone-willian", label: "Clone Willian", detail: "Voz principal para envio consultivo.", status: "Pronto" },
-  { id: "willian-neutro", label: "Willian neutro", detail: "Tom mais direto para resumo de oportunidade.", status: "Backup" },
-  { id: "willian-alerta", label: "Willian alerta", detail: "Usar em leads urgentes e leiloes proximos.", status: "Teste" },
-];
 
 const conversationModeLabels: Record<WillianBehaviorConfig["conversationMode"], string> = {
   always_text: "Sempre texto",
@@ -796,6 +801,160 @@ function QualificationTab({ config, setQualification }: { config: WillianQualifi
 }
 
 function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; setBehavior: (patch: Partial<WillianBehaviorConfig>) => void }) {
+  const initialVoiceLoadRef = useRef(false);
+  const [voices, setVoices] = useState<ElevenLabsVoice[]>([]);
+  const [voiceLoading, setVoiceLoading] = useState(false);
+  const [voiceAction, setVoiceAction] = useState<string | null>(null);
+  const [voiceError, setVoiceError] = useState("");
+  const [voicePreviewUrl, setVoicePreviewUrl] = useState("");
+  const [cloneName, setCloneName] = useState(config.selectedVoiceLabel || "Willian - Betel");
+  const [cloneDescription, setCloneDescription] = useState("Voz autorizada do agente Willian para atendimento Betel.");
+  const [cloneFiles, setCloneFiles] = useState<File[]>([]);
+
+  const filteredVoices = useMemo(() => {
+    const query = config.voiceSearch.trim().toLowerCase();
+    if (!query) return voices;
+
+    return voices.filter((voice) => {
+      const labels = Object.values(voice.labels || {}).join(" ");
+      return `${voice.name} ${voice.category} ${voice.description} ${labels}`.toLowerCase().includes(query);
+    });
+  }, [config.voiceSearch, voices]);
+
+  const selectedVoice = useMemo(
+    () => voices.find((voice) => voice.voiceId === config.selectedVoiceId),
+    [config.selectedVoiceId, voices]
+  );
+
+  const loadVoices = useCallback(async (syncConfiguredVoice = false) => {
+    setVoiceLoading(true);
+    setVoiceError("");
+    try {
+      const res = await fetch(WILLIAN_VOICE_ENDPOINT, { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.message || "Falha ao buscar vozes ElevenLabs.");
+
+      const nextVoices = Array.isArray(data.voices) ? data.voices as ElevenLabsVoice[] : [];
+      setVoices(nextVoices);
+
+      const configuredVoiceId = typeof data.config?.willianVoiceId === "string" ? data.config.willianVoiceId : "";
+      const defaultModelId = typeof data.config?.defaultModelId === "string" ? data.config.defaultModelId : "";
+      if (syncConfiguredVoice && configuredVoiceId && (!config.selectedVoiceId || config.selectedVoiceId === "clone-willian")) {
+        const configuredVoice = nextVoices.find((voice) => voice.voiceId === configuredVoiceId);
+        setBehavior({
+          selectedVoiceId: configuredVoiceId,
+          selectedVoiceLabel: configuredVoice?.name || "Willian - ElevenLabs",
+          audioVoiceSource: "elevenlabs",
+          audioModelId: config.audioModelId || defaultModelId,
+          voiceCloneStatus: "active",
+        });
+      } else if (defaultModelId && !config.audioModelId) {
+        setBehavior({ audioModelId: defaultModelId });
+      }
+    } catch (error) {
+      setVoiceError(error instanceof Error ? error.message : "Falha ao buscar vozes ElevenLabs.");
+    } finally {
+      setVoiceLoading(false);
+    }
+  }, [config.audioModelId, config.selectedVoiceId, setBehavior]);
+
+  useEffect(() => {
+    if (initialVoiceLoadRef.current) return;
+    initialVoiceLoadRef.current = true;
+
+    const timer = window.setTimeout(() => {
+      void loadVoices(true);
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [loadVoices]);
+
+  async function selectVoice(voice: ElevenLabsVoice) {
+    setVoiceAction(`select:${voice.voiceId}`);
+    setVoiceError("");
+    try {
+      setBehavior({
+        selectedVoiceId: voice.voiceId,
+        selectedVoiceLabel: voice.name,
+        audioVoiceSource: "elevenlabs",
+        voiceCloneStatus: "active",
+      });
+      const res = await fetch(WILLIAN_VOICE_ENDPOINT, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "select_willian_voice", voiceId: voice.voiceId }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.message || "Falha ao vincular voz.");
+    } catch (error) {
+      setVoiceError(error instanceof Error ? error.message : "Falha ao vincular voz.");
+    } finally {
+      setVoiceAction(null);
+    }
+  }
+
+  async function previewVoice() {
+    setVoiceAction("preview");
+    setVoiceError("");
+    setVoicePreviewUrl("");
+    try {
+      const res = await fetch(WILLIAN_VOICE_ENDPOINT, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "synthesize_preview",
+          voiceId: config.selectedVoiceId,
+          modelId: config.audioModelId,
+          text: "Ola, aqui e o Willian da Betel. Estou validando a voz de atendimento.",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.message || "Falha ao gerar preview.");
+      const audio = data.audio || {};
+      if (!audio.audioBase64) throw new Error("Audio nao retornado pela ElevenLabs.");
+      setVoicePreviewUrl(`data:${audio.contentType || "audio/mpeg"};base64,${audio.audioBase64}`);
+    } catch (error) {
+      setVoiceError(error instanceof Error ? error.message : "Falha ao gerar preview.");
+    } finally {
+      setVoiceAction(null);
+    }
+  }
+
+  async function cloneVoice() {
+    setVoiceAction("clone");
+    setVoiceError("");
+    try {
+      const form = new FormData();
+      form.set("action", "clone_willian");
+      form.set("name", cloneName);
+      form.set("description", cloneDescription);
+      form.set("authorized", String(config.voiceCloneConsent));
+      cloneFiles.forEach((file) => form.append("files[]", file, file.name));
+
+      const res = await fetch(WILLIAN_VOICE_ENDPOINT, {
+        method: "POST",
+        body: form,
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.message || "Falha ao clonar voz.");
+
+      setBehavior({
+        selectedVoiceId: String(data.voiceId || ""),
+        selectedVoiceLabel: cloneName,
+        voiceCloneEnabled: true,
+        voiceCloneStatus: data.requiresVerification ? "testing" : "active",
+        audioVoiceSource: "elevenlabs_clone",
+        audioModelId: config.audioModelId || "eleven_multilingual_v2",
+      });
+      setCloneFiles([]);
+      await loadVoices(false);
+    } catch (error) {
+      setVoiceError(error instanceof Error ? error.message : "Falha ao clonar voz.");
+    } finally {
+      setVoiceAction(null);
+    }
+  }
+
   function setToggle(key: BehaviorToggleKey, checked: boolean) {
     setBehavior({ [key]: checked } as Partial<WillianBehaviorConfig>);
   }
@@ -884,30 +1043,98 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
           <Field label="Modelo de audio" value={config.audioModelId} onChange={(audioModelId) => setBehavior({ audioModelId })} placeholder="eleven_multilingual_v2" />
           <Field label="Owner publico" value={config.audioVoicePublicOwnerId} onChange={(audioVoicePublicOwnerId) => setBehavior({ audioVoicePublicOwnerId })} />
         </div>
-        <div className="mt-4 grid gap-3 xl:grid-cols-3">
-          {voiceOptions.map((voice) => (
-            <VoiceCard
-              key={voice.id}
-              active={config.selectedVoiceId === voice.id}
-              detail={voice.detail}
-              label={voice.label}
-              status={voice.status}
-              onClick={() => setBehavior({ selectedVoiceId: voice.id, selectedVoiceLabel: voice.label })}
-            />
-          ))}
+        <div className="mt-4 rounded-xl border border-[var(--admin-border)] bg-[#050505] p-3">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Biblioteca ElevenLabs</p>
+              <p className="mt-1 text-sm text-[var(--admin-muted)]">
+                {voiceLoading ? "Carregando vozes..." : `${filteredVoices.length} voz(es) exibida(s)`}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <ActionButton
+                icon={<RefreshCw size={14} />}
+                label="Atualizar vozes"
+                loading={voiceLoading}
+                onClick={() => void loadVoices(false)}
+              />
+              <ActionButton
+                icon={<Radio size={14} />}
+                label="Testar voz"
+                loading={voiceAction === "preview"}
+                disabled={!config.selectedVoiceId || config.selectedVoiceId === "clone-willian"}
+                onClick={() => void previewVoice()}
+              />
+            </div>
+          </div>
+
+          {voiceError && (
+            <div className="mt-3 rounded-lg border border-[rgba(239,68,68,0.28)] bg-[rgba(239,68,68,0.08)] px-3 py-2 text-xs text-[var(--admin-red)]">
+              {voiceError}
+            </div>
+          )}
+
+          <div className="mt-3 grid max-h-72 gap-2 overflow-y-auto pr-1">
+            {filteredVoices.length ? (
+              filteredVoices.map((voice) => (
+                <VoiceCard
+                  key={voice.voiceId}
+                  active={config.selectedVoiceId === voice.voiceId}
+                  detail={voice.description || [voice.category, Object.values(voice.labels || {}).join(" / ")].filter(Boolean).join(" / ") || voice.voiceId}
+                  label={voice.name}
+                  loading={voiceAction === `select:${voice.voiceId}`}
+                  status={config.selectedVoiceId === voice.voiceId ? "Selecionada" : voice.category || "ElevenLabs"}
+                  onClick={() => void selectVoice(voice)}
+                />
+              ))
+            ) : (
+              <div className="rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.02)] px-4 py-8 text-center text-sm text-[var(--admin-muted)]">
+                {voiceLoading ? "Buscando vozes..." : "Nenhuma voz encontrada. Confira o token na Sala de Manutencao."}
+              </div>
+            )}
+          </div>
         </div>
         {config.audioPreviewEnabled && (
           <div className="mt-4 rounded-lg border border-[var(--admin-border)] bg-[#050505] px-4 py-3">
-            <div className="flex flex-wrap items-center gap-3 text-xs text-[var(--admin-muted)]">
-              <BehaviorIcon icon={<Radio size={14} />} label="Preview" />
-              <span className="font-semibold text-white">{config.selectedVoiceLabel}</span>
-              <span>00:00 / 00:18</span>
-            </div>
-            <div className="mt-3 h-2 overflow-hidden rounded-full bg-[rgba(255,255,255,0.08)]">
-              <span className="block h-full w-2/5 rounded-full bg-[var(--admin-cyan)]" />
-            </div>
+            {voicePreviewUrl ? (
+              <audio controls src={voicePreviewUrl} className="h-10 w-full" />
+            ) : (
+              <div className="flex flex-wrap items-center gap-3 text-xs text-[var(--admin-muted)]">
+                <BehaviorIcon icon={<Radio size={14} />} label="Preview" />
+                <span className="font-semibold text-white">{selectedVoice?.name || config.selectedVoiceLabel}</span>
+                <span>Use o botao Testar voz para gerar uma amostra.</span>
+              </div>
+            )}
           </div>
         )}
+        <div className="mt-4 rounded-xl border border-[var(--admin-border)] bg-[rgba(255,255,255,0.02)] p-4">
+          <div className="grid gap-3 xl:grid-cols-[0.8fr_1.2fr]">
+            <Field label="Nome do clone" value={cloneName} onChange={setCloneName} />
+            <TextAreaField label="Descricao do clone" rows={2} value={cloneDescription} onChange={setCloneDescription} />
+          </div>
+          <div className="mt-3 grid gap-3 xl:grid-cols-[1fr_auto] xl:items-end">
+            <label className="grid gap-1">
+              <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Amostras de audio autorizadas</span>
+              <input
+                type="file"
+                accept="audio/*"
+                multiple
+                onChange={(event) => setCloneFiles(Array.from(event.target.files || []))}
+                className="block h-10 w-full cursor-pointer rounded-lg border border-[var(--admin-border)] bg-[#050505] text-xs text-[var(--admin-muted)] file:mr-3 file:h-10 file:border-0 file:bg-[rgba(0,243,255,0.12)] file:px-3 file:text-xs file:font-bold file:text-[var(--admin-cyan)]"
+              />
+            </label>
+            <ActionButton
+              icon={<Paperclip size={14} />}
+              label="Clonar voz"
+              loading={voiceAction === "clone"}
+              disabled={!config.voiceCloneConsent || cloneFiles.length === 0}
+              onClick={() => void cloneVoice()}
+            />
+          </div>
+          <p className="mt-2 text-xs leading-5 text-[var(--admin-muted)]">
+            {cloneFiles.length ? cloneFiles.map((file) => file.name).join(", ") : "O clone exige confirmacao de consentimento e amostras autorizadas do titular da voz."}
+          </p>
+        </div>
       </Panel>
 
       <Panel
@@ -1385,12 +1612,14 @@ function VoiceCard({
   active,
   detail,
   label,
+  loading = false,
   onClick,
   status,
 }: {
   active: boolean;
   detail: string;
   label: string;
+  loading?: boolean;
   onClick: () => void;
   status: string;
 }) {
@@ -1411,7 +1640,7 @@ function VoiceCard({
           <p className="mt-1 text-xs leading-5 text-[var(--admin-muted)]">{detail}</p>
         </div>
         <span className="rounded-full border border-[rgba(229,178,74,0.24)] bg-[rgba(229,178,74,0.08)] px-2 py-1 text-[10px] font-bold uppercase text-[var(--admin-yellow)]">
-          {status}
+          {loading ? <Loader2 size={12} className="animate-spin" /> : status}
         </span>
       </div>
     </button>
