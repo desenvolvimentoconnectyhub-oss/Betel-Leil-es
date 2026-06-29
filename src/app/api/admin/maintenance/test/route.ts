@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { HeadBucketCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getGeminiApiKey, getGeminiModel } from "@/lib/ai/config";
+import { testElevenLabsConnection } from "@/lib/voice/elevenlabs";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -154,6 +155,32 @@ async function testResend(): Promise<TestResult> {
   }
 }
 
+async function testElevenLabs(): Promise<TestResult> {
+  const start = Date.now();
+  try {
+    const subscription = await testElevenLabsConnection();
+    const latencyMs = Date.now() - start;
+    const usage =
+      subscription.characterLimit === null
+        ? `${subscription.characterCount} caracteres usados`
+        : `${subscription.characterCount}/${subscription.characterLimit} caracteres`;
+
+    return {
+      success: true,
+      integration: "elevenlabs",
+      message: `ElevenLabs respondeu. Plano ${subscription.tier}; ${usage}.`,
+      latencyMs,
+    };
+  } catch (error: unknown) {
+    return {
+      success: false,
+      integration: "elevenlabs",
+      message: error instanceof Error ? error.message : "Falha ao conectar ElevenLabs.",
+      latencyMs: Date.now() - start,
+    };
+  }
+}
+
 async function testIbge(): Promise<TestResult> {
   const start = Date.now();
   const baseUrl = process.env.BETEL_IBGE_API_BASE_URL || "https://servicodados.ibge.gov.br/api/v1/localidades";
@@ -187,6 +214,7 @@ const testMap: Record<string, () => Promise<TestResult>> = {
   connectyhub: testConnectyHub,
   gemini: testGemini,
   resend: testResend,
+  elevenlabs: testElevenLabs,
   ibge: testIbge,
   datazap: testEnvOnly("datazap", "DataZAP+", ["BETEL_DATAZAP_API_BASE_URL", "BETEL_DATAZAP_API_KEY"]),
   fipezap: testEnvOnly("fipezap", "FipeZAP", ["BETEL_FIPEZAP_API_BASE_URL", "BETEL_FIPEZAP_API_KEY"]),

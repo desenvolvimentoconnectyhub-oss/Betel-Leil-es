@@ -1,6 +1,7 @@
 import { HeadBucketCommand, S3Client } from "@aws-sdk/client-s3";
 import { getGeminiApiKey, getGeminiModel } from "@/lib/ai/config";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
+import { getElevenLabsConfig } from "@/lib/voice/elevenlabs";
 
 export type MaintenanceStatusValue = "ok" | "warning" | "missing" | "error";
 
@@ -217,6 +218,75 @@ async function checkGemini(): Promise<MaintenanceIntegration> {
   };
 }
 
+async function checkElevenLabs(): Promise<MaintenanceIntegration> {
+  const config = await getElevenLabsConfig();
+  const apiKeyConfigured = Boolean(config.apiKey.value);
+  const willianVoiceConfigured = Boolean(config.willianVoiceId.value);
+
+  const items: MaintenanceItem[] = [
+    {
+      name: "ELEVENLABS_API_KEY",
+      label: "API key",
+      configured: apiKeyConfigured,
+      value: "",
+      editable: true,
+      secret: true,
+      configKey: "elevenlabs_api_key",
+    },
+    {
+      name: "ELEVENLABS_API_BASE_URL",
+      label: "Base URL",
+      configured: Boolean(config.baseUrl.value),
+      value: config.baseUrl.value,
+      editable: true,
+      secret: false,
+      configKey: "elevenlabs_api_base_url",
+    },
+    {
+      name: "ELEVENLABS_DEFAULT_MODEL_ID",
+      label: "Modelo TTS",
+      configured: Boolean(config.defaultModelId.value),
+      value: config.defaultModelId.value,
+      editable: true,
+      secret: false,
+      configKey: "elevenlabs_default_model_id",
+    },
+    {
+      name: "ELEVENLABS_DEFAULT_VOICE_ID",
+      label: "Voz padrao",
+      configured: Boolean(config.defaultVoiceId.value),
+      value: config.defaultVoiceId.value,
+      editable: true,
+      secret: false,
+      configKey: "elevenlabs_default_voice_id",
+    },
+    {
+      name: "ELEVENLABS_WILLIAN_VOICE_ID",
+      label: "Voz Willian",
+      configured: willianVoiceConfigured,
+      value: config.willianVoiceId.value,
+      editable: true,
+      secret: false,
+      configKey: "elevenlabs_willian_voice_id",
+    },
+  ];
+
+  return {
+    id: "elevenlabs",
+    title: "ElevenLabs",
+    status: !apiKeyConfigured ? "missing" : willianVoiceConfigured ? "ok" : "warning",
+    message: !apiKeyConfigured
+      ? "API key pendente."
+      : willianVoiceConfigured
+        ? "Voz IA configurada."
+        : "Conta conectada; voz do Willian pendente.",
+    items,
+    group: "Voz e Midia IA",
+    usedBy: "Willian e futuros agentes de voz",
+    site: "elevenlabs.io",
+  };
+}
+
 function staticCheck(
   id: string,
   title: string,
@@ -268,10 +338,11 @@ function checkIbge(): MaintenanceIntegration {
 }
 
 export async function getMaintenanceStatus(): Promise<MaintenancePayload> {
-  const [supabase, r2, gemini] = await Promise.all([
+  const [supabase, r2, gemini, elevenlabs] = await Promise.all([
     checkSupabase(),
     checkR2(),
     checkGemini(),
+    checkElevenLabs(),
   ]);
 
   supabase.group = "Infraestrutura Base";
@@ -304,6 +375,8 @@ export async function getMaintenanceStatus(): Promise<MaintenancePayload> {
       "RESEND_API_KEY",
       "BETEL_EMAIL_FROM",
     ], { group: "Essenciais para Operacao", usedBy: "Willian (WhatsApp e Email)", site: "resend.com" }),
+
+    elevenlabs,
 
     // --- Prioridade 3: Dados de mercado ---
     staticCheck("datazap", "DataZAP+ (OLX Group)", "Avaliacao de imoveis e preco/m².", [
