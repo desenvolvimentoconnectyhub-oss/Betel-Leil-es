@@ -4,8 +4,14 @@ import {
   configureWillianWebhook,
   connectWillianConnectyHubInstance,
   createWillianConnectyHubInstance,
+  deleteWillianConnectyHubInstance,
+  disconnectWillianConnectyHubInstance,
+  fetchWillianConnectyHubDataOverview,
   fetchWillianRemoteStatus,
+  fetchWillianWebhookDeliveries,
   getWillianInstanceState,
+  resetWillianConnectyHubInstance,
+  testWillianWebhookDelivery,
 } from "@/lib/communication/connectyhub-client";
 
 export const dynamic = "force-dynamic";
@@ -102,6 +108,18 @@ export async function POST(request: Request) {
       result = await fetchWillianRemoteStatus();
     } else if (action === "configureWebhook") {
       result = await configureWillianWebhook();
+    } else if (action === "testWebhook") {
+      result = await testWillianWebhookDelivery();
+    } else if (action === "webhookDeliveries") {
+      result = await fetchWillianWebhookDeliveries();
+    } else if (action === "syncOverview") {
+      result = await fetchWillianConnectyHubDataOverview();
+    } else if (action === "disconnect") {
+      result = await disconnectWillianConnectyHubInstance();
+    } else if (action === "reset") {
+      result = await resetWillianConnectyHubInstance();
+    } else if (action === "deleteInstance") {
+      result = await deleteWillianConnectyHubInstance();
     } else {
       return NextResponse.json({ success: false, error: "Acao desconhecida para instancia do Willian." }, { status: 400 });
     }

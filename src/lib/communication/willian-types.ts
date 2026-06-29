@@ -43,7 +43,8 @@ export type WillianAgentConfigTab =
   | "qualification"
   | "behavior"
   | "multichannel"
-  | "files";
+  | "files"
+  | "memory";
 
 export type WillianBehaviorConfig = {
   active: boolean;
@@ -224,6 +225,18 @@ export type WillianFilesConfig = {
   knowledgeNotes: string;
 };
 
+export type WillianMemoryConfig = {
+  crmEnabled: boolean;
+  saveConversationHistory: boolean;
+  saveLeadTags: boolean;
+  autoSummaries: boolean;
+  leadTags: string[];
+  importantEvents: string[];
+  stopWords: string[];
+  handoffRules: string[];
+  memoryNotes: string;
+};
+
 export type WillianAgentConfig = {
   agentKey: "multichannel-dispatch";
   agentName: "Willian";
@@ -235,6 +248,7 @@ export type WillianAgentConfig = {
   prompt: WillianPromptConfig;
   multichannel: WillianMultichannelConfig;
   files: WillianFilesConfig;
+  memory: WillianMemoryConfig;
 };
 
 export const DEFAULT_WILLIAN_AGENT_CONFIG: WillianAgentConfig = {
@@ -436,5 +450,27 @@ export const DEFAULT_WILLIAN_AGENT_CONFIG: WillianAgentConfig = {
     companyFiles: [],
     uploadEnabled: false,
     knowledgeNotes: "Base de conhecimento inicial: criterios Betel, operacao de leiloes, regras de risco e FAQs comerciais.",
+  },
+  memory: {
+    crmEnabled: true,
+    saveConversationHistory: true,
+    saveLeadTags: true,
+    autoSummaries: true,
+    leadTags: ["novo", "qualificado", "vip", "humano"],
+    importantEvents: [
+      "lead pediu humano",
+      "lead informou capital",
+      "lead informou regiao",
+      "lead pediu edital ou matricula",
+      "lead solicitou parar contato",
+    ],
+    stopWords: ["parar", "sair", "remover", "cancelar", "nao quero receber"],
+    handoffRules: [
+      "Quando houver duvida juridica, ocupacao, matricula, lance ou risco, pausar e acionar humano.",
+      "Quando o lead pedir pessoa, corretor, consultor ou atendimento humano, pausar IA.",
+      "Quando o lead for VIP ou demonstrar urgencia real, registrar evento importante.",
+    ],
+    memoryNotes:
+      "Registrar preferencias do lead, regioes de interesse, capital disponivel, experiencia em leilao, objeções e proximos passos combinados.",
   },
 };

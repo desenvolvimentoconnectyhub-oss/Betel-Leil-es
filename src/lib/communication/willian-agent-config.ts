@@ -44,6 +44,7 @@ export function normalizeWillianAgentConfig(input: unknown): WillianAgentConfig 
   const prompt = asRecord(source.prompt);
   const multichannel = asRecord(source.multichannel);
   const files = asRecord(source.files);
+  const memory = asRecord(source.memory);
   const defaults = DEFAULT_WILLIAN_AGENT_CONFIG;
   const quoteReplyMode = enumField(behavior.quoteReplyMode, defaults.behavior.quoteReplyMode, ["off", "smart", "always"]);
 
@@ -307,6 +308,17 @@ export function normalizeWillianAgentConfig(input: unknown): WillianAgentConfig 
       companyFiles: asStringArray(files.companyFiles, defaults.files.companyFiles),
       uploadEnabled: boolField(files.uploadEnabled, defaults.files.uploadEnabled),
       knowledgeNotes: stringField(files.knowledgeNotes, defaults.files.knowledgeNotes),
+    },
+    memory: {
+      crmEnabled: boolField(memory.crmEnabled, defaults.memory.crmEnabled),
+      saveConversationHistory: boolField(memory.saveConversationHistory, defaults.memory.saveConversationHistory),
+      saveLeadTags: boolField(memory.saveLeadTags, defaults.memory.saveLeadTags),
+      autoSummaries: boolField(memory.autoSummaries, defaults.memory.autoSummaries),
+      leadTags: asStringArray(memory.leadTags, defaults.memory.leadTags),
+      importantEvents: asStringArray(memory.importantEvents, defaults.memory.importantEvents),
+      stopWords: asStringArray(memory.stopWords, defaults.memory.stopWords),
+      handoffRules: asStringArray(memory.handoffRules, defaults.memory.handoffRules),
+      memoryNotes: stringField(memory.memoryNotes, defaults.memory.memoryNotes),
     },
   };
 }

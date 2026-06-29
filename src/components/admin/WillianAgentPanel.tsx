@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   Clock3,
   ClipboardCheck,
+  Database,
   FileText,
   Image as ImageIcon,
   Loader2,
@@ -17,13 +18,17 @@ import {
   QrCode,
   Radio,
   RefreshCw,
+  RotateCcw,
   Save,
   Send,
   ShieldCheck,
   SlidersHorizontal,
   Smile,
   Timer,
+  Trash2,
+  Unplug,
   Users,
+  Webhook,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -34,6 +39,7 @@ import {
   type WillianConnectionInfo,
   type WillianFilesConfig,
   type WillianInstanceState,
+  type WillianMemoryConfig,
   type WillianMultichannelConfig,
   type WillianPromptConfig,
   type WillianQualificationConfig,
@@ -67,6 +73,7 @@ const tabs: Array<{ key: WillianAgentConfigTab; label: string; subtitle: string;
   { key: "behavior", label: "Comportamento", subtitle: "Modos e timers", icon: SlidersHorizontal },
   { key: "multichannel", label: "Multicanal", subtitle: "Grupos e campanhas", icon: Send },
   { key: "files", label: "Arquivos", subtitle: "Conhecimento", icon: Paperclip },
+  { key: "memory", label: "Memoria/CRM", subtitle: "Leads e eventos", icon: Database },
 ];
 
 function linesToArray(value: string) {
@@ -282,6 +289,7 @@ export function WillianAgentPanel({
   const [savingConfig, setSavingConfig] = useState(false);
   const [feedback, setFeedback] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
   const [connection, setConnection] = useState<WillianConnectionInfo | null>(null);
+  const [operationResult, setOperationResult] = useState<Record<string, unknown> | null>(null);
 
   const connected = Boolean(state.status?.connected || state.status?.loggedIn);
   useEffect(() => {
@@ -358,6 +366,10 @@ export function WillianAgentPanel({
     setConfig((prev) => ({ ...prev, status: "needs_review", files: { ...prev.files, ...patch } }));
   }
 
+  function setMemory(patch: Partial<WillianMemoryConfig>) {
+    setConfig((prev) => ({ ...prev, status: "needs_review", memory: { ...prev.memory, ...patch } }));
+  }
+
   async function saveConfig() {
     setSavingConfig(true);
     setFeedback(null);
@@ -382,8 +394,16 @@ export function WillianAgentPanel({
   }
 
   async function runInstanceAction(action: string) {
+    const confirmations: Record<string, string> = {
+      disconnect: "Desconectar este WhatsApp? Sera necessario gerar um novo QR Code para reconectar.",
+      deleteInstance: "Excluir a instancia do Willian na ConnectyHub? Use apenas quando quiser recriar o vinculo.",
+      reset: "Reiniciar o runtime da instancia na ConnectyHub?",
+    };
+    if (confirmations[action] && !window.confirm(confirmations[action])) return;
+
     setLoading(action);
     setFeedback(null);
+    setOperationResult(null);
     if (action === "connect" || action === "generateQr") setConnection(null);
     try {
       const res = await fetch("/api/admin/agentes-ia/communication/willian-instance", {
@@ -401,6 +421,7 @@ export function WillianAgentPanel({
       if (nextState) setState(nextState);
       const nextConnection = result?.data?.result?.connection || result?.data?.result?.connect?.connection;
       if (nextConnection) setConnection(nextConnection);
+      if (result?.data?.result) setOperationResult(result.data.result as Record<string, unknown>);
       if (!res.ok || !result.success) {
         setFeedback({ type: "err", msg: result.error || "Nao foi possivel operar a instancia." });
       } else {
@@ -412,6 +433,12 @@ export function WillianAgentPanel({
           connect: "Ciclo de conexao iniciado.",
           status: "Status atualizado.",
           configureWebhook: "Webhook configurado.",
+          testWebhook: "Teste de webhook disparado pela ConnectyHub.",
+          webhookDeliveries: "Entregas recentes carregadas.",
+          syncOverview: "Dados sincronizados da ConnectyHub carregados.",
+          disconnect: "Instancia desconectada. Gere um novo QR Code para reconectar.",
+          reset: "Reset solicitado para a instancia.",
+          deleteInstance: "Instancia excluida e vinculo local limpo.",
         };
         setFeedback({ type: "ok", msg: labels[action] || "Acao concluida." });
       }
@@ -470,7 +497,7 @@ export function WillianAgentPanel({
         </div>
       </div>
 
-      <div className="grid border-b border-[var(--admin-border)] lg:grid-cols-6">
+      <div className="grid border-b border-[var(--admin-border)] lg:grid-cols-7">
         {tabs.map((tab) => {
           const Icon = tab.icon;
           const active = activeTab === tab.key;
@@ -504,6 +531,7 @@ export function WillianAgentPanel({
             connection={connection}
             instanceName={instanceName}
             loading={loading}
+            operationResult={operationResult}
             phone={phone}
             runInstanceAction={runInstanceAction}
             setInstanceName={setInstanceName}
@@ -520,6 +548,7 @@ export function WillianAgentPanel({
           <MultichannelTab config={config.multichannel} setMultichannel={setMultichannel} />
         )}
         {activeTab === "files" && <FilesTab config={config.files} setFiles={setFiles} />}
+        {activeTab === "memory" && <MemoryTab config={config.memory} setMemory={setMemory} />}
 
         {feedback && (
           <p
@@ -541,6 +570,7 @@ function ConnectionTab({
   connection,
   instanceName,
   loading,
+  operationResult,
   phone,
   runInstanceAction,
   setInstanceName,
@@ -550,6 +580,7 @@ function ConnectionTab({
   connection: WillianConnectionInfo | null;
   instanceName: string;
   loading: string | null;
+  operationResult: Record<string, unknown> | null;
   phone: string;
   runInstanceAction: (action: string) => void;
   setInstanceName: (value: string) => void;
@@ -559,6 +590,7 @@ function ConnectionTab({
   const connected = Boolean(state.status?.connected || state.status?.loggedIn);
   const canGenerateQr = state.adminTokenConfigured || state.instanceTokenConfigured;
   const whatsappLabel = state.displayName || state.phoneNumber || state.instanceName;
+  const operationPreview = operationResult ? JSON.stringify(operationResult, null, 2).slice(0, 1200) : "";
 
   return (
     <div className="grid gap-5 xl:grid-cols-[1.4fr_0.8fr]">
@@ -576,6 +608,13 @@ function ConnectionTab({
 
         <div className="mt-4 flex flex-wrap gap-2">
           <ActionButton
+            disabled={!state.adminTokenConfigured}
+            icon={<MessageCircle size={14} />}
+            label="Criar/vincular"
+            loading={loading === "create"}
+            onClick={() => runInstanceAction("create")}
+          />
+          <ActionButton
             disabled={!canGenerateQr}
             icon={<QrCode size={14} />}
             label="Gerar QR Code"
@@ -588,6 +627,35 @@ function ConnectionTab({
             label="Atualizar status"
             loading={loading === "status"}
             onClick={() => runInstanceAction("status")}
+          />
+          <ActionButton
+            disabled={!state.adminTokenConfigured}
+            icon={<Webhook size={14} />}
+            label="Configurar webhook"
+            loading={loading === "configureWebhook"}
+            onClick={() => runInstanceAction("configureWebhook")}
+          />
+          <ActionButton
+            disabled={!state.instanceTokenConfigured}
+            icon={<RotateCcw size={14} />}
+            label="Resetar"
+            loading={loading === "reset"}
+            onClick={() => runInstanceAction("reset")}
+          />
+          <ActionButton
+            disabled={!state.instanceTokenConfigured}
+            icon={<Unplug size={14} />}
+            label="Desconectar"
+            loading={loading === "disconnect"}
+            onClick={() => runInstanceAction("disconnect")}
+          />
+          <ActionButton
+            disabled={!state.instanceTokenConfigured}
+            icon={<Trash2 size={14} />}
+            label="Excluir instancia"
+            loading={loading === "deleteInstance"}
+            onClick={() => runInstanceAction("deleteInstance")}
+            tone="danger"
           />
         </div>
       </Panel>
@@ -603,6 +671,7 @@ function ConnectionTab({
           </div>
           <div className="mt-4 space-y-2 text-xs leading-5 text-[var(--admin-muted)]">
             <p className="break-all"><span className="text-white">Webhook:</span> {state.webhookConfiguredUrl || "pendente"}</p>
+            <p><span className="text-white">Webhooks:</span> {state.webhookCount ?? 0}</p>
             <p><span className="text-white">Leitura:</span> {state.status?.loggedIn ? "login ok" : "aguardando login"}</p>
             <p><span className="text-white">Numero:</span> {state.phoneNumber || "pendente"}</p>
             <p><span className="text-white">Foto:</span> {state.profileImageUrl ? "sincronizada" : "pendente"}</p>
@@ -630,6 +699,36 @@ function ConnectionTab({
             )}
             {connection.qrCode && <p className="mt-2 break-all font-mono text-xs text-[var(--admin-muted)]">{connection.qrCode}</p>}
           </div>
+        )}
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          <ActionButton
+            disabled={!state.webhookConfiguredUrl}
+            icon={<Radio size={14} />}
+            label="Testar webhook"
+            loading={loading === "testWebhook"}
+            onClick={() => runInstanceAction("testWebhook")}
+          />
+          <ActionButton
+            disabled={!state.webhookConfiguredUrl}
+            icon={<Activity size={14} />}
+            label="Entregas"
+            loading={loading === "webhookDeliveries"}
+            onClick={() => runInstanceAction("webhookDeliveries")}
+          />
+          <ActionButton
+            disabled={!state.instanceTokenConfigured}
+            icon={<Database size={14} />}
+            label="Ler dados"
+            loading={loading === "syncOverview"}
+            onClick={() => runInstanceAction("syncOverview")}
+          />
+        </div>
+
+        {operationPreview && (
+          <pre className="mt-4 max-h-52 overflow-auto rounded-lg border border-[var(--admin-border)] bg-[#050505] p-3 text-[11px] leading-5 text-[var(--admin-muted)]">
+            {operationPreview}
+          </pre>
         )}
       </Panel>
     </div>
@@ -1096,6 +1195,35 @@ function FilesTab({ config, setFiles }: { config: WillianFilesConfig; setFiles: 
   );
 }
 
+function MemoryTab({ config, setMemory }: { config: WillianMemoryConfig; setMemory: (patch: Partial<WillianMemoryConfig>) => void }) {
+  return (
+    <div className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
+      <Panel title="Memoria e CRM" eyebrow="Leads / tags / historico" action={<StatusPill ok={config.crmEnabled} label={config.crmEnabled ? "CRM ativo" : "CRM pausado"} />}>
+        <div className="grid gap-3 md:grid-cols-2">
+          <ToggleTile title="CRM ativo" detail="Salva lead, conversa, mensagens e eventos." checked={config.crmEnabled} onChange={(crmEnabled) => setMemory({ crmEnabled })} />
+          <ToggleTile title="Historico completo" detail="Mantem trilha da conversa no arquivo do lead." checked={config.saveConversationHistory} onChange={(saveConversationHistory) => setMemory({ saveConversationHistory })} />
+          <ToggleTile title="Tags do lead" detail="Permite classificar momento e prioridade." checked={config.saveLeadTags} onChange={(saveLeadTags) => setMemory({ saveLeadTags })} />
+          <ToggleTile title="Resumo automatico" detail="Atualiza memoria operacional do lead." checked={config.autoSummaries} onChange={(autoSummaries) => setMemory({ autoSummaries })} />
+        </div>
+        <div className="mt-4">
+          <TextAreaField label="Notas de memoria" rows={8} value={config.memoryNotes} onChange={(memoryNotes) => setMemory({ memoryNotes })} />
+        </div>
+      </Panel>
+
+      <Panel title="Regras de lead" eyebrow="Stop words / handoff / eventos">
+        <div className="grid gap-3 md:grid-cols-2">
+          <TextAreaField label="Tags possiveis" rows={6} value={arrayToLines(config.leadTags)} onChange={(value) => setMemory({ leadTags: linesToArray(value) })} />
+          <TextAreaField label="Stop words" rows={6} value={arrayToLines(config.stopWords)} onChange={(value) => setMemory({ stopWords: linesToArray(value) })} />
+        </div>
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
+          <TextAreaField label="Eventos importantes" rows={7} value={arrayToLines(config.importantEvents)} onChange={(value) => setMemory({ importantEvents: linesToArray(value) })} />
+          <TextAreaField label="Regras de handoff" rows={7} value={arrayToLines(config.handoffRules)} onChange={(value) => setMemory({ handoffRules: linesToArray(value) })} />
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
 function AgentCard({ active, detail, disabled, status, title }: { active?: boolean; detail: string; disabled?: boolean; status: string; title: string }) {
   return (
     <div className={cn("rounded-lg border p-4", active ? "border-[rgba(0,243,255,0.28)] bg-[rgba(0,243,255,0.06)]" : "border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)]", disabled && "opacity-60")}>
@@ -1377,13 +1505,32 @@ function StatusPill({ ok, label }: { ok: boolean; label: string }) {
   );
 }
 
-function ActionButton({ disabled, icon, label, loading, onClick }: { disabled?: boolean; icon: ReactNode; label: string; loading?: boolean; onClick: () => void }) {
+function ActionButton({
+  disabled,
+  icon,
+  label,
+  loading,
+  onClick,
+  tone = "default",
+}: {
+  disabled?: boolean;
+  icon: ReactNode;
+  label: string;
+  loading?: boolean;
+  onClick: () => void;
+  tone?: "default" | "danger";
+}) {
   return (
     <button
       type="button"
       disabled={disabled || loading}
       onClick={onClick}
-      className="inline-flex h-9 items-center gap-2 rounded-md border border-[var(--admin-border)] bg-[rgba(255,255,255,0.04)] px-3 text-xs font-semibold text-white transition hover:border-[var(--admin-cyan)] disabled:cursor-not-allowed disabled:opacity-45"
+      className={cn(
+        "inline-flex h-9 items-center gap-2 rounded-md border px-3 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-45",
+        tone === "danger"
+          ? "border-[rgba(239,68,68,0.32)] bg-[rgba(239,68,68,0.08)] hover:border-[var(--admin-red)]"
+          : "border-[var(--admin-border)] bg-[rgba(255,255,255,0.04)] hover:border-[var(--admin-cyan)]"
+      )}
     >
       {loading ? <Loader2 size={14} className="animate-spin" /> : icon}
       {label}

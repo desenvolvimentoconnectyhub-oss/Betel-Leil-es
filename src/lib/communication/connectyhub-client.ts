@@ -7,6 +7,22 @@ export const WILLIAN_AGENT_KEY = "multichannel-dispatch";
 export const WILLIAN_AGENT_NAME = "Willian";
 export const WILLIAN_DEFAULT_INSTANCE_NAME = "willian-betel";
 export const CONNECTYHUB_PROVIDER = "connectyhub";
+export const CONNECTYHUB_WEBHOOK_EVENTS = [
+  "messages",
+  "messages_update",
+  "connection",
+  "chats",
+  "contacts",
+  "history",
+  "presence",
+  "groups",
+  "labels",
+  "chat_labels",
+  "newsletter_messages",
+  "call",
+  "blocks",
+  "sender",
+] as const;
 
 type ConfigSource = "env" | "app_config" | "default" | "missing";
 
@@ -107,6 +123,13 @@ async function upsertAppConfig(records: Array<{ key: string; value: string; desc
     })),
     { onConflict: "key" }
   );
+}
+
+async function deleteAppConfig(keys: string[]) {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase || !keys.length) return;
+
+  await supabase.from("app_config").delete().in("key", configAliases(keys));
 }
 
 function configFrom(keys: string[], appConfig: Map<string, string>, fallback = ""): ConfigValue {
@@ -456,6 +479,23 @@ function extractDeliveryId(payload: unknown) {
   );
 }
 
+function extractWebhookId(payload: unknown) {
+  const data = asRecord(payload);
+  const webhook = asRecord(data.webhook);
+  const item = asRecord(data.data);
+  return cleanString(data.id || data.webhookId || data.webhook_id || webhook.id || webhook.webhookId || item.id || item.webhookId);
+}
+
+function extractWebhookSecret(payload: unknown) {
+  return findFirstString(payload, [
+    "secret",
+    "webhookSecret",
+    "webhook_secret",
+    "signingSecret",
+    "signing_secret",
+  ]);
+}
+
 function sanitizePayload(payload: unknown): unknown {
   if (Array.isArray(payload)) return payload.map(sanitizePayload);
   if (!payload || typeof payload !== "object") return payload;
@@ -588,7 +628,7 @@ function extractInstanceName(payload: unknown, fallback = "") {
 function asArrayPayload(payload: unknown) {
   if (Array.isArray(payload)) return payload;
   const data = asRecord(payload);
-  for (const key of ["instances", "webhooks", "items", "results"]) {
+  for (const key of ["instances", "webhooks", "messages", "chats", "contacts", "deliveries", "items", "results"]) {
     const value = data[key];
     if (Array.isArray(value)) return value;
     if (value && typeof value === "object") return [value];
@@ -596,7 +636,7 @@ function asArrayPayload(payload: unknown) {
 
   const nestedData = asRecord(data.data);
   if (Array.isArray(data.data)) return data.data;
-  for (const key of ["instances", "webhooks", "items", "results"]) {
+  for (const key of ["instances", "webhooks", "messages", "chats", "contacts", "deliveries", "items", "results"]) {
     const value = nestedData[key];
     if (Array.isArray(value)) return value;
     if (value && typeof value === "object") return [value];
@@ -604,7 +644,7 @@ function asArrayPayload(payload: unknown) {
 
   if (
     Object.keys(nestedData).some((key) =>
-      ["id", "instanceId", "instance_id", "webhookId", "webhook_id", "url", "name", "instanceName", "instance_name"].includes(key)
+      ["id", "instanceId", "instance_id", "webhookId", "webhook_id", "url", "name", "displayName", "display_name", "instanceName", "instance_name"].includes(key)
     )
   ) {
     return [nestedData];
@@ -614,6 +654,12 @@ function asArrayPayload(payload: unknown) {
 
 async function listConnectyHubInstances() {
   return asArrayPayload(await connectyhubRequest("/instances", { method: "GET", timeoutMs: 10000 }));
+}
+
+async function findConnectyHubInstanceByName(instanceName: string) {
+  const instances = await listConnectyHubInstances().catch(() => []);
+  const normalizedName = instanceName.toLowerCase();
+  return instances.find((item) => extractInstanceName(item).toLowerCase() === normalizedName) || null;
 }
 
 async function resolveConnectyHubInstanceId(config?: Awaited<ReturnType<typeof getWillianConfig>>) {
@@ -683,6 +729,30 @@ async function persistConnectyHubInstance(input: {
     },
     { onConflict: "provider,instance_name" }
   );
+}
+
+async function clearPersistedConnectyHubInstance() {
+  await deleteAppConfig([
+    "BETEL_WILLIAN_CONNECTYHUB_INSTANCE_ID",
+    "BETEL_WILLIAN_WHATSAPP_PHONE_NUMBER",
+    "BETEL_WILLIAN_WHATSAPP_DISPLAY_NAME",
+    "BETEL_WILLIAN_WHATSAPP_PROFILE_IMAGE_URL",
+    "BETEL_WILLIAN_WHATSAPP_PROFILE_SYNCED_AT",
+  ]);
+
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return;
+
+  await supabase
+    .from("whatsapp_instances")
+    .update({
+      status: "deleted",
+      provider_instance_id: null,
+      connected_at: null,
+      last_seen_at: new Date().toISOString(),
+    })
+    .eq("provider", CONNECTYHUB_PROVIDER)
+    .eq("agent_key", WILLIAN_AGENT_KEY);
 }
 
 export async function syncWillianWhatsappProfileFromConnectyHub(input: { connectPayload?: unknown; statusPayload?: unknown } = {}) {
@@ -821,6 +891,25 @@ export async function createWillianConnectyHubInstance(input: { instanceName?: s
   const instanceName = cleanString(input.instanceName, config.instanceName || WILLIAN_DEFAULT_INSTANCE_NAME);
   if (!config.webhookUrl) throw new Error("Configure CONNECTYHUB_WEBHOOK_URL antes de criar a instancia.");
 
+  const existing = await findConnectyHubInstanceByName(instanceName);
+  const existingId = extractInstanceId(existing);
+  if (existingId) {
+    const name = extractInstanceName(existing, instanceName);
+    await persistConnectyHubInstance({
+      instanceId: existingId,
+      instanceName: name,
+      webhookUrl: config.webhookUrl,
+      statusPayload: existing,
+    });
+
+    return {
+      payload: sanitizePayload(existing),
+      instanceIdPersisted: true,
+      instanceName: name,
+      existingInstanceLinked: true,
+    };
+  }
+
   const payload = await connectyhubRequest("/instances", {
     body: {
       name: instanceName,
@@ -889,29 +978,52 @@ function webhookMatchesUrl(webhook: unknown, url: string) {
 export async function configureWillianWebhook() {
   const config = await getWillianConfig();
   if (!config.webhookUrl) throw new Error("Configure CONNECTYHUB_WEBHOOK_URL antes do webhook.");
-  if (!config.webhookSecret) throw new Error("Configure CONNECTYHUB_WEBHOOK_SECRET antes de validar o webhook.");
 
-  const events = ["messages", "messages_update", "connection", "chats", "contacts", "history", "presence", "sender"];
+  const events = [...CONNECTYHUB_WEBHOOK_EVENTS];
   const existingPayload = await connectyhubRequest("/webhooks", { method: "GET", timeoutMs: 10000 }).catch(() => []);
   const existing = asArrayPayload(existingPayload).find((webhook) => webhookMatchesUrl(webhook, config.webhookUrl));
-  const existingId = cleanString(asRecord(existing).id);
-  if (!existingId) {
-    throw new Error(
-      "Webhook ConnectyHub ainda nao localizado. Crie o webhook na ConnectyHub, copie o secret para CONNECTYHUB_WEBHOOK_SECRET e depois atualize por aqui."
-    );
+  const existingId = extractWebhookId(existing);
+  if (existingId) {
+    if (!config.webhookSecret) {
+      throw new Error("Webhook ConnectyHub ja existe, mas CONNECTYHUB_WEBHOOK_SECRET esta ausente para validar entregas.");
+    }
+
+    const payload = await connectyhubRequest(`/webhooks/${encodeURIComponent(existingId)}`, {
+      method: "PATCH",
+      body: {
+        url: config.webhookUrl,
+        description: "Webhook principal Betel AI",
+        events,
+        status: "active",
+      },
+    });
+
+    return { payload: sanitizePayload(payload), existingWebhookUpdated: true };
   }
 
-  const payload = await connectyhubRequest(`/webhooks/${encodeURIComponent(existingId)}`, {
-    method: "PATCH",
+  const payload = await connectyhubRequest("/webhooks", {
     body: {
       url: config.webhookUrl,
       description: "Webhook principal Betel AI",
       events,
-      status: "active",
     },
   });
+  const returnedSecret = extractWebhookSecret(payload);
+  if (returnedSecret && !process.env.CONNECTYHUB_WEBHOOK_SECRET) {
+    await upsertAppConfig([
+      {
+        key: "CONNECTYHUB_WEBHOOK_SECRET",
+        value: returnedSecret,
+        description: "Secret de assinatura do webhook ConnectyHub. Gerado pela ConnectyHub e armazenado como segredo.",
+        secret: true,
+      },
+    ]);
+  }
+  if (!config.webhookSecret && !returnedSecret) {
+    throw new Error("Webhook criado, mas a ConnectyHub nao retornou secret. Configure CONNECTYHUB_WEBHOOK_SECRET manualmente.");
+  }
 
-  return { payload: sanitizePayload(payload), existingWebhookUpdated: true };
+  return { payload: sanitizePayload(payload), webhookCreated: true, secretPersisted: Boolean(returnedSecret && !process.env.CONNECTYHUB_WEBHOOK_SECRET) };
 }
 
 export async function fetchWillianRemoteStatus() {
@@ -937,6 +1049,104 @@ export async function fetchWillianRemoteStatus() {
     payload: sanitizePayload(payload),
     status,
     profile,
+  };
+}
+
+async function runInstanceProviderAction(path: string, statusLabel: string) {
+  const config = await getWillianConfig();
+  const instanceId = await resolveConnectyHubInstanceId(config);
+  if (!instanceId) throw new Error("Instancia ConnectyHub nao localizada para o Willian.");
+
+  const payload = await connectyhubRequest(path, {
+    body: { instanceId },
+    method: path === "/provider/instance" ? "DELETE" : "POST",
+    timeoutMs: 15000,
+  });
+
+  await persistConnectyHubInstance({
+    instanceId,
+    instanceName: config.instanceName,
+    webhookUrl: config.webhookUrl,
+    statusPayload: { status: statusLabel, payload },
+  });
+
+  return { payload: sanitizePayload(payload), instanceId: maskSecret(instanceId), status: statusLabel };
+}
+
+export async function disconnectWillianConnectyHubInstance() {
+  return runInstanceProviderAction("/provider/instance/disconnect", "disconnected");
+}
+
+export async function resetWillianConnectyHubInstance() {
+  return runInstanceProviderAction("/provider/instance/reset", "resetting");
+}
+
+export async function deleteWillianConnectyHubInstance() {
+  const config = await getWillianConfig();
+  const instanceId = await resolveConnectyHubInstanceId(config);
+  if (!instanceId) throw new Error("Instancia ConnectyHub nao localizada para excluir.");
+
+  const payload = await connectyhubRequest(`/provider/instance?instanceId=${encodeURIComponent(instanceId)}`, {
+    method: "DELETE",
+    timeoutMs: 15000,
+  });
+  await clearPersistedConnectyHubInstance();
+
+  return { payload: sanitizePayload(payload), instanceDeleted: true };
+}
+
+export async function testWillianWebhookDelivery() {
+  const config = await getWillianConfig();
+  if (!config.webhookUrl) throw new Error("CONNECTYHUB_WEBHOOK_URL ausente.");
+
+  const existingPayload = await connectyhubRequest("/webhooks", { method: "GET", timeoutMs: 10000 }).catch(() => []);
+  const existing = asArrayPayload(existingPayload).find((webhook) => webhookMatchesUrl(webhook, config.webhookUrl));
+  const webhookId = extractWebhookId(existing);
+  if (!webhookId) throw new Error("Webhook ConnectyHub nao localizado para teste.");
+
+  const payload = await connectyhubRequest(`/webhooks/${encodeURIComponent(webhookId)}/test`, {
+    method: "POST",
+    timeoutMs: 15000,
+  });
+
+  return { payload: sanitizePayload(payload), webhookTestSent: true };
+}
+
+export async function fetchWillianWebhookDeliveries() {
+  const payload = await connectyhubRequest("/webhooks/deliveries", { method: "GET", timeoutMs: 10000 });
+  return { deliveries: asArrayPayload(payload).slice(0, 10).map(sanitizePayload), count: asArrayPayload(payload).length };
+}
+
+export async function fetchWillianConnectyHubDataOverview() {
+  const config = await getWillianConfig();
+  const instanceId = await resolveConnectyHubInstanceId(config);
+  if (!instanceId) throw new Error("Instancia ConnectyHub nao localizada para leitura.");
+
+  const query = `instanceId=${encodeURIComponent(instanceId)}&limit=5&offset=0`;
+  const [messagesPayload, chatsPayload, contactsPayload] = await Promise.all([
+    connectyhubRequest(`/messages?${query}`, { method: "GET", timeoutMs: 12000 }).catch((error) => ({ error: error instanceof Error ? error.message : "messages_error" })),
+    connectyhubRequest(`/chats?${query}`, { method: "GET", timeoutMs: 12000 }).catch((error) => ({ error: error instanceof Error ? error.message : "chats_error" })),
+    connectyhubRequest(`/contacts?${query}`, { method: "GET", timeoutMs: 12000 }).catch((error) => ({ error: error instanceof Error ? error.message : "contacts_error" })),
+  ]);
+
+  const messages = asArrayPayload(messagesPayload);
+  const chats = asArrayPayload(chatsPayload);
+  const contacts = asArrayPayload(contactsPayload);
+
+  return {
+    messages: messages.slice(0, 5).map(sanitizePayload),
+    chats: chats.slice(0, 5).map(sanitizePayload),
+    contacts: contacts.slice(0, 5).map(sanitizePayload),
+    counts: {
+      messages: messages.length,
+      chats: chats.length,
+      contacts: contacts.length,
+    },
+    errors: {
+      messages: cleanString(asRecord(messagesPayload).error),
+      chats: cleanString(asRecord(chatsPayload).error),
+      contacts: cleanString(asRecord(contactsPayload).error),
+    },
   };
 }
 
@@ -1026,4 +1236,102 @@ export async function sendWillianWhatsAppText(input: {
       errorMessage: error instanceof Error ? error.message : "Erro desconhecido na ConnectyHub.",
     };
   }
+}
+
+export async function sendWillianWhatsAppReply(input: {
+  number: string;
+  text: string;
+  trackId: string;
+}): Promise<ConnectyHubDeliveryResult> {
+  const startedMs = Date.now();
+  const processedAt = new Date().toISOString();
+  const phone = normalizeWhatsAppNumber(input.number);
+  const config = await getWillianConfig();
+  const instanceId = config.apiToken ? await resolveConnectyHubInstanceId(config).catch(() => "") : "";
+
+  if (!config.apiToken || !instanceId || !phone || !input.text.trim()) {
+    return {
+      ok: false,
+      providerStatus: !config.apiToken
+        ? "missing_connectyhub_token"
+        : !instanceId
+          ? "missing_connectyhub_instance"
+          : !phone
+            ? "missing_recipient_phone"
+            : "missing_reply_text",
+      endpointConfigured: Boolean(config.apiToken && instanceId),
+      latencyMs: Math.max(Date.now() - startedMs, 1),
+      processedAt,
+      errorMessage: "Resposta WhatsApp incompleta para envio.",
+    };
+  }
+
+  try {
+    const payload = await connectyhubRequest("/messages/text", {
+      body: {
+        instanceId,
+        number: phone,
+        text: input.text.trim(),
+        linkPreview: true,
+        trackId: input.trackId,
+      },
+      headers: {
+        "Idempotency-Key": input.trackId,
+      },
+      timeoutMs: 15000,
+    });
+
+    return {
+      ok: true,
+      providerStatus: "connectyhub_accepted",
+      endpointConfigured: true,
+      latencyMs: Math.max(Date.now() - startedMs, 1),
+      processedAt,
+      externalDeliveryId: extractDeliveryId(payload),
+      responsePreview: preview(JSON.stringify(sanitizePayload(payload))),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      providerStatus: "connectyhub_error",
+      endpointConfigured: true,
+      latencyMs: Math.max(Date.now() - startedMs, 1),
+      processedAt,
+      errorMessage: error instanceof Error ? error.message : "Erro desconhecido na ConnectyHub.",
+    };
+  }
+}
+
+export async function sendWillianWhatsAppMedia(input: {
+  number: string;
+  type: "image" | "video" | "videoplay" | "document" | "audio" | "myaudio" | "ptt" | "ptv" | "sticker";
+  file: string;
+  text?: string;
+  docName?: string;
+  trackId: string;
+}) {
+  const config = await getWillianConfig();
+  const instanceId = config.apiToken ? await resolveConnectyHubInstanceId(config).catch(() => "") : "";
+  const number = normalizeWhatsAppNumber(input.number);
+  if (!config.apiToken || !instanceId || !number || !input.file) {
+    throw new Error("Envio de midia WhatsApp incompleto.");
+  }
+
+  const payload = await connectyhubRequest("/messages/media", {
+    body: {
+      instanceId,
+      number,
+      type: input.type,
+      file: input.file,
+      text: input.text,
+      docName: input.docName,
+      trackId: input.trackId,
+    },
+    headers: {
+      "Idempotency-Key": input.trackId,
+    },
+    timeoutMs: 20000,
+  });
+
+  return { payload: sanitizePayload(payload), externalDeliveryId: extractDeliveryId(payload) };
 }
