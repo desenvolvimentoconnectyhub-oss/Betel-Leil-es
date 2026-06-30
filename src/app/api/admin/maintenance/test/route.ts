@@ -14,6 +14,37 @@ type TestResult = {
   latencyMs: number;
 };
 
+type MaintenanceAppConfig = Map<string, string>;
+
+function cleanConfigValue(value: unknown) {
+  return String(value || "").trim();
+}
+
+async function readMaintenanceAppConfig(): Promise<MaintenanceAppConfig> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return new Map();
+
+  const { data, error } = await supabase
+    .from("app_config")
+    .select("key,value");
+
+  if (error || !data) return new Map();
+
+  return new Map(
+    data
+      .map((row) => [cleanConfigValue(row.key).toLowerCase(), cleanConfigValue(row.value)] as const)
+      .filter(([key, value]) => Boolean(key && value))
+  );
+}
+
+function configKeyFor(name: string) {
+  return cleanConfigValue(name).toLowerCase();
+}
+
+function resolveConfigValue(appConfig: MaintenanceAppConfig, name: string) {
+  return appConfig.get(configKeyFor(name)) || cleanConfigValue(process.env[name]);
+}
+
 async function testSupabase(): Promise<TestResult> {
   const start = Date.now();
   const supabase = getSupabaseAdminClient();
@@ -34,10 +65,11 @@ async function testSupabase(): Promise<TestResult> {
 
 async function testR2(): Promise<TestResult> {
   const start = Date.now();
-  const endpoint = process.env.R2_ENDPOINT;
-  const accessKey = process.env.R2_ACCESS_KEY_ID;
-  const secretKey = process.env.R2_SECRET_ACCESS_KEY;
-  const publicBucket = process.env.R2_PUBLIC_BUCKET_NAME;
+  const appConfig = await readMaintenanceAppConfig();
+  const endpoint = resolveConfigValue(appConfig, "R2_ENDPOINT");
+  const accessKey = resolveConfigValue(appConfig, "R2_ACCESS_KEY_ID");
+  const secretKey = resolveConfigValue(appConfig, "R2_SECRET_ACCESS_KEY");
+  const publicBucket = resolveConfigValue(appConfig, "R2_PUBLIC_BUCKET_NAME");
 
   if (!endpoint || !accessKey || !secretKey || !publicBucket) {
     return { success: false, integration: "r2", message: "Credenciais R2 incompletas.", latencyMs: Date.now() - start };
@@ -60,8 +92,9 @@ async function testR2(): Promise<TestResult> {
 
 async function testInngest(): Promise<TestResult> {
   const start = Date.now();
-  const appId = process.env.INNGEST_APP_ID;
-  const eventKey = process.env.INNGEST_EVENT_KEY;
+  const appConfig = await readMaintenanceAppConfig();
+  const appId = resolveConfigValue(appConfig, "INNGEST_APP_ID");
+  const eventKey = resolveConfigValue(appConfig, "INNGEST_EVENT_KEY");
 
   if (!appId || !eventKey) {
     return { success: false, integration: "inngest", message: "INNGEST_APP_ID ou INNGEST_EVENT_KEY ausente.", latencyMs: Date.now() - start };
@@ -72,8 +105,9 @@ async function testInngest(): Promise<TestResult> {
 
 async function testConnectyHub(): Promise<TestResult> {
   const start = Date.now();
-  const baseUrl = process.env.CONNECTYHUB_API_URL;
-  const token = process.env.CONNECTYHUB_API_TOKEN;
+  const appConfig = await readMaintenanceAppConfig();
+  const baseUrl = resolveConfigValue(appConfig, "CONNECTYHUB_API_URL");
+  const token = resolveConfigValue(appConfig, "CONNECTYHUB_API_TOKEN");
 
   if (!baseUrl || !token) {
     return { success: false, integration: "connectyhub", message: "CONNECTYHUB_API_URL ou CONNECTYHUB_API_TOKEN ausente.", latencyMs: Date.now() - start };
@@ -135,8 +169,9 @@ async function testGemini(): Promise<TestResult> {
 
 async function testResend(): Promise<TestResult> {
   const start = Date.now();
-  const apiKey = process.env.RESEND_API_KEY;
-  const emailFrom = process.env.BETEL_EMAIL_FROM;
+  const appConfig = await readMaintenanceAppConfig();
+  const apiKey = resolveConfigValue(appConfig, "RESEND_API_KEY");
+  const emailFrom = resolveConfigValue(appConfig, "BETEL_EMAIL_FROM");
   if (!apiKey || !emailFrom) {
     return { success: false, integration: "resend", message: "RESEND_API_KEY ou BETEL_EMAIL_FROM ausente.", latencyMs: Date.now() - start };
   }
@@ -183,7 +218,8 @@ async function testElevenLabs(): Promise<TestResult> {
 
 async function testIbge(): Promise<TestResult> {
   const start = Date.now();
-  const baseUrl = process.env.BETEL_IBGE_API_BASE_URL || "https://servicodados.ibge.gov.br/api/v1/localidades";
+  const appConfig = await readMaintenanceAppConfig();
+  const baseUrl = resolveConfigValue(appConfig, "BETEL_IBGE_API_BASE_URL") || "https://servicodados.ibge.gov.br/api/v1/localidades";
   try {
     const res = await fetch(`${baseUrl}/estados?orderBy=nome`, { signal: AbortSignal.timeout(10000) });
     const latencyMs = Date.now() - start;
@@ -199,7 +235,8 @@ async function testIbge(): Promise<TestResult> {
 function testEnvOnly(id: string, label: string, vars: string[]): () => Promise<TestResult> {
   return async () => {
     const start = Date.now();
-    const missing = vars.filter((v) => !process.env[v]?.trim());
+    const appConfig = await readMaintenanceAppConfig();
+    const missing = vars.filter((v) => !resolveConfigValue(appConfig, v));
     if (missing.length > 0) {
       return { success: false, integration: id, message: `Variavel(is) ausente(s): ${missing.join(", ")}`, latencyMs: Date.now() - start };
     }

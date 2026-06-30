@@ -40,16 +40,60 @@ export type MaintenancePayload = {
 
 const IBGE_LOCALIDADES_API_BASE_URL = "https://servicodados.ibge.gov.br/api/v1/localidades";
 
-function envItem(name: string, label = name, secret = false, configKey?: string) {
-  const value = String(process.env[name] || "").trim();
+type MaintenanceAppConfig = Map<string, string>;
+
+function cleanConfigValue(value: unknown) {
+  return String(value || "").trim();
+}
+
+async function readMaintenanceAppConfig(): Promise<MaintenanceAppConfig> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return new Map();
+
+  const { data, error } = await supabase
+    .from("app_config")
+    .select("key,value");
+
+  if (error || !data) return new Map();
+
+  return new Map(
+    data
+      .map((row) => [cleanConfigValue(row.key).toLowerCase(), cleanConfigValue(row.value)] as const)
+      .filter(([key, value]) => Boolean(key && value))
+  );
+}
+
+function configKeyFor(name: string, configKey?: string) {
+  return cleanConfigValue(configKey || name.toLowerCase()).toLowerCase();
+}
+
+function resolveConfigValue(appConfig: MaintenanceAppConfig, name: string, configKey?: string) {
+  const key = configKeyFor(name, configKey);
+  return appConfig.get(key) || cleanConfigValue(process.env[name]);
+}
+
+function isSecretName(name: string) {
+  const lower = name.toLowerCase();
+  return lower.includes("key") || lower.includes("token") || lower.includes("secret") || lower.includes("password");
+}
+
+function envItem(
+  name: string,
+  label = name,
+  secret = false,
+  appConfig: MaintenanceAppConfig = new Map(),
+  configKey?: string
+) {
+  const key = configKeyFor(name, configKey);
+  const value = resolveConfigValue(appConfig, name, key);
   return {
     name,
     label,
     configured: Boolean(value),
-    value: value || "",
+    value: secret ? "" : value,
     editable: true,
     secret,
-    configKey: configKey || name.toLowerCase(),
+    configKey: key,
   };
 }
 
@@ -57,16 +101,16 @@ function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Erro desconhecido.";
 }
 
-function getSupabaseEnvItems() {
+function getSupabaseEnvItems(appConfig: MaintenanceAppConfig) {
   return [
-    envItem("NEXT_PUBLIC_SUPABASE_URL", "Project URL"),
-    envItem("NEXT_PUBLIC_SUPABASE_ANON_KEY", "Publishable key", true),
-    envItem("SUPABASE_SERVICE_ROLE_KEY", "Service role key", true),
+    envItem("NEXT_PUBLIC_SUPABASE_URL", "Project URL", false, appConfig),
+    envItem("NEXT_PUBLIC_SUPABASE_ANON_KEY", "Publishable key", true, appConfig),
+    envItem("SUPABASE_SERVICE_ROLE_KEY", "Service role key", true, appConfig),
   ];
 }
 
-async function checkSupabase(): Promise<MaintenanceIntegration> {
-  const required = getSupabaseEnvItems();
+async function checkSupabase(appConfig: MaintenanceAppConfig): Promise<MaintenanceIntegration> {
+  const required = getSupabaseEnvItems(appConfig);
 
   if (required.some((item) => !item.configured)) {
     return {
@@ -121,14 +165,14 @@ async function checkSupabase(): Promise<MaintenanceIntegration> {
   };
 }
 
-async function checkR2(): Promise<MaintenanceIntegration> {
+async function checkR2(appConfig: MaintenanceAppConfig): Promise<MaintenanceIntegration> {
   const required = [
-    envItem("R2_ACCOUNT_ID", "Account ID"),
-    envItem("R2_ENDPOINT", "Endpoint"),
-    envItem("R2_ACCESS_KEY_ID", "Access key", true),
-    envItem("R2_SECRET_ACCESS_KEY", "Secret key", true),
-    envItem("R2_PUBLIC_BUCKET_NAME", "Bucket publico"),
-    envItem("R2_PRIVATE_BUCKET_NAME", "Bucket privado"),
+    envItem("R2_ACCOUNT_ID", "Account ID", false, appConfig),
+    envItem("R2_ENDPOINT", "Endpoint", false, appConfig),
+    envItem("R2_ACCESS_KEY_ID", "Access key", true, appConfig),
+    envItem("R2_SECRET_ACCESS_KEY", "Secret key", true, appConfig),
+    envItem("R2_PUBLIC_BUCKET_NAME", "Bucket publico", false, appConfig),
+    envItem("R2_PRIVATE_BUCKET_NAME", "Bucket privado", false, appConfig),
   ];
 
   if (required.some((item) => !item.configured)) {
@@ -141,19 +185,22 @@ async function checkR2(): Promise<MaintenanceIntegration> {
     };
   }
 
+  const endpoint = resolveConfigValue(appConfig, "R2_ENDPOINT");
+  const accessKeyId = resolveConfigValue(appConfig, "R2_ACCESS_KEY_ID");
+  const secretAccessKey = resolveConfigValue(appConfig, "R2_SECRET_ACCESS_KEY");
+  const publicBucket = resolveConfigValue(appConfig, "R2_PUBLIC_BUCKET_NAME");
+  const privateBucket = resolveConfigValue(appConfig, "R2_PRIVATE_BUCKET_NAME");
+
   const client = new S3Client({
     region: "auto",
-    endpoint: process.env.R2_ENDPOINT,
+    endpoint,
     credentials: {
-      accessKeyId: process.env.R2_ACCESS_KEY_ID!,
-      secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
+      accessKeyId,
+      secretAccessKey,
     },
   });
 
-  const buckets = [
-    process.env.R2_PUBLIC_BUCKET_NAME!,
-    process.env.R2_PRIVATE_BUCKET_NAME!,
-  ];
+  const buckets = [publicBucket, privateBucket];
 
   try {
     await Promise.all(
@@ -202,7 +249,7 @@ async function checkGemini(): Promise<MaintenanceIntegration> {
       name: "GEMINI_API_KEY",
       label: "API key",
       configured: Boolean(apiKey),
-      value: apiKey || "",
+      value: "",
       editable: true,
       secret: true,
       configKey: "gemini_api_key",
@@ -252,12 +299,14 @@ function staticCheck(
   message: string,
   vars: string[],
   extra?: { group?: string; usedBy?: string; site?: string },
+  appConfig: MaintenanceAppConfig = new Map(),
 ) {
   const items = vars.map((name) =>
     envItem(
       name,
       name,
-      name.toLowerCase().includes("key") || name.toLowerCase().includes("token")
+      isSecretName(name),
+      appConfig
     )
   );
   const missing = items.filter((item) => !item.configured);
@@ -271,8 +320,8 @@ function staticCheck(
   } satisfies MaintenanceIntegration;
 }
 
-function checkIbge(): MaintenanceIntegration {
-  const value = String(process.env.BETEL_IBGE_API_BASE_URL || IBGE_LOCALIDADES_API_BASE_URL).trim();
+function checkIbge(appConfig: MaintenanceAppConfig): MaintenanceIntegration {
+  const value = resolveConfigValue(appConfig, "BETEL_IBGE_API_BASE_URL") || IBGE_LOCALIDADES_API_BASE_URL;
 
   return {
     id: "ibge",
@@ -297,9 +346,10 @@ function checkIbge(): MaintenanceIntegration {
 }
 
 export async function getMaintenanceStatus(): Promise<MaintenancePayload> {
+  const appConfig = await readMaintenanceAppConfig();
   const [supabase, r2, gemini, elevenlabs] = await Promise.all([
-    checkSupabase(),
-    checkR2(),
+    checkSupabase(appConfig),
+    checkR2(appConfig),
     checkGemini(),
     checkElevenLabs(),
   ]);
@@ -321,19 +371,19 @@ export async function getMaintenanceStatus(): Promise<MaintenancePayload> {
       "INNGEST_APP_ID",
       "INNGEST_EVENT_KEY",
       "INNGEST_SIGNING_KEY",
-    ], { group: "Essenciais para Operacao", usedBy: "Pipeline inteiro", site: "inngest.com" }),
+    ], { group: "Essenciais para Operacao", usedBy: "Pipeline inteiro", site: "inngest.com" }, appConfig),
 
     staticCheck("connectyhub", "WhatsApp / ConnectyHub", "Ponte WhatsApp configurada.", [
       "CONNECTYHUB_API_URL",
       "CONNECTYHUB_API_TOKEN",
       "CONNECTYHUB_WEBHOOK_SECRET",
       "CONNECTYHUB_WEBHOOK_URL",
-    ], { group: "Essenciais para Operacao", usedBy: "Willian, Camila, Tiago", site: "connectyhub.com.br" }),
+    ], { group: "Essenciais para Operacao", usedBy: "Willian, Camila, Tiago", site: "connectyhub.com.br" }, appConfig),
 
     staticCheck("resend", "Resend (Email)", "Email transacional configurado.", [
       "RESEND_API_KEY",
       "BETEL_EMAIL_FROM",
-    ], { group: "Essenciais para Operacao", usedBy: "Willian (WhatsApp e Email)", site: "resend.com" }),
+    ], { group: "Essenciais para Operacao", usedBy: "Willian (WhatsApp e Email)", site: "resend.com" }, appConfig),
 
     elevenlabs,
 
@@ -341,45 +391,45 @@ export async function getMaintenanceStatus(): Promise<MaintenancePayload> {
     staticCheck("datazap", "DataZAP+ (OLX Group)", "Avaliacao de imoveis e preco/m².", [
       "BETEL_DATAZAP_API_BASE_URL",
       "BETEL_DATAZAP_API_KEY",
-    ], { group: "Dados de Mercado e Avaliacao", usedBy: "Helena (Curadora), Igor (Risco)", site: "datazap.com.br" }),
+    ], { group: "Dados de Mercado e Avaliacao", usedBy: "Helena (Curadora), Igor (Risco)", site: "datazap.com.br" }, appConfig),
 
     staticCheck("fipezap", "FipeZAP", "Indice de precos por cidade.", [
       "BETEL_FIPEZAP_API_BASE_URL",
       "BETEL_FIPEZAP_API_KEY",
-    ], { group: "Dados de Mercado e Avaliacao", usedBy: "Helena (Curadora), Rafael (Estrategia)", site: "fipezap.zapimoveis.com.br" }),
+    ], { group: "Dados de Mercado e Avaliacao", usedBy: "Helena (Curadora), Rafael (Estrategia)", site: "fipezap.zapimoveis.com.br" }, appConfig),
 
-    checkIbge(),
+    checkIbge(appConfig),
 
     // --- Prioridade 4: Verificacao juridica ---
     staticCheck("datajud", "CNJ DataJud", "Consulta de processos judiciais.", [
       "BETEL_DATAJUD_API_BASE_URL",
       "BETEL_DATAJUD_API_KEY",
-    ], { group: "Verificacao Juridica", usedBy: "Igor (Risco Oculto)", site: "datajud-wiki.cnj.jus.br" }),
+    ], { group: "Verificacao Juridica", usedBy: "Igor (Risco Oculto)", site: "datajud-wiki.cnj.jus.br" }, appConfig),
 
     staticCheck("receitaws", "ReceitaWS", "Verificacao de CNPJ de leiloeiros.", [
       "BETEL_RECEITAWS_API_BASE_URL",
       "BETEL_RECEITAWS_API_KEY",
-    ], { group: "Verificacao Juridica", usedBy: "Igor (Risco Oculto)", site: "receitaws.com.br" }),
+    ], { group: "Verificacao Juridica", usedBy: "Igor (Risco Oculto)", site: "receitaws.com.br" }, appConfig),
 
     staticCheck("bigdata", "BigData Corp", "Enriquecimento de pessoa/empresa/imovel.", [
       "BETEL_BIG_DATA_API_BASE_URL",
       "BETEL_BIG_DATA_API_KEY",
-    ], { group: "Verificacao Juridica", usedBy: "Igor (Risco Oculto), Patricia (Revisao)", site: "bigdatacorp.com.br" }),
+    ], { group: "Verificacao Juridica", usedBy: "Igor (Risco Oculto), Patricia (Revisao)", site: "bigdatacorp.com.br" }, appConfig),
 
     staticCheck("registry", "ONR Registradores", "Matricula e cadeia dominial do imovel.", [
       "BETEL_REGISTRY_API_BASE_URL",
       "BETEL_REGISTRY_API_KEY",
-    ], { group: "Verificacao Juridica", usedBy: "Igor (Risco Oculto)", site: "registradores.onr.org.br" }),
+    ], { group: "Verificacao Juridica", usedBy: "Igor (Risco Oculto)", site: "registradores.onr.org.br" }, appConfig),
 
     staticCheck("infosimples", "InfoSimples", "Dados legais agregados.", [
       "BETEL_INFOSIMPLES_API_BASE_URL",
       "BETEL_INFOSIMPLES_API_KEY",
-    ], { group: "Verificacao Juridica", usedBy: "Igor (Risco Oculto), Patricia (Revisao)", site: "infosimples.com" }),
+    ], { group: "Verificacao Juridica", usedBy: "Igor (Risco Oculto), Patricia (Revisao)", site: "infosimples.com" }, appConfig),
 
     staticCheck("serpro", "SerPro", "Dados governamentais (CPF, CNPJ).", [
       "BETEL_SERPRO_API_BASE_URL",
       "BETEL_SERPRO_API_KEY",
-    ], { group: "Verificacao Juridica", usedBy: "Igor (Risco Oculto)", site: "servicos.serpro.gov.br" }),
+    ], { group: "Verificacao Juridica", usedBy: "Igor (Risco Oculto)", site: "servicos.serpro.gov.br" }, appConfig),
   ];
 
   const counts = integrations.reduce(
