@@ -133,18 +133,30 @@ async function deleteAppConfig(keys: string[]) {
 }
 
 function configFrom(keys: string[], appConfig: Map<string, string>, fallback = ""): ConfigValue {
-  for (const key of keys) {
-    const value = cleanString(process.env[key]);
-    if (value) return { value, source: "env" };
-  }
-
   for (const key of configAliases(keys)) {
     const value = cleanString(appConfig.get(key));
     if (value) return { value, source: "app_config" };
   }
 
+  for (const key of keys) {
+    const value = cleanString(process.env[key]);
+    if (value) return { value, source: "env" };
+  }
+
   if (fallback) return { value: fallback, source: "default" };
   return { value: "", source: "missing" };
+}
+
+function booleanConfigFrom(keys: string[], appConfig: Map<string, string>) {
+  for (const key of configAliases(keys)) {
+    if (readBoolean(appConfig.get(key))) return true;
+  }
+
+  return keys.some((key) => readBoolean(process.env[key]));
+}
+
+function isConnectyHubApiKey(value: string) {
+  return /^ch_(live|test)_[A-Za-z0-9_-]{20,}$/.test(cleanString(value));
 }
 
 const willianConfigKeys = [
@@ -181,25 +193,20 @@ async function getWillianConfig() {
   const emailProvider = configFrom(["BETEL_EMAIL_PROVIDER"], appConfig, "resend");
   const resendKey = configFrom(["RESEND_API_KEY"], appConfig);
   const emailFrom = configFrom(["BETEL_EMAIL_FROM"], appConfig);
-  const communicationReleased =
-    readBoolean(process.env.BETEL_COMMUNICATION_PROVIDER_RELEASED) ||
-    readBoolean(appConfig.get("BETEL_COMMUNICATION_PROVIDER_RELEASED")) ||
-    readBoolean(appConfig.get("betel_communication_provider_released"));
+  const communicationReleased = booleanConfigFrom(["BETEL_COMMUNICATION_PROVIDER_RELEASED"], appConfig);
   const whatsappProviderReleased =
     communicationReleased ||
-    readBoolean(process.env.BETEL_WHATSAPP_PROVIDER_RELEASED) ||
-    readBoolean(appConfig.get("BETEL_WHATSAPP_PROVIDER_RELEASED")) ||
-    readBoolean(appConfig.get("betel_whatsapp_provider_released"));
+    booleanConfigFrom(["BETEL_WHATSAPP_PROVIDER_RELEASED"], appConfig);
   const emailProviderReleased =
     communicationReleased ||
-    readBoolean(process.env.BETEL_EMAIL_PROVIDER_RELEASED) ||
-    readBoolean(appConfig.get("BETEL_EMAIL_PROVIDER_RELEASED")) ||
-    readBoolean(appConfig.get("betel_email_provider_released"));
+    booleanConfigFrom(["BETEL_EMAIL_PROVIDER_RELEASED"], appConfig);
 
   return {
     baseUrl: normalizeBaseUrl(base.value) || "https://www.connectyhub.com.br/api/v1",
     baseUrlSource: base.source,
     apiToken: apiToken.value,
+    apiTokenSource: apiToken.source,
+    apiTokenLooksValid: isConnectyHubApiKey(apiToken.value),
     webhookSecret: webhookSecret.value,
     webhookUrl: normalizePublicUrl(webhookUrl.value),
     instanceName: instanceName.value,
@@ -558,10 +565,27 @@ async function connectyhubRequest(path: string, options: ConnectyHubRequestOptio
   if (!response.ok) {
     const data = asRecord(payload);
     const error = asRecord(data.error);
-    throw new Error(cleanString(error.message || data.message || data.error || data.response, `ConnectyHub retornou HTTP ${response.status}.`));
+    const code = cleanString(error.code || data.code);
+    const message = cleanString(error.message || data.message || data.error || data.response, `ConnectyHub retornou HTTP ${response.status}.`);
+    throw new Error(explainConnectyHubError({ code, message, path, status: response.status }));
   }
 
   return payload;
+}
+
+function explainConnectyHubError(input: { code: string; message: string; path: string; status: number }) {
+  const codeSuffix = input.code ? ` (${input.code})` : "";
+  const normalized = `${input.code} ${input.message}`.toLowerCase();
+
+  if (input.code === "invalid_api_key" || input.code === "missing_api_key" || input.code === "expired_api_key") {
+    return `Chave ConnectyHub recusada${codeSuffix}: ${input.message}. Salve uma API key ativa no formato ch_live_... em CONNECTYHUB_API_TOKEN.`;
+  }
+
+  if (input.code.startsWith("provider_") || normalized.includes("invalid token")) {
+    return `ConnectyHub aceitou a chave, mas o provedor WhatsApp recusou a operacao${codeSuffix}: ${input.message}. Recrie ou vincule uma instancia nova antes de gerar o QR Code.`;
+  }
+
+  return `ConnectyHub retornou HTTP ${input.status}${codeSuffix}: ${input.message}`;
 }
 
 function extractInstanceId(payload: unknown) {
@@ -822,6 +846,7 @@ export async function getWillianInstanceState(options: { checkRemote?: boolean }
   const config = await getWillianConfig();
   const missing = [
     !config.apiToken ? "CONNECTYHUB_API_TOKEN" : "",
+    config.apiToken && !config.apiTokenLooksValid ? "CONNECTYHUB_API_TOKEN deve ser ch_live_..." : "",
     !config.webhookUrl ? "CONNECTYHUB_WEBHOOK_URL" : "",
     !config.webhookSecret ? "CONNECTYHUB_WEBHOOK_SECRET" : "",
     !config.whatsappProviderReleased ? "BETEL_WHATSAPP_PROVIDER_RELEASED=true" : "",
@@ -835,6 +860,9 @@ export async function getWillianInstanceState(options: { checkRemote?: boolean }
     baseUrl: config.baseUrl,
     baseUrlSource: config.baseUrlSource,
     adminTokenConfigured: Boolean(config.apiToken),
+    adminTokenSource: config.apiTokenSource,
+    adminTokenPreview: maskSecret(config.apiToken),
+    adminTokenLooksValid: config.apiTokenLooksValid,
     instanceName: config.instanceName,
     instanceTokenConfigured: Boolean(config.instanceId),
     instanceTokenPreview: maskSecret(config.instanceId),

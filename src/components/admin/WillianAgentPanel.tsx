@@ -51,6 +51,9 @@ const defaultWillianState: WillianInstanceState = {
   baseUrl: "https://www.connectyhub.com.br/api/v1",
   baseUrlSource: "default",
   adminTokenConfigured: false,
+  adminTokenSource: "missing",
+  adminTokenPreview: "",
+  adminTokenLooksValid: false,
   instanceName: "willian-betel",
   instanceTokenConfigured: false,
   instanceTokenPreview: "",
@@ -616,9 +619,11 @@ function ConnectionTab({
   state: WillianInstanceState;
 }) {
   const connected = Boolean(state.status?.connected || state.status?.loggedIn);
-  const canGenerateQr = state.adminTokenConfigured || state.instanceTokenConfigured;
+  const connectyHubKeyReady = state.adminTokenConfigured && state.adminTokenLooksValid;
+  const canGenerateQr = connectyHubKeyReady;
   const whatsappLabel = state.displayName || state.phoneNumber || state.instanceName;
   const operationPreview = operationResult ? JSON.stringify(operationResult, null, 2).slice(0, 1200) : "";
+  const tokenTone = state.adminTokenConfigured && state.adminTokenLooksValid ? "green" : "yellow";
 
   return (
     <div className="grid gap-5 xl:grid-cols-[1.4fr_0.8fr]">
@@ -627,6 +632,7 @@ function ConnectionTab({
           <Field label="Nome da instancia" value={instanceName} onChange={setInstanceName} />
           <Field label="Telefone opcional" value={phone} onChange={setPhone} placeholder="5547999999999" />
           <InfoBox label="Base ConnectyHub" value={state.baseUrl} />
+          <InfoBox label="API key" value={state.adminTokenConfigured ? `${state.adminTokenSource} / ${state.adminTokenPreview || "configurada"}` : "ausente"} tone={tokenTone} />
           <InfoBox label="Instancia" value={state.instanceName} />
           <InfoBox label="Numero" value={state.phoneNumber || "pendente"} tone={state.phoneNumber ? "green" : "yellow"} />
           <InfoBox label="Perfil" value={state.displayName || "pendente"} tone={state.displayName ? "green" : "yellow"} />
@@ -636,7 +642,7 @@ function ConnectionTab({
 
         <div className="mt-4 flex flex-wrap gap-2">
           <ActionButton
-            disabled={!state.adminTokenConfigured}
+            disabled={!connectyHubKeyReady}
             icon={<MessageCircle size={14} />}
             label="Criar/vincular"
             loading={loading === "create"}
@@ -656,36 +662,45 @@ function ConnectionTab({
             loading={loading === "status"}
             onClick={() => runInstanceAction("status")}
           />
-          <ActionButton
-            disabled={!state.adminTokenConfigured}
-            icon={<Webhook size={14} />}
-            label="Configurar webhook"
-            loading={loading === "configureWebhook"}
-            onClick={() => runInstanceAction("configureWebhook")}
-          />
-          <ActionButton
-            disabled={!state.instanceTokenConfigured}
-            icon={<RotateCcw size={14} />}
-            label="Resetar"
-            loading={loading === "reset"}
-            onClick={() => runInstanceAction("reset")}
-          />
-          <ActionButton
-            disabled={!state.instanceTokenConfigured}
-            icon={<Unplug size={14} />}
-            label="Desconectar"
-            loading={loading === "disconnect"}
-            onClick={() => runInstanceAction("disconnect")}
-          />
-          <ActionButton
-            disabled={!state.instanceTokenConfigured}
-            icon={<Trash2 size={14} />}
-            label="Excluir instancia"
-            loading={loading === "deleteInstance"}
-            onClick={() => runInstanceAction("deleteInstance")}
-            tone="danger"
-          />
         </div>
+
+        <details className="mt-4 rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.018)]">
+          <summary className="flex min-h-10 cursor-pointer list-none items-center justify-between px-3 text-xs font-semibold text-[var(--admin-muted)]">
+            Acoes avancadas
+            <span className="text-[10px] uppercase tracking-[0.12em]">abrir</span>
+          </summary>
+          <div className="flex flex-wrap gap-2 border-t border-[var(--admin-border)] p-3">
+            <ActionButton
+              disabled={!connectyHubKeyReady}
+              icon={<Webhook size={14} />}
+              label="Configurar webhook"
+              loading={loading === "configureWebhook"}
+              onClick={() => runInstanceAction("configureWebhook")}
+            />
+            <ActionButton
+              disabled={!state.instanceTokenConfigured}
+              icon={<RotateCcw size={14} />}
+              label="Resetar"
+              loading={loading === "reset"}
+              onClick={() => runInstanceAction("reset")}
+            />
+            <ActionButton
+              disabled={!state.instanceTokenConfigured}
+              icon={<Unplug size={14} />}
+              label="Desconectar"
+              loading={loading === "disconnect"}
+              onClick={() => runInstanceAction("disconnect")}
+            />
+            <ActionButton
+              disabled={!state.instanceTokenConfigured}
+              icon={<Trash2 size={14} />}
+              label="Excluir instancia"
+              loading={loading === "deleteInstance"}
+              onClick={() => runInstanceAction("deleteInstance")}
+              tone="danger"
+            />
+          </div>
+        </details>
       </Panel>
 
       <Panel title="WhatsApp conectado" eyebrow="Conexao WhatsApp">

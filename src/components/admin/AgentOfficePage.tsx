@@ -194,7 +194,9 @@ export function AgentOfficePage({
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState<"todos" | AgentType>("todos");
   const [activeGroup, setActiveGroup] = useState<string | null>(null);
-  const [selectedKey, setSelectedKey] = useState<string | null>(() => data.directory[0]?.key || null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(
+    () => data.directory.find((agent) => agent.key === "multichannel-dispatch")?.key || data.directory[0]?.key || null
+  );
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const [avatars, setAvatars] = useState<Record<string, string>>(() => {
@@ -488,6 +490,35 @@ function AgentDetailPanel({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isUploading = uploadingKey === agent.key;
 
+  if (agent.key === "multichannel-dispatch") {
+    return (
+      <div className="px-5 py-5 lg:px-8">
+        <div className="mb-5 rounded-xl border border-[var(--admin-border)] bg-[linear-gradient(180deg,rgba(255,90,31,0.06),rgba(13,13,13,0.96))] px-4 py-4 sm:px-5">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-center gap-4">
+              <AgentAvatar agentKey={agent.key} avatarUrl={avatarUrl} tone={agent.tone} size="lg" />
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--admin-yellow)]">
+                  {group ? group.name.replace("Grupo ", "").toUpperCase() : agent.department.toUpperCase()} - BETEL AI
+                </p>
+                <h2 className="mt-1 text-xl font-bold text-white">{agent.name}</h2>
+                <p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--admin-muted)]">
+                  {agent.jobTitle}
+                </p>
+              </div>
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5 rounded-full border border-[rgba(234,179,8,0.32)] bg-[rgba(234,179,8,0.08)] px-3 py-1 text-[10px] font-bold tracking-[0.08em] text-[var(--admin-yellow)]">
+              <CheckCircle2 size={12} />
+              {statusLabel[agent.status] ? statusLabel[agent.status].toUpperCase() : "CONFIGURADO"}
+            </div>
+          </div>
+        </div>
+
+        <WillianAgentPanel initialState={willianInstance} initialConfig={willianAgentConfig} />
+      </div>
+    );
+  }
+
   return (
     <div className="px-5 py-6 lg:px-8">
       {/* Group header */}
@@ -586,10 +617,6 @@ function AgentDetailPanel({
         </div>
       </div>
 
-      {agent.key === "multichannel-dispatch" && (
-        <WillianAgentPanel initialState={willianInstance} initialConfig={willianAgentConfig} />
-      )}
-
       {/* Guardrails */}
       {agentDef && agentDef.guardrails.length > 0 && (
         <div className="mt-6 rounded-xl border border-[var(--admin-border)] bg-[var(--admin-card)] p-5">
@@ -609,9 +636,7 @@ function AgentDetailPanel({
       )}
 
       {/* Prompt do agente — editavel */}
-      {agent.key !== "multichannel-dispatch" && (
-        <AgentPromptPanel agentKey={agent.key} promptName={agent.promptName} promptVersion={agent.promptVersion} />
-      )}
+      <AgentPromptPanel agentKey={agent.key} promptName={agent.promptName} promptVersion={agent.promptVersion} />
 
       {/* Dados tecnicos */}
       <div className="mt-6 rounded-xl border border-[var(--admin-border)] bg-[var(--admin-card)] p-5">

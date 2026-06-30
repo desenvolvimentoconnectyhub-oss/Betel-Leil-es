@@ -10,6 +10,9 @@ export type WillianInstanceState = {
   baseUrl: string;
   baseUrlSource: "env" | "app_config" | "default" | "missing";
   adminTokenConfigured: boolean;
+  adminTokenSource: "env" | "app_config" | "default" | "missing";
+  adminTokenPreview: string;
+  adminTokenLooksValid: boolean;
   instanceName: string;
   instanceTokenConfigured: boolean;
   instanceTokenPreview: string;
