@@ -88,6 +88,8 @@ type TestResult = {
   latencyMs: number;
 };
 
+const SECRET_MASK = "••••••••••••••••";
+
 const icons: Record<string, typeof Database> = {
   supabase: Database,
   r2: Cloud,
@@ -258,22 +260,42 @@ function formatTokenLimit(limit: number) {
 
 function FieldInput({
   item,
+  revealedValue,
+  revealing,
   value,
   onChange,
+  onReveal,
 }: {
   item: IntegrationItem;
+  revealedValue?: string;
+  revealing?: boolean;
   value: string;
   onChange: (configKey: string, value: string) => void;
+  onReveal: (configKey: string) => Promise<boolean>;
 }) {
   const [visible, setVisible] = useState(false);
   const configKey = item.configKey || item.name.toLowerCase();
-  const configuredSecret = Boolean(item.secret && item.configured && !item.value);
-  const canRevealTypedValue = Boolean(item.secret && value);
-  const placeholder = configuredSecret
-    ? "Chave salva. Cole uma nova para substituir."
+  const configuredSecret = Boolean(item.secret && item.configured);
+  const displayValue = item.secret ? value || revealedValue || "" : value;
+  const canToggleSecret = Boolean(item.secret && (displayValue || item.configured || revealing));
+  const placeholder = configuredSecret && !displayValue
+    ? SECRET_MASK
     : item.configured
       ? "Valor configurado. Edite para substituir."
       : "Cole o valor aqui...";
+
+  async function handleToggleSecret() {
+    if (!item.secret || revealing) return;
+    if (visible) {
+      setVisible(false);
+      return;
+    }
+    if (!displayValue && item.configured) {
+      const revealed = await onReveal(configKey);
+      if (!revealed) return;
+    }
+    setVisible(true);
+  }
 
   return (
     <div className="py-3">
@@ -291,25 +313,26 @@ function FieldInput({
       <div className="relative">
         <input
           type={item.secret && !visible ? "password" : "text"}
-          value={value}
+          value={displayValue}
           onChange={(e) => onChange(configKey, e.target.value)}
           placeholder={placeholder}
           className="w-full rounded-lg border border-[var(--line)] bg-[var(--bg)] px-4 py-2.5 pr-10 font-mono text-sm text-white placeholder-[var(--muted)] outline-none transition focus:border-[var(--gold)]"
         />
-        {canRevealTypedValue && (
+        {canToggleSecret && (
           <button
             type="button"
-            onClick={() => setVisible((v) => !v)}
-            aria-label={visible ? "Ocultar valor" : "Mostrar valor digitado"}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted)] transition hover:text-white"
+            onClick={handleToggleSecret}
+            disabled={revealing}
+            aria-label={visible ? "Ocultar credencial" : "Mostrar credencial"}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted)] transition hover:text-white disabled:cursor-wait disabled:opacity-60"
           >
-            {visible ? <EyeOff size={16} /> : <Eye size={16} />}
+            {revealing ? <Loader2 size={16} className="animate-spin" /> : visible ? <EyeOff size={16} /> : <Eye size={16} />}
           </button>
         )}
       </div>
       {configuredSecret && (
         <p className="mt-1.5 text-[11px] leading-5 text-[var(--muted)]">
-          O valor esta salvo no app_config e fica oculto por seguranca. Para trocar, cole uma nova chave; o olho aparece somente para conferir o valor digitado.
+          A credencial fica mascarada por padrao. Clique no olho para revelar e clique novamente para ocultar.
         </p>
       )}
     </div>
@@ -319,7 +342,10 @@ function FieldInput({
 function IntegrationCard({
   integration,
   fieldValues,
+  revealedSecrets,
+  revealingSecrets,
   onFieldChange,
+  onRevealSecret,
   testResult,
   testingId,
   onTest,
@@ -328,7 +354,10 @@ function IntegrationCard({
 }: {
   integration: Integration;
   fieldValues: Record<string, string>;
+  revealedSecrets: Record<string, string>;
+  revealingSecrets: Record<string, boolean>;
   onFieldChange: (configKey: string, value: string) => void;
+  onRevealSecret: (configKey: string) => Promise<boolean>;
   testResult: TestResult | null;
   testingId: string | null;
   onTest: (id: string) => void;
@@ -398,8 +427,11 @@ function IntegrationCard({
             <FieldInput
               key={configKey}
               item={item}
+              revealedValue={revealedSecrets[configKey] || ""}
+              revealing={Boolean(revealingSecrets[configKey])}
               value={currentValue}
               onChange={onFieldChange}
+              onReveal={onRevealSecret}
             />
           );
         })}
@@ -471,6 +503,8 @@ export default function MaintenanceClient({
 
   const [testingId, setTestingId] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({});
+  const [revealedSecrets, setRevealedSecrets] = useState<Record<string, string>>({});
+  const [revealingSecrets, setRevealingSecrets] = useState<Record<string, boolean>>({});
 
   const [fieldValues, setFieldValues] = useState<Record<string, string>>(() => {
     const initial: Record<string, string> = {};
@@ -523,6 +557,7 @@ export default function MaintenanceClient({
         }
       }
       setFieldValues(newFields);
+      setRevealedSecrets({});
     } catch (err: unknown) {
       setError(getErrorMessage(err));
     } finally {
@@ -567,7 +602,42 @@ export default function MaintenanceClient({
 
   const handleFieldChange = useCallback((configKey: string, value: string) => {
     setFieldValues((prev) => ({ ...prev, [configKey]: value }));
+    setRevealedSecrets((prev) => {
+      if (!prev[configKey]) return prev;
+      const next = { ...prev };
+      delete next[configKey];
+      return next;
+    });
   }, []);
+
+  const revealSecret = useCallback(async (configKey: string) => {
+    if (revealedSecrets[configKey]) return true;
+    setError("");
+    setRevealingSecrets((prev) => ({ ...prev, [configKey]: true }));
+    try {
+      const res = await fetch("/api/admin/maintenance/credentials/reveal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({ key: configKey }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success || typeof data.value !== "string") {
+        throw new Error(data.message || "Nao foi possivel revelar a credencial.");
+      }
+      setRevealedSecrets((prev) => ({ ...prev, [configKey]: data.value }));
+      return true;
+    } catch (err: unknown) {
+      setError(getErrorMessage(err));
+      return false;
+    } finally {
+      setRevealingSecrets((prev) => {
+        const next = { ...prev };
+        delete next[configKey];
+        return next;
+      });
+    }
+  }, [revealedSecrets]);
 
   const handleSaveAll = useCallback(async () => {
     setSaving(true);
@@ -697,7 +767,10 @@ export default function MaintenanceClient({
                   key={integration.id}
                   integration={integration}
                   fieldValues={fieldValues}
+                  revealedSecrets={revealedSecrets}
+                  revealingSecrets={revealingSecrets}
                   onFieldChange={handleFieldChange}
+                  onRevealSecret={revealSecret}
                   testResult={testResults[integration.id] || null}
                   testingId={testingId}
                   onTest={handleTest}
