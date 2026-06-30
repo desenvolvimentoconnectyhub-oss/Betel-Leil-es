@@ -1114,7 +1114,7 @@ export async function deleteWillianConnectyHubInstance() {
   const instanceId = await resolveConnectyHubInstanceId(config);
   if (!instanceId) throw new Error("Instancia ConnectyHub nao localizada para excluir.");
 
-  const payload = await connectyhubRequest(`/provider/instance?instanceId=${encodeURIComponent(instanceId)}`, {
+  const payload = await connectyhubRequest(`/instances/${encodeURIComponent(instanceId)}`, {
     method: "DELETE",
     timeoutMs: 15000,
   });

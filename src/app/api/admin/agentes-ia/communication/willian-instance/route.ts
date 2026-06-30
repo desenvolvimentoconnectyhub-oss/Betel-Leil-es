@@ -30,24 +30,60 @@ function revalidateWillian() {
   revalidatePath("/api/admin/agentes-ia/communication/willian-config");
 }
 
+function isRecoverableInstanceError(error: unknown) {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  return (
+    message.includes("invalid token") ||
+    message.includes("provider_connect_failed") ||
+    message.includes("missing_instance_token") ||
+    message.includes("instancia sem token") ||
+    message.includes("instancia nao encontrada") ||
+    message.includes("adote ou recrie") ||
+    message.includes("recrie ou vincule")
+  );
+}
+
 async function generateWillianQrCode(input: { browser?: string; instanceName?: string; phone?: string }) {
   const steps: Record<string, unknown> = {};
   const beforeState = await getWillianInstanceState();
+  const instanceName = cleanString(input.instanceName, beforeState.instanceName);
+  const phone = cleanString(input.phone);
+  const browser = cleanString(input.browser, "auto");
 
-  if (!beforeState.instanceTokenConfigured) {
-    steps.create = await createWillianConnectyHubInstance({
-      instanceName: cleanString(input.instanceName),
-    });
+  try {
+    steps.configureWebhookBeforeConnect = await configureWillianWebhook();
+  } catch (error) {
+    steps.configureWebhookWarning =
+      error instanceof Error ? error.message : "Webhook nao configurado automaticamente.";
   }
 
-  const connect = await connectWillianConnectyHubInstance({
-    phone: cleanString(input.phone),
-    browser: cleanString(input.browser, "auto"),
-  });
+  if (!beforeState.instanceTokenConfigured) {
+    steps.create = await createWillianConnectyHubInstance({ instanceName });
+  }
+
+  let connect: Awaited<ReturnType<typeof connectWillianConnectyHubInstance>>;
+  try {
+    connect = await connectWillianConnectyHubInstance({ phone, browser });
+  } catch (error) {
+    if (!isRecoverableInstanceError(error)) throw error;
+
+    steps.recoveryReason = error instanceof Error ? error.message : "Instancia antiga recusada pelo provedor.";
+    const deleteResult = await deleteWillianConnectyHubInstance().catch((deleteError) => ({
+      warning: deleteError instanceof Error ? deleteError.message : "Nao foi possivel arquivar a instancia antiga.",
+    }));
+    steps.recreate = deleteResult;
+
+    const recoveryName =
+      "warning" in deleteResult
+        ? `${instanceName || "willian-betel"}-${Date.now().toString(36)}`
+        : instanceName;
+    steps.createAfterRecovery = await createWillianConnectyHubInstance({ instanceName: recoveryName });
+    connect = await connectWillianConnectyHubInstance({ phone, browser });
+  }
   steps.connect = connect;
 
   try {
-    steps.configureWebhook = await configureWillianWebhook();
+    steps.configureWebhookAfterConnect = await configureWillianWebhook();
   } catch (error) {
     steps.configureWebhookWarning =
       error instanceof Error ? error.message : "Webhook nao configurado automaticamente.";
@@ -62,8 +98,8 @@ async function generateWillianQrCode(input: { browser?: string; instanceName?: s
   return {
     ...steps,
     connection: connect.connection,
-    createdInstance: !beforeState.instanceTokenConfigured,
-    webhookConfigured: Boolean(steps.configureWebhook),
+    createdInstance: !beforeState.instanceTokenConfigured || Boolean(steps.createAfterRecovery),
+    webhookConfigured: Boolean(steps.configureWebhookBeforeConnect || steps.configureWebhookAfterConnect),
   };
 }
 

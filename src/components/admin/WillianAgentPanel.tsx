@@ -7,7 +7,6 @@ import {
   CheckCircle2,
   Clock3,
   ClipboardCheck,
-  Database,
   FileText,
   Image as ImageIcon,
   Loader2,
@@ -18,17 +17,13 @@ import {
   QrCode,
   Radio,
   RefreshCw,
-  RotateCcw,
   Save,
   Send,
   ShieldCheck,
   SlidersHorizontal,
   Smile,
   Timer,
-  Trash2,
-  Unplug,
   Users,
-  Webhook,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -290,21 +285,19 @@ export function WillianAgentPanel({
   const [state, setState] = useState<WillianInstanceState>(initialState || defaultWillianState);
   const [config, setConfig] = useState<WillianAgentConfig>(initialConfig || DEFAULT_WILLIAN_AGENT_CONFIG);
   const [activeTab, setActiveTab] = useState<WillianAgentConfigTab>("connection");
-  const [instanceName, setInstanceName] = useState(initialState?.instanceName || "willian-betel");
-  const [phone, setPhone] = useState("");
   const [loading, setLoading] = useState<string | null>(null);
   const [savingConfig, setSavingConfig] = useState(false);
   const [feedback, setFeedback] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
   const [connection, setConnection] = useState<WillianConnectionInfo | null>(null);
-  const [operationResult, setOperationResult] = useState<Record<string, unknown> | null>(null);
 
   const connected = Boolean(state.status?.connected || state.status?.loggedIn);
   useEffect(() => {
-    if (!connection || connected) return;
+    if (!connection) return;
 
     let cancelled = false;
     let attempts = 0;
     let timer: number | undefined;
+    const maxAttempts = 45;
 
     async function pollStatus() {
       attempts += 1;
@@ -319,15 +312,24 @@ export function WillianAgentPanel({
 
         setState(nextState);
         if (nextState.status?.connected || nextState.status?.loggedIn) {
-          setConnection(null);
-          setFeedback({ type: "ok", msg: "WhatsApp conectado. Numero, nome e foto sincronizados." });
-          return;
+          if (nextState.profileImageUrl || attempts >= maxAttempts) {
+            setConnection(null);
+            setFeedback({
+              type: "ok",
+              msg: nextState.profileImageUrl
+                ? "WhatsApp conectado. Numero, nome e foto sincronizados."
+                : "WhatsApp conectado. Numero e nome sincronizados; foto pendente no provedor.",
+            });
+            return;
+          }
+
+          setFeedback({ type: "ok", msg: "WhatsApp conectado. Sincronizando foto do perfil..." });
         }
       } catch {
         // Keep the QR flow quiet while the user is scanning.
       }
 
-      if (!cancelled && attempts < 15) {
+      if (!cancelled && attempts < maxAttempts) {
         timer = window.setTimeout(pollStatus, 4000);
       }
     }
@@ -338,7 +340,7 @@ export function WillianAgentPanel({
       cancelled = true;
       if (timer) window.clearTimeout(timer);
     };
-  }, [connected, connection]);
+  }, [connection]);
 
   const readyScore = useMemo(() => {
     const checks = [
@@ -410,14 +412,11 @@ export function WillianAgentPanel({
 
     setLoading(action);
     setFeedback(null);
-    setOperationResult(null);
     if (action === "connect" || action === "generateQr") setConnection(null);
     try {
       const res = await fetch("/api/admin/agentes-ia/communication/willian-instance", {
         body: JSON.stringify({
           action,
-          instanceName,
-          phone,
           browser: "auto",
         }),
         headers: { "content-type": "application/json" },
@@ -427,16 +426,19 @@ export function WillianAgentPanel({
       const nextState = result?.data?.state || result?.data?.data?.state;
       if (nextState) setState(nextState);
       const nextConnection = result?.data?.result?.connection || result?.data?.result?.connect?.connection;
+      const hasPairing =
+        Boolean(nextConnection?.qrCodeDataUrl) ||
+        Boolean(nextConnection?.qrCode) ||
+        Boolean(nextConnection?.pairingCode);
       if (nextConnection) setConnection(nextConnection);
-      if (result?.data?.result) setOperationResult(result.data.result as Record<string, unknown>);
       if (!res.ok || !result.success) {
         setFeedback({ type: "err", msg: result.error || "Nao foi possivel operar a instancia." });
       } else {
         const labels: Record<string, string> = {
           create: "Instancia criada ou atualizada.",
-          generateQr: nextConnection
-            ? "QR Code gerado. Escaneie pelo WhatsApp para conectar o Willian."
-            : "Fluxo executado, mas a ConnectyHub nao retornou QR Code nesta tentativa.",
+          generateQr: hasPairing
+            ? "QR Code gerado. Criacao, webhook e conexao foram preparados automaticamente."
+            : "Fluxo automatico executado, mas a ConnectyHub nao retornou QR Code nesta tentativa.",
           connect: "Ciclo de conexao iniciado.",
           status: "Status atualizado.",
           configureWebhook: "Webhook configurado.",
@@ -550,13 +552,8 @@ export function WillianAgentPanel({
         {activeTab === "connection" && (
           <ConnectionTab
             connection={connection}
-            instanceName={instanceName}
             loading={loading}
-            operationResult={operationResult}
-            phone={phone}
             runInstanceAction={runInstanceAction}
-            setInstanceName={setInstanceName}
-            setPhone={setPhone}
             state={state}
           />
         )}
@@ -599,182 +596,90 @@ export function WillianAgentPanel({
 
 function ConnectionTab({
   connection,
-  instanceName,
   loading,
-  operationResult,
-  phone,
   runInstanceAction,
-  setInstanceName,
-  setPhone,
   state,
 }: {
   connection: WillianConnectionInfo | null;
-  instanceName: string;
   loading: string | null;
-  operationResult: Record<string, unknown> | null;
-  phone: string;
   runInstanceAction: (action: string) => void;
-  setInstanceName: (value: string) => void;
-  setPhone: (value: string) => void;
   state: WillianInstanceState;
 }) {
   const connected = Boolean(state.status?.connected || state.status?.loggedIn);
   const connectyHubKeyReady = state.adminTokenConfigured && state.adminTokenLooksValid;
-  const canGenerateQr = connectyHubKeyReady;
-  const whatsappLabel = state.displayName || state.phoneNumber || state.instanceName;
-  const operationPreview = operationResult ? JSON.stringify(operationResult, null, 2).slice(0, 1200) : "";
-  const tokenTone = state.adminTokenConfigured && state.adminTokenLooksValid ? "green" : "yellow";
+  const canGenerateQr = connectyHubKeyReady && Boolean(state.webhookUrl) && state.whatsappProviderReleased;
+  const whatsappLabel = state.displayName || state.phoneNumber || "Willian WhatsApp";
+  const statusLabel = connected ? "Online" : "Aguardando leitura";
+  const pairingConnection = !connected ? connection : null;
+  const hasProfileDetails = Boolean(connected && (state.phoneNumber || state.displayName || state.profileImageUrl));
+  const setupPending = !connected && (!connectyHubKeyReady || !state.webhookUrl || !state.whatsappProviderReleased);
 
   return (
-    <div className="grid gap-5 xl:grid-cols-[1.4fr_0.8fr]">
-      <Panel title="Conexao e identidade" eyebrow="Numero / agente / status" action={<StatusPill ok={connected} label={connected ? "Online" : "Pendente"} />}>
-        <div className="grid gap-3 md:grid-cols-2">
-          <Field label="Nome da instancia" value={instanceName} onChange={setInstanceName} />
-          <Field label="Telefone opcional" value={phone} onChange={setPhone} placeholder="5547999999999" />
-          <InfoBox label="Base ConnectyHub" value={state.baseUrl} />
-          <InfoBox label="API key" value={state.adminTokenConfigured ? `${state.adminTokenSource} / ${state.adminTokenPreview || "configurada"}` : "ausente"} tone={tokenTone} />
-          <InfoBox label="Instancia" value={state.instanceName} />
-          <InfoBox label="Numero" value={state.phoneNumber || "pendente"} tone={state.phoneNumber ? "green" : "yellow"} />
-          <InfoBox label="Perfil" value={state.displayName || "pendente"} tone={state.displayName ? "green" : "yellow"} />
-          <InfoBox label="Instance ID" value={state.instanceTokenConfigured ? state.instanceTokenPreview || "configurado" : "ausente"} tone={state.instanceTokenConfigured ? "green" : "yellow"} />
-          <InfoBox label="Email" value={state.emailReady ? "resend pronto" : "pendente"} tone={state.emailReady ? "green" : "yellow"} />
-        </div>
-
-        <div className="mt-4 flex flex-wrap gap-2">
-          <ActionButton
-            disabled={!connectyHubKeyReady}
-            icon={<MessageCircle size={14} />}
-            label="Criar/vincular"
-            loading={loading === "create"}
-            onClick={() => runInstanceAction("create")}
-          />
-          <ActionButton
-            disabled={!canGenerateQr}
-            icon={<QrCode size={14} />}
-            label="Gerar QR Code"
-            loading={loading === "generateQr"}
-            onClick={() => runInstanceAction("generateQr")}
-          />
-          <ActionButton
-            disabled={!state.instanceTokenConfigured}
-            icon={<RefreshCw size={14} />}
-            label="Atualizar status"
-            loading={loading === "status"}
-            onClick={() => runInstanceAction("status")}
-          />
-        </div>
-
-        <details className="mt-4 rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.018)]">
-          <summary className="flex min-h-10 cursor-pointer list-none items-center justify-between px-3 text-xs font-semibold text-[var(--admin-muted)]">
-            Acoes avancadas
-            <span className="text-[10px] uppercase tracking-[0.12em]">abrir</span>
-          </summary>
-          <div className="flex flex-wrap gap-2 border-t border-[var(--admin-border)] p-3">
-            <ActionButton
-              disabled={!connectyHubKeyReady}
-              icon={<Webhook size={14} />}
-              label="Configurar webhook"
-              loading={loading === "configureWebhook"}
-              onClick={() => runInstanceAction("configureWebhook")}
-            />
-            <ActionButton
-              disabled={!state.instanceTokenConfigured}
-              icon={<RotateCcw size={14} />}
-              label="Resetar"
-              loading={loading === "reset"}
-              onClick={() => runInstanceAction("reset")}
-            />
-            <ActionButton
-              disabled={!state.instanceTokenConfigured}
-              icon={<Unplug size={14} />}
-              label="Desconectar"
-              loading={loading === "disconnect"}
-              onClick={() => runInstanceAction("disconnect")}
-            />
-            <ActionButton
-              disabled={!state.instanceTokenConfigured}
-              icon={<Trash2 size={14} />}
-              label="Excluir instancia"
-              loading={loading === "deleteInstance"}
-              onClick={() => runInstanceAction("deleteInstance")}
-              tone="danger"
-            />
-          </div>
-        </details>
-      </Panel>
-
-      <Panel title="WhatsApp conectado" eyebrow="Conexao WhatsApp">
-        <div className="rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.02)] p-4">
-          <div className="flex items-center gap-3">
+    <Panel title="WhatsApp do Willian" eyebrow="Conexao WhatsApp" action={<StatusPill ok={connected} label={connected ? "Online" : "Pendente"} />}>
+      <div className="rounded-xl border border-[var(--admin-border)] bg-[rgba(255,255,255,0.02)] p-4 sm:p-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex min-w-0 items-center gap-3">
             <WhatsappProfileAvatar connected={connected} imageUrl={state.profileImageUrl} label={whatsappLabel} />
-            <div>
-              <p className="font-semibold text-white">{connected ? whatsappLabel : "Aguardando leitura"}</p>
-              <p className="mt-1 text-xs text-[var(--admin-muted)]">{connected ? "WhatsApp conectado" : state.status?.state || "sem status remoto"}</p>
+            <div className="min-w-0">
+              <p className="truncate text-lg font-bold text-white">{connected ? whatsappLabel : "Aguardando leitura"}</p>
+              <p className={cn("mt-1 text-xs font-bold uppercase tracking-[0.12em]", connected ? "text-[var(--admin-green)]" : "text-[var(--admin-yellow)]")}>
+                {statusLabel}
+              </p>
             </div>
           </div>
-          <div className="mt-4 space-y-2 text-xs leading-5 text-[var(--admin-muted)]">
-            <p className="break-all"><span className="text-white">Webhook:</span> {state.webhookConfiguredUrl || "pendente"}</p>
-            <p><span className="text-white">Webhooks:</span> {state.webhookCount ?? 0}</p>
-            <p><span className="text-white">Leitura:</span> {state.status?.loggedIn ? "login ok" : "aguardando login"}</p>
-            <p><span className="text-white">Numero:</span> {state.phoneNumber || "pendente"}</p>
-            <p><span className="text-white">Foto:</span> {state.profileImageUrl ? "sincronizada" : "pendente"}</p>
-            {state.profileImageSyncedAt && <p><span className="text-white">Atualizada:</span> {formatDateTime(state.profileImageSyncedAt)}</p>}
-          </div>
+
+          {hasProfileDetails && (
+            <div className="grid gap-2 text-xs text-[var(--admin-muted)] sm:min-w-64">
+              {state.phoneNumber && (
+                <p className="truncate">
+                  <span className="font-semibold text-white">Numero:</span> {state.phoneNumber}
+                </p>
+              )}
+              {state.displayName && (
+                <p className="truncate">
+                  <span className="font-semibold text-white">Perfil:</span> {state.displayName}
+                </p>
+              )}
+              {state.profileImageSyncedAt && (
+                <p className="truncate">
+                  <span className="font-semibold text-white">Foto:</span> {formatDateTime(state.profileImageSyncedAt)}
+                </p>
+              )}
+            </div>
+          )}
         </div>
 
-        {!!state.missing.length && (
-          <div className="mt-3 flex flex-wrap gap-1.5">
-            {state.missing.map((item) => (
-              <span key={item} className="rounded border border-[rgba(234,179,8,0.28)] bg-[rgba(234,179,8,0.08)] px-2 py-1 text-[10px] font-semibold text-[var(--admin-yellow)]">
-                {item}
-              </span>
-            ))}
+        {!connected && (
+          <div className="mt-4">
+            <ActionButton
+              disabled={!canGenerateQr}
+              icon={<QrCode size={14} />}
+              label="Gerar QR Code"
+              loading={loading === "generateQr"}
+              onClick={() => runInstanceAction("generateQr")}
+            />
           </div>
         )}
 
-        {connection && (
+        {setupPending && (
+          <div className="mt-4 rounded-lg border border-[rgba(234,179,8,0.28)] bg-[rgba(234,179,8,0.08)] px-3 py-2 text-xs font-semibold text-[var(--admin-yellow)]">
+            Configuracao pendente na manutencao.
+          </div>
+        )}
+
+        {pairingConnection && (
           <div className="mt-4 rounded-lg border border-[rgba(0,243,255,0.22)] bg-[rgba(0,243,255,0.06)] p-4">
             <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-cyan)]">Pareamento</p>
-            {connection.pairingCode && <p className="mt-2 font-mono text-lg font-bold text-white">{connection.pairingCode}</p>}
-            {connection.qrCodeDataUrl && (
+            {pairingConnection.pairingCode && <p className="mt-2 font-mono text-lg font-bold text-white">{pairingConnection.pairingCode}</p>}
+            {pairingConnection.qrCodeDataUrl && (
               /* eslint-disable-next-line @next/next/no-img-element */
-              <img alt="QR code de conexao do WhatsApp" src={connection.qrCodeDataUrl} className="mt-3 h-44 w-44 rounded-lg border border-[var(--admin-border)] bg-white p-2" />
+              <img alt="QR code de conexao do WhatsApp" src={pairingConnection.qrCodeDataUrl} className="mt-3 h-44 w-44 rounded-lg border border-[var(--admin-border)] bg-white p-2" />
             )}
-            {connection.qrCode && <p className="mt-2 break-all font-mono text-xs text-[var(--admin-muted)]">{connection.qrCode}</p>}
+            {pairingConnection.qrCode && <p className="mt-2 break-all font-mono text-xs text-[var(--admin-muted)]">{pairingConnection.qrCode}</p>}
           </div>
         )}
-
-        <div className="mt-4 flex flex-wrap gap-2">
-          <ActionButton
-            disabled={!state.webhookConfiguredUrl}
-            icon={<Radio size={14} />}
-            label="Testar webhook"
-            loading={loading === "testWebhook"}
-            onClick={() => runInstanceAction("testWebhook")}
-          />
-          <ActionButton
-            disabled={!state.webhookConfiguredUrl}
-            icon={<Activity size={14} />}
-            label="Entregas"
-            loading={loading === "webhookDeliveries"}
-            onClick={() => runInstanceAction("webhookDeliveries")}
-          />
-          <ActionButton
-            disabled={!state.instanceTokenConfigured}
-            icon={<Database size={14} />}
-            label="Ler dados"
-            loading={loading === "syncOverview"}
-            onClick={() => runInstanceAction("syncOverview")}
-          />
-        </div>
-
-        {operationPreview && (
-          <pre className="mt-4 max-h-52 overflow-auto rounded-lg border border-[var(--admin-border)] bg-[#050505] p-3 text-[11px] leading-5 text-[var(--admin-muted)]">
-            {operationPreview}
-          </pre>
-        )}
-      </Panel>
-    </div>
+      </div>
+    </Panel>
   );
 }
 
