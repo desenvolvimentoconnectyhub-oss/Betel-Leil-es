@@ -16,6 +16,12 @@ type TestResult = {
 
 type MaintenanceAppConfig = Map<string, string>;
 
+const DEFAULT_CONFIG_VALUES: Record<string, string> = {
+  betel_datajud_api_base_url: "https://api-publica.datajud.cnj.jus.br",
+  betel_ibge_api_base_url: "https://servicodados.ibge.gov.br/api/v1/localidades",
+  betel_receitaws_api_base_url: "https://www.receitaws.com.br/v1/cnpj",
+};
+
 function cleanConfigValue(value: unknown) {
   return String(value || "").trim();
 }
@@ -42,7 +48,8 @@ function configKeyFor(name: string) {
 }
 
 function resolveConfigValue(appConfig: MaintenanceAppConfig, name: string) {
-  return appConfig.get(configKeyFor(name)) || cleanConfigValue(process.env[name]);
+  const key = configKeyFor(name);
+  return appConfig.get(key) || cleanConfigValue(process.env[name]) || DEFAULT_CONFIG_VALUES[key] || "";
 }
 
 async function testSupabase(): Promise<TestResult> {
@@ -219,7 +226,7 @@ async function testElevenLabs(): Promise<TestResult> {
 async function testIbge(): Promise<TestResult> {
   const start = Date.now();
   const appConfig = await readMaintenanceAppConfig();
-  const baseUrl = resolveConfigValue(appConfig, "BETEL_IBGE_API_BASE_URL") || "https://servicodados.ibge.gov.br/api/v1/localidades";
+  const baseUrl = resolveConfigValue(appConfig, "BETEL_IBGE_API_BASE_URL");
   try {
     const res = await fetch(`${baseUrl}/estados?orderBy=nome`, { signal: AbortSignal.timeout(10000) });
     const latencyMs = Date.now() - start;

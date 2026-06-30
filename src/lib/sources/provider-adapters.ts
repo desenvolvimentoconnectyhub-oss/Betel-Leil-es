@@ -1,4 +1,5 @@
 import "server-only";
+import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 
 export type SourceProviderMode = "mock" | "sandbox" | "provider";
 
@@ -92,6 +93,15 @@ type SourceProviderConfig = {
   baseUrlEnv: string;
   tokenEnv: string;
   releasedEnv: string;
+  tokenRequired?: boolean;
+};
+
+type SourceProviderRuntimeConfig = Map<string, string>;
+
+const DEFAULT_SOURCE_PROVIDER_CONFIG: Record<string, string> = {
+  betel_datajud_api_base_url: "https://api-publica.datajud.cnj.jus.br",
+  betel_ibge_api_base_url: "https://servicodados.ibge.gov.br/api/v1/localidades",
+  betel_receitaws_api_base_url: "https://www.receitaws.com.br/v1/cnpj",
 };
 
 const sourceProviderConfigs: SourceProviderConfig[] = [
@@ -214,11 +224,33 @@ const sourceProviderConfigs: SourceProviderConfig[] = [
     baseUrlEnv: "BETEL_IBGE_API_BASE_URL",
     tokenEnv: "BETEL_IBGE_API_KEY",
     releasedEnv: "BETEL_IBGE_PROVIDER_RELEASED",
+    tokenRequired: false,
   },
 ];
 
 function cleanString(value: unknown, fallback = "") {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+async function readSourceProviderRuntimeConfig(): Promise<SourceProviderRuntimeConfig> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return new Map();
+
+  const { data, error } = await supabase
+    .from("app_config")
+    .select("key,value");
+
+  if (error || !data) return new Map();
+
+  return new Map(
+    data
+      .map((row) => [cleanString(row.key).toLowerCase(), cleanString(row.value)] as const)
+      .filter(([key, value]) => Boolean(key && value))
+  );
+}
+
+function configKeyFor(envKey: string) {
+  return cleanString(envKey).toLowerCase();
 }
 
 function asNumber(value: unknown, fallback = 0) {
@@ -236,12 +268,17 @@ function clampScore(value: unknown, fallback = 50) {
   return Math.min(Math.max(Math.round(asNumber(value, fallback)), 0), 100);
 }
 
-function readBooleanEnv(value: string | undefined) {
+function readBooleanValue(value: string | undefined) {
   return ["1", "true", "yes", "sim", "on"].includes((value || "").trim().toLowerCase());
 }
 
-function envValue(key: string) {
-  return cleanString(process.env[key]);
+function envValue(key: string, runtimeConfig: SourceProviderRuntimeConfig = new Map()) {
+  const configKey = configKeyFor(key);
+  return runtimeConfig.get(configKey) || cleanString(process.env[key]) || DEFAULT_SOURCE_PROVIDER_CONFIG[configKey] || "";
+}
+
+function booleanConfigValue(key: string, runtimeConfig: SourceProviderRuntimeConfig) {
+  return readBooleanValue(runtimeConfig.get(configKeyFor(key)) || process.env[key]);
 }
 
 function normalizeProviderMode(value: string | undefined): SourceProviderMode {
@@ -281,8 +318,8 @@ function getConfigByKey(key: string) {
   return sourceProviderConfigs.find((config) => config.key === key) || sourceProviderConfigs[0];
 }
 
-function getHealthByKey(key: string) {
-  return getSourceProviderHealth().find((provider) => provider.key === key) || getSourceProviderHealth()[0];
+function getHealthByKey(key: string, providers: SourceProviderHealth[]) {
+  return providers.find((provider) => provider.key === key) || providers[0];
 }
 
 function headerToken(token: string): Record<string, string> {
@@ -457,12 +494,13 @@ function buildMockCandidates(
   return rows.slice(0, limit).map((row, index) => normalizeCandidate(row, index, input, provider, runtimeMode));
 }
 
-export function getSourceProviderHealth(): SourceProviderHealth[] {
+function buildSourceProviderHealth(runtimeConfig: SourceProviderRuntimeConfig): SourceProviderHealth[] {
   return sourceProviderConfigs.map((config) => {
-    const provider = envValue(config.providerEnv) || config.defaultProvider;
-    const baseUrlConfigured = Boolean(envValue(config.baseUrlEnv));
-    const tokenConfigured = Boolean(envValue(config.tokenEnv));
-    const released = readBooleanEnv(process.env[config.releasedEnv]) || readBooleanEnv(process.env.BETEL_SOURCE_PROVIDER_RELEASED);
+    const provider = envValue(config.providerEnv, runtimeConfig) || config.defaultProvider;
+    const baseUrlConfigured = Boolean(envValue(config.baseUrlEnv, runtimeConfig));
+    const tokenRequired = config.tokenRequired !== false;
+    const tokenConfigured = !tokenRequired || Boolean(envValue(config.tokenEnv, runtimeConfig));
+    const released = booleanConfigValue(config.releasedEnv, runtimeConfig) || booleanConfigValue("BETEL_SOURCE_PROVIDER_RELEASED", runtimeConfig);
     const ready = baseUrlConfigured && tokenConfigured && released;
     const missing = [
       !baseUrlConfigured ? "endpoint/base URL" : "",
@@ -492,6 +530,10 @@ export function getSourceProviderHealth(): SourceProviderHealth[] {
   });
 }
 
+export async function getSourceProviderHealth(): Promise<SourceProviderHealth[]> {
+  return buildSourceProviderHealth(await readSourceProviderRuntimeConfig());
+}
+
 export async function executeSourceProviderPull(
   input: SourceProviderPullInput
 ): Promise<SourceProviderAdapterResult> {
@@ -499,9 +541,12 @@ export async function executeSourceProviderPull(
   const runtimeMode = normalizeProviderMode(input.runtimeMode);
   const limit = clampLimit(input.limit);
   const providerConfig = getConfigByKey(cleanString(input.providerKey, "auction_sources"));
-  const provider = getHealthByKey(providerConfig.key);
-  const endpointUrl = envValue(providerConfig.baseUrlEnv);
-  const token = envValue(providerConfig.tokenEnv);
+  const runtimeConfig = await readSourceProviderRuntimeConfig();
+  const providers = buildSourceProviderHealth(runtimeConfig);
+  const provider = getHealthByKey(providerConfig.key, providers);
+  const endpointUrl = envValue(providerConfig.baseUrlEnv, runtimeConfig);
+  const token = envValue(providerConfig.tokenEnv, runtimeConfig);
+  const tokenRequired = providerConfig.tokenRequired !== false;
   const providerReleased = provider.released || Boolean(input.providerReleaseConfirmed);
   const dryRun = input.dryRun !== false;
   const requestPayload = {
@@ -549,7 +594,7 @@ export async function executeSourceProviderPull(
     };
   }
 
-  if (!endpointUrl || !token) {
+  if (!endpointUrl || (tokenRequired && !token)) {
     return {
       ok: false,
       error: `Configuracao incompleta para ${provider.label}: endpoint/base URL e token/API key sao obrigatorios.`,

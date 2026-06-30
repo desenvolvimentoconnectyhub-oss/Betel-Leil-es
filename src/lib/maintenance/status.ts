@@ -38,7 +38,11 @@ export type MaintenancePayload = {
   integrations: MaintenanceIntegration[];
 };
 
-const IBGE_LOCALIDADES_API_BASE_URL = "https://servicodados.ibge.gov.br/api/v1/localidades";
+const DEFAULT_CONFIG_VALUES: Record<string, string> = {
+  betel_datajud_api_base_url: "https://api-publica.datajud.cnj.jus.br",
+  betel_ibge_api_base_url: "https://servicodados.ibge.gov.br/api/v1/localidades",
+  betel_receitaws_api_base_url: "https://www.receitaws.com.br/v1/cnpj",
+};
 
 type MaintenanceAppConfig = Map<string, string>;
 
@@ -69,7 +73,7 @@ function configKeyFor(name: string, configKey?: string) {
 
 function resolveConfigValue(appConfig: MaintenanceAppConfig, name: string, configKey?: string) {
   const key = configKeyFor(name, configKey);
-  return appConfig.get(key) || cleanConfigValue(process.env[name]);
+  return appConfig.get(key) || cleanConfigValue(process.env[name]) || DEFAULT_CONFIG_VALUES[key] || "";
 }
 
 function isSecretName(name: string) {
@@ -321,7 +325,7 @@ function staticCheck(
 }
 
 function checkIbge(appConfig: MaintenanceAppConfig): MaintenanceIntegration {
-  const value = resolveConfigValue(appConfig, "BETEL_IBGE_API_BASE_URL") || IBGE_LOCALIDADES_API_BASE_URL;
+  const value = resolveConfigValue(appConfig, "BETEL_IBGE_API_BASE_URL");
 
   return {
     id: "ibge",

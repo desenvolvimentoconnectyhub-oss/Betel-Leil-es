@@ -120,7 +120,7 @@ export default async function SourceCapturesPage({
   const message = paramValue(params, "message");
   const capturesResult = await listSourceSnapshots({ sourceId, status, limit: 80 });
   const captures = capturesResult.data;
-  const sourceProviders = getSourceProviderHealth();
+  const sourceProviders = await getSourceProviderHealth();
   const distinctSources = new Set(captures.map((capture) => capture.sourceId).filter(Boolean)).size;
   const queuedRuns = captures.filter((capture) => capture.runStatus.toLowerCase().includes("queued")).length;
   const withOpportunity = captures.filter((capture) => capture.opportunityCode).length;
