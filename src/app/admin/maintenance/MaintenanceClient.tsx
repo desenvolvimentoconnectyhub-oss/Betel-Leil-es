@@ -268,6 +268,7 @@ function FieldInput({
   const [visible, setVisible] = useState(false);
   const configKey = item.configKey || item.name.toLowerCase();
   const configuredSecret = Boolean(item.secret && item.configured && !item.value);
+  const canRevealTypedValue = Boolean(item.secret && value);
   const placeholder = configuredSecret
     ? "Chave salva. Cole uma nova para substituir."
     : item.configured
@@ -295,7 +296,7 @@ function FieldInput({
           placeholder={placeholder}
           className="w-full rounded-lg border border-[var(--line)] bg-[var(--bg)] px-4 py-2.5 pr-10 font-mono text-sm text-white placeholder-[var(--muted)] outline-none transition focus:border-[var(--gold)]"
         />
-        {item.secret && (
+        {canRevealTypedValue && (
           <button
             type="button"
             onClick={() => setVisible((v) => !v)}
@@ -308,7 +309,7 @@ function FieldInput({
       </div>
       {configuredSecret && (
         <p className="mt-1.5 text-[11px] leading-5 text-[var(--muted)]">
-          O valor esta salvo no app_config e fica oculto por seguranca. Para trocar, cole uma nova chave e salve.
+          O valor esta salvo no app_config e fica oculto por seguranca. Para trocar, cole uma nova chave; o olho aparece somente para conferir o valor digitado.
         </p>
       )}
     </div>
