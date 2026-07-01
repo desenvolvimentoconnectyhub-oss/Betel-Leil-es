@@ -253,7 +253,7 @@ export async function createElevenLabsVoiceClone(input: {
   files: File[];
 }) {
   const form = new FormData();
-  form.set("name", cleanString(input.name, "Willian - Betel"));
+  form.set("name", cleanString(input.name, "Agente Betel"));
 
   const description = cleanString(input.description);
   if (description) form.set("description", description);
@@ -292,7 +292,7 @@ export async function synthesizeElevenLabsPreview(input: {
   const modelId = cleanString(input.modelId || config.defaultModelId.value, DEFAULT_MODEL_ID);
   const text = cleanString(
     input.text,
-    "Ola, aqui e o Willian da Betel. Estou validando a voz de atendimento."
+    "Ola, aqui e a Betel. Estou validando a voz de atendimento."
   ).slice(0, 400);
 
   if (!voiceId) {

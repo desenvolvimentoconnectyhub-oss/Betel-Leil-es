@@ -4,7 +4,7 @@ import { runCommunicationSchedulerRecord } from "@/lib/admin/repository";
 export const communicationSchedulerFunction = inngest.createFunction(
   {
     id: "communication-scheduler",
-    name: "Willian - Comunicacao Agendada",
+    name: "Agente WhatsApp - Comunicacao Agendada",
     triggers: [{ cron: "0 11 * * *" }],
   },
   async () => {

@@ -2,8 +2,11 @@ import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 import {
   configureWillianWebhook,
+  createConnectyHubWhatsappAgentQrCode,
   connectWillianConnectyHubInstance,
   createWillianConnectyHubInstance,
+  disconnectConnectyHubWhatsappAgent,
+  deleteConnectyHubWhatsappAgent,
   deleteWillianConnectyHubInstance,
   disconnectWillianConnectyHubInstance,
   fetchWillianConnectyHubDataOverview,
@@ -129,6 +132,13 @@ export async function POST(request: Request) {
       result = await createWillianConnectyHubInstance({
         instanceName: cleanString(body.instanceName),
       });
+    } else if (action === "createWhatsappAgent") {
+      result = await createConnectyHubWhatsappAgentQrCode({
+        agentName: cleanString(body.agentName),
+        browser: cleanString(body.browser, "auto"),
+        companyName: cleanString(body.companyName),
+        sector: cleanString(body.sector),
+      });
     } else if (action === "generateQr") {
       result = await generateWillianQrCode({
         instanceName: cleanString(body.instanceName),
@@ -152,12 +162,20 @@ export async function POST(request: Request) {
       result = await fetchWillianConnectyHubDataOverview();
     } else if (action === "disconnect") {
       result = await disconnectWillianConnectyHubInstance();
+    } else if (action === "disconnectWhatsappAgent") {
+      result = await disconnectConnectyHubWhatsappAgent({
+        agentKey: cleanString(body.agentKey),
+      });
     } else if (action === "reset") {
       result = await resetWillianConnectyHubInstance();
     } else if (action === "deleteInstance") {
       result = await deleteWillianConnectyHubInstance();
+    } else if (action === "deleteWhatsappAgent") {
+      result = await deleteConnectyHubWhatsappAgent({
+        agentKey: cleanString(body.agentKey),
+      });
     } else {
-      return NextResponse.json({ success: false, error: "Acao desconhecida para instancia do Willian." }, { status: 400 });
+      return NextResponse.json({ success: false, error: "Acao desconhecida para instancia do agente WhatsApp." }, { status: 400 });
     }
 
     revalidateWillian();
@@ -177,7 +195,7 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : "Falha ao operar instancia do Willian.",
+        error: error instanceof Error ? error.message : "Falha ao operar instancia do agente WhatsApp.",
         data: { state },
       },
       { status: 400 }

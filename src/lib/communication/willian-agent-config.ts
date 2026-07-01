@@ -362,7 +362,7 @@ export async function saveWillianAgentConfig(input: unknown) {
     {
       key: WILLIAN_AGENT_CONFIG_KEY,
       value: JSON.stringify(config),
-      description: "Configuracao operacional do agente Willian para WhatsApp e email.",
+      description: "Configuracao operacional do agente Willian para WhatsApp.",
       is_secret: false,
       updated_at: new Date().toISOString(),
     },

@@ -75,7 +75,7 @@ export async function getAgentOfficeData(): Promise<DataResult<AgentOfficeData>>
 
   if (!supabase) {
     const [willianInstance, willianAgentConfig] = await Promise.all([
-      getWillianInstanceState(),
+      getWillianInstanceState({ checkRemote: true }),
       getWillianAgentConfig(),
     ]);
     const fallbackData = fallbackAgentOffice("Supabase admin nao configurado.");
@@ -132,7 +132,7 @@ export async function getAgentOfficeData(): Promise<DataResult<AgentOfficeData>>
 
   if (errors.length === 8) {
     const [willianInstance, willianAgentConfig] = await Promise.all([
-      getWillianInstanceState(),
+      getWillianInstanceState({ checkRemote: true }),
       getWillianAgentConfig(),
     ]);
     const fallbackData = fallbackAgentOffice(errors.join(" | "));
@@ -218,7 +218,7 @@ export async function getAgentOfficeData(): Promise<DataResult<AgentOfficeData>>
       : ((outboxResult.data || []) as CommunicationOutboxDbRow[]).map(normalizeCommunicationOutbox);
 
   const [willianInstance, willianAgentConfig] = await Promise.all([
-    getWillianInstanceState(),
+    getWillianInstanceState({ checkRemote: true }),
     getWillianAgentConfig(),
   ]);
 

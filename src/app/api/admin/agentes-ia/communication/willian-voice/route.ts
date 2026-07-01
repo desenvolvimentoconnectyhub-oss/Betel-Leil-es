@@ -92,14 +92,14 @@ async function handleMultipart(request: NextRequest) {
   }
 
   const result = await createElevenLabsVoiceClone({
-    name: cleanString(form.get("name"), "Willian - Betel"),
+    name: cleanString(form.get("name"), "Agente Betel"),
     description: cleanString(form.get("description")),
     files,
   });
 
   return NextResponse.json({
     success: true,
-    message: "Voz do Willian criada na ElevenLabs.",
+    message: "Voz do agente criada na ElevenLabs.",
     voiceId: result.voiceId,
     requiresVerification: result.requiresVerification,
   });
@@ -127,7 +127,7 @@ async function handleJson(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: "Voz do Willian vinculada.",
+      message: "Voz do agente vinculada.",
       voiceId,
     });
   }

@@ -75,7 +75,24 @@ const iconMap: Record<string, typeof Bot> = {
   "admin-alert": AlertTriangle,
 };
 
+const WHATSAPP_AGENT_KEY = "multichannel-dispatch";
+const WHATSAPP_AGENT_PUBLIC_NAME = "Agente de WhatsApp";
+const WHATSAPP_AGENT_PUBLIC_ROLE = "Atende e distribui oportunidades por WhatsApp com opt-in, frequencia, plano e auditoria por usuario.";
+
 type AgentType = "coletor" | "consumidor" | "hibrido";
+
+function getPublicAgentName(agent: AgentDirectoryEntry) {
+  return agent.key === WHATSAPP_AGENT_KEY ? WHATSAPP_AGENT_PUBLIC_NAME : agent.name;
+}
+
+function getPublicAgentRole(agent: AgentDirectoryEntry) {
+  return agent.key === WHATSAPP_AGENT_KEY ? WHATSAPP_AGENT_PUBLIC_ROLE : agent.jobTitle;
+}
+
+function getCarouselAgentName(agent: AgentDirectoryEntry) {
+  const name = getPublicAgentName(agent);
+  return agent.key === WHATSAPP_AGENT_KEY ? name : name.replace("Agente ", "");
+}
 
 function getAgentType(key: string): AgentType {
   if (["source-scout", "source-watchdog"].includes(key)) return "coletor";
@@ -431,7 +448,7 @@ export function AgentOfficePage({
                 >
                   <AgentAvatar agentKey={agent.key} avatarUrl={avatars[agent.key]} tone={agent.tone} size="sm" />
                   <div className="min-w-0 text-left">
-                    <p className="truncate text-sm font-semibold text-white">{agent.name.replace("Agente ", "")}</p>
+                    <p className="truncate text-sm font-semibold text-white">{getCarouselAgentName(agent)}</p>
                     <p className="truncate text-[11px] text-[var(--admin-muted)]">
                       {agent.jobTitle}
                     </p>
@@ -490,7 +507,10 @@ function AgentDetailPanel({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isUploading = uploadingKey === agent.key;
 
-  if (agent.key === "multichannel-dispatch") {
+  if (agent.key === WHATSAPP_AGENT_KEY) {
+    const publicAgentName = getPublicAgentName(agent);
+    const publicAgentRole = getPublicAgentRole(agent);
+
     return (
       <div className="px-5 py-5 lg:px-8">
         <div className="mb-5 rounded-xl border border-[var(--admin-border)] bg-[linear-gradient(180deg,rgba(255,90,31,0.06),rgba(13,13,13,0.96))] px-4 py-4 sm:px-5">
@@ -501,9 +521,9 @@ function AgentDetailPanel({
                 <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--admin-yellow)]">
                   {group ? group.name.replace("Grupo ", "").toUpperCase() : agent.department.toUpperCase()} - BETEL AI
                 </p>
-                <h2 className="mt-1 text-xl font-bold text-white">{agent.name}</h2>
+                <h2 className="mt-1 text-xl font-bold text-white">{publicAgentName}</h2>
                 <p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--admin-muted)]">
-                  {agent.jobTitle}
+                  {publicAgentRole}
                 </p>
               </div>
             </div>

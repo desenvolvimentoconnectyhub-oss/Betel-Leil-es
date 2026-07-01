@@ -613,7 +613,7 @@ async function processWillianRuntime(
     await insertRuntimeEvent(supabase, {
       eventType: "willian_whatsapp_runtime_skipped",
       status: "outside_window",
-      message: "Mensagem recebida fora da janela de atendimento do Willian.",
+      message: "Mensagem recebida fora da janela de atendimento do agente WhatsApp.",
       payload: { eventId, leadId, conversationId, timezone: config.behavior.timezone },
     });
     return { ok: true, skipped: true, reason: "outside_window" };

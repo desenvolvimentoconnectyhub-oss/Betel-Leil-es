@@ -4,6 +4,23 @@ export type WillianConnectionInfo = {
   qrCodeDataUrl?: string;
 };
 
+export type WhatsAppAgentInstanceSummary = {
+  agentKey: string;
+  agentName: string;
+  companyName?: string;
+  sector?: string;
+  instanceName: string;
+  providerInstanceId?: string;
+  phoneNumber?: string;
+  displayName?: string;
+  profileImageUrl?: string;
+  profileImageSyncedAt?: string;
+  status: string;
+  connected: boolean;
+  connectedAt?: string;
+  updatedAt?: string;
+};
+
 export type WillianInstanceState = {
   agentKey: "multichannel-dispatch";
   agentName: "Willian";
@@ -36,6 +53,7 @@ export type WillianInstanceState = {
     state: string;
   };
   webhookCount?: number;
+  agentInstances?: WhatsAppAgentInstanceSummary[];
   missing: string[];
   lastError?: string;
 };
@@ -273,7 +291,7 @@ export const DEFAULT_WILLIAN_AGENT_CONFIG: WillianAgentConfig = {
     voiceCloneConsent: false,
     voiceCloneStatus: "inactive",
     selectedVoiceId: "clone-willian",
-    selectedVoiceLabel: "Clone Willian",
+    selectedVoiceLabel: "Clone do agente",
     voiceSearch: "",
     audioVoiceSource: "",
     audioVoicePublicOwnerId: "",
@@ -422,7 +440,7 @@ export const DEFAULT_WILLIAN_AGENT_CONFIG: WillianAgentConfig = {
   },
   prompt: {
     agentPrompt:
-      "Voce e Willian, agente de distribuicao da Betel AI. Atua no WhatsApp e email com clareza, rapidez e tom consultivo. Seu trabalho e distribuir oportunidades de leilao, qualificar investidores e registrar cada interacao no CRM.",
+      "Voce e um agente de WhatsApp da Betel AI. Atua no atendimento por WhatsApp com clareza, rapidez e tom consultivo. Seu trabalho e distribuir oportunidades de leilao, qualificar investidores e registrar cada interacao no CRM.",
     dnaManual:
       "Use linguagem simples, objetiva e comercial. Nunca invente dados de edital, valor, matricula, ocupacao ou risco. Quando faltar uma informacao, diga que a equipe esta validando.",
     cloneMemory:

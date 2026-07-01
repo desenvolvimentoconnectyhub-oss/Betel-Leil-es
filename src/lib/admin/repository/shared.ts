@@ -1006,10 +1006,15 @@ export function normalizeAgentDirectoryEntry(row: AgentDbRow): AgentDirectoryEnt
   const status = normalizeAgentStatus(row.status || staticMatch?.agent.status);
   const tone = toneForAgentStatus(status);
   const department = agentOfficeRooms.find((room) => room.agents.includes(asString(row.name)))?.name;
+  const isWhatsappAgent = key === "multichannel-dispatch";
+  const name = isWhatsappAgent ? "Agente de WhatsApp" : asString(row.name, staticMatch?.agent.name || "Agente IA");
+  const role = isWhatsappAgent
+    ? "Atende e distribui oportunidades por WhatsApp com opt-in, frequencia, plano e auditoria por usuario."
+    : asString(row.role, staticMatch?.agent.role || "Agente especializado");
 
   return {
     key,
-    name: asString(row.name, staticMatch?.agent.name || "Agente IA"),
+    name,
     department:
       department ||
       (groupKey === "captacao"
@@ -1024,8 +1029,8 @@ export function normalizeAgentDirectoryEntry(row: AgentDbRow): AgentDirectoryEnt
                 ? "Sala de Arremate e Pos-Arremate"
                 : "Escritorio IA"),
     group: asString(groupRow?.name, staticMatch?.group.name || "Grupo operacional"),
-    jobTitle: asString(row.role, staticMatch?.agent.role || "Agente especializado").split(".")[0],
-    functionSummary: asString(row.role, staticMatch?.agent.role || "Agente especializado da operacao Betel."),
+    jobTitle: role.split(".")[0],
+    functionSummary: role,
     promptName: asString(row.prompt_name, staticMatch?.agent.promptName || "agent_prompt"),
     promptVersion: asString(row.prompt_version, staticMatch?.agent.promptVersion || "v0.1"),
     status,
