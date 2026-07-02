@@ -6,10 +6,13 @@ import {
   updateScraperRunRecord,
   updateScraperTargetRunState,
 } from "./scraper-repository";
+import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { ingestAuctionOpportunityRecord } from "@/lib/admin/repository/pipeline";
-import { executeStrategy } from "./scraper-strategies";
+import { collectImageUrlsFromSourceUrl, executeStrategy } from "./scraper-strategies";
 import { isGeminiQuotaError } from "./scraper-llm";
 import { screenScraperCandidatesByWillianPattern } from "./scraper-criteria";
+import { mirrorRemoteImagesToR2 } from "@/lib/storage/r2";
+import { isLikelyExactPropertySourceUrl, isLikelyPropertyImageUrl } from "./quality";
 import type { ScraperCandidate, ScraperResult, ScraperTarget } from "./types";
 
 function normalizeCode(value: string) {
@@ -42,19 +45,225 @@ function normalizeScore(value: number, fallback: number) {
   return Math.min(Math.max(Math.round(value), 0), 100);
 }
 
+function hasInformedAuctionValue(initialBid: number, appraisalValue: number) {
+  return initialBid > 0 || appraisalValue > 0;
+}
+
+function uniqueImageUrls(imageUrls: string[] | undefined) {
+  const seen = new Set<string>();
+  return (imageUrls || [])
+    .map((url) => asString(url).trim())
+    .filter(Boolean)
+    .filter(isLikelyPropertyImageUrl)
+    .filter((url) => {
+      if (seen.has(url)) return false;
+      seen.add(url);
+      return true;
+    });
+}
+
+function hasUsableStoredImage(images: Awaited<ReturnType<typeof mirrorRemoteImagesToR2>>) {
+  return images.some((image) => Boolean(image.url) && image.status !== "failed");
+}
+
+function hasExactSourceUrl(candidate: ScraperCandidate, target: ScraperTarget) {
+  return isLikelyExactPropertySourceUrl(asString(candidate.sourceUrl), target.url);
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function asString(value: unknown, fallback = "") {
+  if (typeof value === "string") return value;
+  if (value === null || value === undefined) return fallback;
+  return String(value) || fallback;
+}
+
+function imageAssetsFromRawPayload(rawPayload: Record<string, unknown>) {
+  const media = asRecord(rawPayload.media);
+  return Array.isArray(media.images)
+    ? media.images
+        .map((image) => asString(asRecord(image).url))
+        .filter(Boolean)
+    : [];
+}
+
+function sourceUrlFromRawPayload(rawPayload: Record<string, unknown>) {
+  const candidate = asRecord(rawPayload.candidate);
+  return asString(
+    rawPayload.sourceUrl,
+    asString(candidate.sourceUrl, asString(rawPayload.targetUrl))
+  );
+}
+
+export async function backfillOpportunityImages(options: {
+  limit?: number;
+  force?: boolean;
+} = {}): Promise<{
+  ok: boolean;
+  scanned: number;
+  updated: number;
+  skipped: number;
+  failed: Array<{ code: string; title: string; error: string }>;
+}> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) {
+    return {
+      ok: false,
+      scanned: 0,
+      updated: 0,
+      skipped: 0,
+      failed: [{ code: "", title: "", error: "Supabase admin nao configurado." }],
+    };
+  }
+
+  const limit = Math.min(Math.max(options.limit || 80, 1), 200);
+  const { data, error } = await supabase
+    .from("auction_opportunities")
+    .select("id, code, title, raw_payload")
+    .order("updated_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    return {
+      ok: false,
+      scanned: 0,
+      updated: 0,
+      skipped: 0,
+      failed: [{ code: "", title: "", error: error.message }],
+    };
+  }
+
+  let updated = 0;
+  let skipped = 0;
+  const failed: Array<{ code: string; title: string; error: string }> = [];
+
+  for (const row of data || []) {
+    const code = asString(row.code, asString(row.id));
+    const title = asString(row.title, code);
+    const rawPayload = asRecord(row.raw_payload);
+    const existingImages = imageAssetsFromRawPayload(rawPayload);
+
+    if (existingImages.length && !options.force) {
+      skipped += 1;
+      continue;
+    }
+
+    const sourceUrl = sourceUrlFromRawPayload(rawPayload);
+    if (!sourceUrl) {
+      skipped += 1;
+      failed.push({ code, title, error: "URL de origem ausente." });
+      continue;
+    }
+
+    const imageUrls = await collectImageUrlsFromSourceUrl(sourceUrl, asString(rawPayload.targetUrl));
+    if (!imageUrls.length) {
+      skipped += 1;
+      failed.push({ code, title, error: "Nenhuma imagem util encontrada na origem." });
+      continue;
+    }
+
+    const images = await mirrorRemoteImagesToR2({
+      opportunityCode: code,
+      imageUrls,
+      alt: title,
+      maxImages: 40,
+    });
+
+    if (!images.length) {
+      skipped += 1;
+      failed.push({ code, title, error: "Imagem encontrada, mas nao foi possivel salvar a galeria." });
+      continue;
+    }
+
+    const media = asRecord(rawPayload.media);
+    const nextRawPayload = {
+      ...rawPayload,
+      media: {
+        ...media,
+        images,
+        sourceImageUrls: imageUrls,
+        mirroredCount: images.filter((image) => image.status === "mirrored").length,
+        externalCount: images.filter((image) => image.status === "external").length,
+        failedCount: images.filter((image) => image.status === "failed").length,
+        collectedAt: new Date().toISOString(),
+      },
+    };
+
+    const updateResult = await supabase
+      .from("auction_opportunities")
+      .update({ raw_payload: nextRawPayload, updated_at: new Date().toISOString() })
+      .eq("id", row.id);
+
+    if (updateResult.error) {
+      failed.push({ code, title, error: updateResult.error.message });
+      continue;
+    }
+
+    updated += 1;
+  }
+
+  return {
+    ok: failed.length === 0 || updated > 0,
+    scanned: (data || []).length,
+    updated,
+    skipped,
+    failed,
+  };
+}
+
 async function ingestScraperCandidates(target: ScraperTarget, candidates: ScraperCandidate[]) {
   const ingested: string[] = [];
   const failed: { title: string; error: string }[] = [];
+  const skipped: { title: string; reason: string }[] = [];
 
   for (const [index, candidate] of candidates.entries()) {
     const initialBid = Number(candidate.minBid) || 0;
     const appraisalValue = Number(candidate.appraisalValue) || 0;
+    const sourceImageUrls = uniqueImageUrls(candidate.imageUrls);
+    const hasValue = hasInformedAuctionValue(initialBid, appraisalValue);
+    const exactSourceUrl = asString(candidate.sourceUrl).trim();
+
+    if (!hasExactSourceUrl(candidate, target)) {
+      skipped.push({
+        title: candidate.title || candidate.sourceUrl || `candidato ${index + 1}`,
+        reason: "Descartado: sem link exato da fonte do imovel.",
+      });
+      continue;
+    }
+
+    if (!hasValue || sourceImageUrls.length === 0) {
+      skipped.push({
+        title: candidate.title || candidate.sourceUrl || `candidato ${index + 1}`,
+        reason: !hasValue
+          ? "Descartado: sem valor informado."
+          : "Descartado: sem foto util do imovel.",
+      });
+      continue;
+    }
+
     const discountPct =
       Number(candidate.discount) ||
       (appraisalValue > 0 && initialBid > 0 ? Math.round(((appraisalValue - initialBid) / appraisalValue) * 100) : 0);
+    const code = candidateCode(target, candidate, index);
+    const images = await mirrorRemoteImagesToR2({
+      opportunityCode: code,
+      imageUrls: sourceImageUrls,
+      alt: candidate.title || `Imovel capturado em ${target.name}`,
+      maxImages: 40,
+    });
+
+    if (!hasUsableStoredImage(images)) {
+      skipped.push({
+        title: candidate.title || candidate.sourceUrl || `candidato ${index + 1}`,
+        reason: "Descartado: as fotos da origem nao puderam ser usadas como foto do imovel.",
+      });
+      continue;
+    }
 
     const result = await ingestAuctionOpportunityRecord({
-      code: candidateCode(target, candidate, index),
+      code,
       title: candidate.title || `Oportunidade capturada em ${target.name}`,
       propertyType: candidate.propertyType || "Imovel",
       address: candidate.address || candidate.city || target.region || "Nao informado",
@@ -76,8 +285,8 @@ async function ingestScraperCandidates(target: ScraperTarget, candidates: Scrape
       auctionDate: candidate.auctionDate || "",
       occupancy: "Nao informado",
       summary: `Candidato capturado automaticamente em ${target.name}. Validar dados antes de qualquer comunicacao comercial.`,
-      sourceUrl: candidate.sourceUrl || target.url,
-      externalId: candidate.sourceUrl || `${target.targetCode}-${index + 1}`,
+      sourceUrl: exactSourceUrl,
+      externalId: exactSourceUrl,
       collectionMode: "scraper_target",
       evidenceNotes: "Captura automatica do scraper. Requer curadoria, risco oculto e revisao humana.",
       rawPayload: {
@@ -86,6 +295,21 @@ async function ingestScraperCandidates(target: ScraperTarget, candidates: Scrape
         targetUrl: target.url,
         scrapeStrategy: target.scrapeStrategy,
         candidate: candidate.rawData || candidate,
+        qualityGate: {
+          hasValue,
+          sourceImageCount: sourceImageUrls.length,
+          usableImageCount: images.filter((image) => image.status !== "failed").length,
+          blockedIfNoPhotoAndNoValue: true,
+          exactSourceUrlRequired: true,
+          exactSourceUrl,
+        },
+        media: {
+          images,
+          sourceImageUrls,
+          mirroredCount: images.filter((image) => image.status === "mirrored").length,
+          externalCount: images.filter((image) => image.status === "external").length,
+          failedCount: images.filter((image) => image.status === "failed").length,
+        },
       },
     });
 
@@ -99,7 +323,7 @@ async function ingestScraperCandidates(target: ScraperTarget, candidates: Scrape
     }
   }
 
-  return { ingested, failed };
+  return { ingested, failed, skipped };
 }
 
 export async function runScraperForTarget(
@@ -111,6 +335,7 @@ export async function runScraperForTarget(
   result?: ScraperResult;
   ingested?: string[];
   ingestFailed?: { title: string; error: string }[];
+  ingestSkipped?: { title: string; reason: string }[];
   rateLimited?: boolean;
 }> {
   const targetResult = await getScraperTargetByCode(targetCode);
@@ -125,7 +350,7 @@ export async function runScraperForTarget(
     return { ok: false, error: `Alvo ${targetCode} esta desabilitado.` };
   }
 
-  const runResult = await createScraperRunRecord(target.id, target.targetCode);
+  const runResult = await createScraperRunRecord(target.id);
   if (!runResult.ok || !runResult.data) {
     return { ok: false, error: runResult.error || "Falha ao criar run." };
   }
@@ -137,13 +362,17 @@ export async function runScraperForTarget(
   const result = await executeStrategy(target);
   const rateLimited = isGeminiQuotaError(result.errorMessage);
   const screening = screenScraperCandidatesByWillianPattern(result.candidates);
-  const ingest = screening.accepted.length ? await ingestScraperCandidates(target, screening.accepted) : { ingested: [], failed: [] };
+  const ingest = screening.accepted.length ? await ingestScraperCandidates(target, screening.accepted) : { ingested: [], failed: [], skipped: [] };
   const hasIngestFailure = ingest.failed.length > 0;
+  const sourceUrlSkippedCount = ingest.skipped.filter((item) => item.reason.toLowerCase().includes("link exato")).length;
+  const noPhotoValueSkippedCount = ingest.skipped.filter((item) => item.reason.toLowerCase().includes("sem foto")).length;
   const finalStatus =
     result.status === "failed" ? "failed" : result.errorMessage || hasIngestFailure ? "partial" : "completed";
   const errorMessage = [
     result.errorMessage,
     hasIngestFailure ? `${ingest.failed.length} candidato(s) nao foram gravados.` : "",
+    sourceUrlSkippedCount ? `${sourceUrlSkippedCount} candidato(s) descartados por falta de link exato da fonte.` : "",
+    noPhotoValueSkippedCount ? `${noPhotoValueSkippedCount} candidato(s) descartados por falta de foto e valor.` : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -152,7 +381,7 @@ export async function runScraperForTarget(
     status: finalStatus,
     itemsFound: result.candidates.length,
     itemsIngested: ingest.ingested.length,
-    itemsSkipped: screening.skipped.length + Math.max(screening.accepted.length - ingest.ingested.length - ingest.failed.length, 0),
+    itemsSkipped: screening.skipped.length + ingest.skipped.length + Math.max(screening.accepted.length - ingest.ingested.length - ingest.failed.length - ingest.skipped.length, 0),
     itemsDuplicate: 0,
     pagesScraped: result.pagesScraped,
     durationMs: result.durationMs,
@@ -173,6 +402,7 @@ export async function runScraperForTarget(
     result: { ...result, status: finalStatus, errorMessage: errorMessage || undefined },
     ingested: ingest.ingested,
     ingestFailed: ingest.failed,
+    ingestSkipped: ingest.skipped,
     rateLimited,
   };
 }

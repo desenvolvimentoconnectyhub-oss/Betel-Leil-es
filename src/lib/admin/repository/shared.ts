@@ -26,6 +26,7 @@ import {
   type SourceProviderPullInput,
   type SourceProviderPullResult,
 } from "@/lib/sources/provider-adapters";
+import { isLikelyPropertyImageUrl } from "@/lib/scraper/quality";
 import {
   agentDirectory,
   agentGroups,
@@ -69,6 +70,7 @@ import {
   getOpportunityById,
   type AuctionOpportunity,
   type ModuleResource,
+  type PropertyImageAsset,
   type ResourceTone,
 } from "../resources";
 
@@ -1355,6 +1357,51 @@ export function normalizeRiskFlags(
   return flags.some((item) => item.label || item.detail) ? flags : fallback;
 }
 
+export function normalizeOpportunityImages(rawPayloadValue: unknown): PropertyImageAsset[] {
+  const rawPayload = asRecord(rawPayloadValue);
+  const media = asRecord(rawPayload.media);
+  const candidate = asRecord(rawPayload.candidate);
+  const images = asArray<Record<string, unknown>>(media.images, []);
+  const fallbackUrls = [
+    ...asStringList(media.sourceImageUrls, []),
+    ...asStringList(candidate.imageUrls, []),
+    ...asStringList(rawPayload.imageUrls, []),
+  ];
+
+  const normalizedImages = images
+    .map((image) => ({
+      url: asString(image.url),
+      sourceUrl: asString(image.sourceUrl, asString(image.url)),
+      storageKey: asString(image.storageKey) || undefined,
+      status: asString(image.status) || undefined,
+      contentType: asString(image.contentType) || undefined,
+      sizeBytes: asNumber(image.sizeBytes) || undefined,
+      alt: asString(image.alt) || undefined,
+      error: asString(image.error) || undefined,
+      collectedAt: asString(image.collectedAt) || undefined,
+    }))
+    .filter((image) => Boolean(image.url) && isLikelyPropertyImageUrl(image.sourceUrl || image.url));
+
+  if (normalizedImages.length) return normalizedImages;
+
+  const seen = new Set<string>();
+  return fallbackUrls
+    .map((url) => url.trim())
+    .filter(Boolean)
+    .filter(isLikelyPropertyImageUrl)
+    .filter((url) => {
+      if (seen.has(url)) return false;
+      seen.add(url);
+      return true;
+    })
+    .map((url) => ({
+      url,
+      sourceUrl: url,
+      status: "external",
+      alt: asString(rawPayload.title, asString(candidate.title)) || undefined,
+    }));
+}
+
 export function normalizeOpportunity(row: OpportunityDbRow): AuctionOpportunity {
   const code = asString(row.code, asString(row.id, "OPP"));
   const fallback = getOpportunityById(code) || auctionOpportunities[0];
@@ -1390,6 +1437,7 @@ export function normalizeOpportunity(row: OpportunityDbRow): AuctionOpportunity 
     checklist: asArray<AuctionOpportunity["checklist"][number]>(row.checklist, fallback.checklist),
     documents: asArray<AuctionOpportunity["documents"][number]>(row.documents, fallback.documents),
     timeline: asArray<AuctionOpportunity["timeline"][number]>(row.timeline, fallback.timeline),
+    images: normalizeOpportunityImages(row.raw_payload),
   };
 }
 

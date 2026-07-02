@@ -9,6 +9,7 @@ import {
   type CreateAuctionOpportunityInput,
   type SourceIntakeInput,
 } from "@/lib/admin/repository";
+import { backfillOpportunityImages } from "@/lib/scraper";
 
 function field(formData: FormData, name: string, fallback = "") {
   const value = formData.get(name);
@@ -58,7 +59,7 @@ function parseOpportunityForm(formData: FormData, errorPath: string): CreateAuct
   const city = field(formData, "city");
   const state = field(formData, "state").toUpperCase();
 
-  if (!title) errorRedirect(errorPath, "Informe o nome do imovel.");
+  if (!title) errorRedirect(errorPath, "Informe o nome do imóvel.");
   if (!city || !state) errorRedirect(errorPath, "Informe cidade e UF.");
 
   const initialBid = numberField(formData, "initialBid");
@@ -73,7 +74,7 @@ function parseOpportunityForm(formData: FormData, errorPath: string): CreateAuct
   return {
     code: codeInput || makeFallbackCode(city, title),
     title,
-    propertyType: field(formData, "propertyType", "Imovel"),
+    propertyType: field(formData, "propertyType", "Imóvel"),
     address: field(formData, "address"),
     city,
     state,
@@ -88,14 +89,14 @@ function parseOpportunityForm(formData: FormData, errorPath: string): CreateAuct
     aiStatus: field(formData, "aiStatus", "Fila IA"),
     legalStatus: field(formData, "legalStatus", "Pendente"),
     stage: field(formData, "stage", "Entrada"),
-    nextAction: field(formData, "nextAction", "Triar oportunidade"),
-    owner: field(formData, "owner", "Operacao"),
+    nextAction: field(formData, "nextAction", "Triar imóvel"),
+    owner: field(formData, "owner", "Operação"),
     auctionDate: field(formData, "auctionDate"),
-    occupancy: field(formData, "occupancy", "Nao informado"),
+    occupancy: field(formData, "occupancy", "Não informado"),
     summary: field(
       formData,
       "summary",
-      "Oportunidade cadastrada manualmente para curadoria inicial, score, compliance e revisao humana."
+      "Imóvel captado manualmente para curadoria inicial, score, compliance e revisão humana."
     ),
   };
 }
@@ -172,4 +173,15 @@ export async function updateOpportunityAction(formData: FormData) {
   revalidatePath(editPath);
 
   redirect(`/admin/oportunidades/${result.data.code}`);
+}
+
+export async function backfillOpportunityImagesAction() {
+  const result = await backfillOpportunityImages({ limit: 120 });
+
+  revalidatePath("/admin");
+  revalidatePath("/admin/oportunidades");
+  revalidatePath("/admin/scraper");
+
+  const status = result.updated > 0 ? `fotos-${result.updated}` : "sem-fotos";
+  redirect(`/admin/oportunidades?sync=${status}`);
 }

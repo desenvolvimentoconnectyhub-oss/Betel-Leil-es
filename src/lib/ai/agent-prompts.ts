@@ -31,7 +31,7 @@ const agentPrompts: Record<string, AgentPromptConfig> = {
   "discount": 0,
   "auctioneer": "nome do leiloeiro",
   "sourceUrl": "link do imovel se disponivel",
-  "imageUrl": "link da imagem se disponivel"
+  "imageUrls": ["links de todas as fotos do imovel quando estiverem disponiveis"]
 }
 Se um campo nao estiver claro, use string vazia ou 0. NUNCA invente dados.`,
     guardrails: [

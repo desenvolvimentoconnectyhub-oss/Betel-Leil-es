@@ -1,5 +1,17 @@
 export type ResourceTone = "cyan" | "green" | "yellow" | "red" | "purple" | "muted";
 
+export type PropertyImageAsset = {
+  url: string;
+  sourceUrl: string;
+  storageKey?: string;
+  status?: "mirrored" | "external" | "failed" | string;
+  contentType?: string;
+  sizeBytes?: number;
+  alt?: string;
+  error?: string;
+  collectedAt?: string;
+};
+
 export type AuctionOpportunity = {
   id: string;
   title: string;
@@ -28,6 +40,7 @@ export type AuctionOpportunity = {
   checklist: Array<{ label: string; status: string; owner: string }>;
   documents: Array<{ label: string; status: string; source: string }>;
   timeline: Array<{ time: string; actor: string; action: string; tone: ResourceTone }>;
+  images?: PropertyImageAsset[];
 };
 
 export type ResourceCell = {

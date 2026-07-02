@@ -44,11 +44,11 @@ export const adminModules: AdminModule[] = [
     slug: "oportunidades",
     legacySlugs: ["opportunities", "financial", "matching"],
     group: "Operacao",
-    label: "Oportunidades",
-    title: "Oportunidades de Leilao",
-    eyebrow: "Captacao, score e ROI",
+    label: "Imóveis captados",
+    title: "Imóveis captados",
+    eyebrow: "Vitrine operacional",
     description:
-      "Fila central de imoveis captados, score de oportunidade, risco, documentos e proximo passo operacional.",
+      "Catálogo dos imóveis captados pela Renata, com fotos, descrição, valores, score, risco e ficha completa.",
     icon: "Gavel",
     accent: "cyan",
     status: "build",
@@ -58,20 +58,20 @@ export const adminModules: AdminModule[] = [
       { label: "Alto potencial", value: "28", detail: "score acima de 80" },
       { label: "Risco critico", value: "7", detail: "bloqueio humano" },
     ],
-    workflow: ["Captar fonte", "Normalizar dados", "Pontuar oportunidade", "Enviar para revisao"],
+    workflow: ["Captar fonte", "Montar vitrine", "Pontuar imóvel", "Abrir ficha completa"],
     focus: ["Fonte oficial", "Lance inicial", "Desconto real", "Teto racional"],
     records: [
       {
-        title: "Apartamento em Balneario Camboriu",
+        title: "Apartamento em Balneário Camboriú",
         meta: "Leiloeiro homologado - 42% de desconto estimado",
-        status: "Em analise",
+        status: "Em análise",
         owner: "Curadoria IA",
       },
       {
-        title: "Casa em Itajai",
-        meta: "Ocupacao informada no edital",
+        title: "Casa em Itajaí",
+        meta: "Ocupação informada no edital",
         status: "Risco alto",
-        owner: "Juridico",
+        owner: "Jurídico",
       },
     ],
   }),
@@ -406,7 +406,7 @@ export const adminModules: AdminModule[] = [
       { label: "Reprovados", value: "5", detail: "alto risco" },
     ],
     workflow: ["Abrir edital", "Comparar dados", "Registrar parecer", "Aprovar ou reprovar"],
-    focus: ["Matricula", "Ocupacao", "Debitos", "Processo"],
+    focus: ["Matrícula", "Ocupação", "Débitos", "Processo"],
     records: [
       {
         title: "Terreno em Porto Belo",
@@ -475,14 +475,14 @@ export const adminModules: AdminModule[] = [
       { label: "Vencendo", value: "6", detail: "proximas 48h" },
       { label: "Pos-arremate", value: "3", detail: "em acompanhamento" },
     ],
-    workflow: ["Mover fase", "Atribuir responsavel", "Registrar acao", "Encerrar caso"],
-    focus: ["Prazo", "Responsavel", "Proxima acao", "Risco"],
+    workflow: ["Mover fase", "Atribuir responsável", "Registrar ação", "Encerrar caso"],
+    focus: ["Prazo", "Responsável", "Próxima ação", "Risco"],
     records: [
       {
         title: "Aguardando advogado",
-        meta: "19 oportunidades com SLA juridico",
+        meta: "19 oportunidades com SLA jurídico",
         status: "Fila",
-        owner: "Operacao",
+        owner: "Operação",
       },
       {
         title: "Pos-arremate",
@@ -506,16 +506,16 @@ export const adminModules: AdminModule[] = [
     status: "build",
     statusLabel: "In-app",
     metrics: [
-      { label: "Criticos", value: "7", detail: "acao imediata" },
+      { label: "Críticos", value: "7", detail: "ação imediata" },
       { label: "Hoje", value: "22", detail: "novos eventos" },
       { label: "Resolvidos", value: "41", detail: "semana atual" },
     ],
-    workflow: ["Criar evento", "Classificar severidade", "Notificar responsavel", "Resolver"],
-    focus: ["SLA", "Canal", "Responsavel", "Historico"],
+    workflow: ["Criar evento", "Classificar severidade", "Notificar responsável", "Resolver"],
+    focus: ["SLA", "Canal", "Responsável", "Histórico"],
     records: [
       {
-        title: "Leilao em 24h",
-        meta: "Validar teto e autorizacao antes da sessao",
+        title: "Leilão em 24h",
+        meta: "Validar teto e autorização antes da sessão",
         status: "Critico",
         owner: "Watchdog",
       },
@@ -747,11 +747,11 @@ export const adminModules: AdminModule[] = [
     statusLabel: "Visual",
     metrics: [
       { label: "Eventos", value: "680", detail: "mock" },
-      { label: "Criticos", value: "24", detail: "precisam retencao" },
+      { label: "Críticos", value: "24", detail: "precisam retenção" },
       { label: "API", value: "94", detail: "chamadas simuladas" },
     ],
     workflow: ["Capturar evento", "Classificar", "Vincular recurso", "Auditar"],
-    focus: ["Entrada", "Saida", "Responsavel", "Timestamp"],
+    focus: ["Entrada", "Saída", "Responsável", "Timestamp"],
     records: [
       {
         title: "AI output saved",
@@ -846,7 +846,7 @@ export const adminNavGroups: AdminNavGroup[] = [
   {
     label: "Operacao",
     items: [
-      { href: "/admin/oportunidades", label: "Oportunidades", icon: "Gavel" },
+      { href: "/admin/oportunidades", label: "Imóveis captados", icon: "Gavel" },
       { href: "/admin/investidores", label: "Investidores", icon: "Users" },
       { href: "/admin/scraper", label: "Scraper", icon: "Globe" },
     ],

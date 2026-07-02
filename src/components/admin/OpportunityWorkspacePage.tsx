@@ -4,28 +4,23 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import {
   ArrowUpRight,
+  CalendarDays,
+  Camera,
   Database,
   FileText,
   Gavel,
+  Home,
+  MapPin,
   Search,
-  ShieldCheck,
-  Sparkles,
   TimerReset,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { DashboardCard } from "@/components/admin/DashboardCard";
 import { RiskBadge } from "@/components/admin/RiskBadge";
 import { ScoreBadge } from "@/components/admin/ScoreBadge";
 import { StatusBadge, getStatusTone } from "@/components/admin/StatusBadge";
+import { backfillOpportunityImagesAction } from "@/app/admin/oportunidades/actions";
 import { cn } from "@/lib/utils";
 
 type ResourceTone = "cyan" | "green" | "yellow" | "red" | "purple" | "muted";
@@ -64,6 +59,7 @@ type WorkspaceOpportunity = {
   checklist: Array<{ label: string; status: string; owner: string }>;
   documents: Array<{ label: string; status: string; source: string }>;
   timeline: Array<{ time: string; actor: string; action: string; tone: ResourceTone }>;
+  images?: Array<{ url: string; sourceUrl?: string; status?: string; alt?: string }>;
 };
 
 type WorkspaceSnapshot = {
@@ -95,7 +91,29 @@ type WorkspaceSnapshot = {
   payloadPreview: string;
 };
 
-type WorkspaceFilter = "todos" | "entrada" | "revisao" | "risco" | "pronto";
+type WorkspaceFilter = "todos" | "entrada" | "revisao" | "risco" | "pronto" | "com_foto";
+type CategoryFilter =
+  | "todos"
+  | "imoveis"
+  | "terrenos"
+  | "lotes"
+  | "casas"
+  | "apartamentos"
+  | "predios"
+  | "comerciais"
+  | "rurais";
+
+const categoryTabs: Array<{ key: CategoryFilter; label: string }> = [
+  { key: "todos", label: "Todos" },
+  { key: "imoveis", label: "Imóveis" },
+  { key: "terrenos", label: "Terrenos" },
+  { key: "lotes", label: "Lotes" },
+  { key: "casas", label: "Casas" },
+  { key: "apartamentos", label: "Apartamentos" },
+  { key: "predios", label: "Prédios" },
+  { key: "comerciais", label: "Comerciais" },
+  { key: "rurais", label: "Rurais" },
+];
 
 const currencyFormatter = new Intl.NumberFormat("pt-BR", {
   style: "currency",
@@ -106,12 +124,6 @@ const currencyFormatter = new Intl.NumberFormat("pt-BR", {
 const shortDateFormatter = new Intl.DateTimeFormat("pt-BR", {
   day: "2-digit",
   month: "short",
-});
-
-const longDateFormatter = new Intl.DateTimeFormat("pt-BR", {
-  day: "2-digit",
-  month: "short",
-  year: "numeric",
 });
 
 const toneBorder: Record<ResourceTone, string> = {
@@ -131,6 +143,7 @@ function normalizeText(value: string) {
 }
 
 function formatCurrency(value: number) {
+  if (!value) return "Valor não informado";
   return currencyFormatter.format(Number.isFinite(value) ? value : 0);
 }
 
@@ -139,13 +152,6 @@ function formatShortDate(value: string) {
   const date = new Date(`${value}T12:00:00`);
   if (Number.isNaN(date.getTime())) return "sem data";
   return shortDateFormatter.format(date);
-}
-
-function formatLongDate(value: string) {
-  if (!value) return "sem data";
-  const date = new Date(`${value}T12:00:00`);
-  if (Number.isNaN(date.getTime())) return "sem data";
-  return longDateFormatter.format(date);
 }
 
 function classifyOpportunity(item: WorkspaceOpportunity): WorkspaceFilter {
@@ -166,6 +172,24 @@ function classifyOpportunity(item: WorkspaceOpportunity): WorkspaceFilter {
   return "pronto";
 }
 
+function classifyPropertyCategory(item: WorkspaceOpportunity): CategoryFilter {
+  const text = normalizeText(`${item.propertyType} ${item.title} ${item.summary}`);
+
+  if (text.includes("lote")) return "lotes";
+  if (text.includes("terreno")) return "terrenos";
+  if (text.includes("apartamento") || text.includes("apto")) return "apartamentos";
+  if (text.includes("casa") || text.includes("sobrado") || text.includes("condominio")) return "casas";
+  if (text.includes("predio") || text.includes("edificio")) return "predios";
+  if (text.includes("comercial") || text.includes("sala") || text.includes("loja") || text.includes("galpao")) {
+    return "comerciais";
+  }
+  if (text.includes("rural") || text.includes("fazenda") || text.includes("sitio") || text.includes("chacara")) {
+    return "rurais";
+  }
+
+  return "imoveis";
+}
+
 function daysUntil(value: string) {
   if (!value) return null;
   const today = new Date();
@@ -175,77 +199,25 @@ function daysUntil(value: string) {
   return Math.round((date.getTime() - base) / 86_400_000);
 }
 
-function runTone(status = ""): ResourceTone {
-  const text = normalizeText(status);
-  if (!text || text.includes("sem run") || text.includes("pendente")) return "muted";
-  if (text.includes("completed") || text.includes("concluido") || text.includes("approved")) return "green";
-  if (text.includes("failed") || text.includes("erro") || text.includes("bloq")) return "red";
-  if (text.includes("running") || text.includes("anal")) return "purple";
-  if (text.includes("queued") || text.includes("fila") || text.includes("aguard")) return "yellow";
-  return "cyan";
-}
-
-function processStatus(status?: string, fallback = "pendente") {
-  const text = String(status || "").trim();
-  return text || fallback;
-}
-
-function buildProcessSteps(opportunity: WorkspaceOpportunity, snapshot?: WorkspaceSnapshot) {
-  return [
-    {
-      label: "Captura",
-      owner: "Renata",
-      status: "concluido",
-      detail: snapshot?.snapshotCode || opportunity.sourceName,
-      tone: "green" as ResourceTone,
-    },
-    {
-      label: "Curadoria",
-      owner: "Helena",
-      status: processStatus(snapshot?.curatorRunStatus || snapshot?.curationStatus || opportunity.aiStatus, "fila ia"),
-      detail: snapshot?.curatorRunCode || opportunity.stage,
-      tone: runTone(snapshot?.curatorRunStatus || opportunity.aiStatus),
-    },
-    {
-      label: "Risco oculto",
-      owner: "Igor",
-      status: processStatus(snapshot?.hiddenRiskStatus),
-      detail: snapshot?.hiddenRiskRunCode || `${opportunity.riskFlags.length} sinais`,
-      tone: runTone(snapshot?.hiddenRiskStatus || (opportunity.riskScore >= 70 ? "risco" : "")),
-    },
-    {
-      label: "Revisao humana",
-      owner: "Patricia",
-      status: processStatus(snapshot?.humanHandoffStatus || opportunity.legalStatus),
-      detail: snapshot?.humanHandoffRunCode || opportunity.nextAction,
-      tone: runTone(snapshot?.humanHandoffStatus || opportunity.legalStatus),
-    },
-    {
-      label: "Compliance",
-      owner: "Dr. Otavio",
-      status: processStatus(snapshot?.complianceRunStatus || snapshot?.complianceReviewStatus),
-      detail: snapshot?.complianceRunCode || `score ${opportunity.complianceScore}`,
-      tone: runTone(snapshot?.complianceRunStatus || snapshot?.complianceReviewStatus),
-    },
-    {
-      label: "Comercial",
-      owner: "Matching",
-      status: processStatus(snapshot?.communicationStatus),
-      detail: snapshot?.communicationOutboxCount ? `${snapshot.communicationOutboxCount} envios` : "aguarda aprovacao",
-      tone: snapshot?.communicationOutboxCount ? "green" as ResourceTone : "muted" as ResourceTone,
-    },
-  ];
-}
-
 function filterLabel(filter: WorkspaceFilter) {
   const labels: Record<WorkspaceFilter, string> = {
     todos: "Todos",
     entrada: "Entrada",
-    revisao: "Revisao",
+    revisao: "Revisão",
     risco: "Risco",
-    pronto: "Pronto",
+    pronto: "Prontos",
+    com_foto: "Com foto",
   };
   return labels[filter];
+}
+
+function getPrimaryImage(item: WorkspaceOpportunity) {
+  const images = item.images || [];
+  return images.find((image) => image.status === "mirrored")?.url || images[0]?.url || "";
+}
+
+function metricTone(value: number, fallback: ResourceTone) {
+  return value > 0 ? fallback : "muted";
 }
 
 function MetricTile({
@@ -270,15 +242,148 @@ function MetricTile({
 
 function EmptyState() {
   return (
-    <div className="grid min-h-80 place-items-center px-4 py-10 text-center">
+    <div className="grid min-h-80 place-items-center rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] px-4 py-10 text-center">
       <div>
         <Database className="mx-auto mb-3 text-[var(--admin-muted)]" size={28} />
-        <h2 className="text-lg font-semibold text-white">Nenhuma oportunidade cadastrada</h2>
+        <h2 className="text-lg font-semibold text-white">Nenhum imóvel captado</h2>
         <p className="mt-2 max-w-md text-sm leading-6 text-[var(--admin-muted)]">
-          A mesa fica pronta assim que a Renata ou a entrada manual criar o primeiro registro.
+          A vitrine aparece assim que a Renata ou a entrada manual criar o primeiro imóvel.
         </p>
       </div>
     </div>
+  );
+}
+
+function PropertyCard({
+  opportunity,
+  snapshot,
+}: {
+  opportunity: WorkspaceOpportunity;
+  snapshot?: WorkspaceSnapshot;
+}) {
+  const imageUrl = getPrimaryImage(opportunity);
+  const imagesCount = opportunity.images?.length || 0;
+  const location = [opportunity.city, opportunity.state].filter(Boolean).join("/");
+  const due = daysUntil(opportunity.auctionDate);
+  const detailHref = `/admin/oportunidades/${opportunity.id}`;
+  const sourceUrl = snapshot?.sourceUrl;
+
+  return (
+    <article className="group flex min-h-[520px] flex-col overflow-hidden rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] transition hover:border-[rgba(255,122,24,0.42)] hover:bg-[rgba(255,255,255,0.035)]">
+      <Link href={detailHref} className="block">
+        <div className="relative aspect-[16/10] border-b border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)]">
+          {imageUrl ? (
+            <img
+              src={imageUrl}
+              alt={opportunity.title}
+              loading="lazy"
+              className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.025]"
+            />
+          ) : (
+            <div className="grid h-full place-items-center text-[var(--admin-muted)]">
+              <Home size={36} className="opacity-30" />
+            </div>
+          )}
+
+          <div className="absolute left-3 top-3 flex flex-wrap gap-2">
+            <span className="rounded-md border border-black/35 bg-black/72 px-2 py-1 text-[10px] font-bold uppercase text-white">
+              {opportunity.propertyType || "Imóvel"}
+            </span>
+            {imagesCount ? (
+              <span className="inline-flex items-center gap-1 rounded-md border border-black/35 bg-black/72 px-2 py-1 font-mono text-[10px] font-bold text-white">
+                <Camera size={11} />
+                {imagesCount}
+              </span>
+            ) : null}
+          </div>
+
+          <StatusBadge
+            tone={getStatusTone(opportunity.stage)}
+            className="absolute bottom-3 left-3 border-black/35 bg-black/72"
+          >
+            {opportunity.stage}
+          </StatusBadge>
+        </div>
+      </Link>
+
+      <div className="flex flex-1 flex-col p-4">
+        <div className="flex items-start justify-between gap-3">
+          <Link href={detailHref} className="min-w-0">
+            <h2 className="line-clamp-2 text-base font-semibold leading-6 text-white transition group-hover:text-[var(--admin-orange)]">
+              {opportunity.title}
+            </h2>
+          </Link>
+          <ScoreBadge score={opportunity.opportunityScore} className="h-9 min-w-12" />
+        </div>
+
+        <div className="mt-2 flex items-center gap-1.5 text-sm text-[var(--admin-muted)]">
+          <MapPin size={14} className="shrink-0" />
+          <span className="truncate">{location || "Localização não informada"}</span>
+        </div>
+
+        <p className="mt-3 line-clamp-3 min-h-16 text-sm leading-6 text-[var(--admin-soft)]">
+          {opportunity.summary || opportunity.address || "Descrição em validação pela curadoria."}
+        </p>
+
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <div className="rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.025)] px-3 py-3">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--admin-muted)]">Lance</p>
+            <p className="mt-2 truncate font-mono text-base font-bold text-white">
+              {formatCurrency(opportunity.initialBid)}
+            </p>
+          </div>
+          <div className="rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.025)] px-3 py-3">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--admin-muted)]">
+              Avaliação
+            </p>
+            <p className="mt-2 truncate font-mono text-base font-bold text-[var(--admin-green)]">
+              {formatCurrency(opportunity.appraisalValue)}
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <StatusBadge tone="green">{opportunity.discountPct}% desconto</StatusBadge>
+          <RiskBadge score={opportunity.riskScore} className="h-7 min-w-10" />
+          <span className="inline-flex h-7 items-center gap-1 rounded-md border border-[var(--admin-border)] px-2 font-mono text-[10px] text-[var(--admin-muted)]">
+            <CalendarDays size={12} />
+            {formatShortDate(opportunity.auctionDate)}
+            {due !== null && due >= 0 ? ` / ${due}d` : ""}
+          </span>
+        </div>
+
+        <div className="mt-4 border-t border-[var(--admin-border)] pt-3">
+          <div className="flex items-center justify-between gap-3 text-xs">
+            <div className="min-w-0">
+              <p className="truncate font-semibold text-white">{opportunity.sourceName || "Fonte"}</p>
+              <p className="mt-1 truncate text-[var(--admin-muted)]">{opportunity.address || opportunity.nextAction}</p>
+            </div>
+            <StatusBadge tone={getStatusTone(opportunity.legalStatus)}>{opportunity.legalStatus}</StatusBadge>
+          </div>
+        </div>
+
+        <div className="mt-auto flex flex-wrap items-center gap-2 pt-4">
+          <Link
+            href={detailHref}
+            className="inline-flex h-9 items-center gap-2 rounded-lg border border-[rgba(255,122,24,0.36)] bg-[rgba(255,122,24,0.12)] px-3 text-xs font-semibold text-[var(--admin-orange)] transition hover:bg-[rgba(255,122,24,0.2)] hover:text-white"
+          >
+            <FileText size={14} />
+            Ver descrição completa
+          </Link>
+          {sourceUrl ? (
+            <Link
+              href={sourceUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex h-9 items-center gap-2 rounded-lg border border-[var(--admin-border)] px-3 text-xs font-semibold text-[var(--admin-muted)] transition hover:text-white"
+            >
+              Fonte
+              <ArrowUpRight size={13} />
+            </Link>
+          ) : null}
+        </div>
+      </div>
+    </article>
   );
 }
 
@@ -297,7 +402,7 @@ export function OpportunityWorkspacePage({
 }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<WorkspaceFilter>("todos");
-  const [selectedId, setSelectedId] = useState(opportunities[0]?.id || "");
+  const [category, setCategory] = useState<CategoryFilter>("todos");
 
   const snapshotsByOpportunity = useMemo(() => {
     const map = new Map<string, WorkspaceSnapshot[]>();
@@ -314,14 +419,17 @@ export function OpportunityWorkspacePage({
     const text = normalizeText(query);
 
     return opportunities.filter((item) => {
+      if (category !== "todos" && classifyPropertyCategory(item) !== category) return false;
       const bucket = classifyOpportunity(item);
-      if (filter !== "todos" && bucket !== filter) return false;
+      if (filter !== "todos" && filter !== "com_foto" && bucket !== filter) return false;
+      if (filter === "com_foto" && !getPrimaryImage(item)) return false;
       if (!text) return true;
 
       const haystack = normalizeText(
         [
           item.title,
           item.propertyType,
+          item.address,
           item.city,
           item.state,
           item.sourceName,
@@ -329,34 +437,40 @@ export function OpportunityWorkspacePage({
           item.aiStatus,
           item.legalStatus,
           item.nextAction,
+          item.summary,
         ].join(" ")
       );
 
       return haystack.includes(text);
     });
-  }, [filter, opportunities, query]);
+  }, [category, filter, opportunities, query]);
 
-  const selected =
-    opportunities.find((item) => item.id === selectedId) ||
-    filteredOpportunities[0] ||
-    opportunities[0];
-  const selectedSnapshots = selected ? snapshotsByOpportunity.get(selected.id) || [] : [];
-  const selectedSnapshot = selectedSnapshots[0];
-  const processSteps = selected ? buildProcessSteps(selected, selectedSnapshot) : [];
+  const categoryCounts = useMemo(() => {
+    const counts = new Map<CategoryFilter, number>();
+    counts.set("todos", opportunities.length);
+
+    for (const opportunity of opportunities) {
+      const key = classifyPropertyCategory(opportunity);
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+
+    return counts;
+  }, [opportunities]);
+
   const urgentCount = opportunities.filter((item) => {
     const days = daysUntil(item.auctionDate);
     return days !== null && days >= 0 && days <= 3;
   }).length;
-  const entradaCount = opportunities.filter((item) => classifyOpportunity(item) === "entrada").length;
   const revisaoCount = opportunities.filter((item) => classifyOpportunity(item) === "revisao").length;
-  const riscoCount = opportunities.filter((item) => classifyOpportunity(item) === "risco").length;
+  const readyCount = opportunities.filter((item) => classifyOpportunity(item) === "pronto").length;
+  const withPhotoCount = opportunities.filter((item) => Boolean(getPrimaryImage(item))).length;
 
   return (
     <div className="mx-auto max-w-[1800px] px-4 py-4 lg:px-5">
       <section className="mb-4 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] px-4 py-5">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
           <div className="min-w-0">
-            <div className="mb-3 inline-flex h-9 items-center gap-2 rounded-lg border border-[rgba(0,243,255,0.24)] bg-[rgba(0,243,255,0.08)] px-3 text-xs font-semibold text-[var(--admin-cyan)]">
+            <div className="mb-3 inline-flex h-9 items-center gap-2 rounded-lg border border-[rgba(255,122,24,0.32)] bg-[rgba(255,122,24,0.1)] px-3 text-xs font-semibold text-[var(--admin-orange)]">
               <Gavel size={15} />
               {module.eyebrow}
             </div>
@@ -377,10 +491,20 @@ export function OpportunityWorkspacePage({
                 Scraper
               </Link>
             </Button>
-            <Button asChild className="h-9 bg-[var(--admin-cyan)] text-black hover:bg-white">
+            <form action={backfillOpportunityImagesAction}>
+              <Button
+                type="submit"
+                variant="outline"
+                className="h-9 border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] text-white"
+              >
+                <Camera size={15} />
+                Atualizar fotos
+              </Button>
+            </form>
+            <Button asChild className="h-9 bg-[var(--admin-orange)] text-black hover:bg-white">
               <Link href="/admin/oportunidades/nova">
                 <FileText size={15} />
-                Novo
+                Novo imóvel
               </Link>
             </Button>
           </div>
@@ -389,315 +513,107 @@ export function OpportunityWorkspacePage({
       </section>
 
       <section className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <MetricTile label="Arquivo" value={String(opportunities.length)} detail="imoveis no pipeline" tone="cyan" />
-        <MetricTile label="Entrada" value={String(entradaCount)} detail="captados ou em fila IA" tone="purple" />
-        <MetricTile label="Revisao" value={String(revisaoCount)} detail="juridico ou humano" tone="yellow" />
-        <MetricTile label="Urgentes" value={String(urgentCount + riscoCount)} detail="ate 3 dias ou com risco" tone="red" />
+        <MetricTile label="Captados" value={String(opportunities.length)} detail="imóveis no arquivo" tone="cyan" />
+        <MetricTile label="Com foto" value={String(withPhotoCount)} detail="prontos para vitrine" tone={metricTone(withPhotoCount, "green")} />
+        <MetricTile label="Em revisão" value={String(revisaoCount)} detail="jurídico ou humano" tone={metricTone(revisaoCount, "yellow")} />
+        <MetricTile label="Urgentes" value={String(urgentCount)} detail="leilão em até 3 dias" tone={metricTone(urgentCount, "red")} />
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(420px,0.75fr)]">
-        <DashboardCard
-          title="Arquivo operacional"
-          eyebrow="planilha / captacao / fila"
-          action={
-            <div className="flex min-w-0 items-center gap-2">
-              <div className="relative w-48 sm:w-64">
-                <Search
-                  size={15}
-                  className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--admin-muted)]"
-                />
-                <Input
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Buscar imovel"
-                  className="h-8 border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] pl-8 text-sm text-white"
-                />
-              </div>
-            </div>
-          }
-          contentClassName="p-0"
-        >
-          <div className="flex flex-wrap gap-2 border-b border-[var(--admin-border)] px-3 py-3">
-            {(["todos", "entrada", "revisao", "risco", "pronto"] as WorkspaceFilter[]).map((item) => (
-              <Button
-                key={item}
-                type="button"
-                size="sm"
-                variant={filter === item ? "default" : "outline"}
-                aria-pressed={filter === item}
-                onClick={() => setFilter(item)}
-                className={cn(
-                  "h-8",
-                  filter === item
-                    ? "bg-[var(--admin-cyan)] text-black hover:bg-white"
-                    : "border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] text-white"
-                )}
-              >
-                {filterLabel(item)}
-              </Button>
+      <DashboardCard
+        title="Vitrine de imóveis captados"
+        eyebrow="foto / descrição / valor"
+        action={
+          <div className="relative w-56 sm:w-80">
+            <Search
+              size={15}
+              className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--admin-muted)]"
+            />
+            <Input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Buscar por título, cidade ou fonte"
+              className="h-9 border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] pl-8 text-sm text-white"
+            />
+          </div>
+        }
+      >
+        <div className="-mx-1 mb-4 overflow-x-auto px-1 pb-1">
+          <div className="flex min-w-max gap-2 border-b border-[var(--admin-border)] pb-3">
+            {categoryTabs.map((tab) => {
+              const isActive = category === tab.key;
+              const count = categoryCounts.get(tab.key) || 0;
+
+              return (
+                <button
+                  key={tab.key}
+                  type="button"
+                  aria-pressed={isActive}
+                  onClick={() => setCategory(tab.key)}
+                  className={cn(
+                    "inline-flex h-10 items-center gap-2 rounded-lg border px-3 text-sm font-semibold transition",
+                    isActive
+                      ? "border-[rgba(255,122,24,0.62)] bg-[var(--admin-orange)] text-black"
+                      : "border-[var(--admin-border)] bg-[rgba(255,255,255,0.025)] text-[var(--admin-soft)] hover:border-[rgba(255,122,24,0.36)] hover:text-white"
+                  )}
+                >
+                  <span>{tab.label}</span>
+                  <span
+                    className={cn(
+                      "rounded-md px-1.5 py-0.5 font-mono text-[10px]",
+                      isActive ? "bg-black/15 text-black" : "bg-[rgba(255,255,255,0.08)] text-[var(--admin-muted)]"
+                    )}
+                  >
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="mb-4 flex flex-wrap gap-2">
+          {(["todos", "com_foto", "entrada", "revisao", "risco", "pronto"] as WorkspaceFilter[]).map((item) => (
+            <Button
+              key={item}
+              type="button"
+              size="sm"
+              variant={filter === item ? "default" : "outline"}
+              aria-pressed={filter === item}
+              onClick={() => setFilter(item)}
+              className={cn(
+                "h-8",
+                filter === item
+                  ? "bg-[var(--admin-orange)] text-black hover:bg-white"
+                  : "border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] text-white"
+              )}
+            >
+              {filterLabel(item)}
+            </Button>
+          ))}
+        </div>
+
+        {filteredOpportunities.length ? (
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+            {filteredOpportunities.map((opportunity) => (
+              <PropertyCard
+                key={opportunity.id}
+                opportunity={opportunity}
+                snapshot={snapshotsByOpportunity.get(opportunity.id)?.[0]}
+              />
             ))}
           </div>
+        ) : (
+          <EmptyState />
+        )}
 
-          {opportunities.length ? (
-            <Table className="min-w-[1280px]">
-              <TableHeader className="bg-[rgba(255,255,255,0.02)]">
-                <TableRow className="border-[var(--admin-border)] hover:bg-transparent">
-                  {[
-                    "Imovel",
-                    "Tipo",
-                    "Cidade/UF",
-                    "Fonte",
-                    "Leilao",
-                    "Lance",
-                    "Avaliacao",
-                    "Desc.",
-                    "Score",
-                    "Risco",
-                    "IA",
-                    "Juridico",
-                    "Etapa",
-                  ].map((head) => (
-                    <TableHead
-                      key={head}
-                      className="h-10 px-3 font-mono text-[10px] uppercase text-[var(--admin-muted)]"
-                    >
-                      {head}
-                    </TableHead>
-                  ))}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredOpportunities.map((item) => {
-                  const isSelected = selected?.id === item.id;
-                  const due = daysUntil(item.auctionDate);
-
-                  return (
-                    <TableRow
-                      key={item.id}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => setSelectedId(item.id)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") setSelectedId(item.id);
-                      }}
-                      className={cn(
-                        "cursor-pointer border-[var(--admin-border)] bg-[var(--admin-card)] outline-none hover:bg-[rgba(255,255,255,0.04)] focus-visible:bg-[rgba(0,243,255,0.08)]",
-                        isSelected && "bg-[rgba(0,243,255,0.08)]"
-                      )}
-                    >
-                      <TableCell className="max-w-[280px] px-3 py-3">
-                        <div className="truncate font-semibold text-white">{item.title}</div>
-                        <div className="mt-1 truncate font-mono text-[10px] text-[var(--admin-muted)]">{item.id}</div>
-                      </TableCell>
-                      <TableCell className="px-3 text-[var(--admin-soft)]">{item.propertyType}</TableCell>
-                      <TableCell className="px-3 text-[var(--admin-soft)]">
-                        {item.city}/{item.state || "--"}
-                      </TableCell>
-                      <TableCell className="max-w-[170px] px-3">
-                        <div className="truncate text-[var(--admin-soft)]">{item.sourceName}</div>
-                      </TableCell>
-                      <TableCell className="px-3">
-                        <div className="font-mono text-white">{formatShortDate(item.auctionDate)}</div>
-                        <div className="mt-1 text-[10px] text-[var(--admin-muted)]">
-                          {due === null ? "sem prazo" : due < 0 ? "passou" : `${due}d`}
-                        </div>
-                      </TableCell>
-                      <TableCell className="px-3 font-mono font-semibold text-white">
-                        {formatCurrency(item.initialBid)}
-                      </TableCell>
-                      <TableCell className="px-3 font-mono text-[var(--admin-soft)]">
-                        {formatCurrency(item.appraisalValue)}
-                      </TableCell>
-                      <TableCell className="px-3 font-mono text-[var(--admin-green)]">{item.discountPct}%</TableCell>
-                      <TableCell className="px-3">
-                        <ScoreBadge score={item.opportunityScore} />
-                      </TableCell>
-                      <TableCell className="px-3">
-                        <RiskBadge score={item.riskScore} />
-                      </TableCell>
-                      <TableCell className="px-3">
-                        <StatusBadge tone={getStatusTone(item.aiStatus)}>{item.aiStatus}</StatusBadge>
-                      </TableCell>
-                      <TableCell className="px-3">
-                        <StatusBadge tone={getStatusTone(item.legalStatus)}>{item.legalStatus}</StatusBadge>
-                      </TableCell>
-                      <TableCell className="max-w-[220px] px-3">
-                        <div className="truncate text-[var(--admin-soft)]">{item.stage}</div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          ) : (
-            <EmptyState />
-          )}
-        </DashboardCard>
-
-        <div className="grid content-start gap-4">
-          <DashboardCard
-            title="Arquivo do imovel"
-            eyebrow="status / agentes / evidencias"
-            action={
-              selected ? (
-                <Button
-                  asChild
-                  variant="outline"
-                  size="sm"
-                  className="h-8 border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] text-white"
-                >
-                  <Link href={`/admin/oportunidades/${selected.id}`}>
-                    Abrir
-                    <ArrowUpRight size={14} />
-                  </Link>
-                </Button>
-              ) : null
-            }
-          >
-            {selected ? (
-              <div className="grid gap-4">
-                <div>
-                  <div className="mb-3 flex flex-wrap gap-2">
-                    <StatusBadge tone={getStatusTone(selected.stage)}>{selected.stage}</StatusBadge>
-                    <StatusBadge tone={getStatusTone(selected.aiStatus)}>{selected.aiStatus}</StatusBadge>
-                    <StatusBadge tone={getStatusTone(selected.legalStatus)}>{selected.legalStatus}</StatusBadge>
-                  </div>
-                  <h2 className="text-lg font-semibold leading-6 text-white">{selected.title}</h2>
-                  <p className="mt-2 text-sm leading-6 text-[var(--admin-muted)]">
-                    {selected.address} - {selected.city}/{selected.state || "--"}
-                  </p>
-                  <p className="mt-3 text-sm leading-6 text-[var(--admin-soft)]">{selected.summary}</p>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="rounded-lg border border-[var(--admin-border)] px-3 py-3">
-                    <p className="text-xs text-[var(--admin-muted)]">Leilao</p>
-                    <p className="mt-2 font-mono text-sm font-semibold text-white">
-                      {formatLongDate(selected.auctionDate)}
-                    </p>
-                  </div>
-                  <div className="rounded-lg border border-[var(--admin-border)] px-3 py-3">
-                    <p className="text-xs text-[var(--admin-muted)]">Fonte</p>
-                    <p className="mt-2 truncate text-sm font-semibold text-white">{selected.sourceName}</p>
-                  </div>
-                </div>
-
-                <div>
-                  <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-white">
-                    <Sparkles size={15} className="text-[var(--admin-cyan)]" />
-                    Processo dos agentes
-                  </div>
-                  <div className="grid gap-2">
-                    {processSteps.map((step, index) => (
-                      <div
-                        key={step.label}
-                        className="grid grid-cols-[2rem_minmax(0,1fr)] gap-3 rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.025)] px-3 py-3"
-                      >
-                        <div className={cn("grid size-7 place-items-center rounded-md border font-mono text-xs", toneBorder[step.tone])}>
-                          {index + 1}
-                        </div>
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <p className="font-semibold text-white">{step.label}</p>
-                            <StatusBadge tone={step.tone}>{step.status}</StatusBadge>
-                          </div>
-                          <p className="mt-1 truncate text-xs text-[var(--admin-muted)]">
-                            {step.owner} - {step.detail}
-                          </p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-white">
-                    <ShieldCheck size={15} className="text-[var(--admin-green)]" />
-                    Checklist e documentos
-                  </div>
-                  <div className="grid gap-2">
-                    {[...selected.checklist.slice(0, 3), ...selected.documents.slice(0, 2)].map((item) => {
-                      const label = "label" in item ? item.label : "Documento";
-                      const status = "status" in item ? item.status : "";
-                      const owner = "owner" in item ? item.owner : "source" in item ? item.source : "";
-
-                      return (
-                        <div
-                          key={`${label}-${owner}`}
-                          className="flex items-center justify-between gap-3 rounded-md border border-[var(--admin-border)] px-3 py-2"
-                        >
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-white">{label}</p>
-                            <p className="mt-1 truncate text-xs text-[var(--admin-muted)]">{owner}</p>
-                          </div>
-                          <StatusBadge tone={getStatusTone(status)}>{status}</StatusBadge>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <EmptyState />
-            )}
-          </DashboardCard>
-
-          <DashboardCard title="Evidencias coletadas" eyebrow="fonte / snapshot / payload">
-            {selectedSnapshots.length ? (
-              <div className="grid gap-2">
-                {selectedSnapshots.slice(0, 4).map((snapshot) => (
-                  <div key={snapshot.snapshotCode} className="rounded-lg border border-[var(--admin-border)] px-3 py-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate font-semibold text-white">{snapshot.snapshotCode}</p>
-                        <p className="mt-1 text-xs text-[var(--admin-muted)]">
-                          {snapshot.collectedBy} - {formatLongDate(snapshot.collectedAt)}
-                        </p>
-                      </div>
-                      <StatusBadge tone={getStatusTone(snapshot.status)}>{snapshot.status}</StatusBadge>
-                    </div>
-                    <p className="mt-2 line-clamp-2 text-xs leading-5 text-[var(--admin-soft)]">
-                      {snapshot.payloadPreview || snapshot.title}
-                    </p>
-                    {snapshot.sourceUrl ? (
-                      <Link
-                        href={snapshot.sourceUrl}
-                        target="_blank"
-                        className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-[var(--admin-cyan)] hover:text-white"
-                      >
-                        Fonte original
-                        <ArrowUpRight size={12} />
-                      </Link>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="rounded-lg border border-[var(--admin-border)] px-3 py-4 text-sm text-[var(--admin-muted)]">
-                Sem snapshot vinculado a este imovel.
-              </div>
-            )}
-          </DashboardCard>
-
-          {selected?.timeline.length ? (
-            <DashboardCard title="Linha do tempo" eyebrow="auditoria">
-              <div className="grid gap-3">
-                {selected.timeline.slice(0, 4).map((item) => (
-                  <div key={`${item.time}-${item.actor}-${item.action}`} className="flex gap-3">
-                    <div className={cn("mt-1 size-2 shrink-0 rounded-full bg-current", toneBorder[item.tone])} />
-                    <div className="min-w-0">
-                      <p className="text-xs font-semibold text-white">
-                        {item.actor} <span className="font-mono text-[var(--admin-muted)]">{item.time}</span>
-                      </p>
-                      <p className="mt-1 text-xs leading-5 text-[var(--admin-muted)]">{item.action}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </DashboardCard>
-          ) : null}
-        </div>
-      </section>
+        {readyCount > 0 ? (
+          <p className="mt-4 text-xs text-[var(--admin-muted)]">
+            {readyCount === 1
+              ? "1 imóvel está classificado como pronto para avançar depois da revisão operacional."
+              : `${readyCount} imóveis estão classificados como prontos para avançar depois da revisão operacional.`}
+          </p>
+        ) : null}
+      </DashboardCard>
     </div>
   );
 }

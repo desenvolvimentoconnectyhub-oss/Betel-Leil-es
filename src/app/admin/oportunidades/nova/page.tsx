@@ -105,9 +105,9 @@ export default async function NewOpportunityPage({
               <StatusBadge tone="cyan">Novo registro</StatusBadge>
               <StatusBadge tone="yellow">Revisao obrigatoria</StatusBadge>
             </div>
-            <h1 className="text-2xl font-semibold tracking-tight text-white">Nova oportunidade</h1>
+            <h1 className="text-2xl font-semibold tracking-tight text-white">Novo imóvel captado</h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--admin-muted)]">
-              Cadastro operacional de imovel para entrada na curadoria, score, compliance e revisao juridica.
+              Cadastro operacional de imóvel para entrada na curadoria, score, compliance e revisão jurídica.
             </p>
           </div>
 
@@ -118,7 +118,7 @@ export default async function NewOpportunityPage({
           >
             <Link href="/admin/oportunidades">
               <ArrowLeft size={15} />
-              Oportunidades
+              Imóveis captados
             </Link>
           </Button>
         </div>
@@ -128,7 +128,7 @@ export default async function NewOpportunityPage({
         <div className="mb-4 flex gap-3 rounded-lg border border-[rgba(239,68,68,0.28)] bg-[rgba(239,68,68,0.08)] px-4 py-3 text-sm text-[var(--admin-soft)]">
           <ShieldAlert className="mt-0.5 shrink-0 text-[var(--admin-red)]" size={17} />
           <div>
-            <div className="font-semibold text-white">Cadastro nao concluido</div>
+            <div className="font-semibold text-white">Cadastro não concluído</div>
             <div className="mt-1 text-[var(--admin-muted)]">{message}</div>
           </div>
         </div>
@@ -136,10 +136,10 @@ export default async function NewOpportunityPage({
 
       <form action={createOpportunityAction} className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(340px,0.8fr)]">
         <div className="grid gap-4">
-          <DashboardCard title="Imovel" eyebrow="identificacao">
+          <DashboardCard title="Imóvel" eyebrow="identificação">
             <div className="grid gap-4 md:grid-cols-2">
-              <Field label="Codigo interno" name="code" placeholder="BC-204" />
-              <Field label="Nome do imovel" name="title" placeholder="Apartamento frente mar" required />
+              <Field label="Código interno" name="code" placeholder="BC-204" />
+              <Field label="Nome do imóvel" name="title" placeholder="Apartamento frente mar" required />
               <SelectField
                 label="Tipo"
                 name="propertyType"
@@ -161,12 +161,12 @@ export default async function NewOpportunityPage({
                 defaultValue="Manual"
                 options={["Manual", "Leiloeiro", "Banco", "Judicial", "Tribunal", "API"]}
               />
-              <Field label="Data do leilao" name="auctionDate" type="date" />
+              <Field label="Data do leilão" name="auctionDate" type="date" />
               <SelectField
-                label="Ocupacao"
+                label="Ocupação"
                 name="occupancy"
-                defaultValue="Nao informado"
-                options={["Nao informado", "Vago", "Ocupado", "Nao aplicavel"]}
+                defaultValue="Não informado"
+                options={["Não informado", "Vago", "Ocupado", "Não aplicável"]}
               />
               <Field label="URL oficial" name="sourceUrl" placeholder="https://fonte/oferta-ou-edital" />
               <Field label="ID externo" name="externalId" placeholder="processo, lote ou codigo da fonte" />
@@ -189,7 +189,7 @@ export default async function NewOpportunityPage({
                   className={cn(inputClass, "min-h-32 py-3")}
                   id="summary"
                   name="summary"
-                  placeholder="Descreva o racional inicial, origem da oportunidade, pontos de atencao e hipoteses de lucro."
+                  placeholder="Descreva o racional inicial, origem do imóvel, pontos de atenção e hipóteses de lucro."
                 />
               </div>
               <div className="grid gap-2">
@@ -215,8 +215,8 @@ export default async function NewOpportunityPage({
                 />
               </div>
               <div className="rounded-lg border border-[rgba(0,243,255,0.22)] bg-[rgba(0,243,255,0.06)] px-3 py-2 text-xs leading-5 text-[var(--admin-muted)]">
-                Preencher URL, ID externo, evidencias ou payload ativa a ingestao por fonte: o sistema cria
-                snapshot bruto, run de curadoria e log de auditoria antes da revisao humana.
+                Preencher URL, ID externo, evidências ou payload ativa a ingestão por fonte: o sistema cria
+                snapshot bruto, run de curadoria e log de auditoria antes da revisão humana.
               </div>
             </div>
           </DashboardCard>
@@ -239,7 +239,7 @@ export default async function NewOpportunityPage({
             </div>
           </DashboardCard>
 
-          <DashboardCard title="Fluxo" eyebrow="status / acao">
+          <DashboardCard title="Fluxo" eyebrow="status / ação">
             <div className="grid gap-4">
               <SelectField
                 label="Status IA"
@@ -248,7 +248,7 @@ export default async function NewOpportunityPage({
                 options={["Fila IA", "Analisado", "Requer humano", "Divergencia"]}
               />
               <SelectField
-                label="Status juridico"
+                label="Status jurídico"
                 name="legalStatus"
                 defaultValue="Pendente"
                 options={["Pendente", "Aguardando", "Com ressalvas", "Aprovado", "Risco alto"]}
@@ -257,10 +257,10 @@ export default async function NewOpportunityPage({
                 label="Etapa"
                 name="stage"
                 defaultValue="Entrada"
-                options={["Entrada", "Curadoria IA", "Compliance", "Revisao juridica", "Dossie", "Matching"]}
+                options={["Entrada", "Curadoria IA", "Compliance", "Revisão jurídica", "Dossiê", "Matching"]}
               />
-              <Field label="Responsavel" name="owner" placeholder="Operacao" defaultValue="Operacao" />
-              <Field label="Proxima acao" name="nextAction" placeholder="Triar oportunidade" defaultValue="Triar oportunidade" />
+              <Field label="Responsável" name="owner" placeholder="Operação" defaultValue="Operação" />
+              <Field label="Próxima ação" name="nextAction" placeholder="Triar imóvel" defaultValue="Triar imóvel" />
             </div>
           </DashboardCard>
 

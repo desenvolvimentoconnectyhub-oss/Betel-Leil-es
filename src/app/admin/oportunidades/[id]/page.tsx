@@ -46,6 +46,9 @@ export default async function OpportunityDetailPage({
 
   if (!opportunity) notFound();
 
+  const images = opportunity.images || [];
+  const heroImage = images.find((image) => image.status === "mirrored") || images[0];
+
   return (
     <div className="mx-auto max-w-[1600px] px-4 py-4 lg:px-5">
       <section className="mb-4 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] px-4 py-5">
@@ -57,7 +60,7 @@ export default async function OpportunityDetailPage({
           >
             <Link href="/admin/oportunidades">
               <ArrowLeft size={15} />
-              Oportunidades
+              Imóveis captados
             </Link>
           </Button>
 
@@ -71,7 +74,7 @@ export default async function OpportunityDetailPage({
             >
               <Link href={`/admin/oportunidades/${opportunity.id}/editar`}>
                 <Pencil size={15} />
-                Editar
+                Editar imóvel
               </Link>
             </Button>
             <Button className="h-9 bg-[var(--admin-cyan)] text-black hover:bg-white">
@@ -108,12 +111,51 @@ export default async function OpportunityDetailPage({
               </div>
             </div>
             <div className="rounded-md border border-[var(--admin-border)] px-3 py-3">
-              <p className="text-xs text-[var(--admin-muted)]">Data do leilao</p>
+              <p className="text-xs text-[var(--admin-muted)]">Data do leilão</p>
               <p className="mt-2 font-mono text-sm font-semibold text-white">{formatDate(opportunity.auctionDate)}</p>
             </div>
           </div>
         </div>
       </section>
+
+      {heroImage && (
+        <section className="mb-4 overflow-hidden rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)]">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--admin-border)] px-4 py-3">
+            <div>
+              <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--admin-cyan)]">
+                galeria / r2
+              </p>
+              <h2 className="mt-1 text-lg font-semibold text-white">Fotos do imóvel</h2>
+            </div>
+            <StatusBadge tone="cyan">{images.length} foto(s)</StatusBadge>
+          </div>
+
+          <div className="grid gap-3 p-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(280px,0.65fr)]">
+            <div className="overflow-hidden rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)]">
+              <img
+                src={heroImage.url}
+                alt={heroImage.alt || opportunity.title}
+                className="aspect-[16/9] h-full w-full object-cover"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-2">
+              {images.slice(1, 9).map((image, index) => (
+                <div
+                  key={`${image.url}-${index}`}
+                  className="overflow-hidden rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)]"
+                >
+                  <img
+                    src={image.url}
+                    alt={image.alt || `${opportunity.title} foto ${index + 2}`}
+                    loading="lazy"
+                    className="aspect-[4/3] h-full w-full object-cover"
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
 
       <section className="mb-4 grid gap-3 md:grid-cols-3">
         <DashboardCard title="Score oportunidade" eyebrow="potencial">
@@ -138,7 +180,7 @@ export default async function OpportunityDetailPage({
           <div className="flex items-end justify-between gap-3">
             <ScoreBadge score={opportunity.complianceScore} className="h-12 min-w-16 text-lg" />
             <p className="max-w-56 text-right text-xs leading-5 text-[var(--admin-muted)]">
-              Valida linguagem, fonte oficial, evidencias e revisao obrigatoria.
+              Valida linguagem, fonte oficial, evidências e revisão obrigatória.
             </p>
           </div>
         </DashboardCard>
@@ -158,7 +200,7 @@ export default async function OpportunityDetailPage({
             </div>
           </DashboardCard>
 
-          <DashboardCard title="Checklist juridico" eyebrow="advogado / compliance" contentClassName="p-0">
+          <DashboardCard title="Checklist jurídico" eyebrow="advogado / compliance" contentClassName="p-0">
             <div className="divide-y divide-[var(--admin-border)]">
               {opportunity.checklist.map((item) => (
                 <div
@@ -173,7 +215,7 @@ export default async function OpportunityDetailPage({
             </div>
           </DashboardCard>
 
-          <DashboardCard title="Documentos" eyebrow="fontes / evidencias" contentClassName="p-0">
+          <DashboardCard title="Documentos" eyebrow="fontes / evidências" contentClassName="p-0">
             <div className="divide-y divide-[var(--admin-border)]">
               {opportunity.documents.map((document) => (
                 <div
@@ -210,12 +252,12 @@ export default async function OpportunityDetailPage({
             </div>
           </DashboardCard>
 
-          <DashboardCard title="Proxima acao" eyebrow="responsavel">
+          <DashboardCard title="Próxima ação" eyebrow="responsável">
             <div className="rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] px-3 py-3">
               <p className="font-semibold text-white">{opportunity.nextAction}</p>
-              <p className="mt-2 text-sm text-[var(--admin-soft)]">Responsavel: {opportunity.owner}</p>
+              <p className="mt-2 text-sm text-[var(--admin-soft)]">Responsável: {opportunity.owner}</p>
               <p className="mt-2 text-xs leading-5 text-[var(--admin-muted)]">
-                Ocupacao: {opportunity.occupancy}. Tipo: {opportunity.propertyType}. Fonte: {opportunity.sourceType}.
+                Ocupação: {opportunity.occupancy}. Tipo: {opportunity.propertyType}. Fonte: {opportunity.sourceType}.
               </p>
             </div>
           </DashboardCard>

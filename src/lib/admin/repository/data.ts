@@ -19,7 +19,7 @@ import {
   asString, asNumber, asBoolean, asArray, asStringList, asRecord,
   mockReason, adminDateTimeFormatter,
   getSupabaseAdminClient,
-  normalizeOpportunity, normalizeInvestor, normalizeAdvisoryContract,
+  normalizeOpportunity, normalizeOpportunityImages, normalizeInvestor, normalizeAdvisoryContract,
   normalizeInvestorCommunicationEvent,
   makeContractCode, resolveAdvisoryContractForeignKeys, getAdvisoryContractSnapshot,
   toDashboardRow, fallbackOpportunities, fallbackInvestors,
@@ -33,6 +33,42 @@ import {
   getMockInvestorById, normalizeRiskAppetite,
   buildCommercialPack, buildAdvisoryContractGate,
 } from "./shared";
+import { isLikelyExactPropertySourceUrl } from "@/lib/scraper/quality";
+
+function hasPortfolioValue(row: OpportunityDbRow) {
+  return asNumber(row.initial_bid) > 0 || asNumber(row.appraisal_value) > 0;
+}
+
+function hasPortfolioImage(row: OpportunityDbRow) {
+  return normalizeOpportunityImages(row.raw_payload).some((image) => Boolean(image.url) && image.status !== "failed");
+}
+
+function getPortfolioSourceUrl(row: OpportunityDbRow) {
+  const rawPayload = asRecord(row.raw_payload);
+  const candidate = asRecord(rawPayload.candidate);
+  return asString(rawPayload.sourceUrl, asString(candidate.sourceUrl, asString(rawPayload.targetUrl))).trim();
+}
+
+function hasExactPortfolioSourceUrl(row: OpportunityDbRow) {
+  const rawPayload = asRecord(row.raw_payload);
+  const targetUrl = asString(rawPayload.targetUrl).trim();
+  return isLikelyExactPropertySourceUrl(getPortfolioSourceUrl(row), targetUrl);
+}
+
+function shouldShowInPortfolio(row: OpportunityDbRow) {
+  const status = [
+    asString(row.stage),
+    asString(row.ai_status),
+    asString(row.legal_status),
+  ]
+    .join(" ")
+    .toLowerCase();
+
+  if (status.includes("descart")) return false;
+  if (!hasExactPortfolioSourceUrl(row)) return false;
+
+  return hasPortfolioValue(row) && hasPortfolioImage(row);
+}
 
 export async function listAuctionOpportunities(limit = 50): Promise<DataResult<AuctionOpportunity[]>> {
   const supabase = getSupabaseAdminClient();
@@ -47,8 +83,10 @@ export async function listAuctionOpportunities(limit = 50): Promise<DataResult<A
   if (error) return fallbackOpportunities(error.message, limit);
   if (!data?.length) return fallbackOpportunities("Tabela auction_opportunities vazia.", limit);
 
+  const visibleRows = ((data || []) as OpportunityDbRow[]).filter(shouldShowInPortfolio);
+
   return {
-    data: data.map((row) => normalizeOpportunity(row as OpportunityDbRow)),
+    data: visibleRows.map((row) => normalizeOpportunity(row)),
     source: "supabase",
   };
 }

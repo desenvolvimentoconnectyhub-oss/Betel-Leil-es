@@ -176,6 +176,7 @@ async function checkR2(appConfig: MaintenanceAppConfig): Promise<MaintenanceInte
     envItem("R2_ACCESS_KEY_ID", "Access key", true, appConfig),
     envItem("R2_SECRET_ACCESS_KEY", "Secret key", true, appConfig),
     envItem("R2_PUBLIC_BUCKET_NAME", "Bucket publico", false, appConfig),
+    envItem("R2_PUBLIC_URL", "URL publica do bucket", false, appConfig),
     envItem("R2_PRIVATE_BUCKET_NAME", "Bucket privado", false, appConfig),
   ];
 

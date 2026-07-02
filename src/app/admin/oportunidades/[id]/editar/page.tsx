@@ -122,14 +122,14 @@ export default async function EditOpportunityPage({
         <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
           <div className="min-w-0">
             <div className="mb-3 flex flex-wrap items-center gap-2">
-              <StatusBadge tone="cyan">Editar oportunidade</StatusBadge>
+              <StatusBadge tone="cyan">Editar imóvel</StatusBadge>
               <StatusBadge tone={opportunityResult.source === "supabase" ? "green" : "purple"}>
                 {opportunityResult.source}
               </StatusBadge>
             </div>
             <h1 className="text-2xl font-semibold tracking-tight text-white">{opportunity.title}</h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--admin-muted)]">
-              Ajuste dados, scores, status e proxima acao da oportunidade {opportunity.id}.
+              Ajuste dados, valores, scores, status e próxima ação do imóvel {opportunity.id}.
             </p>
           </div>
 
@@ -150,7 +150,7 @@ export default async function EditOpportunityPage({
         <div className="mb-4 flex gap-3 rounded-lg border border-[rgba(239,68,68,0.28)] bg-[rgba(239,68,68,0.08)] px-4 py-3 text-sm text-[var(--admin-soft)]">
           <ShieldAlert className="mt-0.5 shrink-0 text-[var(--admin-red)]" size={17} />
           <div>
-            <div className="font-semibold text-white">Atualizacao nao concluida</div>
+            <div className="font-semibold text-white">Atualização não concluída</div>
             <div className="mt-1 text-[var(--admin-muted)]">{message}</div>
           </div>
         </div>
@@ -160,10 +160,10 @@ export default async function EditOpportunityPage({
         <input name="currentCode" type="hidden" value={opportunity.id} />
 
         <div className="grid gap-4">
-          <DashboardCard title="Imovel" eyebrow="identificacao">
+          <DashboardCard title="Imóvel" eyebrow="identificação">
             <div className="grid gap-4 md:grid-cols-2">
-              <Field label="Codigo interno" name="code" defaultValue={opportunity.id} readOnly />
-              <Field label="Nome do imovel" name="title" defaultValue={opportunity.title} required />
+              <Field label="Código interno" name="code" defaultValue={opportunity.id} readOnly />
+              <Field label="Nome do imóvel" name="title" defaultValue={opportunity.title} required />
               <SelectField
                 label="Tipo"
                 name="propertyType"
@@ -185,12 +185,12 @@ export default async function EditOpportunityPage({
                 defaultValue={opportunity.sourceType}
                 options={["Manual", "Leiloeiro", "Banco", "Judicial", "Tribunal", "API"]}
               />
-              <Field label="Data do leilao" name="auctionDate" type="date" defaultValue={opportunity.auctionDate} />
+              <Field label="Data do leilão" name="auctionDate" type="date" defaultValue={opportunity.auctionDate} />
               <SelectField
-                label="Ocupacao"
+                label="Ocupação"
                 name="occupancy"
                 defaultValue={opportunity.occupancy}
-                options={["Nao informado", "Vago", "Ocupado", "Nao aplicavel"]}
+                options={["Não informado", "Vago", "Ocupado", "Não aplicável"]}
               />
             </div>
           </DashboardCard>
@@ -227,7 +227,7 @@ export default async function EditOpportunityPage({
             </div>
           </DashboardCard>
 
-          <DashboardCard title="Fluxo" eyebrow="status / acao">
+          <DashboardCard title="Fluxo" eyebrow="status / ação">
             <div className="grid gap-4">
               <SelectField
                 label="Status IA"
@@ -236,7 +236,7 @@ export default async function EditOpportunityPage({
                 options={["Fila IA", "Analisado", "Requer humano", "Divergencia"]}
               />
               <SelectField
-                label="Status juridico"
+                label="Status jurídico"
                 name="legalStatus"
                 defaultValue={opportunity.legalStatus}
                 options={["Pendente", "Aguardando", "Com ressalvas", "Aprovado", "Risco alto"]}
@@ -245,10 +245,10 @@ export default async function EditOpportunityPage({
                 label="Etapa"
                 name="stage"
                 defaultValue={opportunity.stage}
-                options={["Entrada", "Curadoria IA", "Compliance", "Revisao juridica", "Dossie", "Matching"]}
+                options={["Entrada", "Curadoria IA", "Compliance", "Revisão jurídica", "Dossiê", "Matching"]}
               />
-              <Field label="Responsavel" name="owner" defaultValue={opportunity.owner} />
-              <Field label="Proxima acao" name="nextAction" defaultValue={opportunity.nextAction} />
+              <Field label="Responsável" name="owner" defaultValue={opportunity.owner} />
+              <Field label="Próxima ação" name="nextAction" defaultValue={opportunity.nextAction} />
             </div>
           </DashboardCard>
 

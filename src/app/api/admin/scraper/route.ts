@@ -4,9 +4,11 @@ import {
   createScraperTargetRecord,
   toggleScraperTargetRecord,
   updateScraperTargetRecord,
+  clearScraperTargetErrors,
   deleteScraperTargetRecord,
+  runScraperForTarget,
+  backfillOpportunityImages,
 } from "@/lib/scraper";
-import { runScraperForTarget } from "@/lib/scraper";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
@@ -107,6 +109,19 @@ export async function POST(request: Request) {
 
   if (action === "run") {
     const result = await runScraperForTarget(body.targetCode);
+    return NextResponse.json(result);
+  }
+
+  if (action === "clear_errors") {
+    const result = await clearScraperTargetErrors(body.targetCode);
+    return NextResponse.json(result);
+  }
+
+  if (action === "backfill_images") {
+    const result = await backfillOpportunityImages({
+      limit: typeof body.limit === "number" ? body.limit : 120,
+      force: body.force === true,
+    });
     return NextResponse.json(result);
   }
 

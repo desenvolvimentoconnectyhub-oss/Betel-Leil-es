@@ -86,21 +86,32 @@ function parseLlmCandidates(
 
   return parsed
     .filter((item): item is Record<string, unknown> => item !== null && typeof item === "object")
-    .map((item) => ({
-      sourceUrl: String(item.sourceUrl || ""),
-      title: String(item.title || ""),
-      address: String(item.address || ""),
-      city: String(item.city || ""),
-      state: String(item.state || ""),
-      propertyType: String(item.propertyType || ""),
-      auctionDate: String(item.auctionDate || ""),
-      minBid: Number(item.minBid) || 0,
-      appraisalValue: Number(item.appraisalValue) || 0,
-      discount: Number(item.discount) || 0,
-      auctioneer: String(item.auctioneer || ""),
-      sourceCode: target.targetCode,
-      rawData: item,
-    }));
+    .map((item) => {
+      const imageUrls = [
+        ...(Array.isArray(item.imageUrls) ? item.imageUrls : []),
+        ...(Array.isArray(item.images) ? item.images : []),
+        item.imageUrl,
+      ]
+        .map((url) => String(url || "").trim())
+        .filter(Boolean);
+
+      return {
+        sourceUrl: String(item.sourceUrl || ""),
+        imageUrls,
+        title: String(item.title || ""),
+        address: String(item.address || ""),
+        city: String(item.city || ""),
+        state: String(item.state || ""),
+        propertyType: String(item.propertyType || ""),
+        auctionDate: String(item.auctionDate || ""),
+        minBid: Number(item.minBid) || 0,
+        appraisalValue: Number(item.appraisalValue) || 0,
+        discount: Number(item.discount) || 0,
+        auctioneer: String(item.auctioneer || ""),
+        sourceCode: target.targetCode,
+        rawData: item,
+      };
+    });
 }
 
 export async function extractCandidatesWithLlm(
@@ -138,6 +149,11 @@ export async function extractCandidatesWithLlm(
         `- Retornar somente imoveis com data de leilao entre ${auctionWindow.todayIso} e ${auctionWindow.endIso}.`,
         "- Ignorar veiculos, maquinas, sucatas, equipamentos e outros bens que nao sejam imoveis.",
         "- Se a data do leilao nao estiver clara no HTML, nao retorne o item.",
+        "- O campo sourceUrl deve ser o link exato do lote/imovel/edital na fonte. Nunca use a home, listagem geral ou URL do alvo quando nao houver link de detalhe.",
+        "- URL de leilao/listagem com varios imoveis, como /leilao/123/..., nao serve como sourceUrl. Use apenas o link individual do lote/imovel, por exemplo /sale/detail?id=123.",
+        "- Imagens de logo, vendedor, banner, layout, modal, marca ou institucionais nao contam como foto do imovel.",
+        "- Nao retorne paginas institucionais como duvidas, legislacao, como-funciona, o-que-e, sobre, contato, blog ou artigos.",
+        "- Se nao encontrar o link exato do imovel, nao retorne o item.",
         "",
         `Alvo: ${target.name} (${target.url})`,
         `Tipo: ${target.targetType}`,
