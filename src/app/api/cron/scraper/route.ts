@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { runScraperCron } from "@/lib/scraper";
+import { getScraperScheduleConfig, getScraperScheduleDecision } from "@/lib/scraper/schedule";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -12,6 +13,11 @@ function parseLimit(request: Request) {
   return Math.max(1, Math.min(Math.trunc(rawLimit), 14));
 }
 
+function shouldForceRun(request: Request) {
+  const url = new URL(request.url);
+  return url.searchParams.get("force") === "1" || url.searchParams.get("force") === "true";
+}
+
 export async function GET(request: Request) {
   const authHeader = request.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
@@ -21,11 +27,25 @@ export async function GET(request: Request) {
   }
 
   const maxTargets = parseLimit(request);
+  const schedule = await getScraperScheduleConfig();
+  const decision = getScraperScheduleDecision(schedule);
+
+  if (!decision.shouldRun && !shouldForceRun(request)) {
+    return NextResponse.json({
+      ok: true,
+      skipped: true,
+      reason: decision.reason,
+      clock: decision.clock,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
   const result = await runScraperCron({ maxTargets });
 
   return NextResponse.json({
     ok: true,
     maxTargets,
+    clock: decision.clock,
     ...result,
     timestamp: new Date().toISOString(),
   });

@@ -96,7 +96,7 @@ const emptyForm: TargetFormData = {
   name: "",
   url: "",
   targetType: "auctioneer",
-  scrapeStrategy: "playwright",
+  scrapeStrategy: "fetch",
   region: "",
   priority: 50,
   rateLimitMs: 2000,
@@ -503,7 +503,7 @@ export function ScraperDashboardPage({
           <div className="flex-1">
             <p className="text-xs font-bold text-white">Renata — Buscadora de Imoveis</p>
             <p className="text-[10px] text-[var(--admin-muted)]">
-              Coleta automatizada a cada 4h via Inngest · Gemini 2.5 Flash · Sala de Captacao
+              Coleta automatizada via Inngest · Horario de Brasilia · Gemini 2.5 Flash
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -803,13 +803,13 @@ function KpiCard({ icon, label, value, sub, color }: { icon: React.ReactNode; la
   );
 }
 
-type ScheduleConfig = { days: number[]; hours: number[]; maxResults: number; enabled: boolean };
+type ScheduleConfig = { days: number[]; hours: number[]; maxResults: number; enabled: boolean; timezone?: string };
 
 const DAY_LABELS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sab"];
 const HOUR_OPTIONS = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22];
 
 function ScheduleEditor() {
-  const [schedule, setSchedule] = useState<ScheduleConfig>({ days: [1, 2, 3, 4, 5], hours: [8, 12, 16, 20], maxResults: 50, enabled: true });
+  const [schedule, setSchedule] = useState<ScheduleConfig>({ days: [1, 2, 3, 4, 5], hours: [8, 12, 16, 20], maxResults: 50, enabled: true, timezone: "America/Sao_Paulo" });
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);

@@ -7,6 +7,26 @@ type ScraperAnchor = { text: string; href: string };
 
 const MAX_IMAGES_PER_CANDIDATE = 40;
 
+function shouldAvoidBrowserAutomation() {
+  return (
+    (process.env.VERCEL === "1" || Boolean(process.env.VERCEL_ENV)) &&
+    process.env.SCRAPER_ENABLE_PLAYWRIGHT_ON_VERCEL !== "1"
+  );
+}
+
+async function fetchFallbackForBrowserTarget(target: ScraperTarget, reason?: string) {
+  const fallback = await executeFetchStrategy(target);
+
+  if (fallback.status === "failed" && reason) {
+    return {
+      ...fallback,
+      errorMessage: `Fallback HTTP apos falha no navegador (${reason}): ${fallback.errorMessage || "sem detalhes"}`,
+    };
+  }
+
+  return fallback;
+}
+
 const REAL_ESTATE_TITLE_SIGNALS = [
   "apartamento",
   "apto",
@@ -194,6 +214,8 @@ export function extractImageUrlsFromHtml(html: string, baseUrl: string) {
 }
 
 async function extractRuntimeImageUrlsWithPlaywright(sourceUrl: string) {
+  if (shouldAvoidBrowserAutomation()) return [];
+
   try {
     const { chromium } = await import("playwright");
     const browser = await chromium.launch({ headless: true });
@@ -548,17 +570,14 @@ export async function executePlaywrightStrategy(
 ): Promise<ScraperResult> {
   const start = Date.now();
 
+  if (shouldAvoidBrowserAutomation()) {
+    return fetchFallbackForBrowserTarget(target);
+  }
+
   const isAvailable = await checkPlaywrightAvailable();
 
   if (!isAvailable) {
-    return {
-      targetCode: target.targetCode,
-      status: "failed",
-      candidates: [],
-      pagesScraped: 0,
-      durationMs: Date.now() - start,
-      errorMessage: "Playwright nao disponivel neste ambiente. Use fetch ou instale playwright.",
-    };
+    return fetchFallbackForBrowserTarget(target, "Playwright nao disponivel neste ambiente");
   }
 
   try {
@@ -632,13 +651,12 @@ export async function executePlaywrightStrategy(
       await browser?.close().catch(() => {});
     }
   } catch (err) {
+    const reason = err instanceof Error ? err.message : "Erro no Playwright";
+    const fallback = await fetchFallbackForBrowserTarget(target, reason);
+
     return {
-      targetCode: target.targetCode,
-      status: "failed",
-      candidates: [],
-      pagesScraped: 0,
+      ...fallback,
       durationMs: Date.now() - start,
-      errorMessage: err instanceof Error ? err.message : "Erro no Playwright",
     };
   }
 }
