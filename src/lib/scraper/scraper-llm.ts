@@ -14,6 +14,11 @@ export function isGeminiQuotaError(message?: string) {
     normalized.includes("resource_exhausted") ||
     normalized.includes("quota exceeded") ||
     normalized.includes("free_tier_requests") ||
+    normalized.includes("dunning decision") ||
+    normalized.includes("deny for project") ||
+    normalized.includes("billing") ||
+    normalized.includes("credit") ||
+    normalized.includes("no credits") ||
     normalized.includes("rate-limit") ||
     normalized.includes("rate limit")
   );

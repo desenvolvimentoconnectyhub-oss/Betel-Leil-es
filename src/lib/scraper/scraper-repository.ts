@@ -268,7 +268,7 @@ export async function updateScraperRunRecord(
   if (updates.pagesScraped !== undefined) payload.pages_scraped = updates.pagesScraped;
   if (updates.errorMessage !== undefined) payload.error_message = updates.errorMessage;
   if (updates.durationMs !== undefined) payload.duration_ms = updates.durationMs;
-  if (updates.status === "completed" || updates.status === "failed") {
+  if (updates.status === "completed" || updates.status === "failed" || updates.status === "partial") {
     payload.completed_at = new Date().toISOString();
   }
 

@@ -803,13 +803,64 @@ function KpiCard({ icon, label, value, sub, color }: { icon: React.ReactNode; la
   );
 }
 
-type ScheduleConfig = { days: number[]; hours: number[]; maxResults: number; enabled: boolean; timezone?: string };
+type ScheduleConfig = {
+  days: number[];
+  times: string[];
+  hours?: number[];
+  maxResults: number;
+  enabled: boolean;
+  timezone?: string;
+};
 
 const DAY_LABELS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sab"];
-const HOUR_OPTIONS = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22];
+const DEFAULT_SCHEDULE_TIMES = ["08:00", "12:00", "16:00", "20:00"];
+
+function scheduleTimeToMinutes(time: string) {
+  const [hour, minute] = time.split(":").map(Number);
+  return hour * 60 + minute;
+}
+
+function normalizeScheduleTime(value: unknown) {
+  const raw = String(value || "").trim();
+  const match = raw.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return "";
+
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (!Number.isInteger(hour) || !Number.isInteger(minute)) return "";
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return "";
+
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function sortScheduleTimes(times: string[]) {
+  return [...times].sort((a, b) => scheduleTimeToMinutes(a) - scheduleTimeToMinutes(b));
+}
+
+function normalizeScheduleTimes(schedule: Partial<ScheduleConfig>) {
+  const fromTimes = Array.isArray(schedule.times)
+    ? schedule.times.map(normalizeScheduleTime).filter(Boolean)
+    : [];
+  const fromHours = Array.isArray(schedule.hours)
+    ? schedule.hours
+        .map((hour) => Number(hour))
+        .filter((hour) => Number.isInteger(hour) && hour >= 0 && hour <= 23)
+        .map((hour) => `${String(hour).padStart(2, "0")}:00`)
+    : [];
+  const times = fromTimes.length ? fromTimes : fromHours;
+
+  return sortScheduleTimes(Array.from(new Set(times.length ? times : DEFAULT_SCHEDULE_TIMES)));
+}
 
 function ScheduleEditor() {
-  const [schedule, setSchedule] = useState<ScheduleConfig>({ days: [1, 2, 3, 4, 5], hours: [8, 12, 16, 20], maxResults: 50, enabled: true, timezone: "America/Sao_Paulo" });
+  const [schedule, setSchedule] = useState<ScheduleConfig>({
+    days: [1, 2, 3, 4, 5],
+    times: DEFAULT_SCHEDULE_TIMES,
+    maxResults: 50,
+    enabled: true,
+    timezone: "America/Sao_Paulo",
+  });
+  const [newTime, setNewTime] = useState("15:40");
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -818,7 +869,14 @@ function ScheduleEditor() {
   useEffect(() => {
     fetch("/api/admin/scraper")
       .then((r) => r.json())
-      .then((d) => { if (d.schedule) setSchedule(d.schedule); })
+      .then((d) => {
+        if (d.schedule) {
+          setSchedule({
+            ...d.schedule,
+            times: normalizeScheduleTimes(d.schedule),
+          });
+        }
+      })
       .catch(() => {})
       .finally(() => setLoaded(true));
   }, []);
@@ -831,10 +889,21 @@ function ScheduleEditor() {
     setDirty(true);
   }
 
-  function toggleHour(hour: number) {
+  function addTime() {
+    const time = normalizeScheduleTime(newTime);
+    if (!time) return;
+
     setSchedule((s) => ({
       ...s,
-      hours: s.hours.includes(hour) ? s.hours.filter((h) => h !== hour) : [...s.hours, hour].sort((a, b) => a - b),
+      times: sortScheduleTimes(Array.from(new Set([...s.times, time]))),
+    }));
+    setDirty(true);
+  }
+
+  function removeTime(time: string) {
+    setSchedule((s) => ({
+      ...s,
+      times: s.times.length > 1 ? s.times.filter((item) => item !== time) : s.times,
     }));
     setDirty(true);
   }
@@ -848,13 +917,20 @@ function ScheduleEditor() {
     setSaving(true);
     setFeedback("");
     try {
+      const cleanSchedule = { ...schedule, times: normalizeScheduleTimes(schedule) };
       const res = await fetch("/api/admin/scraper", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "schedule_save", ...schedule }),
+        body: JSON.stringify({ action: "schedule_save", ...cleanSchedule }),
       });
       const result = await res.json();
       if (result.ok) {
+        if (result.schedule) {
+          setSchedule({
+            ...result.schedule,
+            times: normalizeScheduleTimes(result.schedule),
+          });
+        }
         setFeedback("Agenda salva!");
         setDirty(false);
         setTimeout(() => setFeedback(""), 3000);
@@ -868,15 +944,17 @@ function ScheduleEditor() {
   }
 
   const nextRuns = useMemo(() => {
-    if (!schedule.enabled || schedule.days.length === 0 || schedule.hours.length === 0) return [];
+    const times = normalizeScheduleTimes(schedule);
+    if (!schedule.enabled || schedule.days.length === 0 || times.length === 0) return [];
     const now = new Date();
     const results: string[] = [];
     for (let dayOffset = 0; dayOffset < 7 && results.length < 3; dayOffset++) {
       const candidate = new Date(now);
       candidate.setDate(candidate.getDate() + dayOffset);
       if (!schedule.days.includes(candidate.getDay())) continue;
-      for (const hour of schedule.hours) {
-        candidate.setHours(hour, 0, 0, 0);
+      for (const time of times) {
+        const [hour, minute] = time.split(":").map(Number);
+        candidate.setHours(hour, minute, 0, 0);
         if (candidate > now && results.length < 3) {
           results.push(
             new Intl.DateTimeFormat("pt-BR", { weekday: "short", hour: "2-digit", minute: "2-digit" }).format(candidate)
@@ -947,20 +1025,33 @@ function ScheduleEditor() {
           <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--admin-muted)]">
             Horarios de coleta
           </p>
-          <div className="grid grid-cols-4 gap-1">
-            {HOUR_OPTIONS.map((hour) => (
+          <div className="flex gap-2">
+            <input
+              type="time"
+              step={60}
+              value={newTime}
+              onChange={(event) => setNewTime(event.target.value)}
+              className="h-9 min-w-0 flex-1 rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.04)] px-3 font-mono text-xs font-semibold text-white outline-none transition focus:border-[var(--admin-purple)]"
+            />
+            <button
+              type="button"
+              onClick={addTime}
+              className="flex h-9 items-center gap-1.5 rounded-lg border border-[rgba(139,92,246,0.3)] bg-[rgba(139,92,246,0.12)] px-3 text-[10px] font-semibold text-[var(--admin-purple)] transition hover:bg-[rgba(139,92,246,0.2)]"
+            >
+              <Plus size={12} />
+              Adicionar
+            </button>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {schedule.times.map((time) => (
               <button
-                key={hour}
+                key={time}
                 type="button"
-                onClick={() => toggleHour(hour)}
-                className={cn(
-                  "rounded-md py-1.5 text-[10px] font-mono font-semibold transition border",
-                  schedule.hours.includes(hour)
-                    ? "border-[rgba(139,92,246,0.3)] bg-[rgba(139,92,246,0.12)] text-[var(--admin-purple)]"
-                    : "border-[var(--admin-border)] bg-[rgba(255,255,255,0.02)] text-[var(--admin-muted)] hover:text-white"
-                )}
+                onClick={() => removeTime(time)}
+                className="flex items-center gap-1 rounded-md border border-[rgba(139,92,246,0.28)] bg-[rgba(139,92,246,0.12)] px-2 py-1.5 font-mono text-[10px] font-semibold text-[var(--admin-purple)] transition hover:bg-[rgba(239,68,68,0.1)] hover:text-[var(--admin-red)]"
               >
-                {String(hour).padStart(2, "0")}:00
+                {time}
+                <X size={10} />
               </button>
             ))}
           </div>
@@ -1014,7 +1105,7 @@ function ScheduleEditor() {
           )}
           {!feedback && (
             <span className="text-[10px] text-[var(--admin-muted)]">
-              {schedule.days.length} dias · {schedule.hours.length} horarios
+              {schedule.days.length} dias · {schedule.times.length} horarios
             </span>
           )}
         </div>

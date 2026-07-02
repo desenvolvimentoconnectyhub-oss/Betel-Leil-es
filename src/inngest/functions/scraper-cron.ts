@@ -6,7 +6,7 @@ export const scraperCronFunction = inngest.createFunction(
   {
     id: "scraper-cron",
     name: "Renata — Coleta Automatizada",
-    triggers: [{ cron: "0 * * * *" }],
+    triggers: [{ cron: "* * * * *" }],
   },
   async () => {
     const schedule = await getScraperScheduleConfig();

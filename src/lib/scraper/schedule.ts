@@ -4,7 +4,7 @@ import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 
 export type ScraperScheduleConfig = {
   days: number[];
-  hours: number[];
+  times: string[];
   maxResults: number;
   enabled: boolean;
   timezone: string;
@@ -15,7 +15,7 @@ export const SCRAPER_TIMEZONE = "America/Sao_Paulo";
 
 export const DEFAULT_SCRAPER_SCHEDULE: ScraperScheduleConfig = {
   days: [1, 2, 3, 4, 5],
-  hours: [8, 12, 16, 20],
+  times: ["08:00", "12:00", "16:00", "20:00"],
   maxResults: 50,
   enabled: true,
   timezone: SCRAPER_TIMEZONE,
@@ -39,6 +39,37 @@ function asNumberArray(value: unknown, fallback: number[], min: number, max: num
   return Array.from(new Set(clean)).sort((a, b) => a - b);
 }
 
+function minutesFromTime(time: string) {
+  const [hour, minute] = time.split(":").map(Number);
+  return hour * 60 + minute;
+}
+
+function normalizeTime(value: unknown) {
+  const raw = String(value || "").trim();
+  const match = raw.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return "";
+
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (!Number.isInteger(hour) || !Number.isInteger(minute)) return "";
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return "";
+
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function timesFromHours(value: unknown) {
+  return asNumberArray(value, [], 0, 23).map((hour) => `${String(hour).padStart(2, "0")}:00`);
+}
+
+function asTimeArray(value: unknown, legacyHours: unknown, fallback: string[]) {
+  const clean = Array.isArray(value)
+    ? value.map(normalizeTime).filter(Boolean)
+    : timesFromHours(legacyHours);
+  const unique = Array.from(new Set(clean));
+
+  return (unique.length ? unique : fallback).sort((a, b) => minutesFromTime(a) - minutesFromTime(b));
+}
+
 function asTimezone(value: unknown) {
   const timezone = typeof value === "string" && value.trim() ? value.trim() : SCRAPER_TIMEZONE;
 
@@ -56,7 +87,7 @@ export function normalizeScraperScheduleConfig(value: unknown): ScraperScheduleC
 
   return {
     days: asNumberArray(input.days, DEFAULT_SCRAPER_SCHEDULE.days, 0, 6),
-    hours: asNumberArray(input.hours, DEFAULT_SCRAPER_SCHEDULE.hours, 0, 23),
+    times: asTimeArray(input.times, input.hours, DEFAULT_SCRAPER_SCHEDULE.times),
     maxResults: Number.isFinite(maxResults)
       ? Math.min(Math.max(Math.trunc(maxResults), 1), 500)
       : DEFAULT_SCRAPER_SCHEDULE.maxResults,
@@ -90,6 +121,7 @@ export function getScraperScheduleClock(date = new Date(), timezone = SCRAPER_TI
     timeZone: asTimezone(timezone),
     weekday: "short",
     hour: "2-digit",
+    minute: "2-digit",
     hourCycle: "h23",
   });
   const parts = formatter.formatToParts(date);
@@ -97,10 +129,15 @@ export function getScraperScheduleClock(date = new Date(), timezone = SCRAPER_TI
     .slice(0, 3)
     .toLowerCase();
   const hour = Number(parts.find((part) => part.type === "hour")?.value || 0);
+  const minute = Number(parts.find((part) => part.type === "minute")?.value || 0);
+  const safeHour = Number.isFinite(hour) ? hour : 0;
+  const safeMinute = Number.isFinite(minute) ? minute : 0;
 
   return {
     day: WEEKDAY_TO_INDEX[weekday] ?? 0,
-    hour: Number.isFinite(hour) ? hour : 0,
+    hour: safeHour,
+    minute: safeMinute,
+    time: `${String(safeHour).padStart(2, "0")}:${String(safeMinute).padStart(2, "0")}`,
     timezone: asTimezone(timezone),
   };
 }
@@ -120,11 +157,11 @@ export function getScraperScheduleDecision(schedule: ScraperScheduleConfig, date
     };
   }
 
-  if (!schedule.hours.includes(clock.hour)) {
+  if (!schedule.times.includes(clock.time)) {
     return {
       shouldRun: false,
       clock,
-      reason: `Hora ${clock.hour}:00 nao esta na agenda em ${clock.timezone}.`,
+      reason: `Horario ${clock.time} nao esta na agenda em ${clock.timezone}.`,
     };
   }
 

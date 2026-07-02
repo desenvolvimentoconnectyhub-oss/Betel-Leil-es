@@ -30,16 +30,19 @@ function classifyGeminiError(status: number, payload: GeminiErrorPayload): Provi
   const msg = String(payload?.error?.message || "").toLowerCase();
 
   if (!status) return "error";
-  if (status === 401 || status === 403 || msg.includes("api key not valid")) return "invalid_key";
+  if (msg.includes("api key not valid")) return "invalid_key";
   if (
     status === 429 ||
     code.includes("resource_exhausted") ||
     msg.includes("quota") ||
     msg.includes("billing") ||
-    msg.includes("credit")
+    msg.includes("credit") ||
+    msg.includes("dunning decision") ||
+    msg.includes("deny for project")
   ) {
     return "no_credits";
   }
+  if (status === 401 || status === 403) return "invalid_key";
   return "error";
 }
 

@@ -104,6 +104,7 @@ export async function POST(request: Request) {
     const schedule = normalizeScraperScheduleConfig({
       ...DEFAULT_SCRAPER_SCHEDULE,
       days: body.days,
+      times: body.times,
       hours: body.hours,
       maxResults: body.maxResults,
       enabled: body.enabled,
