@@ -49,37 +49,6 @@ export type ScraperRun = {
   tone: ResourceTone;
 };
 
-export type ScraperCollectedOpportunity = {
-  id: string;
-  code: string;
-  title: string;
-  city: string;
-  state: string;
-  propertyType: string;
-  sourceName: string;
-  sourceUrl: string;
-  stage: string;
-  aiStatus: string;
-  legalStatus: string;
-  initialBid: number;
-  appraisalValue: number;
-  discountPct: number;
-  opportunityScore: number;
-  riskScore: number;
-  auctionDate: string;
-  createdAt: string;
-  updatedAt: string;
-  imageUrl: string;
-  images: Array<{
-    url: string;
-    sourceUrl: string;
-    status?: string;
-    storageKey?: string;
-    alt?: string;
-  }>;
-  tone: ResourceTone;
-};
-
 export type ScraperCandidate = {
   sourceUrl: string;
   imageUrls: string[];
@@ -109,7 +78,6 @@ export type ScraperResult = {
 export type ScraperDashboardData = {
   targets: ScraperTarget[];
   recentRuns: ScraperRun[];
-  collectedOpportunities: ScraperCollectedOpportunity[];
   metrics: {
     totalTargets: number;
     enabledTargets: number;

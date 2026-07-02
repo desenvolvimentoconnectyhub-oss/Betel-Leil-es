@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useState, useCallback, useMemo, useEffect } from "react";
 import {
   Globe,
@@ -22,23 +21,17 @@ import {
   Activity,
   RefreshCw,
   Eye,
-  Calendar,
   Save,
   Power,
-  ExternalLink,
-  FileText,
-  Home,
 } from "lucide-react";
 import type { AdminModule } from "@/lib/admin/modules";
 import type {
-  ScraperCollectedOpportunity,
   ScraperDashboardData,
   ScraperTarget,
   ScraperRun,
 } from "@/lib/scraper";
 import type { DataResult } from "@/lib/admin/repository";
 import { DashboardCard } from "./DashboardCard";
-import { StatusBadge } from "./StatusBadge";
 import { cn } from "@/lib/utils";
 
 const targetTypeLabel: Record<string, string> = {
@@ -62,33 +55,6 @@ const strategyLabel: Record<string, string> = {
   fetch: "HTTP",
   api: "API",
 };
-
-function formatDate(iso: string) {
-  if (!iso) return "—";
-  try {
-    return new Intl.DateTimeFormat("pt-BR", {
-      day: "2-digit",
-      month: "short",
-      hour: "2-digit",
-      minute: "2-digit",
-    }).format(new Date(iso));
-  } catch {
-    return iso;
-  }
-}
-
-function formatMoney(value: number) {
-  if (!value) return "Valor nao informado";
-  try {
-    return new Intl.NumberFormat("pt-BR", {
-      style: "currency",
-      currency: "BRL",
-      maximumFractionDigits: 0,
-    }).format(value);
-  } catch {
-    return String(value);
-  }
-}
 
 function formatRelative(iso: string) {
   if (!iso) return "Nunca";
@@ -326,7 +292,6 @@ export function ScraperDashboardPage({
 }) {
   const [targets, setTargets] = useState(data.data.targets);
   const [recentRuns, setRecentRuns] = useState(data.data.recentRuns);
-  const [collectedOpportunities, setCollectedOpportunities] = useState(data.data.collectedOpportunities);
 
   const [showForm, setShowForm] = useState(false);
   const [editingCode, setEditingCode] = useState<string | null>(null);
@@ -389,7 +354,6 @@ export function ScraperDashboardPage({
       if (result.data) {
         setTargets(result.data.targets);
         setRecentRuns(result.data.recentRuns);
-        setCollectedOpportunities(result.data.collectedOpportunities || []);
       }
     } catch { /* ignore */ }
   }
@@ -715,38 +679,6 @@ export function ScraperDashboardPage({
       )}
 
       {/* ═══ Main content ═══ */}
-      <DashboardCard
-        title="Imoveis coletados"
-        eyebrow="arquivo da Renata"
-        action={
-          <Link
-            href="/admin/oportunidades"
-            className="flex items-center gap-1 rounded-md border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] px-2 py-1 text-[10px] font-semibold text-[var(--admin-muted)] transition hover:text-white"
-          >
-            <FileText size={11} />
-            Ver todos
-          </Link>
-        }
-      >
-        {collectedOpportunities.length === 0 ? (
-          <div className="flex flex-col items-center gap-3 py-8 text-center">
-            <Home size={42} className="text-[var(--admin-muted)] opacity-20" />
-            <div>
-              <p className="text-sm font-semibold text-white">Nenhum imovel coletado ainda.</p>
-              <p className="mt-1 text-xs text-[var(--admin-muted)]">
-                Execute uma coleta para a Renata gravar as fichas no arquivo de oportunidades.
-              </p>
-            </div>
-          </div>
-        ) : (
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {collectedOpportunities.slice(0, 6).map((opportunity) => (
-              <CollectedOpportunityCard key={opportunity.code} opportunity={opportunity} />
-            ))}
-          </div>
-        )}
-      </DashboardCard>
-
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Fontes */}
         <div className="flex flex-col gap-6 lg:col-span-2">
@@ -857,86 +789,6 @@ export function ScraperDashboardPage({
 }
 
 /* ══════════════════ Sub-components ══════════════════ */
-
-function CollectedOpportunityCard({ opportunity }: { opportunity: ScraperCollectedOpportunity }) {
-  const location = [opportunity.city, opportunity.state].filter(Boolean).join("/");
-  const detailHref = `/admin/oportunidades/${opportunity.code || opportunity.id}`;
-  const hasSourceUrl = /^https?:\/\//i.test(opportunity.sourceUrl);
-
-  return (
-    <article className="flex min-h-[250px] flex-col overflow-hidden rounded-xl border border-[var(--admin-border)] bg-[rgba(255,255,255,0.025)]">
-      {opportunity.imageUrl ? (
-        <div className="relative aspect-[16/9] border-b border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)]">
-          <img
-            src={opportunity.imageUrl}
-            alt={opportunity.title}
-            loading="lazy"
-            className="h-full w-full object-cover"
-          />
-          {opportunity.images.length > 1 && (
-            <span className="absolute bottom-2 right-2 rounded-md border border-[rgba(0,0,0,0.38)] bg-black/70 px-2 py-1 font-mono text-[10px] font-bold text-white">
-              {opportunity.images.length} fotos
-            </span>
-          )}
-        </div>
-      ) : (
-        <div className="flex aspect-[16/9] items-center justify-center border-b border-[var(--admin-border)] bg-[rgba(255,255,255,0.025)] text-[var(--admin-muted)]">
-          <Home size={28} className="opacity-30" />
-        </div>
-      )}
-
-      <div className="flex flex-1 flex-col p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="line-clamp-2 text-sm font-semibold leading-5 text-white">{opportunity.title}</p>
-          <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--admin-muted)]">
-            {opportunity.propertyType} {location ? `- ${location}` : ""}
-          </p>
-        </div>
-        <StatusBadge tone={opportunity.tone}>{opportunity.opportunityScore || 0}</StatusBadge>
-      </div>
-
-      <div className="mt-4 grid grid-cols-2 gap-2 text-[10px]">
-        <div className="rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] px-2.5 py-2">
-          <p className="font-semibold uppercase tracking-[0.1em] text-[var(--admin-muted)]">Lance</p>
-          <p className="mt-1 truncate font-mono text-xs font-bold text-white">{formatMoney(opportunity.initialBid)}</p>
-        </div>
-        <div className="rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] px-2.5 py-2">
-          <p className="font-semibold uppercase tracking-[0.1em] text-[var(--admin-muted)]">Fonte</p>
-          <p className="mt-1 truncate text-xs font-semibold text-white">{opportunity.sourceName || "Fonte"}</p>
-        </div>
-      </div>
-
-      <div className="mt-3 flex items-center gap-2 text-[10px] text-[var(--admin-muted)]">
-        <Calendar size={11} />
-        <span>{opportunity.auctionDate ? formatDate(opportunity.auctionDate) : "Data nao informada"}</span>
-        <span className="ml-auto">{formatRelative(opportunity.updatedAt || opportunity.createdAt)}</span>
-      </div>
-
-      <div className="mt-auto flex flex-wrap items-center gap-2 pt-4">
-        <Link
-          href={detailHref}
-          className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[rgba(0,243,255,0.28)] bg-[rgba(0,243,255,0.08)] px-3 text-xs font-semibold text-[var(--admin-cyan)] transition hover:bg-[rgba(0,243,255,0.16)]"
-        >
-          <FileText size={13} />
-          Abrir ficha
-        </Link>
-        {hasSourceUrl && (
-          <Link
-            href={opportunity.sourceUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[var(--admin-border)] px-3 text-xs font-semibold text-[var(--admin-muted)] transition hover:text-white"
-          >
-            <ExternalLink size={13} />
-            Fonte
-          </Link>
-        )}
-      </div>
-      </div>
-    </article>
-  );
-}
 
 function KpiCard({ icon, label, value, sub, color }: { icon: React.ReactNode; label: string; value: number; sub: string; color: string }) {
   return (

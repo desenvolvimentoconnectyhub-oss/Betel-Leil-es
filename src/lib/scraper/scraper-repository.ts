@@ -3,11 +3,9 @@ import "server-only";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { DataResult, MutationResult } from "@/lib/admin/repository/shared";
 import type { ResourceTone } from "@/lib/admin/resources";
-import { isLikelyPropertyImageUrl } from "./quality";
 import type {
   ScraperTarget,
   ScraperRun,
-  ScraperCollectedOpportunity,
   ScraperDashboardData,
   ScraperRunStatus,
 } from "./types";
@@ -28,10 +26,6 @@ function asNumber(v: unknown, fallback = 0): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
-function asRecord(v: unknown): Record<string, unknown> {
-  return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
-}
-
 function toneForTargetStatus(enabled: boolean, errors: number): ResourceTone {
   if (!enabled) return "muted";
   if (errors > 2) return "red";
@@ -44,13 +38,6 @@ function toneForRunStatus(status: string): ResourceTone {
   if (status === "running") return "cyan";
   if (status === "failed") return "red";
   if (status === "partial") return "yellow";
-  return "muted";
-}
-
-function toneForOpportunity(score: number, riskScore: number): ResourceTone {
-  if (riskScore >= 70) return "red";
-  if (score >= 75) return "green";
-  if (score >= 55) return "yellow";
   return "muted";
 }
 
@@ -106,106 +93,27 @@ function normalizeRun(row: DbRow): ScraperRun {
   };
 }
 
-function normalizeCollectedOpportunity(row: DbRow): ScraperCollectedOpportunity {
-  const rawPayload = asRecord(row.raw_payload);
-  const candidate = asRecord(rawPayload.candidate);
-  const media = asRecord(rawPayload.media);
-  const images = Array.isArray(media.images)
-    ? media.images
-        .map((image) => {
-          const record = asRecord(image);
-          return {
-            url: asString(record.url),
-            sourceUrl: asString(record.sourceUrl, asString(record.url)),
-            status: asString(record.status),
-            storageKey: asString(record.storageKey),
-            alt: asString(record.alt),
-          };
-        })
-        .filter((image) => Boolean(image.url) && isLikelyPropertyImageUrl(image.sourceUrl || image.url))
-    : [];
-  const imageUrl =
-    images.find((image) => image.status === "mirrored")?.url ||
-    images.find((image) => image.status === "external")?.url ||
-    images[0]?.url ||
-    "";
-  const sourceUrl = asString(
-    rawPayload.sourceUrl,
-    asString(candidate.sourceUrl, asString(rawPayload.targetUrl))
-  );
-  const score = asNumber(row.opportunity_score, 0);
-  const riskScore = asNumber(row.risk_score, 0);
-
-  return {
-    id: asString(row.id),
-    code: asString(row.code, asString(row.id)),
-    title: asString(row.title, "Imovel coletado"),
-    city: asString(row.city),
-    state: asString(row.state),
-    propertyType: asString(row.property_type, "Imovel"),
-    sourceName: asString(row.source_name, asString(rawPayload.targetName, "Fonte")),
-    sourceUrl,
-    stage: asString(row.stage, "Entrada"),
-    aiStatus: asString(row.ai_status, "Fila IA"),
-    legalStatus: asString(row.legal_status, "Pendente"),
-    initialBid: asNumber(row.initial_bid),
-    appraisalValue: asNumber(row.appraisal_value),
-    discountPct: asNumber(row.discount_pct),
-    opportunityScore: score,
-    riskScore,
-    auctionDate: asString(row.auction_date),
-    createdAt: asString(row.created_at),
-    updatedAt: asString(row.updated_at),
-    imageUrl,
-    images,
-    tone: toneForOpportunity(score, riskScore),
-  };
-}
-
-function isScraperOpportunity(row: DbRow) {
-  const rawPayload = asRecord(row.raw_payload);
-  return (
-    asString(row.owner_name).toLowerCase().includes("renata") ||
-    asString(rawPayload.collectionMode) === "scraper_target" ||
-    Boolean(asString(rawPayload.targetCode))
-  );
-}
-
 export async function getScraperDashboardData(): Promise<DataResult<ScraperDashboardData>> {
   const empty: ScraperDashboardData = {
     targets: [],
     recentRuns: [],
-    collectedOpportunities: [],
     metrics: { totalTargets: 0, enabledTargets: 0, totalRuns: 0, itemsIngested: 0, failedTargets: 0 },
   };
 
   const supabase = getSupabaseAdminClient();
   if (!supabase) return { data: empty, source: "mock", reason: mockReason };
 
-  const [targetsResult, runsResult, opportunitiesResult] = await Promise.all([
+  const [targetsResult, runsResult] = await Promise.all([
     supabase.from("scraper_targets").select("*").order("priority", { ascending: false }),
     supabase
       .from("scraper_runs")
       .select("*, scraper_targets(name)")
       .order("created_at", { ascending: false })
       .limit(50),
-    supabase
-      .from("auction_opportunities")
-      .select(
-        "id, code, title, property_type, city, state, source_name, initial_bid, appraisal_value, discount_pct, opportunity_score, risk_score, ai_status, legal_status, stage, auction_date, owner_name, raw_payload, created_at, updated_at"
-      )
-      .order("updated_at", { ascending: false })
-      .limit(80),
   ]);
 
   const targets = targetsResult.error ? [] : ((targetsResult.data || []) as DbRow[]).map(normalizeTarget);
   const recentRuns = runsResult.error ? [] : ((runsResult.data || []) as DbRow[]).map(normalizeRun);
-  const collectedOpportunities = opportunitiesResult.error
-    ? []
-    : ((opportunitiesResult.data || []) as DbRow[])
-        .filter(isScraperOpportunity)
-        .slice(0, 12)
-        .map(normalizeCollectedOpportunity);
 
   const metrics = {
     totalTargets: targets.length,
@@ -216,7 +124,7 @@ export async function getScraperDashboardData(): Promise<DataResult<ScraperDashb
   };
 
   return {
-    data: { targets, recentRuns, collectedOpportunities, metrics },
+    data: { targets, recentRuns, metrics },
     source: targets.length > 0 ? "supabase" : "mock",
     reason: targets.length > 0 ? undefined : "Tabela scraper_targets sem registros. Execute as migrations.",
   };
