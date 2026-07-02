@@ -15,6 +15,8 @@ import { mirrorRemoteImagesToR2 } from "@/lib/storage/r2";
 import { isLikelyExactPropertySourceUrl, isLikelyPropertyImageUrl } from "./quality";
 import type { ScraperCandidate, ScraperResult, ScraperTarget } from "./types";
 
+const DEFAULT_SCRAPER_CRON_MAX_TARGETS = 12;
+
 function normalizeCode(value: string) {
   return value
     .normalize("NFD")
@@ -95,6 +97,25 @@ function sourceUrlFromRawPayload(rawPayload: Record<string, unknown>) {
     rawPayload.sourceUrl,
     asString(candidate.sourceUrl, asString(rawPayload.targetUrl))
   );
+}
+
+function targetLastScrapedMs(target: ScraperTarget) {
+  if (!target.lastScrapedAt) return 0;
+  const ms = Date.parse(target.lastScrapedAt);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function sortTargetsForCron(targets: ScraperTarget[]) {
+  return [...targets].sort((a, b) => {
+    const aBlocked = !a.enabled || a.consecutiveErrors >= a.maxRetries;
+    const bBlocked = !b.enabled || b.consecutiveErrors >= b.maxRetries;
+    if (aBlocked !== bBlocked) return aBlocked ? 1 : -1;
+
+    const lastDiff = targetLastScrapedMs(a) - targetLastScrapedMs(b);
+    if (lastDiff !== 0) return lastDiff;
+
+    return b.priority - a.priority;
+  });
 }
 
 export async function backfillOpportunityImages(options: {
@@ -419,10 +440,16 @@ export async function runScraperCron(options: { maxTargets?: number } = {}): Pro
   const failed: string[] = [];
   const skipped: string[] = [];
   const configuredMaxTargets = Number(process.env.SCRAPER_CRON_MAX_TARGETS);
-  const maxTargets = Math.max(1, options.maxTargets || (Number.isFinite(configuredMaxTargets) && configuredMaxTargets > 0 ? configuredMaxTargets : 4));
+  const maxTargets = Math.max(
+    1,
+    options.maxTargets ||
+      (Number.isFinite(configuredMaxTargets) && configuredMaxTargets > 0
+        ? configuredMaxTargets
+        : DEFAULT_SCRAPER_CRON_MAX_TARGETS)
+  );
   let quotaBlocked = false;
 
-  for (const target of targetsResult.data) {
+  for (const target of sortTargetsForCron(targetsResult.data)) {
     if (quotaBlocked) {
       skipped.push(target.targetCode);
       continue;

@@ -6,6 +6,7 @@ import {
   updateScraperTargetRecord,
   clearScraperTargetErrors,
   deleteScraperTargetRecord,
+  seedRecommendedScraperTargets,
   runScraperForTarget,
   backfillOpportunityImages,
 } from "@/lib/scraper";
@@ -84,6 +85,11 @@ export async function POST(request: Request) {
 
   if (action === "clear_errors") {
     const result = await clearScraperTargetErrors(body.targetCode);
+    return NextResponse.json(result);
+  }
+
+  if (action === "seed_recommended_sources") {
+    const result = await seedRecommendedScraperTargets();
     return NextResponse.json(result);
   }
 

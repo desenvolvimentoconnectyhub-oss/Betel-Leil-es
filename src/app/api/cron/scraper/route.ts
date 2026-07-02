@@ -6,10 +6,12 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
+const DEFAULT_CRON_TARGET_LIMIT = 12;
+
 function parseLimit(request: Request) {
   const url = new URL(request.url);
-  const rawLimit = Number(url.searchParams.get("limit") || process.env.SCRAPER_CRON_MAX_TARGETS || 4);
-  if (!Number.isFinite(rawLimit)) return 4;
+  const rawLimit = Number(url.searchParams.get("limit") || process.env.SCRAPER_CRON_MAX_TARGETS || DEFAULT_CRON_TARGET_LIMIT);
+  if (!Number.isFinite(rawLimit)) return DEFAULT_CRON_TARGET_LIMIT;
   return Math.max(1, Math.min(Math.trunc(rawLimit), 14));
 }
 

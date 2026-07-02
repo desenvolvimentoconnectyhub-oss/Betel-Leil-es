@@ -9,6 +9,7 @@ import type {
   ScraperDashboardData,
   ScraperRunStatus,
 } from "./types";
+import { RECOMMENDED_SCRAPER_SOURCES } from "./source-catalog";
 
 type DbRow = Record<string, unknown>;
 
@@ -202,6 +203,74 @@ export async function createScraperTargetRecord(
 
   if (error) return { ok: false, error: error.message };
   return { ok: true, data: { targetCode: input.targetCode } };
+}
+
+export async function seedRecommendedScraperTargets(): Promise<
+  MutationResult<{
+    created: number;
+    existing: number;
+    sources: Array<{ targetCode: string; name: string }>;
+  }>
+> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return { ok: false, error: "Supabase admin nao configurado." };
+
+  const codes = RECOMMENDED_SCRAPER_SOURCES.map((source) => source.targetCode);
+  const existingResult = await supabase
+    .from("scraper_targets")
+    .select("target_code")
+    .in("target_code", codes);
+
+  if (existingResult.error) return { ok: false, error: existingResult.error.message };
+
+  const existingCodes = new Set(((existingResult.data || []) as DbRow[]).map((row) => asString(row.target_code)));
+  const missing = RECOMMENDED_SCRAPER_SOURCES.filter((source) => !existingCodes.has(source.targetCode));
+
+  if (missing.length === 0) {
+    return {
+      ok: true,
+      data: {
+        created: 0,
+        existing: existingCodes.size,
+        sources: [],
+      },
+    };
+  }
+
+  const rows = missing.map((source) => ({
+    target_code: source.targetCode,
+    name: source.name,
+    url: source.url,
+    target_type: source.targetType,
+    coverage: source.coverage,
+    scrape_strategy: source.scrapeStrategy,
+    selectors: {},
+    schedule_cron: "0 */6 * * *",
+    enabled: true,
+    priority: source.priority,
+    max_pages: source.maxPages,
+    rate_limit_ms: source.rateLimitMs,
+    notes: source.notes,
+  }));
+
+  const { data, error } = await supabase
+    .from("scraper_targets")
+    .insert(rows)
+    .select("target_code, name");
+
+  if (error) return { ok: false, error: error.message };
+
+  return {
+    ok: true,
+    data: {
+      created: (data || []).length,
+      existing: existingCodes.size,
+      sources: ((data || []) as DbRow[]).map((row) => ({
+        targetCode: asString(row.target_code),
+        name: asString(row.name),
+      })),
+    },
+  };
 }
 
 export async function toggleScraperTargetRecord(

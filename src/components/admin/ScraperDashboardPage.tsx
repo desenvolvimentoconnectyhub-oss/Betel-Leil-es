@@ -72,6 +72,68 @@ function formatRelative(iso: string) {
   }
 }
 
+function formatLocalRunTime(iso: string) {
+  if (!iso) return "Sem registro";
+  try {
+    return new Intl.DateTimeFormat("pt-BR", {
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(iso));
+  } catch {
+    return iso;
+  }
+}
+
+const RUN_GROUP_WINDOW_MS = 10 * 60 * 1000;
+
+type LatestRunSummary = {
+  label: string;
+  checked: number;
+  completed: number;
+  failed: number;
+  found: number;
+  ingested: number;
+  skippedCandidates: number;
+  blockedTargets: number;
+  pausedTargets: number;
+  noNewItems: boolean;
+};
+
+function buildLatestRunSummary(runs: ScraperRun[], targets: ScraperTarget[]): LatestRunSummary | null {
+  const latest = runs[0];
+  if (!latest) return null;
+
+  const latestMs = Date.parse(latest.createdAt);
+  if (!Number.isFinite(latestMs)) return null;
+
+  const batch = runs.filter((run) => {
+    const runMs = Date.parse(run.createdAt);
+    return Number.isFinite(runMs) && Math.abs(latestMs - runMs) <= RUN_GROUP_WINDOW_MS;
+  });
+  const completed = batch.filter((run) => run.status === "completed" || run.status === "partial").length;
+  const failed = batch.filter((run) => run.status === "failed").length;
+  const found = batch.reduce((sum, run) => sum + run.itemsFound, 0);
+  const ingested = batch.reduce((sum, run) => sum + run.itemsIngested, 0);
+  const skippedCandidates = batch.reduce((sum, run) => sum + run.itemsSkipped, 0);
+  const blockedTargets = targets.filter((target) => target.enabled && target.consecutiveErrors >= target.maxRetries).length;
+  const pausedTargets = targets.filter((target) => !target.enabled).length;
+
+  return {
+    label: formatLocalRunTime(latest.createdAt),
+    checked: batch.length,
+    completed,
+    failed,
+    found,
+    ingested,
+    skippedCandidates,
+    blockedTargets,
+    pausedTargets,
+    noNewItems: completed > 0 && failed === 0 && found === 0 && ingested === 0,
+  };
+}
+
 const inputClass =
   "h-9 w-full rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.04)] px-3 text-sm text-white placeholder:text-[var(--admin-muted)] outline-none transition focus:border-[var(--admin-cyan)]";
 
@@ -301,6 +363,7 @@ export function ScraperDashboardPage({
   const [togglingCode, setTogglingCode] = useState<string | null>(null);
   const [deletingCode, setDeletingCode] = useState<string | null>(null);
   const [clearingErrors, setClearingErrors] = useState(false);
+  const [addingSources, setAddingSources] = useState(false);
   const [successMsg, setSuccessMsg] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
   const [viewMode, setViewMode] = useState<"cards" | "list">("cards");
@@ -346,6 +409,10 @@ export function ScraperDashboardPage({
 
   const totalIngested = useMemo(() => recentRuns.reduce((s, r) => s + r.itemsIngested, 0), [recentRuns]);
   const totalFound = useMemo(() => recentRuns.reduce((s, r) => s + r.itemsFound, 0), [recentRuns]);
+  const latestRunSummary = useMemo(
+    () => buildLatestRunSummary(recentRuns, targets),
+    [recentRuns, targets]
+  );
 
   async function refreshData() {
     try {
@@ -468,6 +535,34 @@ export function ScraperDashboardPage({
       showError("Erro de conexao.");
     }
     setClearingErrors(false);
+  }
+
+  async function handleSeedRecommendedSources() {
+    setAddingSources(true);
+    try {
+      const res = await fetch("/api/admin/scraper", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "seed_recommended_sources" }),
+      });
+      const result = await res.json();
+
+      if (result.ok) {
+        const created = Number(result.data?.created || 0);
+        const existing = Number(result.data?.existing || 0);
+        showSuccess(
+          created > 0
+            ? `${created} nova(s) fonte(s) recomendada(s) adicionada(s).`
+            : `Fontes recomendadas ja estavam cadastradas (${existing}).`
+        );
+        await refreshData();
+      } else {
+        showError(result.error || "Erro ao adicionar fontes.");
+      }
+    } catch {
+      showError("Erro de conexao.");
+    }
+    setAddingSources(false);
   }
 
   return (
@@ -689,6 +784,16 @@ export function ScraperDashboardPage({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
+                  onClick={handleSeedRecommendedSources}
+                  disabled={addingSources}
+                  className="flex items-center gap-1.5 rounded-md border border-[rgba(34,197,94,0.24)] bg-[rgba(34,197,94,0.08)] px-2 py-1 text-[10px] font-semibold text-[var(--admin-green)] transition hover:bg-[rgba(34,197,94,0.14)] disabled:opacity-50"
+                  title="Adicionar fontes recomendadas que ainda nao existem"
+                >
+                  {addingSources ? <Loader2 size={10} className="animate-spin" /> : <Plus size={10} />}
+                  Recomendadas
+                </button>
+                <button
+                  type="button"
                   onClick={() => setViewMode(viewMode === "cards" ? "list" : "cards")}
                   className="rounded-md p-1.5 text-[var(--admin-muted)] hover:text-white transition"
                   title={viewMode === "cards" ? "Modo lista" : "Modo cards"}
@@ -752,6 +857,8 @@ export function ScraperDashboardPage({
 
         {/* Sidebar */}
         <div className="flex flex-col gap-6">
+          <LatestRunSummaryCard summary={latestRunSummary} />
+
           {/* Agenda de Coleta — admin configura dias e horarios */}
           <ScheduleEditor />
 
@@ -789,6 +896,70 @@ export function ScraperDashboardPage({
 }
 
 /* ══════════════════ Sub-components ══════════════════ */
+
+function LatestRunSummaryCard({ summary }: { summary: LatestRunSummary | null }) {
+  return (
+    <DashboardCard title="Ultima Rodada" eyebrow="cron">
+      {!summary ? (
+        <p className="py-4 text-center text-xs italic text-[var(--admin-muted)]">
+          Nenhuma rodada registrada ainda.
+        </p>
+      ) : (
+        <div className="space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--admin-muted)]">
+                Executada em
+              </p>
+              <p className="font-mono text-sm font-bold text-white">{summary.label}</p>
+            </div>
+            <span
+              className={cn(
+                "rounded-full border px-2 py-1 text-[10px] font-semibold",
+                summary.failed > 0
+                  ? "border-[rgba(234,179,8,0.3)] bg-[rgba(234,179,8,0.08)] text-[var(--admin-yellow)]"
+                  : "border-[rgba(34,197,94,0.3)] bg-[rgba(34,197,94,0.08)] text-[var(--admin-green)]"
+              )}
+            >
+              {summary.failed > 0 ? "Com alerta" : "Executada"}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-3 gap-2 border-y border-[var(--admin-border)] py-3">
+            <div>
+              <p className="font-mono text-lg font-bold text-white">{summary.checked}</p>
+              <p className="text-[10px] text-[var(--admin-muted)]">fontes</p>
+            </div>
+            <div>
+              <p className="font-mono text-lg font-bold text-[var(--admin-cyan)]">{summary.found}</p>
+              <p className="text-[10px] text-[var(--admin-muted)]">encontrados</p>
+            </div>
+            <div>
+              <p className="font-mono text-lg font-bold text-[var(--admin-green)]">{summary.ingested}</p>
+              <p className="text-[10px] text-[var(--admin-muted)]">gravados</p>
+            </div>
+          </div>
+
+          {summary.noNewItems ? (
+            <p className="rounded-lg border border-[rgba(0,243,255,0.18)] bg-[rgba(0,243,255,0.05)] px-3 py-2 text-[10px] font-semibold text-[var(--admin-cyan)]">
+              Rodou sem erro, mas nao encontrou imoveis novos nesta rodada.
+            </p>
+          ) : (
+            <p className="text-[10px] text-[var(--admin-muted)]">
+              {summary.completed} sucesso(s), {summary.failed} falha(s), {summary.skippedCandidates} candidato(s) descartado(s).
+            </p>
+          )}
+
+          {(summary.blockedTargets > 0 || summary.pausedTargets > 0) && (
+            <p className="text-[10px] text-[var(--admin-muted)]">
+              {summary.blockedTargets} fonte(s) bloqueada(s) por limite de erro. {summary.pausedTargets} pausada(s).
+            </p>
+          )}
+        </div>
+      )}
+    </DashboardCard>
+  );
+}
 
 function KpiCard({ icon, label, value, sub, color }: { icon: React.ReactNode; label: string; value: number; sub: string; color: string }) {
   return (
@@ -1268,6 +1439,7 @@ function RunCard({ run }: { run: ScraperRun }) {
     queued: { icon: <Clock size={12} />, color: "var(--admin-muted)", label: "Na fila" },
   };
   const cfg = statusConfig[run.status] || statusConfig["queued"];
+  const zeroResult = (run.status === "completed" || run.status === "partial") && run.itemsFound === 0 && run.itemsIngested === 0;
 
   return (
     <div className="rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.02)] p-3">
@@ -1278,12 +1450,17 @@ function RunCard({ run }: { run: ScraperRun }) {
         </div>
         <span className="text-[10px] text-[var(--admin-muted)]">{formatRelative(run.createdAt)}</span>
       </div>
-      {(run.itemsFound > 0 || run.itemsIngested > 0) && (
-        <div className="mt-2 flex gap-3 text-[10px]">
-          <span className="text-[var(--admin-cyan)]">{run.itemsFound} encontrados</span>
-          <span className="text-[var(--admin-green)]">{run.itemsIngested} ingeridos</span>
-          {run.pagesScraped > 0 && <span className="text-[var(--admin-muted)]">{run.pagesScraped} pag</span>}
-        </div>
+      <div className="mt-2 flex flex-wrap gap-3 text-[10px]">
+        <span style={{ color: cfg.color }}>{cfg.label}</span>
+        <span className="text-[var(--admin-cyan)]">{run.itemsFound} encontrados</span>
+        <span className="text-[var(--admin-green)]">{run.itemsIngested} gravados</span>
+        {run.itemsSkipped > 0 && <span className="text-[var(--admin-yellow)]">{run.itemsSkipped} descartados</span>}
+        {run.pagesScraped > 0 && <span className="text-[var(--admin-muted)]">{run.pagesScraped} pag</span>}
+      </div>
+      {zeroResult && (
+        <p className="mt-1 text-[10px] text-[var(--admin-muted)]">
+          Coleta executada sem imoveis novos.
+        </p>
       )}
       {run.errorMessage && (
         <p className="mt-1 text-[10px] text-[var(--admin-red)] truncate">{run.errorMessage}</p>
