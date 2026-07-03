@@ -156,7 +156,8 @@ function booleanConfigFrom(keys: string[], appConfig: Map<string, string>) {
 }
 
 function isConnectyHubApiKey(value: string) {
-  return /^ch_(live|test)_[A-Za-z0-9_-]{20,}$/.test(cleanString(value));
+  const token = cleanString(value);
+  return token.length >= 20 && !/\s/.test(token);
 }
 
 const willianConfigKeys = [
@@ -835,6 +836,24 @@ function makeWhatsappAgentKey(agentName: string) {
   return `whatsapp-${slugifyAgentName(agentName) || Date.now().toString(36)}`;
 }
 
+async function makeUniqueWhatsappAgentKey(agentName: string) {
+  const baseKey = makeWhatsappAgentKey(agentName);
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return baseKey;
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const candidate = attempt === 0 ? baseKey : `${baseKey}-${Date.now().toString(36)}-${attempt}`;
+    const { data } = await supabase
+      .from("ai_agents")
+      .select("agent_key")
+      .eq("agent_key", candidate)
+      .maybeSingle();
+    if (!data) return candidate;
+  }
+
+  return `${baseKey}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
 function makeWhatsappInstanceName(agentKey: string) {
   return `betel-${agentKey}`;
 }
@@ -874,7 +893,7 @@ async function ensureWhatsappAgentRecord(input: { agentKey: string; agentName: s
       agent_key: input.agentKey,
       name: input.agentName,
       role: `Agente WhatsApp da Betel para atendimento e distribuicao comercial.`,
-      status: "planned",
+      status: "draft",
       prompt_name: promptName,
       prompt_version: "v0.1",
       system_prompt: null,
@@ -894,6 +913,30 @@ async function ensureWhatsappAgentRecord(input: { agentKey: string; agentName: s
   );
 
   if (error) throw new Error(error.message);
+}
+
+export async function createLocalConnectyHubWhatsappAgent(input: { agentName: string; companyName?: string; sector?: string }) {
+  const agentName = cleanString(input.agentName);
+  if (!agentName) throw new Error("Informe o nome do novo agente WhatsApp.");
+
+  const agentKey = await makeUniqueWhatsappAgentKey(agentName);
+  await ensureWhatsappAgentRecord({
+    agentKey,
+    agentName,
+    companyName: input.companyName,
+    sector: input.sector,
+  });
+
+  return {
+    createdAgent: {
+      agentKey,
+      agentName,
+      companyName: cleanString(input.companyName, "Betel Leiloes"),
+      sector: cleanString(input.sector, "Atendimento WhatsApp"),
+      status: "draft",
+      connected: false,
+    },
+  };
 }
 
 function whatsappInstanceSummaryFromRow(row: Record<string, unknown>): WhatsAppAgentInstanceSummary {
@@ -936,7 +979,8 @@ async function listWhatsappAgentInstances(options: { checkRemote?: boolean } = {
   if (error) return [] as WhatsAppAgentInstanceSummary[];
 
   const rows = ((data || []) as Array<Record<string, unknown>>).filter((row) => cleanString(row.instance_name));
-  if (!options.checkRemote) return rows.map(whatsappInstanceSummaryFromRow);
+  const localAgents = await listLocalWhatsappAgents(supabase).catch(() => [] as WhatsAppAgentInstanceSummary[]);
+  if (!options.checkRemote) return mergeWhatsappAgentSummaries(rows.map(whatsappInstanceSummaryFromRow), localAgents);
 
   const updatedRows = await Promise.all(
     rows.map(async (row) => {
@@ -998,7 +1042,63 @@ async function listWhatsappAgentInstances(options: { checkRemote?: boolean } = {
     })
   );
 
-  return updatedRows.map(whatsappInstanceSummaryFromRow);
+  return mergeWhatsappAgentSummaries(updatedRows.map(whatsappInstanceSummaryFromRow), localAgents);
+}
+
+async function listLocalWhatsappAgents(supabase: NonNullable<ReturnType<typeof getSupabaseAdminClient>>) {
+  const { data, error } = await supabase
+    .from("ai_agents")
+    .select("agent_key,name,status,metadata,updated_at")
+    .order("updated_at", { ascending: false })
+    .limit(80);
+
+  if (error) return [] as WhatsAppAgentInstanceSummary[];
+
+  return ((data || []) as Array<Record<string, unknown>>)
+    .filter((row) => {
+      const key = cleanString(row.agent_key);
+      const metadata = asRecord(row.metadata);
+      return key === WILLIAN_AGENT_KEY || cleanString(metadata.channel) === "whatsapp" || cleanString(metadata.provider) === CONNECTYHUB_PROVIDER;
+    })
+    .filter((row) => cleanString(row.status) !== "archived")
+    .map((row) => {
+      const metadata = asRecord(row.metadata);
+      const agentKey = cleanString(row.agent_key, WILLIAN_AGENT_KEY);
+      return {
+        agentKey,
+        agentName: cleanString(row.name, agentKey === WILLIAN_AGENT_KEY ? WILLIAN_AGENT_NAME : "Agente de WhatsApp"),
+        companyName: cleanString(metadata.companyName, "Betel Leiloes"),
+        sector: cleanString(metadata.sector, "Atendimento WhatsApp"),
+        instanceName: "",
+        status: cleanString(row.status, "draft"),
+        connected: false,
+        updatedAt: cleanString(row.updated_at) || undefined,
+      };
+    });
+}
+
+function mergeWhatsappAgentSummaries(
+  instanceSummaries: WhatsAppAgentInstanceSummary[],
+  localAgents: WhatsAppAgentInstanceSummary[]
+) {
+  const byAgentKey = new Map<string, WhatsAppAgentInstanceSummary>();
+
+  for (const localAgent of localAgents) byAgentKey.set(localAgent.agentKey, localAgent);
+  for (const summary of instanceSummaries) {
+    byAgentKey.set(summary.agentKey, {
+      ...byAgentKey.get(summary.agentKey),
+      ...summary,
+      agentName: summary.agentName || byAgentKey.get(summary.agentKey)?.agentName || summary.agentKey,
+      companyName: summary.companyName || byAgentKey.get(summary.agentKey)?.companyName,
+      sector: summary.sector || byAgentKey.get(summary.agentKey)?.sector,
+    });
+  }
+
+  return [...byAgentKey.values()].sort((a, b) => {
+    if (a.agentKey === WILLIAN_AGENT_KEY) return -1;
+    if (b.agentKey === WILLIAN_AGENT_KEY) return 1;
+    return (b.updatedAt || "").localeCompare(a.updatedAt || "");
+  });
 }
 
 function ensureWillianSummary(state: WillianInstanceState, summaries: WhatsAppAgentInstanceSummary[]) {
@@ -1120,7 +1220,7 @@ export async function getWillianInstanceState(options: { checkRemote?: boolean }
   const config = await getWillianConfig();
   const missing = [
     !config.apiToken ? "CONNECTYHUB_API_TOKEN" : "",
-    config.apiToken && !config.apiTokenLooksValid ? "CONNECTYHUB_API_TOKEN deve ser ch_live_..." : "",
+    config.apiToken && !config.apiTokenLooksValid ? "CONNECTYHUB_API_TOKEN parece incompleto" : "",
     !config.webhookUrl ? "CONNECTYHUB_WEBHOOK_URL" : "",
     !config.webhookSecret ? "CONNECTYHUB_WEBHOOK_SECRET" : "",
     !config.whatsappProviderReleased ? "BETEL_WHATSAPP_PROVIDER_RELEASED=true" : "",
@@ -1251,28 +1351,88 @@ export async function createWillianConnectyHubInstance(input: { instanceName?: s
   };
 }
 
-export async function createConnectyHubWhatsappAgentQrCode(input: { agentName: string; browser?: string; companyName?: string; sector?: string }) {
+async function getLocalWhatsappAgent(agentKey: string) {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return null;
+
+  const { data } = await supabase
+    .from("ai_agents")
+    .select("agent_key,name,metadata")
+    .eq("agent_key", agentKey)
+    .maybeSingle();
+
+  if (!data) return null;
+  const row = data as Record<string, unknown>;
+  const metadata = asRecord(row.metadata);
+  return {
+    agentKey: cleanString(row.agent_key, agentKey),
+    agentName: cleanString(row.name, agentKey),
+    companyName: cleanString(metadata.companyName, "Betel Leiloes"),
+    sector: cleanString(metadata.sector, "Atendimento WhatsApp"),
+  };
+}
+
+async function findPersistedWhatsappInstance(agentKey: string) {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return null;
+
+  const { data } = await supabase
+    .from("whatsapp_instances")
+    .select("instance_name, provider_instance_id")
+    .eq("provider", CONNECTYHUB_PROVIDER)
+    .eq("agent_key", agentKey)
+    .neq("status", "deleted")
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return data ? (data as Record<string, unknown>) : null;
+}
+
+export async function createConnectyHubWhatsappAgentQrCode(input: {
+  agentKey?: string;
+  agentName?: string;
+  browser?: string;
+  companyName?: string;
+  sector?: string;
+}) {
   const config = await getWillianConfig();
-  const agentName = cleanString(input.agentName);
-  if (!agentName) throw new Error("Informe o nome do novo agente WhatsApp.");
+  let agentKey = cleanString(input.agentKey);
+  let agentName = cleanString(input.agentName);
   if (!config.webhookUrl) throw new Error("Configure CONNECTYHUB_WEBHOOK_URL na manutencao antes de criar agentes WhatsApp.");
   if (!config.apiToken) throw new Error("Configure CONNECTYHUB_API_TOKEN na manutencao antes de criar agentes WhatsApp.");
 
-  const agentKey = makeWhatsappAgentKey(agentName);
+  if (!agentKey) {
+    if (!agentName) throw new Error("Informe o nome do novo agente WhatsApp.");
+    const created = await createLocalConnectyHubWhatsappAgent({
+      agentName,
+      companyName: input.companyName,
+      sector: input.sector,
+    });
+    agentKey = cleanString(created.createdAgent.agentKey);
+  }
+
+  const localAgent = await getLocalWhatsappAgent(agentKey);
+  agentName = cleanString(localAgent?.agentName, agentName || "Agente de WhatsApp");
+  if (!localAgent) {
+    await ensureWhatsappAgentRecord({
+      agentKey,
+      agentName,
+      companyName: input.companyName,
+      sector: input.sector,
+    });
+  }
+
   const instanceName = makeWhatsappInstanceName(agentKey);
-  await ensureWhatsappAgentRecord({
-    agentKey,
-    agentName,
-    companyName: input.companyName,
-    sector: input.sector,
-  });
 
   await configureWillianWebhook().catch(() => null);
 
-  const existing = await findConnectyHubInstanceByName(instanceName);
+  const persisted = await findPersistedWhatsappInstance(agentKey);
+  const persistedId = cleanString(persisted?.provider_instance_id);
+  const existing = persistedId ? null : await findConnectyHubInstanceByName(instanceName);
   const existingId = extractInstanceId(existing);
-  let instanceId = existingId;
-  let instancePayload: unknown = existing || {};
+  let instanceId = persistedId || existingId;
+  let instancePayload: unknown = existing || persisted || {};
   let createdInstance = false;
 
   if (!instanceId) {
@@ -1330,6 +1490,56 @@ export async function createConnectyHubWhatsappAgentQrCode(input: { agentName: s
     reusedInstance: Boolean(existingId),
     connection: extractConnectionInfo(connectPayload),
     connect: sanitizePayload(connectPayload),
+  };
+}
+
+export async function fetchWhatsappAgentRemoteStatus(input: { agentKey: string }) {
+  const agentKey = cleanString(input.agentKey, WILLIAN_AGENT_KEY);
+  if (agentKey === WILLIAN_AGENT_KEY) return fetchWillianRemoteStatus();
+
+  const instance = await findPersistedWhatsappInstance(agentKey);
+  const instanceId = cleanString(instance?.provider_instance_id);
+  const instanceName = cleanString(instance?.instance_name);
+  if (!instanceId || !instanceName) throw new Error("Instancia ConnectyHub nao localizada para este agente.");
+
+  const localAgent = await getLocalWhatsappAgent(agentKey);
+  const payload = await connectyhubRequest(`/instances/${encodeURIComponent(instanceId)}/status`, { method: "GET", timeoutMs: 10000 });
+  const status = normalizeStatusPayload(payload);
+  const profileImageUrl = extractProfileImageUrl(payload);
+  const displayName = extractWhatsappProfileDisplayName(payload) || extractWhatsappDisplayName(payload);
+
+  await persistConnectyHubInstance({
+    agentKey,
+    agentName: localAgent?.agentName || agentKey,
+    instanceId,
+    instanceName,
+    persistWillianConfig: false,
+    statusPayload: payload,
+  });
+
+  if (localAgent && (profileImageUrl || displayName)) {
+    const supabase = getSupabaseAdminClient();
+    const current = await getLocalWhatsappAgent(agentKey);
+    if (supabase && current) {
+      const { data } = await supabase.from("ai_agents").select("metadata").eq("agent_key", agentKey).maybeSingle();
+      const metadata = asRecord((data as Record<string, unknown> | null)?.metadata);
+      await supabase.from("ai_agents").update({
+        metadata: {
+          ...metadata,
+          whatsappProfile: {
+            ...asRecord(metadata.whatsappProfile),
+            displayName: displayName || cleanString(asRecord(metadata.whatsappProfile).displayName),
+            profileImageUrl: profileImageUrl || cleanString(asRecord(metadata.whatsappProfile).profileImageUrl),
+            syncedAt: new Date().toISOString(),
+          },
+        },
+      }).eq("agent_key", agentKey);
+    }
+  }
+
+  return {
+    payload: sanitizePayload(payload),
+    status,
   };
 }
 
@@ -1733,6 +1943,77 @@ export async function sendWillianWhatsAppReply(input: {
   const phone = normalizeWhatsAppNumber(input.number);
   const config = await getWillianConfig();
   const instanceId = config.apiToken ? await resolveConnectyHubInstanceId(config).catch(() => "") : "";
+
+  if (!config.apiToken || !instanceId || !phone || !input.text.trim()) {
+    return {
+      ok: false,
+      providerStatus: !config.apiToken
+        ? "missing_connectyhub_token"
+        : !instanceId
+          ? "missing_connectyhub_instance"
+          : !phone
+            ? "missing_recipient_phone"
+            : "missing_reply_text",
+      endpointConfigured: Boolean(config.apiToken && instanceId),
+      latencyMs: Math.max(Date.now() - startedMs, 1),
+      processedAt,
+      errorMessage: "Resposta WhatsApp incompleta para envio.",
+    };
+  }
+
+  try {
+    const payload = await connectyhubRequest("/messages/text", {
+      body: {
+        instanceId,
+        number: phone,
+        text: input.text.trim(),
+        linkPreview: true,
+        trackId: input.trackId,
+      },
+      headers: {
+        "Idempotency-Key": input.trackId,
+      },
+      timeoutMs: 15000,
+    });
+
+    return {
+      ok: true,
+      providerStatus: "connectyhub_accepted",
+      endpointConfigured: true,
+      latencyMs: Math.max(Date.now() - startedMs, 1),
+      processedAt,
+      externalDeliveryId: extractDeliveryId(payload),
+      responsePreview: preview(JSON.stringify(sanitizePayload(payload))),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      providerStatus: "connectyhub_error",
+      endpointConfigured: true,
+      latencyMs: Math.max(Date.now() - startedMs, 1),
+      processedAt,
+      errorMessage: error instanceof Error ? error.message : "Erro desconhecido na ConnectyHub.",
+    };
+  }
+}
+
+export async function sendWhatsAppAgentReply(input: {
+  agentKey: string;
+  instanceId?: string;
+  number: string;
+  text: string;
+  trackId: string;
+}): Promise<ConnectyHubDeliveryResult> {
+  if (!input.agentKey || input.agentKey === WILLIAN_AGENT_KEY) {
+    return sendWillianWhatsAppReply(input);
+  }
+
+  const startedMs = Date.now();
+  const processedAt = new Date().toISOString();
+  const phone = normalizeWhatsAppNumber(input.number);
+  const config = await getWillianConfig();
+  const persisted = input.instanceId ? null : await findPersistedWhatsappInstance(input.agentKey);
+  const instanceId = cleanString(input.instanceId || persisted?.provider_instance_id);
 
   if (!config.apiToken || !instanceId || !phone || !input.text.trim()) {
     return {

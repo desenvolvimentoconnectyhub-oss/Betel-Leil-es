@@ -22,8 +22,8 @@ export type WhatsAppAgentInstanceSummary = {
 };
 
 export type WillianInstanceState = {
-  agentKey: "multichannel-dispatch";
-  agentName: "Willian";
+  agentKey: string;
+  agentName: string;
   baseUrl: string;
   baseUrlSource: "env" | "app_config" | "default" | "missing";
   adminTokenConfigured: boolean;
@@ -259,8 +259,9 @@ export type WillianMemoryConfig = {
 };
 
 export type WillianAgentConfig = {
-  agentKey: "multichannel-dispatch";
-  agentName: "Willian";
+  agentKey: string;
+  agentName: string;
+  roleTitle: string;
   companyName: string;
   status: "draft" | "saved" | "needs_review";
   updatedAt: string;
@@ -275,6 +276,7 @@ export type WillianAgentConfig = {
 export const DEFAULT_WILLIAN_AGENT_CONFIG: WillianAgentConfig = {
   agentKey: "multichannel-dispatch",
   agentName: "Willian",
+  roleTitle: "Agente de WhatsApp",
   companyName: "Betel Leiloes",
   status: "draft",
   updatedAt: "",

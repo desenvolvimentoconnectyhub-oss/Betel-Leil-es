@@ -2,6 +2,7 @@ import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 import {
   configureWillianWebhook,
+  createLocalConnectyHubWhatsappAgent,
   createConnectyHubWhatsappAgentQrCode,
   connectWillianConnectyHubInstance,
   createWillianConnectyHubInstance,
@@ -10,11 +11,13 @@ import {
   deleteWillianConnectyHubInstance,
   disconnectWillianConnectyHubInstance,
   fetchWillianConnectyHubDataOverview,
+  fetchWhatsappAgentRemoteStatus,
   fetchWillianRemoteStatus,
   fetchWillianWebhookDeliveries,
   getWillianInstanceState,
   resetWillianConnectyHubInstance,
   testWillianWebhookDelivery,
+  WILLIAN_AGENT_KEY,
 } from "@/lib/communication/connectyhub-client";
 
 export const dynamic = "force-dynamic";
@@ -106,6 +109,39 @@ async function generateWillianQrCode(input: { browser?: string; instanceName?: s
   };
 }
 
+async function generateWhatsappAgentQrCode(input: { agentKey?: string; agentName?: string; browser?: string; companyName?: string; sector?: string }) {
+  const agentKey = cleanString(input.agentKey);
+  if (!agentKey || agentKey === WILLIAN_AGENT_KEY) return generateWillianQrCode({ browser: input.browser });
+
+  const steps: Record<string, unknown> = {};
+  try {
+    steps.configureWebhookBeforeConnect = await configureWillianWebhook();
+  } catch (error) {
+    steps.configureWebhookWarning =
+      error instanceof Error ? error.message : "Webhook nao configurado automaticamente.";
+  }
+
+  const result = await createConnectyHubWhatsappAgentQrCode({
+    agentKey,
+    agentName: cleanString(input.agentName),
+    browser: cleanString(input.browser, "auto"),
+    companyName: cleanString(input.companyName),
+    sector: cleanString(input.sector),
+  });
+
+  try {
+    steps.status = await fetchWhatsappAgentRemoteStatus({ agentKey });
+  } catch (error) {
+    steps.statusWarning = error instanceof Error ? error.message : "Status remoto ainda nao disponivel.";
+  }
+
+  return {
+    ...steps,
+    ...result,
+    webhookConfigured: Boolean(steps.configureWebhookBeforeConnect),
+  };
+}
+
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const checkRemote = ["1", "true", "sim"].includes((url.searchParams.get("remote") || "").toLowerCase());
@@ -133,16 +169,17 @@ export async function POST(request: Request) {
         instanceName: cleanString(body.instanceName),
       });
     } else if (action === "createWhatsappAgent") {
-      result = await createConnectyHubWhatsappAgentQrCode({
+      result = await createLocalConnectyHubWhatsappAgent({
         agentName: cleanString(body.agentName),
-        browser: cleanString(body.browser, "auto"),
         companyName: cleanString(body.companyName),
         sector: cleanString(body.sector),
       });
     } else if (action === "generateQr") {
-      result = await generateWillianQrCode({
-        instanceName: cleanString(body.instanceName),
-        phone: cleanString(body.phone),
+      result = await generateWhatsappAgentQrCode({
+        agentKey: cleanString(body.agentKey),
+        agentName: cleanString(body.agentName),
+        companyName: cleanString(body.companyName),
+        sector: cleanString(body.sector),
         browser: cleanString(body.browser, "auto"),
       });
     } else if (action === "connect") {
@@ -151,7 +188,8 @@ export async function POST(request: Request) {
         browser: cleanString(body.browser, "auto"),
       });
     } else if (action === "status") {
-      result = await fetchWillianRemoteStatus();
+      const agentKey = cleanString(body.agentKey);
+      result = agentKey ? await fetchWhatsappAgentRemoteStatus({ agentKey }) : await fetchWillianRemoteStatus();
     } else if (action === "configureWebhook") {
       result = await configureWillianWebhook();
     } else if (action === "testWebhook") {

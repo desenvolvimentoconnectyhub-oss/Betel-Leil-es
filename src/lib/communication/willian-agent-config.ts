@@ -7,6 +7,12 @@ import {
 } from "./willian-types";
 
 const WILLIAN_AGENT_CONFIG_KEY = "BETEL_WILLIAN_AGENT_CONFIG";
+const WILLIAN_AGENT_KEY = "multichannel-dispatch";
+const WILLIAN_AGENT_NAME = "Willian";
+
+function whatsappAgentConfigKey(agentKey: string) {
+  return `BETEL_WHATSAPP_AGENT_CONFIG_${agentKey.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`;
+}
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
@@ -47,10 +53,13 @@ export function normalizeWillianAgentConfig(input: unknown): WillianAgentConfig 
   const memory = asRecord(source.memory);
   const defaults = DEFAULT_WILLIAN_AGENT_CONFIG;
   const quoteReplyMode = enumField(behavior.quoteReplyMode, defaults.behavior.quoteReplyMode, ["off", "smart", "always"]);
+  const agentKey = stringField(source.agentKey, defaults.agentKey);
+  const agentName = stringField(source.agentName || source.name, agentKey === defaults.agentKey ? defaults.agentName : "Agente de WhatsApp");
 
   return {
-    agentKey: "multichannel-dispatch",
-    agentName: "Willian",
+    agentKey,
+    agentName,
+    roleTitle: stringField(source.roleTitle || source.role, defaults.roleTitle),
     companyName: stringField(source.companyName, defaults.companyName),
     status: enumField(source.status, "saved", ["draft", "saved", "needs_review"]),
     updatedAt: stringField(source.updatedAt, new Date().toISOString()),
@@ -323,62 +332,153 @@ export function normalizeWillianAgentConfig(input: unknown): WillianAgentConfig 
   };
 }
 
-export async function getWillianAgentConfig(): Promise<WillianAgentConfig> {
+export async function getWhatsAppAgentConfig(agentKey = WILLIAN_AGENT_KEY): Promise<WillianAgentConfig> {
   const supabase = getSupabaseAdminClient();
-  if (!supabase) return DEFAULT_WILLIAN_AGENT_CONFIG;
+  const targetAgentKey = stringField(agentKey, WILLIAN_AGENT_KEY);
+  const fallback = normalizeWillianAgentConfig({
+    ...DEFAULT_WILLIAN_AGENT_CONFIG,
+    agentKey: targetAgentKey,
+    agentName: targetAgentKey === WILLIAN_AGENT_KEY ? WILLIAN_AGENT_NAME : "Agente de WhatsApp",
+  });
+  if (!supabase) return fallback;
+
+  const { data: agentRow } = await supabase
+    .from("ai_agents")
+    .select("agent_key,name,role,status,system_prompt,metadata,whatsapp_behavior_config,lead_qualification_config")
+    .eq("agent_key", targetAgentKey)
+    .maybeSingle();
+
+  if (agentRow) {
+    const row = agentRow as Record<string, unknown>;
+    const metadata = asRecord(row.metadata);
+    const savedConfig =
+      asRecord(metadata.whatsappAgentConfig).agentKey
+        ? asRecord(metadata.whatsappAgentConfig)
+        : asRecord(metadata.whatsapp_agent_config);
+    const normalized = normalizeWillianAgentConfig({
+      ...fallback,
+      ...savedConfig,
+      agentKey: targetAgentKey,
+      agentName: stringField(row.name, fallback.agentName),
+      roleTitle: stringField(row.role, stringField(metadata.roleTitle, fallback.roleTitle)),
+      companyName: stringField(metadata.companyName, fallback.companyName),
+      status: "saved",
+      behavior: {
+        ...fallback.behavior,
+        ...asRecord(row.whatsapp_behavior_config),
+        ...asRecord(savedConfig.behavior),
+      },
+      qualification: {
+        ...fallback.qualification,
+        ...asRecord(row.lead_qualification_config),
+        ...asRecord(savedConfig.qualification),
+      },
+      prompt: {
+        ...fallback.prompt,
+        ...asRecord(savedConfig.prompt),
+        agentPrompt: stringField(
+          asRecord(savedConfig.prompt).agentPrompt,
+          stringField(row.system_prompt, fallback.prompt.agentPrompt)
+        ),
+      },
+    });
+    return normalized;
+  }
 
   const { data } = await supabase
     .from("app_config")
     .select("value")
-    .eq("key", WILLIAN_AGENT_CONFIG_KEY)
+    .in("key", targetAgentKey === WILLIAN_AGENT_KEY ? [WILLIAN_AGENT_CONFIG_KEY] : [whatsappAgentConfigKey(targetAgentKey)])
     .maybeSingle();
 
-  if (!data?.value || typeof data.value !== "string") return DEFAULT_WILLIAN_AGENT_CONFIG;
+  if (!data?.value || typeof data.value !== "string") return fallback;
 
   try {
-    return normalizeWillianAgentConfig(JSON.parse(data.value));
+    return normalizeWillianAgentConfig({
+      ...fallback,
+      ...JSON.parse(data.value),
+      agentKey: targetAgentKey,
+    });
   } catch {
-    return DEFAULT_WILLIAN_AGENT_CONFIG;
+    return fallback;
   }
 }
 
-export async function saveWillianAgentConfig(input: unknown) {
+export async function getWillianAgentConfig(): Promise<WillianAgentConfig> {
+  return getWhatsAppAgentConfig(WILLIAN_AGENT_KEY);
+}
+
+export async function saveWhatsAppAgentConfig(input: unknown) {
   const supabase = getSupabaseAdminClient();
+  const inputRecord = asRecord(input);
+  const targetAgentKey = stringField(inputRecord.agentKey, WILLIAN_AGENT_KEY);
   if (!supabase) {
     return {
       ok: false,
       error: "Supabase admin nao configurado. Salvamento real exige service role.",
-      config: normalizeWillianAgentConfig(input),
+      config: normalizeWillianAgentConfig({ ...inputRecord, agentKey: targetAgentKey }),
     };
   }
 
   const config = normalizeWillianAgentConfig({
-    ...asRecord(input),
+    ...inputRecord,
+    agentKey: targetAgentKey,
     status: "saved",
     updatedAt: new Date().toISOString(),
   });
 
-  const { error } = await supabase.from("app_config").upsert(
+  const configKey = targetAgentKey === WILLIAN_AGENT_KEY ? WILLIAN_AGENT_CONFIG_KEY : whatsappAgentConfigKey(targetAgentKey);
+  const { error: configError } = await supabase.from("app_config").upsert(
     {
-      key: WILLIAN_AGENT_CONFIG_KEY,
+      key: configKey,
       value: JSON.stringify(config),
-      description: "Configuracao operacional do agente Willian para WhatsApp.",
+      description: `Configuracao operacional do agente WhatsApp ${config.agentName}.`,
       is_secret: false,
       updated_at: new Date().toISOString(),
     },
     { onConflict: "key" }
   );
 
-  if (error) return { ok: false, error: error.message, config };
+  if (configError) return { ok: false, error: configError.message, config };
 
-  await supabase
+  const { data: currentAgent } = await supabase
+    .from("ai_agents")
+    .select("metadata")
+    .eq("agent_key", targetAgentKey)
+    .maybeSingle();
+  const metadata = asRecord((currentAgent as Record<string, unknown> | null)?.metadata);
+
+  const { error: agentError } = await supabase
     .from("ai_agents")
     .update({
-      metadata: { whatsapp_agent_config: config },
+      name: config.agentName,
+      role: config.roleTitle,
+      status: config.behavior.active ? "active" : "paused",
+      system_prompt: config.prompt.agentPrompt,
+      metadata: {
+        ...metadata,
+        channel: "whatsapp",
+        companyName: config.companyName,
+        roleTitle: config.roleTitle,
+        whatsappAgentConfig: config,
+        whatsapp_agent_config: config,
+        cloneProfile: {
+          dnaManual: config.prompt.dnaManual,
+          humanizationMetric: config.prompt.humanizationMetric,
+        },
+        cloneMemory: config.prompt.cloneMemory,
+        knowledgeFiles: config.files.companyFiles,
+      },
       whatsapp_behavior_config: config.behavior,
       lead_qualification_config: config.qualification,
     })
-    .eq("agent_key", "multichannel-dispatch");
+    .eq("agent_key", targetAgentKey);
+
+  if (agentError) return { ok: false, error: agentError.message, config };
 
   return { ok: true, config };
+}
+
+export async function saveWillianAgentConfig(input: unknown) {
+  return saveWhatsAppAgentConfig(input);
 }

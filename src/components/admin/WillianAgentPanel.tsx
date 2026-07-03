@@ -324,7 +324,6 @@ export function WillianAgentPanel({
   const [selectedAgentKey, setSelectedAgentKey] = useState<string>(initialState?.agentKey || defaultWillianState.agentKey);
   const [newAgentFormOpen, setNewAgentFormOpen] = useState(false);
   const [newAgentName, setNewAgentName] = useState("");
-  const [newAgentCompany, setNewAgentCompany] = useState(initialConfig?.companyName || DEFAULT_WILLIAN_AGENT_CONFIG.companyName);
   const [newAgentSector, setNewAgentSector] = useState("Atendimento WhatsApp");
   const [pairingTarget, setPairingTarget] = useState<{ agentKey?: string; agentName: string } | null>(null);
 
@@ -450,6 +449,34 @@ export function WillianAgentPanel({
   const selectedWhatsappAgent =
     whatsappAgents.find((item) => item.agentKey === selectedAgentKey) ||
     whatsappAgents[0];
+  const selectedConfigAgentKey = selectedWhatsappAgent?.agentKey || state.agentKey;
+
+  useEffect(() => {
+    if (!selectedConfigAgentKey) return;
+    let cancelled = false;
+
+    async function loadSelectedAgentConfig() {
+      try {
+        const res = await fetch(
+          `/api/admin/agentes-ia/communication/willian-config?agentKey=${encodeURIComponent(selectedConfigAgentKey)}`,
+          { cache: "no-store", method: "GET" }
+        );
+        const result = await res.json();
+        const nextConfig = result?.data?.config as WillianAgentConfig | undefined;
+        if (!cancelled && nextConfig) setConfig(nextConfig);
+      } catch {
+        if (!cancelled) {
+          setFeedback({ type: "err", msg: "Nao foi possivel carregar as configuracoes deste agente." });
+        }
+      }
+    }
+
+    void loadSelectedAgentConfig();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedConfigAgentKey]);
 
   const readyScore = useMemo(() => {
     const checks = [
@@ -493,7 +520,13 @@ export function WillianAgentPanel({
     setFeedback(null);
     try {
       const res = await fetch("/api/admin/agentes-ia/communication/willian-config", {
-        body: JSON.stringify(config),
+        body: JSON.stringify({
+          ...config,
+          agentKey: selectedConfigAgentKey,
+          agentName: displayWhatsappAgentName(selectedWhatsappAgent),
+          companyName: selectedWhatsappAgent?.companyName || config.companyName,
+          roleTitle: selectedWhatsappAgent?.sector || "Atendimento WhatsApp",
+        }),
         headers: { "content-type": "application/json" },
         method: "POST",
       });
@@ -526,7 +559,7 @@ export function WillianAgentPanel({
 
     setLoading(action);
     setFeedback(null);
-    if (action === "connect" || action === "generateQr" || action === "createWhatsappAgent" || action === "disconnectWhatsappAgent") {
+    if (action === "connect" || action === "generateQr" || action === "disconnectWhatsappAgent") {
       setConnection(null);
       setPairingTarget(null);
     }
@@ -548,6 +581,8 @@ export function WillianAgentPanel({
         | undefined;
       if (cleanFormValue(createdAgent?.agentKey)) setSelectedAgentKey(cleanFormValue(createdAgent?.agentKey));
       const nextConnection = result?.data?.result?.connection || result?.data?.result?.connect?.connection;
+      const actionAgentKey = cleanFormValue(payload.agentKey);
+      const actionAgentName = cleanFormValue(payload.agentName);
       const hasPairing =
         Boolean(nextConnection?.qrCodeDataUrl) ||
         Boolean(nextConnection?.qrCode) ||
@@ -555,8 +590,12 @@ export function WillianAgentPanel({
       if (nextConnection) {
         setConnection(nextConnection);
         setPairingTarget({
-          agentKey: cleanFormValue(createdAgent?.agentKey) || (action === "generateQr" ? state.agentKey : undefined),
-          agentName: cleanFormValue(createdAgent?.agentName) || (action === "generateQr" ? PRIMARY_WHATSAPP_AGENT_LABEL : cleanFormValue(payload.agentName) || "Agente WhatsApp"),
+          agentKey: cleanFormValue(createdAgent?.agentKey) || actionAgentKey || selectedConfigAgentKey,
+          agentName:
+            cleanFormValue(createdAgent?.agentName) ||
+            actionAgentName ||
+            displayWhatsappAgentName(selectedWhatsappAgent) ||
+            PRIMARY_WHATSAPP_AGENT_LABEL,
         });
       }
       if (!res.ok || !result.success) {
@@ -564,9 +603,7 @@ export function WillianAgentPanel({
       } else {
         const labels: Record<string, string> = {
           create: "Instancia criada ou atualizada.",
-          createWhatsappAgent: hasPairing
-            ? "Agente criado. Escaneie o QR Code para conectar o WhatsApp."
-            : "Agente criado, mas a ConnectyHub nao retornou QR Code nesta tentativa.",
+          createWhatsappAgent: "Agente criado. Abra a aba Conexao para criar a instancia e gerar o QR Code.",
           generateQr: hasPairing
             ? "QR Code gerado. Criacao, webhook e conexao foram preparados automaticamente."
             : "Fluxo automatico executado, mas a ConnectyHub nao retornou QR Code nesta tentativa.",
@@ -580,7 +617,7 @@ export function WillianAgentPanel({
           disconnectWhatsappAgent: "WhatsApp desconectado. Gere um novo QR Code para reconectar.",
           reset: "Reset solicitado para a instancia.",
           deleteInstance: "Instancia excluida e vinculo local limpo.",
-          deleteWhatsappAgent: "Agente WhatsApp excluido.",
+          deleteWhatsappAgent: "Agente de WhatsApp excluido.",
         };
         setFeedback({ type: "ok", msg: labels[action] || "Acao concluida." });
         if (action === "disconnectWhatsappAgent") {
@@ -593,7 +630,7 @@ export function WillianAgentPanel({
           setConnection(null);
           setPairingTarget(null);
         }
-        if (action === "createWhatsappAgent" && hasPairing) {
+        if (action === "createWhatsappAgent") {
           setNewAgentName("");
           setNewAgentFormOpen(false);
         }
@@ -612,7 +649,6 @@ export function WillianAgentPanel({
 
   function cloneWhatsappAgent(agent: WhatsAppAgentInstanceSummary) {
     const baseName = displayWhatsappAgentName(agent);
-    setNewAgentCompany(agent.companyName || config.companyName);
     setNewAgentSector(agent.sector || "Atendimento WhatsApp");
     setNewAgentName(`${baseName} copia`);
     setNewAgentFormOpen(true);
@@ -635,13 +671,12 @@ export function WillianAgentPanel({
         companyName={config.companyName}
         formOpen={newAgentFormOpen}
         loading={loading}
-        newAgentCompany={newAgentCompany}
         newAgentName={newAgentName}
         newAgentSector={newAgentSector}
         onCreate={() =>
           runInstanceAction("createWhatsappAgent", {
             agentName: newAgentName,
-            companyName: newAgentCompany,
+            companyName: config.companyName,
             sector: newAgentSector,
           })
         }
@@ -650,7 +685,6 @@ export function WillianAgentPanel({
         onSelect={setSelectedAgentKey}
         selectedAgentKey={selectedWhatsappAgent?.agentKey || state.agentKey}
         setFormOpen={setNewAgentFormOpen}
-        setNewAgentCompany={setNewAgentCompany}
         setNewAgentName={setNewAgentName}
         setNewAgentSector={setNewAgentSector}
       />
@@ -769,7 +803,6 @@ function WhatsAppAgentManager({
   companyName,
   formOpen,
   loading,
-  newAgentCompany,
   newAgentName,
   newAgentSector,
   onClone,
@@ -778,7 +811,6 @@ function WhatsAppAgentManager({
   onSelect,
   selectedAgentKey,
   setFormOpen,
-  setNewAgentCompany,
   setNewAgentName,
   setNewAgentSector,
 }: {
@@ -786,7 +818,6 @@ function WhatsAppAgentManager({
   companyName: string;
   formOpen: boolean;
   loading: string | null;
-  newAgentCompany: string;
   newAgentName: string;
   newAgentSector: string;
   onClone: (agent: WhatsAppAgentInstanceSummary) => void;
@@ -795,7 +826,6 @@ function WhatsAppAgentManager({
   onSelect: (agentKey: string) => void;
   selectedAgentKey: string;
   setFormOpen: (open: boolean) => void;
-  setNewAgentCompany: (value: string) => void;
   setNewAgentName: (value: string) => void;
   setNewAgentSector: (value: string) => void;
 }) {
@@ -806,7 +836,7 @@ function WhatsAppAgentManager({
       <div className="flex items-center justify-between gap-3 border-b border-[var(--admin-border)] px-4 py-4 sm:px-5">
         <div>
           <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--admin-muted)]">Escolher / criar / clonar</p>
-          <h3 className="mt-1 text-base font-bold text-white">Agentes WhatsApp</h3>
+          <h3 className="mt-1 text-base font-bold text-white">Agentes de WhatsApp</h3>
         </div>
         <StatusPill ok label={`${agentCount} ${agentCount === 1 ? "agente" : "agentes"}`} />
       </div>
@@ -817,7 +847,7 @@ function WhatsAppAgentManager({
             const selected = agent.agentKey === selectedAgentKey;
             return (
               <div
-                key={`${agent.agentKey}-${agent.instanceName}`}
+                key={agent.agentKey}
                 className={cn(
                   "rounded-xl border p-4 transition",
                   selected
@@ -870,25 +900,15 @@ function WhatsAppAgentManager({
       {formOpen && (
         <div className="border-t border-[var(--admin-border)] p-4 sm:p-5">
           <div className="rounded-xl border border-[var(--admin-border)] bg-[rgba(255,255,255,0.025)] p-4">
-            <div className="grid gap-3 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,0.9fr)_minmax(0,0.9fr)]">
-              <label className="grid gap-1">
-                <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Empresa</span>
-                <select
-                  value={newAgentCompany}
-                  onChange={(event) => setNewAgentCompany(event.target.value)}
-                  className="h-12 rounded-lg border border-[var(--admin-border)] bg-[#050505] px-3 text-sm font-semibold text-white outline-none transition focus:border-[var(--admin-cyan)]"
-                >
-                  <option value={companyName}>{companyName}</option>
-                </select>
-              </label>
+            <div className="grid gap-3 lg:grid-cols-2">
               <Field
                 label="Nome do agente"
                 onChange={setNewAgentName}
-                placeholder="Ex: Guilherme Pilger"
+                placeholder="Ex: Atendimento Betel Sul"
                 value={newAgentName}
               />
               <Field
-                label="Setor"
+                label="Funcao / setor"
                 onChange={setNewAgentSector}
                 placeholder="Atendimento WhatsApp"
                 value={newAgentSector}
@@ -925,8 +945,8 @@ function ConnectionTab({
   selectedAgent?: WhatsAppAgentInstanceSummary;
   state: WillianInstanceState;
 }) {
-  const selectedIsWillian = !selectedAgent || selectedAgent.agentKey === state.agentKey;
-  const connected = selectedIsWillian
+  const selectedIsPrimary = !selectedAgent || selectedAgent.agentKey === state.agentKey;
+  const connected = selectedIsPrimary
     ? Boolean(state.status?.connected || state.status?.loggedIn)
     : Boolean(selectedAgent?.connected);
   const connectyHubKeyReady = state.adminTokenConfigured && state.adminTokenLooksValid;
@@ -945,6 +965,19 @@ function ConnectionTab({
   const profileImageSyncedAt = selectedAgent?.profileImageSyncedAt || state.profileImageSyncedAt;
   const hasProfileDetails = Boolean(connected && (phoneNumber || displayName || profileImageUrl));
   const setupPending = !connected && (!connectyHubKeyReady || !state.webhookUrl || !state.whatsappProviderReleased);
+  const selectedAgentKey = selectedAgent?.agentKey || state.agentKey;
+  const selectedHasInstance = Boolean(
+    selectedAgent?.providerInstanceId ||
+      selectedAgent?.instanceName ||
+      (selectedIsPrimary && state.instanceTokenConfigured)
+  );
+  const generateQrLabel = selectedHasInstance ? "Gerar QR Code" : "Criar instancia e gerar QR";
+  const agentPayload = {
+    agentKey: selectedAgentKey,
+    agentName: agentLabel,
+    companyName: selectedAgent?.companyName,
+    sector: selectedAgent?.sector,
+  };
 
   return (
     <Panel title={`Conexao de ${agentLabel}`} eyebrow="Numero / agente / status" action={<StatusPill ok={connected} label={connected ? "Online" : "Pendente"} />}>
@@ -984,43 +1017,46 @@ function ConnectionTab({
         {connected ? (
           <div className="mt-4 flex flex-wrap gap-2">
             <ActionButton
+              icon={<RefreshCw size={14} />}
+              label="Atualizar status"
+              loading={loading === "status"}
+              onClick={() => runInstanceAction("status", { agentKey: selectedAgentKey })}
+            />
+            <ActionButton
               icon={<Power size={14} />}
               label="Desconectar"
               loading={loading === "disconnectWhatsappAgent"}
               onClick={() =>
                 runInstanceAction("disconnectWhatsappAgent", {
-                  agentKey: selectedAgent?.agentKey || state.agentKey,
+                  agentKey: selectedAgentKey,
                 })
               }
               tone="danger"
             />
           </div>
         ) : (
-          <div className="mt-4">
+          <div className="mt-4 flex flex-wrap gap-2">
             <ActionButton
               disabled={!canGenerateQr}
               icon={<QrCode size={14} />}
-              label="Gerar QR Code"
-              loading={loading === (selectedIsWillian ? "generateQr" : "createWhatsappAgent")}
-              onClick={() =>
-                runInstanceAction(
-                  selectedIsWillian ? "generateQr" : "createWhatsappAgent",
-                  selectedIsWillian
-                    ? {}
-                    : {
-                        agentName: displayWhatsappAgentName(selectedAgent),
-                        companyName: selectedAgent?.companyName,
-                        sector: selectedAgent?.sector,
-                      }
-                )
-              }
+              label={generateQrLabel}
+              loading={loading === "generateQr"}
+              onClick={() => runInstanceAction("generateQr", agentPayload)}
             />
+            {selectedHasInstance && (
+              <ActionButton
+                icon={<RefreshCw size={14} />}
+                label="Atualizar status"
+                loading={loading === "status"}
+                onClick={() => runInstanceAction("status", { agentKey: selectedAgentKey })}
+              />
+            )}
           </div>
         )}
 
         {setupPending && (
           <div className="mt-4 rounded-lg border border-[rgba(234,179,8,0.28)] bg-[rgba(234,179,8,0.08)] px-3 py-2 text-xs font-semibold text-[var(--admin-yellow)]">
-            Configuracao pendente na manutencao.
+            Chave ConnectyHub, webhook ou liberacao do provedor esta pendente na manutencao.
           </div>
         )}
 
