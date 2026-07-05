@@ -15,7 +15,8 @@ import { mirrorRemoteImagesToR2 } from "@/lib/storage/r2";
 import { assessRealEstateAsset, isLikelyExactPropertySourceUrl, isLikelyPropertyImageUrl } from "./quality";
 import type { ScraperCandidate, ScraperResult, ScraperTarget } from "./types";
 
-const DEFAULT_SCRAPER_CRON_MAX_TARGETS = 12;
+const DEFAULT_SCRAPER_CRON_MAX_TARGETS = 20;
+const MAX_SCRAPER_CRON_TARGETS = 25;
 
 function normalizeCode(value: string) {
   return value
@@ -460,12 +461,15 @@ export async function runScraperCron(options: { maxTargets?: number } = {}): Pro
   const failed: string[] = [];
   const skipped: string[] = [];
   const configuredMaxTargets = Number(process.env.SCRAPER_CRON_MAX_TARGETS);
-  const maxTargets = Math.max(
-    1,
-    options.maxTargets ||
-      (Number.isFinite(configuredMaxTargets) && configuredMaxTargets > 0
-        ? configuredMaxTargets
-        : DEFAULT_SCRAPER_CRON_MAX_TARGETS)
+  const maxTargets = Math.min(
+    MAX_SCRAPER_CRON_TARGETS,
+    Math.max(
+      1,
+      options.maxTargets ||
+        (Number.isFinite(configuredMaxTargets) && configuredMaxTargets > 0
+          ? configuredMaxTargets
+          : DEFAULT_SCRAPER_CRON_MAX_TARGETS)
+    )
   );
   let quotaBlocked = false;
 
