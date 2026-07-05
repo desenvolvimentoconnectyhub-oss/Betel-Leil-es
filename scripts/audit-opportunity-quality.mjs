@@ -37,6 +37,97 @@ function normalize(value) {
     .trim();
 }
 
+const strongRealEstateSignals = [
+  ["imovel", /\bimove?is?\b/],
+  ["apartamento", /\b(?:apartamento|apto)\b/],
+  ["casa", /\b(?:casa|sobrado|condominio)\b/],
+  ["terreno", /\b(?:terreno|gleba)\b/],
+  ["lote-terreno", /\blote(?:s)?\s+(?:de\s+)?(?:terreno|terra|urbano|residencial|comercial|industrial|rural)\b/],
+  ["lote-quadra", /\blote(?:s)?\b.{0,48}\bquadra\b/],
+  ["loteamento", /\bloteamento\b/],
+  ["comercial", /\b(?:sala comercial|loja comercial|galp(?:ao|oes)|predio|edificio|barracao)\b/],
+  ["complexo-industrial", /\bcomplexo industrial\b/],
+  ["area-medida", /\barea\s+(?:de\s+)?\d+(?:[.,]\d+)?\s*(?:ha|hectare|hectares|m(?:2|\u00b2)|metros?)\b/],
+  ["rural", /\b(?:fazenda|sitio|chacara|area rural)\b/],
+  ["matricula", /\b(?:matricula|inscricao imobiliaria|unidade autonoma)\b/],
+];
+
+const weakRealEstateSignals = [
+  ["lote", /\blote(?:s)?\b/],
+  ["bem", /\bbem\b/],
+  ["edital", /\bedital\b/],
+];
+
+const nonRealEstateSignals = [
+  ["veiculo", /\b(?:veiculo|veiculos|automovel|automoveis|carro|carros|moto|motocicleta)\b/],
+  ["pesado", /\b(?:caminhao|caminhoes|onibus|trator|tratores|empilhadeira)\b/],
+  ["maquina", /\b(?:maquina|maquinas|maquinario)\b/],
+  ["equipamento", /\b(?:equipamento|equipamentos|ferramenta|ferramentas)\b/],
+  ["material", /\b(?:material|materiais|estoque|mercadoria|mercadorias|diversos)\b/],
+  ["movel", /\b(?:movel|moveis|mobiliario|eletrodomestico|eletrodomesticos)\b/],
+  ["eletronico", /\b(?:informatica|notebook|computador|celular|telefone)\b/],
+  ["sucata", /\b(?:sucata|sucatas)\b/],
+  ["joia", /\b(?:joia|joias|relogio|relogios)\b/],
+  ["embarcacao", /\b(?:embarcacao|embarcacoes|barco|aeronave)\b/],
+  ["semovente", /\b(?:gado|semovente|semoventes)\b/],
+];
+
+function compactUnknown(value, depth = 0) {
+  if (depth > 2) return "";
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
+  if (!value || typeof value !== "object") return "";
+  if (Array.isArray(value)) return value.slice(0, 20).map((item) => compactUnknown(item, depth + 1)).join(" ");
+
+  return Object.entries(value)
+    .slice(0, 50)
+    .map(([key, item]) => `${key} ${compactUnknown(item, depth + 1)}`)
+    .join(" ");
+}
+
+function matchSignals(text, signals) {
+  return signals.filter(([, pattern]) => pattern.test(text)).map(([label]) => label);
+}
+
+function uniqueSignals(signals) {
+  return Array.from(new Set(signals));
+}
+
+function assessRealEstateAsset(input) {
+  const titleText = normalize(input.title);
+  const typeText = normalize(input.propertyType);
+  const locationText = normalize([input.address, input.city, input.state].map((item) => asString(item)).filter(Boolean).join(" "));
+  const summaryText = normalize(input.summary);
+  const sourceText = normalize(input.sourceUrl);
+  const rawText = normalize(compactUnknown(input.rawData));
+  const titleLocationSummaryText = [titleText, locationText, summaryText].filter(Boolean).join(" ");
+  const primaryText = [titleLocationSummaryText, typeText].filter(Boolean).join(" ");
+  const fullText = [primaryText, sourceText, rawText].filter(Boolean).join(" ");
+
+  const strongTitleSignals = matchSignals(titleLocationSummaryText, strongRealEstateSignals);
+  const strongSignals = uniqueSignals([
+    ...strongTitleSignals,
+    ...matchSignals(typeText, strongRealEstateSignals),
+    ...matchSignals(rawText, strongRealEstateSignals),
+  ]);
+  const weakSignals = uniqueSignals(matchSignals(fullText, weakRealEstateSignals));
+  const nonPrimarySignals = matchSignals(primaryText, nonRealEstateSignals);
+  const nonTitleSignals = matchSignals(titleText, nonRealEstateSignals);
+  const nonSignals = uniqueSignals([...nonPrimarySignals, ...matchSignals(rawText, nonRealEstateSignals)]);
+  const rejected =
+    (nonTitleSignals.length > 0 && strongTitleSignals.length === 0) ||
+    (nonPrimarySignals.length > 0 && strongTitleSignals.length === 0);
+
+  return {
+    rejected,
+    reason: rejected
+      ? `bem nao imobiliario: ${uniqueSignals(nonPrimarySignals.length ? nonPrimarySignals : nonTitleSignals).join(", ")}`
+      : "",
+    strongRealEstateSignals: strongSignals,
+    weakRealEstateSignals: weakSignals,
+    nonRealEstateSignals: nonSignals,
+  };
+}
+
 const nonPropertyImageSignals = [
   "logo",
   "sprite",
@@ -182,18 +273,30 @@ function visibleStatus(row) {
 
 function assessOpportunity(row) {
   const rawPayload = asRecord(row.raw_payload);
+  const candidate = asRecord(rawPayload.candidate);
   const sourceUrl = opportunitySourceUrl(row);
   const sourceOk = isLikelyExactPropertySourceUrl(sourceUrl, asString(rawPayload.targetUrl));
   const images = opportunityImages(row.raw_payload);
   const hasValue = Number(row.initial_bid || 0) > 0 || Number(row.appraisal_value || 0) > 0;
   const alreadyDiscarded = visibleStatus(row).includes("descart");
-  const shouldDiscard = !alreadyDiscarded && (!sourceOk || !hasValue || images.length === 0);
+  const assetAssessment = assessRealEstateAsset({
+    title: row.title,
+    propertyType: row.property_type,
+    address: row.address,
+    city: row.city,
+    state: row.state,
+    summary: row.summary,
+    sourceUrl,
+    rawData: candidate,
+  });
+  const shouldDiscard = !alreadyDiscarded && (!sourceOk || !hasValue || images.length === 0 || assetAssessment.rejected);
   const reasons = [];
   if (!sourceOk) reasons.push("fonte sem link individual do imovel");
   if (!hasValue) reasons.push("sem valor informado");
   if (!images.length) reasons.push("sem foto real do imovel");
+  if (assetAssessment.rejected) reasons.push(assetAssessment.reason);
 
-  return { sourceUrl, sourceOk, hasValue, imageCount: images.length, shouldDiscard, reasons };
+  return { sourceUrl, sourceOk, hasValue, imageCount: images.length, shouldDiscard, reasons, assetAssessment };
 }
 
 function nextRawPayload(row, assessment) {
@@ -206,6 +309,10 @@ function nextRawPayload(row, assessment) {
       sourceUrlQualityCheckedAt: new Date().toISOString(),
       portfolioRejected: true,
       portfolioRejectedReasons: assessment.reasons,
+      realEstateAssetCheckedAt: new Date().toISOString(),
+      realEstateAssetRejected: assessment.assetAssessment.rejected,
+      realEstateSignals: assessment.assetAssessment.strongRealEstateSignals,
+      nonRealEstateSignals: assessment.assetAssessment.nonRealEstateSignals,
     },
   };
 }
@@ -224,7 +331,7 @@ async function main() {
 
   const { data, error } = await supabase
     .from("auction_opportunities")
-    .select("id, code, title, source_name, stage, ai_status, legal_status, initial_bid, appraisal_value, raw_payload, timeline, updated_at")
+    .select("id, code, title, property_type, address, city, state, source_name, stage, ai_status, legal_status, initial_bid, appraisal_value, summary, raw_payload, timeline, updated_at")
     .order("updated_at", { ascending: false })
     .limit(500);
 
@@ -276,6 +383,11 @@ async function main() {
       hasValue: item.assessment.hasValue,
       imageCount: item.assessment.imageCount,
       reasons: item.assessment.reasons,
+      assetSignals: {
+        strong: item.assessment.assetAssessment.strongRealEstateSignals,
+        weak: item.assessment.assetAssessment.weakRealEstateSignals,
+        nonRealEstate: item.assessment.assetAssessment.nonRealEstateSignals,
+      },
     })),
   }, null, 2));
 }

@@ -12,7 +12,7 @@ import { collectImageUrlsFromSourceUrl, executeStrategy } from "./scraper-strate
 import { isGeminiQuotaError } from "./scraper-llm";
 import { screenScraperCandidatesByWillianPattern } from "./scraper-criteria";
 import { mirrorRemoteImagesToR2 } from "@/lib/storage/r2";
-import { isLikelyExactPropertySourceUrl, isLikelyPropertyImageUrl } from "./quality";
+import { assessRealEstateAsset, isLikelyExactPropertySourceUrl, isLikelyPropertyImageUrl } from "./quality";
 import type { ScraperCandidate, ScraperResult, ScraperTarget } from "./types";
 
 const DEFAULT_SCRAPER_CRON_MAX_TARGETS = 12;
@@ -245,6 +245,23 @@ async function ingestScraperCandidates(target: ScraperTarget, candidates: Scrape
     const sourceImageUrls = uniqueImageUrls(candidate.imageUrls);
     const hasValue = hasInformedAuctionValue(initialBid, appraisalValue);
     const exactSourceUrl = asString(candidate.sourceUrl).trim();
+    const assetAssessment = assessRealEstateAsset({
+      title: candidate.title,
+      propertyType: candidate.propertyType,
+      address: candidate.address,
+      city: candidate.city,
+      state: candidate.state,
+      sourceUrl: candidate.sourceUrl,
+      rawData: candidate.rawData,
+    });
+
+    if (assetAssessment.rejected) {
+      skipped.push({
+        title: candidate.title || candidate.sourceUrl || `candidato ${index + 1}`,
+        reason: `Descartado: ${assetAssessment.reason}`,
+      });
+      continue;
+    }
 
     if (!hasExactSourceUrl(candidate, target)) {
       skipped.push({
@@ -323,6 +340,9 @@ async function ingestScraperCandidates(target: ScraperTarget, candidates: Scrape
           blockedIfNoPhotoAndNoValue: true,
           exactSourceUrlRequired: true,
           exactSourceUrl,
+          realEstateAssetRejected: assetAssessment.rejected,
+          realEstateSignals: assetAssessment.strongRealEstateSignals,
+          nonRealEstateSignals: assetAssessment.nonRealEstateSignals,
         },
         media: {
           images,

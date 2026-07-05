@@ -33,7 +33,7 @@ import {
   getMockInvestorById, normalizeRiskAppetite,
   buildCommercialPack, buildAdvisoryContractGate,
 } from "./shared";
-import { isLikelyExactPropertySourceUrl } from "@/lib/scraper/quality";
+import { assessRealEstateAsset, isLikelyExactPropertySourceUrl } from "@/lib/scraper/quality";
 
 function hasPortfolioValue(row: OpportunityDbRow) {
   return asNumber(row.initial_bid) > 0 || asNumber(row.appraisal_value) > 0;
@@ -55,6 +55,21 @@ function hasExactPortfolioSourceUrl(row: OpportunityDbRow) {
   return isLikelyExactPropertySourceUrl(getPortfolioSourceUrl(row), targetUrl);
 }
 
+function hasRealEstateAssetIntent(row: OpportunityDbRow) {
+  const rawPayload = asRecord(row.raw_payload);
+  const candidate = asRecord(rawPayload.candidate);
+  return !assessRealEstateAsset({
+    title: asString(row.title),
+    propertyType: asString(row.property_type),
+    address: asString(row.address),
+    city: asString(row.city),
+    state: asString(row.state),
+    summary: asString(row.summary),
+    sourceUrl: getPortfolioSourceUrl(row),
+    rawData: candidate,
+  }).rejected;
+}
+
 function shouldShowInPortfolio(row: OpportunityDbRow) {
   const status = [
     asString(row.stage),
@@ -65,6 +80,7 @@ function shouldShowInPortfolio(row: OpportunityDbRow) {
     .toLowerCase();
 
   if (status.includes("descart")) return false;
+  if (!hasRealEstateAssetIntent(row)) return false;
   if (!hasExactPortfolioSourceUrl(row)) return false;
 
   return hasPortfolioValue(row) && hasPortfolioImage(row);

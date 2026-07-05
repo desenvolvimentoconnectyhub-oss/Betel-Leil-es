@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { ScraperCandidate } from "./types";
+import { assessRealEstateAsset } from "./quality";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const BETEL_TIME_ZONE = "America/Sao_Paulo";
@@ -158,62 +159,6 @@ function daysBetween(from: Date, to: Date) {
   return Math.round((to.getTime() - from.getTime()) / DAY_MS);
 }
 
-function isLikelyNonRealEstateAsset(candidate: ScraperCandidate) {
-  const text = normalizeText(
-    [
-      candidate.title,
-      candidate.propertyType,
-      candidate.address,
-      candidate.sourceUrl,
-      JSON.stringify(candidate.rawData || {}),
-    ].join(" ")
-  );
-
-  const realEstateSignals = [
-    "imovel",
-    "imoveis",
-    "apartamento",
-    "apto",
-    "casa",
-    "terreno",
-    "lote",
-    "sala",
-    "loja",
-    "galpao",
-    "predio",
-    "comercial",
-    "industrial",
-    "rural",
-    "fazenda",
-    "sitio",
-    "area",
-    "barracao",
-    "sobrado",
-  ];
-
-  if (realEstateSignals.some((signal) => text.includes(signal))) return false;
-
-  const nonRealEstateSignals = [
-    "veiculo",
-    "automovel",
-    "carro",
-    "moto",
-    "caminhao",
-    "onibus",
-    "trator",
-    "maquina",
-    "equipamento",
-    "sucata",
-    "joia",
-    "embarcacao",
-    "barco",
-    "aeronave",
-    "gado",
-  ];
-
-  return nonRealEstateSignals.some((signal) => text.includes(signal));
-}
-
 export function screenScraperCandidatesByWillianPattern(
   candidates: ScraperCandidate[],
   window = getAuctionWindow()
@@ -222,11 +167,21 @@ export function screenScraperCandidatesByWillianPattern(
   const skipped: ScraperCriteriaSkippedCandidate[] = [];
 
   for (const candidate of candidates) {
-    if (isLikelyNonRealEstateAsset(candidate)) {
+    const assetAssessment = assessRealEstateAsset({
+      title: candidate.title,
+      propertyType: candidate.propertyType,
+      address: candidate.address,
+      city: candidate.city,
+      state: candidate.state,
+      sourceUrl: candidate.sourceUrl,
+      rawData: candidate.rawData,
+    });
+
+    if (assetAssessment.rejected) {
       skipped.push({
         candidate,
         reason: "non_real_estate_asset",
-        detail: "O item parece ser veiculo, maquina ou outro bem que nao e imovel.",
+        detail: assetAssessment.reason || "O item parece ser veiculo, maquina ou outro bem que nao e imovel.",
       });
       continue;
     }
