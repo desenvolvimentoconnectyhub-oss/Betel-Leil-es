@@ -519,7 +519,7 @@ function ScraperSummary({
 }) {
   return (
     <div className="grid gap-4">
-      <SideStat label="Imoveis ingeridos" value={String(ingested)} detail="total coletado pela Renata" tone="cyan" />
+      <SideStat label="Imoveis gravados" value={String(ingested)} detail="nas coletas recentes listadas" tone="cyan" />
       <SideStat label="Falhas recentes" value={String(failedRuns)} detail={failedRuns ? "precisa revisar fonte" : "coletas estaveis"} tone={failedRuns ? "red" : "green"} />
 
       <div className="rounded-lg border border-[var(--admin-border)] bg-black/20 p-3">

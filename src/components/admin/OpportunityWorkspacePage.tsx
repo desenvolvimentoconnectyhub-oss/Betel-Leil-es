@@ -461,6 +461,8 @@ export function OpportunityWorkspacePage({
     const days = daysUntil(item.auctionDate);
     return days !== null && days >= 0 && days <= 3;
   }).length;
+  const rawCaptureCount = snapshots.length;
+  const notVisibleCount = Math.max(rawCaptureCount - opportunities.length, 0);
   const revisaoCount = opportunities.filter((item) => classifyOpportunity(item) === "revisao").length;
   const readyCount = opportunities.filter((item) => classifyOpportunity(item) === "pronto").length;
   const withPhotoCount = opportunities.filter((item) => Boolean(getPrimaryImage(item))).length;
@@ -513,7 +515,7 @@ export function OpportunityWorkspacePage({
       </section>
 
       <section className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <MetricTile label="Captados" value={String(opportunities.length)} detail="imóveis no arquivo" tone="cyan" />
+        <MetricTile label="Qualificados" value={String(opportunities.length)} detail={`${rawCaptureCount} snapshots; ${notVisibleCount} fora/duplicados`} tone="cyan" />
         <MetricTile label="Com foto" value={String(withPhotoCount)} detail="prontos para vitrine" tone={metricTone(withPhotoCount, "green")} />
         <MetricTile label="Em revisão" value={String(revisaoCount)} detail="jurídico ou humano" tone={metricTone(revisaoCount, "yellow")} />
         <MetricTile label="Urgentes" value={String(urgentCount)} detail="leilão em até 3 dias" tone={metricTone(urgentCount, "red")} />

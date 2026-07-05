@@ -409,6 +409,7 @@ export function ScraperDashboardPage({
 
   const totalIngested = useMemo(() => recentRuns.reduce((s, r) => s + r.itemsIngested, 0), [recentRuns]);
   const totalFound = useMemo(() => recentRuns.reduce((s, r) => s + r.itemsFound, 0), [recentRuns]);
+  const totalSkipped = useMemo(() => recentRuns.reduce((s, r) => s + r.itemsSkipped, 0), [recentRuns]);
   const latestRunSummary = useMemo(
     () => buildLatestRunSummary(recentRuns, targets),
     [recentRuns, targets]
@@ -633,8 +634,8 @@ export function ScraperDashboardPage({
       {/* ═══ KPI Row ═══ */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <KpiCard icon={<Database size={18} />} label="Fontes Monitoradas" value={targets.length} sub={`${statusBreakdown.active} ativas`} color="var(--admin-cyan)" />
-        <KpiCard icon={<TrendingUp size={18} />} label="Imoveis Encontrados" value={totalFound} sub={`${totalIngested} ingeridos`} color="var(--admin-green)" />
-        <KpiCard icon={<Zap size={18} />} label="Coletas Realizadas" value={recentRuns.length} sub={`${runStatusBreakdown.completed} com sucesso`} color="var(--admin-purple)" />
+        <KpiCard icon={<TrendingUp size={18} />} label="Candidatos Encontrados" value={totalFound} sub={`${totalIngested} gravados / ${totalSkipped} descartados`} color="var(--admin-green)" />
+        <KpiCard icon={<Zap size={18} />} label="Coletas Recentes" value={recentRuns.length} sub={`${runStatusBreakdown.completed} OK / ${runStatusBreakdown.partial} parciais`} color="var(--admin-purple)" />
         <KpiCard icon={<AlertTriangle size={18} />} label="Fontes com Erro" value={statusBreakdown.error} sub={`${statusBreakdown.paused} pausadas`} color={statusBreakdown.error > 0 ? "var(--admin-red)" : "var(--admin-muted)"} />
       </div>
 
