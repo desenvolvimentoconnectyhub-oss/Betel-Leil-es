@@ -24,6 +24,7 @@ const SECRET_CONFIG_KEYS = new Set([
   "betel_registry_api_key",
   "betel_infosimples_api_key",
   "betel_serpro_api_key",
+  "betel_dadosgov_api_token",
 ]);
 
 const ENV_ALIASES: Record<string, string[]> = {

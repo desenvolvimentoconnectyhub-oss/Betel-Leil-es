@@ -42,6 +42,13 @@ const DEFAULT_CONFIG_VALUES: Record<string, string> = {
   betel_datajud_api_base_url: "https://api-publica.datajud.cnj.jus.br",
   betel_ibge_api_base_url: "https://servicodados.ibge.gov.br/api/v1/localidades",
   betel_receitaws_api_base_url: "https://www.receitaws.com.br/v1/cnpj",
+  betel_brasilapi_base_url: "https://brasilapi.com.br/api",
+  betel_viacep_base_url: "https://viacep.com.br/ws",
+  betel_dadosgov_api_base_url: "https://dados.gov.br/dados/api/publico",
+  betel_spu_imoveis_base_url: "https://imoveis.economia.gov.br",
+  betel_sncr_base_url: "https://sncr.serpro.gov.br/sncr-web",
+  betel_bcb_imoveis_api_base_url: "https://dadosabertos.bcb.gov.br/api/3/action",
+  betel_nominatim_api_base_url: "https://nominatim.openstreetmap.org",
 };
 
 type MaintenanceAppConfig = Map<string, string>;
@@ -325,6 +332,37 @@ function staticCheck(
   } satisfies MaintenanceIntegration;
 }
 
+function publicApiCheck(
+  id: string,
+  title: string,
+  message: string,
+  baseUrlEnv: string,
+  extra: { group?: string; usedBy?: string; site?: string; tokenEnv?: string; tokenLabel?: string; tokenRequired?: boolean },
+  appConfig: MaintenanceAppConfig = new Map(),
+) {
+  const baseItem = envItem(baseUrlEnv, baseUrlEnv, false, appConfig);
+  const items: MaintenanceItem[] = [baseItem];
+
+  if (extra.tokenEnv) {
+    items.push(envItem(extra.tokenEnv, extra.tokenLabel || extra.tokenEnv, true, appConfig));
+  }
+
+  const tokenItem = extra.tokenEnv ? items[items.length - 1] : null;
+  const missingRequiredToken = Boolean(extra.tokenEnv && extra.tokenRequired && !tokenItem?.configured);
+  const status: MaintenanceStatusValue = !baseItem.configured || missingRequiredToken ? "missing" : "ok";
+
+  return {
+    id,
+    title,
+    status,
+    message: status === "ok" ? message : "Endpoint ou credencial obrigatoria pendente.",
+    items,
+    group: extra.group,
+    usedBy: extra.usedBy,
+    site: extra.site,
+  } satisfies MaintenanceIntegration;
+}
+
 function checkIbge(appConfig: MaintenanceAppConfig): MaintenanceIntegration {
   const value = resolveConfigValue(appConfig, "BETEL_IBGE_API_BASE_URL");
 
@@ -404,6 +442,51 @@ export async function getMaintenanceStatus(): Promise<MaintenancePayload> {
     ], { group: "Dados de Mercado e Avaliacao", usedBy: "Helena (Curadora), Rafael (Estrategia)", site: "fipezap.zapimoveis.com.br" }, appConfig),
 
     checkIbge(appConfig),
+
+    publicApiCheck("brasilapi", "BrasilAPI", "API publica gratuita para CEP, CNPJ, bancos, DDD, FIPE e municipios.", "BETEL_BRASILAPI_BASE_URL", {
+      group: "Busca Publica e Enriquecimento de Imoveis",
+      usedBy: "Renata (Scraper), Helena (Curadora), Igor (Risco)",
+      site: "brasilapi.com.br",
+    }, appConfig),
+
+    publicApiCheck("viacep", "ViaCEP", "API publica gratuita para normalizar endereco por CEP.", "BETEL_VIACEP_BASE_URL", {
+      group: "Busca Publica e Enriquecimento de Imoveis",
+      usedBy: "Renata (Scraper), Helena (Curadora)",
+      site: "viacep.com.br",
+    }, appConfig),
+
+    publicApiCheck("dadosgov", "Dados.gov.br", "Catalogo oficial de dados abertos para descobrir bases publicas de imoveis, SPU, patrimonio e ITBI.", "BETEL_DADOSGOV_API_BASE_URL", {
+      group: "Busca Publica e Enriquecimento de Imoveis",
+      usedBy: "Renata (Scraper), Rafael (Estrategia)",
+      site: "dados.gov.br",
+      tokenEnv: "BETEL_DADOSGOV_API_TOKEN",
+      tokenLabel: "Token consumidor",
+      tokenRequired: true,
+    }, appConfig),
+
+    publicApiCheck("spu_imoveis", "SPU / Imoveis da Uniao", "Fonte publica de imoveis da Uniao, vendas, licitacoes e dados patrimoniais federais.", "BETEL_SPU_IMOVEIS_BASE_URL", {
+      group: "Busca Publica e Enriquecimento de Imoveis",
+      usedBy: "Renata (Scraper), Patricia (Revisao)",
+      site: "imoveis.economia.gov.br",
+    }, appConfig),
+
+    publicApiCheck("sncr", "SNCR Rural", "Consulta publica de imoveis rurais por UF e municipio.", "BETEL_SNCR_BASE_URL", {
+      group: "Busca Publica e Enriquecimento de Imoveis",
+      usedBy: "Renata (Scraper), Igor (Risco)",
+      site: "sncr.serpro.gov.br",
+    }, appConfig),
+
+    publicApiCheck("bcb_imoveis", "BCB Mercado Imobiliario", "Dados abertos do Banco Central para indicadores macro do mercado imobiliario.", "BETEL_BCB_IMOVEIS_API_BASE_URL", {
+      group: "Busca Publica e Enriquecimento de Imoveis",
+      usedBy: "Rafael (Estrategia), Helena (Curadora)",
+      site: "dadosabertos.bcb.gov.br",
+    }, appConfig),
+
+    publicApiCheck("nominatim", "OpenStreetMap / Nominatim", "Geocodificacao gratuita para validar endereco, bairro, cidade e coordenadas com uso moderado.", "BETEL_NOMINATIM_API_BASE_URL", {
+      group: "Busca Publica e Enriquecimento de Imoveis",
+      usedBy: "Renata (Scraper), Helena (Curadora)",
+      site: "nominatim.org",
+    }, appConfig),
 
     // --- Prioridade 4: Verificacao juridica ---
     staticCheck("datajud", "CNJ DataJud", "Consulta de processos judiciais.", [

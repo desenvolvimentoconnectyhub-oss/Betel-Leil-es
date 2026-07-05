@@ -20,6 +20,13 @@ const DEFAULT_CONFIG_VALUES: Record<string, string> = {
   betel_datajud_api_base_url: "https://api-publica.datajud.cnj.jus.br",
   betel_ibge_api_base_url: "https://servicodados.ibge.gov.br/api/v1/localidades",
   betel_receitaws_api_base_url: "https://www.receitaws.com.br/v1/cnpj",
+  betel_brasilapi_base_url: "https://brasilapi.com.br/api",
+  betel_viacep_base_url: "https://viacep.com.br/ws",
+  betel_dadosgov_api_base_url: "https://dados.gov.br/dados/api/publico",
+  betel_spu_imoveis_base_url: "https://imoveis.economia.gov.br",
+  betel_sncr_base_url: "https://sncr.serpro.gov.br/sncr-web",
+  betel_bcb_imoveis_api_base_url: "https://dadosabertos.bcb.gov.br/api/3/action",
+  betel_nominatim_api_base_url: "https://nominatim.openstreetmap.org",
 };
 
 function cleanConfigValue(value: unknown) {
@@ -239,6 +246,104 @@ async function testIbge(): Promise<TestResult> {
   }
 }
 
+function joinUrl(baseUrl: string, path: string) {
+  return `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+}
+
+async function testPublicGet(
+  integration: string,
+  label: string,
+  url: string,
+  init?: RequestInit,
+): Promise<TestResult> {
+  const start = Date.now();
+  const headers = new Headers(init?.headers);
+  if (!headers.has("Accept")) {
+    headers.set("Accept", "application/json,text/html;q=0.9,*/*;q=0.8");
+  }
+
+  try {
+    const res = await fetch(url, {
+      ...init,
+      headers,
+      signal: AbortSignal.timeout(10000),
+    });
+    const latencyMs = Date.now() - start;
+
+    if (res.ok) {
+      return { success: true, integration, message: `${label} respondeu OK (${latencyMs}ms).`, latencyMs };
+    }
+
+    return { success: false, integration, message: `${label} retornou ${res.status}.`, latencyMs };
+  } catch (error: unknown) {
+    return { success: false, integration, message: error instanceof Error ? error.message : `Falha ao conectar ${label}.`, latencyMs: Date.now() - start };
+  }
+}
+
+async function testBrasilApi(): Promise<TestResult> {
+  const appConfig = await readMaintenanceAppConfig();
+  const baseUrl = resolveConfigValue(appConfig, "BETEL_BRASILAPI_BASE_URL");
+  return testPublicGet("brasilapi", "BrasilAPI", joinUrl(baseUrl, "ibge/uf/v1"));
+}
+
+async function testViaCep(): Promise<TestResult> {
+  const appConfig = await readMaintenanceAppConfig();
+  const baseUrl = resolveConfigValue(appConfig, "BETEL_VIACEP_BASE_URL");
+  return testPublicGet("viacep", "ViaCEP", joinUrl(baseUrl, "01001000/json/"));
+}
+
+async function testDadosGov(): Promise<TestResult> {
+  const start = Date.now();
+  const appConfig = await readMaintenanceAppConfig();
+  const baseUrl = resolveConfigValue(appConfig, "BETEL_DADOSGOV_API_BASE_URL");
+  const token = resolveConfigValue(appConfig, "BETEL_DADOSGOV_API_TOKEN");
+
+  if (!token) {
+    return {
+      success: false,
+      integration: "dadosgov",
+      message: "Token consumidor do Dados.gov.br pendente. Gere o token no portal para ativar a busca.",
+      latencyMs: Date.now() - start,
+    };
+  }
+
+  return testPublicGet(
+    "dadosgov",
+    "Dados.gov.br",
+    joinUrl(baseUrl, "conjuntos-dados/buscar?termo=imoveis&pagina=1&tamanho=1"),
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+}
+
+async function testSpuImoveis(): Promise<TestResult> {
+  const appConfig = await readMaintenanceAppConfig();
+  const baseUrl = resolveConfigValue(appConfig, "BETEL_SPU_IMOVEIS_BASE_URL");
+  return testPublicGet("spu_imoveis", "SPU / Imoveis da Uniao", baseUrl);
+}
+
+async function testSncr(): Promise<TestResult> {
+  const appConfig = await readMaintenanceAppConfig();
+  const baseUrl = resolveConfigValue(appConfig, "BETEL_SNCR_BASE_URL");
+  return testPublicGet("sncr", "SNCR Rural", joinUrl(baseUrl, "consultaPublica.jsf"));
+}
+
+async function testBcbImoveis(): Promise<TestResult> {
+  const appConfig = await readMaintenanceAppConfig();
+  const baseUrl = resolveConfigValue(appConfig, "BETEL_BCB_IMOVEIS_API_BASE_URL");
+  return testPublicGet("bcb_imoveis", "BCB Mercado Imobiliario", joinUrl(baseUrl, "package_show?id=informacoes-do-mercado-imobiliario"));
+}
+
+async function testNominatim(): Promise<TestResult> {
+  const appConfig = await readMaintenanceAppConfig();
+  const baseUrl = resolveConfigValue(appConfig, "BETEL_NOMINATIM_API_BASE_URL");
+  return testPublicGet(
+    "nominatim",
+    "OpenStreetMap / Nominatim",
+    joinUrl(baseUrl, "search?format=json&q=Sao%20Paulo%20SP&limit=1"),
+    { headers: { "User-Agent": "BetelAI/1.0 maintenance-check", "Accept-Language": "pt-BR,pt;q=0.9" } }
+  );
+}
+
 function testEnvOnly(id: string, label: string, vars: string[]): () => Promise<TestResult> {
   return async () => {
     const start = Date.now();
@@ -260,6 +365,13 @@ const testMap: Record<string, () => Promise<TestResult>> = {
   resend: testResend,
   elevenlabs: testElevenLabs,
   ibge: testIbge,
+  brasilapi: testBrasilApi,
+  viacep: testViaCep,
+  dadosgov: testDadosGov,
+  spu_imoveis: testSpuImoveis,
+  sncr: testSncr,
+  bcb_imoveis: testBcbImoveis,
+  nominatim: testNominatim,
   datazap: testEnvOnly("datazap", "DataZAP+", ["BETEL_DATAZAP_API_BASE_URL", "BETEL_DATAZAP_API_KEY"]),
   fipezap: testEnvOnly("fipezap", "FipeZAP", ["BETEL_FIPEZAP_API_BASE_URL", "BETEL_FIPEZAP_API_KEY"]),
   datajud: testEnvOnly("datajud", "CNJ DataJud", ["BETEL_DATAJUD_API_BASE_URL", "BETEL_DATAJUD_API_KEY"]),

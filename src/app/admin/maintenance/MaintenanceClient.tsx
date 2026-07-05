@@ -13,7 +13,9 @@ import {
   Eye,
   EyeOff,
   FileSearch,
+  Globe2,
   HeartPulse,
+  Home,
   Landmark,
   Loader2,
   Mail,
@@ -22,6 +24,7 @@ import {
   RefreshCw,
   Save,
   Scale,
+  Search,
   Server,
   Shield,
   Sparkles,
@@ -107,6 +110,13 @@ const icons: Record<string, typeof Database> = {
   registry: Landmark,
   infosimples: Shield,
   serpro: Building2,
+  brasilapi: Globe2,
+  viacep: MapPin,
+  dadosgov: Search,
+  spu_imoveis: Home,
+  sncr: MapPin,
+  bcb_imoveis: BarChart3,
+  nominatim: MapPin,
 };
 
 const integrationDescriptions: Record<string, string> = {
@@ -126,6 +136,13 @@ const integrationDescriptions: Record<string, string> = {
   registry: "Matricula e cadeia dominial do imovel. Pago por consulta.",
   infosimples: "Dados legais agregados de multiplas fontes. Pago por creditos.",
   serpro: "Dados governamentais — CPF, CNPJ, certidoes. Contrato gov.",
+  brasilapi: "API publica gratuita para CEP, CNPJ, bancos, DDD, FIPE e municipios.",
+  viacep: "API publica gratuita para consultar e normalizar endereco por CEP.",
+  dadosgov: "Catalogo oficial de dados abertos para descobrir bases publicas de imoveis, SPU, patrimonio e ITBI.",
+  spu_imoveis: "Fonte publica de imoveis da Uniao, vendas, licitacoes e dados patrimoniais federais.",
+  sncr: "Consulta publica de imoveis rurais por UF e municipio.",
+  bcb_imoveis: "Dados abertos do Banco Central para indicadores macro do mercado imobiliario.",
+  nominatim: "Geocodificacao OpenStreetMap para validar endereco, bairro, cidade e coordenadas com uso moderado.",
 };
 
 const statusCopy: Record<string, string> = {
