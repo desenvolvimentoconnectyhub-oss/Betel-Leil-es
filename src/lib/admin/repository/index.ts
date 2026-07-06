@@ -4,3 +4,4 @@ export * from "./data";
 export * from "./pipeline";
 export * from "./intelligence";
 export * from "./users";
+export * from "./validation-pipeline";

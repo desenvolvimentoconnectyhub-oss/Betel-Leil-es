@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import {
   createAuctionOpportunityRecord,
   ingestAuctionOpportunityRecord,
+  refreshOpportunityValidationPipelinesRecord,
   updateAuctionOpportunityRecord,
   type CreateAuctionOpportunityInput,
   type SourceIntakeInput,
@@ -184,4 +185,25 @@ export async function backfillOpportunityImagesAction() {
 
   const status = result.updated > 0 ? `fotos-${result.updated}` : "sem-fotos";
   redirect(`/admin/oportunidades?sync=${status}`);
+}
+
+export async function refreshOpportunityValidationPipelineAction() {
+  const result = await refreshOpportunityValidationPipelinesRecord({ limit: 150 });
+
+  revalidatePath("/admin");
+  revalidatePath("/admin/oportunidades");
+  revalidatePath("/admin/fontes/capturas");
+
+  if (!result.ok || !result.data) {
+    redirect(`/admin/oportunidades?validation=erro&message=${encodeURIComponent(result.error || "Nao foi possivel atualizar a validacao.")}`);
+  }
+
+  const params = new URLSearchParams({
+    validation: result.data.persisted ? "salva" : "calculada",
+    total: String(result.data.processed),
+    concluidos: String(result.data.completed),
+    bloqueados: String(result.data.blocked + result.data.discarded),
+  });
+
+  redirect(`/admin/oportunidades?${params.toString()}`);
 }

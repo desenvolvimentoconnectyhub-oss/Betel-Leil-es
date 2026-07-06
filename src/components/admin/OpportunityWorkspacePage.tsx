@@ -4,15 +4,21 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import {
   ArrowUpRight,
+  AlertTriangle,
   CalendarDays,
   Camera,
+  CheckCircle2,
+  CircleDashed,
   Database,
   FileText,
   Gavel,
   Home,
+  ListChecks,
   MapPin,
   Search,
+  ShieldCheck,
   TimerReset,
+  XCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,7 +26,7 @@ import { DashboardCard } from "@/components/admin/DashboardCard";
 import { RiskBadge } from "@/components/admin/RiskBadge";
 import { ScoreBadge } from "@/components/admin/ScoreBadge";
 import { StatusBadge, getStatusTone } from "@/components/admin/StatusBadge";
-import { backfillOpportunityImagesAction } from "@/app/admin/oportunidades/actions";
+import { backfillOpportunityImagesAction, refreshOpportunityValidationPipelineAction } from "@/app/admin/oportunidades/actions";
 import { cn } from "@/lib/utils";
 
 type ResourceTone = "cyan" | "green" | "yellow" | "red" | "purple" | "muted";
@@ -89,6 +95,34 @@ type WorkspaceSnapshot = {
   communicationStatus: string;
   communicationOutboxCount: number;
   payloadPreview: string;
+};
+
+type ValidationStepStatus = "passed" | "warning" | "pending" | "blocked" | "skipped";
+type ValidationOverallStatus = "completed" | "in_review" | "blocked" | "discarded";
+
+type WorkspaceValidationStep = {
+  stepKey: string;
+  stepLabel: string;
+  stepOrder: number;
+  status: ValidationStepStatus;
+  score: number;
+  summary: string;
+  provider: string;
+  errorMessage: string;
+  finishedAt: string;
+};
+
+type WorkspaceValidationRun = {
+  opportunityCode: string;
+  opportunityTitle: string;
+  overallStatus: ValidationOverallStatus;
+  currentStepKey: string;
+  currentStepLabel: string;
+  progressPct: number;
+  finalScore: number;
+  blockedReason: string;
+  persisted: boolean;
+  steps: WorkspaceValidationStep[];
 };
 
 type WorkspaceFilter = "todos" | "entrada" | "revisao" | "risco" | "pronto" | "com_foto";
@@ -220,6 +254,277 @@ function metricTone(value: number, fallback: ResourceTone) {
   return value > 0 ? fallback : "muted";
 }
 
+function validationTone(status?: ValidationOverallStatus): ResourceTone {
+  if (status === "completed") return "green";
+  if (status === "blocked" || status === "discarded") return "red";
+  if (status === "in_review") return "yellow";
+  return "muted";
+}
+
+function validationLabel(status?: ValidationOverallStatus) {
+  const labels: Record<ValidationOverallStatus, string> = {
+    completed: "Concluido",
+    in_review: "Em validacao",
+    blocked: "Bloqueado",
+    discarded: "Descartado",
+  };
+  return status ? labels[status] : "Nao calculado";
+}
+
+function stepTone(status: ValidationStepStatus): ResourceTone {
+  if (status === "passed") return "green";
+  if (status === "blocked") return "red";
+  if (status === "warning") return "yellow";
+  if (status === "pending") return "purple";
+  return "muted";
+}
+
+function stepIcon(status: ValidationStepStatus) {
+  if (status === "passed") return CheckCircle2;
+  if (status === "blocked") return XCircle;
+  if (status === "warning") return AlertTriangle;
+  return CircleDashed;
+}
+
+function validationStopCounts(validations: WorkspaceValidationRun[]) {
+  const counts = new Map<string, number>();
+  for (const validation of validations) {
+    if (validation.overallStatus === "completed") continue;
+    const label = validation.currentStepLabel || "Sem etapa";
+    counts.set(label, (counts.get(label) || 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .map(([label, count]) => ({ label, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 8);
+}
+
+function statusSuggestsStop(value: string) {
+  const text = normalizeText(value);
+  return (
+    text.includes("erro") ||
+    text.includes("falha") ||
+    text.includes("bloq") ||
+    text.includes("descart") ||
+    text.includes("reject") ||
+    text.includes("failed")
+  );
+}
+
+function snapshotStopLabel(snapshot: WorkspaceSnapshot, qualifiedCodes: Set<string>) {
+  if (!snapshot.opportunityCode) return "Nao virou oportunidade";
+  if (!qualifiedCodes.has(snapshot.opportunityCode)) return "Fora da vitrine";
+  if (statusSuggestsStop(`${snapshot.status} ${snapshot.runStatus} ${snapshot.curationStatus}`)) return "Coleta ou curadoria";
+  if (statusSuggestsStop(snapshot.hiddenRiskStatus)) return "Risco oculto";
+  if (snapshot.humanHandoffStatus && !normalizeText(snapshot.humanHandoffStatus).includes("completed")) return "Revisao humana";
+  if (snapshot.legalReviewStatus && !normalizeText(snapshot.legalReviewStatus).includes("approved")) return "Juridico";
+  if (snapshot.complianceReviewStatus && !normalizeText(snapshot.complianceReviewStatus).includes("approved")) return "Compliance";
+  if (snapshot.communicationStatus && statusSuggestsStop(snapshot.communicationStatus)) return "Comunicacao";
+  return "Chegou ao fim";
+}
+
+function snapshotStopCounts(snapshots: WorkspaceSnapshot[], qualifiedCodes: Set<string>) {
+  const counts = new Map<string, number>();
+  for (const snapshot of snapshots) {
+    const label = snapshotStopLabel(snapshot, qualifiedCodes);
+    if (label === "Chegou ao fim") continue;
+    counts.set(label, (counts.get(label) || 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .map(([label, count]) => ({ label, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 8);
+}
+
+function ValidationProgress({
+  validation,
+  compact = false,
+}: {
+  validation?: WorkspaceValidationRun;
+  compact?: boolean;
+}) {
+  const tone = validationTone(validation?.overallStatus);
+  const progress = validation?.progressPct || 0;
+
+  return (
+    <div className={cn("rounded-lg border px-3 py-2", toneBorder[tone])}>
+      <div className="flex items-center justify-between gap-3">
+        <span className="inline-flex min-w-0 items-center gap-2 text-xs font-semibold">
+          <ShieldCheck size={14} className="shrink-0" />
+          <span className="truncate">{validationLabel(validation?.overallStatus)}</span>
+        </span>
+        <span className="font-mono text-xs font-bold">{progress}%</span>
+      </div>
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-black/30">
+        <div className="h-full rounded-full bg-current transition-all" style={{ width: `${progress}%` }} />
+      </div>
+      {!compact && (
+        <p className="mt-2 line-clamp-2 text-xs leading-5 text-[var(--admin-soft)]">
+          {validation?.blockedReason || validation?.currentStepLabel || "Aguardando calculo da validacao."}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ValidationStepChips({ validation }: { validation?: WorkspaceValidationRun }) {
+  if (!validation?.steps.length) {
+    return (
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        <span className={cn("inline-flex h-6 items-center gap-1 rounded-md border px-2 text-[10px] font-semibold", toneBorder.muted)}>
+          <CircleDashed size={11} />
+          Sem etapas
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5">
+      {validation.steps.slice(0, 5).map((step) => {
+        const Icon = stepIcon(step.status);
+        return (
+          <span
+            key={step.stepKey}
+            title={step.summary || step.errorMessage || step.stepLabel}
+            className={cn(
+              "inline-flex h-6 max-w-full items-center gap-1 rounded-md border px-2 text-[10px] font-semibold",
+              toneBorder[stepTone(step.status)]
+            )}
+          >
+            <Icon size={11} className="shrink-0" />
+            <span className="truncate">{step.stepLabel}</span>
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function ValidationPipelinePanel({
+  validations,
+  snapshots,
+  qualifiedCodes,
+}: {
+  validations: WorkspaceValidationRun[];
+  snapshots: WorkspaceSnapshot[];
+  qualifiedCodes: Set<string>;
+}) {
+  const completed = validations.filter((item) => item.overallStatus === "completed").length;
+  const blocked = validations.filter((item) => item.overallStatus === "blocked" || item.overallStatus === "discarded").length;
+  const inReview = validations.filter((item) => item.overallStatus === "in_review").length;
+  const linkedCodes = new Set(snapshots.map((item) => item.opportunityCode).filter(Boolean));
+  const unlinkedSnapshots = snapshots.filter((item) => !item.opportunityCode).length;
+  const outsideOrDuplicate = Math.max(snapshots.length - qualifiedCodes.size, 0);
+  const outsidePortfolio = Math.max(linkedCodes.size - qualifiedCodes.size, 0);
+  const avgProgress = validations.length
+    ? Math.round(validations.reduce((total, item) => total + item.progressPct, 0) / validations.length)
+    : 0;
+  const stopCounts = validationStopCounts(validations);
+  const captureStopCounts = snapshotStopCounts(snapshots, qualifiedCodes);
+  const activeValidations = validations
+    .filter((item) => item.overallStatus !== "completed")
+    .slice(0, 6);
+
+  return (
+    <DashboardCard
+      title="Validação dos imóveis"
+      eyebrow="captura / provas / decisão"
+      action={
+        <form action={refreshOpportunityValidationPipelineAction}>
+          <Button
+            type="submit"
+            variant="outline"
+            className="h-9 border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] text-white"
+          >
+            <ListChecks size={15} />
+            Atualizar validação
+          </Button>
+        </form>
+      }
+    >
+      <div className="mb-4 grid gap-3 md:grid-cols-4">
+        <MetricTile label="Candidatos brutos" value={String(snapshots.length)} detail="snapshots capturados" tone={metricTone(snapshots.length, "cyan")} />
+        <MetricTile label="Viraram oportunidade" value={String(linkedCodes.size)} detail="gravados no banco" tone={metricTone(linkedCodes.size, "purple")} />
+        <MetricTile label="Entraram na vitrine" value={String(qualifiedCodes.size)} detail="passaram filtros finais" tone={metricTone(qualifiedCodes.size, "green")} />
+        <MetricTile label="Fora/duplicados" value={String(outsideOrDuplicate)} detail={`${unlinkedSnapshots} sem oportunidade; ${outsidePortfolio} fora vitrine`} tone={metricTone(outsideOrDuplicate, "yellow")} />
+      </div>
+
+      <div className="mb-4 rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.02)] p-4">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm font-semibold text-white">Paradas da captacao</p>
+          <StatusBadge tone={captureStopCounts.length ? "yellow" : "green"}>
+            {captureStopCounts.length ? `${captureStopCounts.length} filtros` : "sem parada"}
+          </StatusBadge>
+        </div>
+        <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+          {captureStopCounts.length ? (
+            captureStopCounts.map((item) => (
+              <div key={item.label} className="flex items-center justify-between gap-3 rounded-lg border border-[var(--admin-border)] bg-black/15 px-3 py-2 text-xs">
+                <span className="truncate text-[var(--admin-soft)]">{item.label}</span>
+                <span className="font-mono font-bold text-white">{item.count}</span>
+              </div>
+            ))
+          ) : (
+            <p className="text-sm text-[var(--admin-muted)]">Todas as capturas desta lista chegaram ate a vitrine.</p>
+          )}
+        </div>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-4">
+        <MetricTile label="No pipeline" value={String(validations.length)} detail={`${avgProgress}% medio validado`} tone={metricTone(validations.length, "cyan")} />
+        <MetricTile label="Chegaram ao fim" value={String(completed)} detail="prontos para avancar" tone={metricTone(completed, "green")} />
+        <MetricTile label="Em validação" value={String(inReview)} detail="com etapa pendente" tone={metricTone(inReview, "yellow")} />
+        <MetricTile label="Bloqueados" value={String(blocked)} detail="risco, descarte ou falta critica" tone={metricTone(blocked, "red")} />
+      </div>
+
+      <div className="mt-4 grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+        <div className="rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.02)] p-4">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm font-semibold text-white">Paradas por etapa</p>
+            <StatusBadge tone={stopCounts.length ? "yellow" : "green"}>
+              {stopCounts.length ? `${stopCounts.length} etapas` : "sem parada"}
+            </StatusBadge>
+          </div>
+          <div className="mt-4 grid gap-2">
+            {stopCounts.length ? (
+              stopCounts.map((item) => (
+                <div key={item.label} className="flex items-center justify-between gap-3 rounded-lg border border-[var(--admin-border)] bg-black/15 px-3 py-2 text-xs">
+                  <span className="truncate text-[var(--admin-soft)]">{item.label}</span>
+                  <span className="font-mono font-bold text-white">{item.count}</span>
+                </div>
+              ))
+            ) : (
+              <p className="text-sm text-[var(--admin-muted)]">Todos os imóveis validados chegaram ao fim.</p>
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.02)] p-4">
+          <p className="text-sm font-semibold text-white">Fila atual</p>
+          <div className="mt-4 grid gap-2">
+            {activeValidations.length ? (
+              activeValidations.map((validation) => (
+                <div key={validation.opportunityCode} className="grid gap-3 rounded-lg border border-[var(--admin-border)] bg-black/15 px-3 py-3 md:grid-cols-[minmax(0,1fr)_180px] md:items-center">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-white">{validation.opportunityTitle}</p>
+                    <p className="mt-1 truncate text-xs text-[var(--admin-muted)]">
+                      Parou em: {validation.currentStepLabel || "sem etapa"}{validation.blockedReason ? ` / ${validation.blockedReason}` : ""}
+                    </p>
+                  </div>
+                  <ValidationProgress validation={validation} compact />
+                </div>
+              ))
+            ) : (
+              <p className="text-sm text-[var(--admin-muted)]">Sem imóveis pendentes nesta lista.</p>
+            )}
+          </div>
+        </div>
+      </div>
+    </DashboardCard>
+  );
+}
+
 function MetricTile({
   label,
   value,
@@ -257,9 +562,11 @@ function EmptyState() {
 function PropertyCard({
   opportunity,
   snapshot,
+  validation,
 }: {
   opportunity: WorkspaceOpportunity;
   snapshot?: WorkspaceSnapshot;
+  validation?: WorkspaceValidationRun;
 }) {
   const imageUrl = getPrimaryImage(opportunity);
   const imagesCount = opportunity.images?.length || 0;
@@ -352,6 +659,11 @@ function PropertyCard({
           </span>
         </div>
 
+        <div className="mt-4">
+          <ValidationProgress validation={validation} />
+          <ValidationStepChips validation={validation} />
+        </div>
+
         <div className="mt-4 border-t border-[var(--admin-border)] pt-3">
           <div className="flex items-center justify-between gap-3 text-xs">
             <div className="min-w-0">
@@ -391,12 +703,14 @@ export function OpportunityWorkspacePage({
   module,
   opportunities,
   snapshots,
+  validations,
   source,
   reason,
 }: {
   module: WorkspaceModule;
   opportunities: WorkspaceOpportunity[];
   snapshots: WorkspaceSnapshot[];
+  validations: WorkspaceValidationRun[];
   source: string;
   reason?: string;
 }) {
@@ -414,6 +728,17 @@ export function OpportunityWorkspacePage({
     }
     return map;
   }, [snapshots]);
+
+  const validationsByOpportunity = useMemo(() => {
+    const map = new Map<string, WorkspaceValidationRun>();
+    for (const validation of validations) {
+      if (!validation.opportunityCode) continue;
+      map.set(validation.opportunityCode, validation);
+    }
+    return map;
+  }, [validations]);
+
+  const qualifiedOpportunityCodes = useMemo(() => new Set(opportunities.map((item) => item.id)), [opportunities]);
 
   const filteredOpportunities = useMemo(() => {
     const text = normalizeText(query);
@@ -521,6 +846,14 @@ export function OpportunityWorkspacePage({
         <MetricTile label="Urgentes" value={String(urgentCount)} detail="leilão em até 3 dias" tone={metricTone(urgentCount, "red")} />
       </section>
 
+      <section className="mb-4">
+        <ValidationPipelinePanel
+          validations={validations}
+          snapshots={snapshots}
+          qualifiedCodes={qualifiedOpportunityCodes}
+        />
+      </section>
+
       <DashboardCard
         title="Vitrine de imóveis captados"
         eyebrow="foto / descrição / valor"
@@ -601,6 +934,7 @@ export function OpportunityWorkspacePage({
                 key={opportunity.id}
                 opportunity={opportunity}
                 snapshot={snapshotsByOpportunity.get(opportunity.id)?.[0]}
+                validation={validationsByOpportunity.get(opportunity.id)}
               />
             ))}
           </div>
