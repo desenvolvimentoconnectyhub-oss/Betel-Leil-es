@@ -114,6 +114,46 @@ function cleanFormValue(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function normalizePairingPhone(value: string) {
+  return value.replace(/\D/g, "").slice(0, 16);
+}
+
+function toSearchableText(value: unknown): string {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  if (value instanceof Error) return `${value.name} ${value.message} ${value.stack || ""}`;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function containsPasskeySignal(...values: unknown[]) {
+  return values.some((value) => {
+    const text = toSearchableText(value).toLowerCase();
+    return (
+      text.includes("passkey") ||
+      text.includes("passkey_blocked") ||
+      text.includes("chave de acesso")
+    );
+  });
+}
+
+function connectionHasPasskeyBlock(connection?: WillianConnectionInfo | null, error?: unknown) {
+  return Boolean(
+    connection?.lastDisconnectReason === "Passkey pairing not supported" ||
+      connection?.finalStatus === "passkey_blocked" ||
+      containsPasskeySignal(connection?.lastDisconnectReason, connection?.finalStatus, error)
+  );
+}
+
+function friendlyDisconnectReason(reason?: string) {
+  if (!reason) return "";
+  if (containsPasskeySignal(reason)) return "Verificação extra por chave de acesso solicitada.";
+  return reason;
+}
+
 function isPrimaryWhatsappAgentName(value: unknown) {
   const name = cleanFormValue(value).toLowerCase();
   return /^willia[mn]\b/.test(name);
@@ -326,6 +366,8 @@ export function WillianAgentPanel({
   const [newAgentName, setNewAgentName] = useState("");
   const [newAgentSector, setNewAgentSector] = useState("Atendimento WhatsApp");
   const [pairingTarget, setPairingTarget] = useState<{ agentKey?: string; agentName: string } | null>(null);
+  const [passkeyDialogOpen, setPasskeyDialogOpen] = useState(false);
+  const lastConnectionPayloadRef = useRef<Record<string, unknown>>({});
 
   const connected = Boolean(state.status?.connected || state.status?.loggedIn);
   const applyInstanceState = useCallback((nextState?: WillianInstanceState) => {
@@ -369,15 +411,34 @@ export function WillianAgentPanel({
     async function pollStatus() {
       attempts += 1;
       try {
-        const res = await fetch("/api/admin/agentes-ia/communication/willian-instance?remote=true", {
+        const res = await fetch("/api/admin/agentes-ia/communication/willian-instance", {
+          body: JSON.stringify({
+            action: "status",
+            agentKey: pairingTarget?.agentKey || state.agentKey,
+          }),
           cache: "no-store",
-          method: "GET",
+          headers: { "content-type": "application/json" },
+          method: "POST",
         });
         const result = await res.json();
         const nextState = result?.data?.state as WillianInstanceState | undefined;
+        const resultConnection = (result?.data?.result?.connection || nextState?.connection) as WillianConnectionInfo | undefined;
+        if (!cancelled && connectionHasPasskeyBlock(resultConnection, result?.error || result)) {
+          setPasskeyDialogOpen(true);
+        }
         if (cancelled || !nextState) return;
 
         applyInstanceState(nextState);
+        const nextConnection = resultConnection;
+        if (nextConnection) {
+          if (connectionHasPasskeyBlock(nextConnection, result?.data?.result || result?.error)) {
+            setPasskeyDialogOpen(true);
+          }
+          setConnection((current) => ({
+            ...(current || {}),
+            ...nextConnection,
+          }));
+        }
         const targetInstance = pairingTarget?.agentKey
           ? nextState.agentInstances?.find((item) => item.agentKey === pairingTarget.agentKey)
           : null;
@@ -415,7 +476,7 @@ export function WillianAgentPanel({
       cancelled = true;
       if (timer) window.clearTimeout(timer);
     };
-  }, [applyInstanceState, connection, pairingTarget]);
+  }, [applyInstanceState, connection, pairingTarget, state.agentKey]);
 
   const whatsappAgents = useMemo<WhatsAppAgentInstanceSummary[]>(() => {
     if (agentInstances.length) return agentInstances;
@@ -544,14 +605,18 @@ export function WillianAgentPanel({
     }
   }
 
-  async function runInstanceAction(action: string, payload: Record<string, unknown> = {}) {
+  async function runInstanceAction(
+    action: string,
+    payload: Record<string, unknown> = {},
+    options: { skipConfirm?: boolean } = {}
+  ) {
     const confirmations: Record<string, string> = {
       disconnect: "Desconectar este WhatsApp? Sera necessario gerar um novo QR Code para reconectar.",
       disconnectWhatsappAgent: "Desconectar este WhatsApp? Sera necessario gerar um novo QR Code para reconectar.",
       deleteInstance: "Excluir a instancia atual na ConnectyHub? Use apenas quando quiser recriar o vinculo.",
       reset: "Reiniciar o runtime da instancia na ConnectyHub?",
     };
-    if (confirmations[action] && !window.confirm(confirmations[action])) return;
+    if (confirmations[action] && !options.skipConfirm && !window.confirm(confirmations[action])) return;
     if (action === "createWhatsappAgent" && !cleanFormValue(payload.agentName)) {
       setFeedback({ type: "err", msg: "Informe o nome do novo agente WhatsApp." });
       return;
@@ -559,9 +624,12 @@ export function WillianAgentPanel({
 
     setLoading(action);
     setFeedback(null);
-    if (action === "connect" || action === "generateQr" || action === "disconnectWhatsappAgent") {
+    if (action === "connect" || action === "generateQr" || action === "reset" || action === "disconnectWhatsappAgent") {
       setConnection(null);
       setPairingTarget(null);
+    }
+    if (action === "connect" || action === "generateQr" || action === "reset") {
+      lastConnectionPayloadRef.current = payload;
     }
     try {
       const res = await fetch("/api/admin/agentes-ia/communication/willian-instance", {
@@ -580,7 +648,10 @@ export function WillianAgentPanel({
         | { agentKey?: string; agentName?: string }
         | undefined;
       if (cleanFormValue(createdAgent?.agentKey)) setSelectedAgentKey(cleanFormValue(createdAgent?.agentKey));
-      const nextConnection = result?.data?.result?.connection || result?.data?.result?.connect?.connection;
+      const nextConnection =
+        result?.data?.result?.connection ||
+        result?.data?.result?.reconnect?.connection ||
+        result?.data?.result?.connect?.connection;
       const actionAgentKey = cleanFormValue(payload.agentKey);
       const actionAgentName = cleanFormValue(payload.agentName);
       const hasPairing =
@@ -588,6 +659,9 @@ export function WillianAgentPanel({
         Boolean(nextConnection?.qrCode) ||
         Boolean(nextConnection?.pairingCode);
       if (nextConnection) {
+        if (connectionHasPasskeyBlock(nextConnection, result?.error || result?.data?.result)) {
+          setPasskeyDialogOpen(true);
+        }
         setConnection(nextConnection);
         setPairingTarget({
           agentKey: cleanFormValue(createdAgent?.agentKey) || actionAgentKey || selectedConfigAgentKey,
@@ -599,14 +673,18 @@ export function WillianAgentPanel({
         });
       }
       if (!res.ok || !result.success) {
-        setFeedback({ type: "err", msg: result.error || "Nao foi possivel operar a instancia." });
+        if (connectionHasPasskeyBlock(nextConnection, result.error || result)) {
+          setPasskeyDialogOpen(true);
+        } else {
+          setFeedback({ type: "err", msg: result.error || "Nao foi possivel operar a instancia." });
+        }
       } else {
         const labels: Record<string, string> = {
           create: "Instancia criada ou atualizada.",
           createWhatsappAgent: "Agente criado. Abra a aba Conexao para criar a instancia e gerar o QR Code.",
           generateQr: hasPairing
-            ? "QR Code gerado. Criacao, webhook e conexao foram preparados automaticamente."
-            : "Fluxo automatico executado, mas a ConnectyHub nao retornou QR Code nesta tentativa.",
+            ? "Pareamento iniciado. Use o QR Code ou o codigo exibido."
+            : "Fluxo automatico executado, mas a ConnectyHub nao retornou QR Code ou codigo nesta tentativa.",
           connect: "Ciclo de conexao iniciado.",
           status: "Status atualizado.",
           configureWebhook: "Webhook configurado.",
@@ -615,7 +693,7 @@ export function WillianAgentPanel({
           syncOverview: "Dados sincronizados da ConnectyHub carregados.",
           disconnect: "Instancia desconectada. Gere um novo QR Code para reconectar.",
           disconnectWhatsappAgent: "WhatsApp desconectado. Gere um novo QR Code para reconectar.",
-          reset: "Reset solicitado para a instancia.",
+          reset: "Reset aplicado. A ConnectyHub iniciou uma nova conexao.",
           deleteInstance: "Instancia excluida e vinculo local limpo.",
           deleteWhatsappAgent: "Agente de WhatsApp excluido.",
         };
@@ -635,11 +713,20 @@ export function WillianAgentPanel({
           setNewAgentFormOpen(false);
         }
       }
-    } catch {
-      setFeedback({ type: "err", msg: "Falha de rede ao falar com a rota do agente WhatsApp." });
+    } catch (error) {
+      if (containsPasskeySignal(error)) {
+        setPasskeyDialogOpen(true);
+      } else {
+        setFeedback({ type: "err", msg: "Falha de rede ao falar com a rota do agente WhatsApp." });
+      }
     } finally {
       setLoading(null);
     }
+  }
+
+  function handlePasskeyReset() {
+    setPasskeyDialogOpen(false);
+    void runInstanceAction("reset", lastConnectionPayloadRef.current, { skipConfirm: true });
   }
 
   const changeLabel = config.status === "saved" ? "Salvo" : "Revisar";
@@ -794,6 +881,54 @@ export function WillianAgentPanel({
           </p>
         )}
       </div>
+
+      {passkeyDialogOpen && (
+        <div
+          aria-labelledby="passkey-dialog-title"
+          aria-modal="true"
+          className="fixed inset-0 z-[100] grid place-items-center bg-black/72 px-4 py-6 backdrop-blur-sm"
+          role="dialog"
+        >
+          <div className="w-full max-w-md rounded-xl border border-[rgba(255,255,255,0.14)] bg-[#0d0d0d] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.5)]">
+            <div className="flex items-start justify-between gap-4">
+              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-[rgba(234,179,8,0.35)] bg-[rgba(234,179,8,0.12)] text-[var(--admin-yellow)]">
+                <ShieldCheck size={18} />
+              </div>
+              <button
+                aria-label="Fechar aviso"
+                className="grid h-9 w-9 place-items-center rounded-lg border border-[var(--admin-border)] text-[var(--admin-muted)] transition hover:border-[rgba(255,255,255,0.28)] hover:text-white"
+                onClick={() => setPasskeyDialogOpen(false)}
+                type="button"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <h3 id="passkey-dialog-title" className="mt-4 text-lg font-bold text-white">
+              Verificação extra solicitada
+            </h3>
+            <p className="mt-3 text-sm leading-6 text-white/82">
+              Esta conta do WhatsApp pediu uma verificação por chave de acesso. Nosso serviço ainda não suporta concluir essa etapa pelo painel.
+            </p>
+            <p className="mt-3 text-sm leading-6 text-[var(--admin-muted)]">
+              Você pode tentar resetar a conexão e gerar um novo QR Code. Se a conta pedir a mesma verificação novamente, será necessário usar outra conta enquanto acompanhamos essa limitação.
+            </p>
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <ActionButton
+                icon={<CheckCircle2 size={14} />}
+                label="Entendi"
+                onClick={() => setPasskeyDialogOpen(false)}
+              />
+              <ActionButton
+                icon={<RefreshCw size={14} />}
+                label="Tentar reset"
+                loading={loading === "reset"}
+                onClick={handlePasskeyReset}
+                tone="danger"
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -945,6 +1080,8 @@ function ConnectionTab({
   selectedAgent?: WhatsAppAgentInstanceSummary;
   state: WillianInstanceState;
 }) {
+  const [connectMode, setConnectMode] = useState<"qr" | "phone">("qr");
+  const [pairingPhone, setPairingPhone] = useState("");
   const selectedIsPrimary = !selectedAgent || selectedAgent.agentKey === state.agentKey;
   const connected = selectedIsPrimary
     ? Boolean(state.status?.connected || state.status?.loggedIn)
@@ -971,6 +1108,9 @@ function ConnectionTab({
       selectedAgent?.instanceName ||
       (selectedIsPrimary && state.instanceTokenConfigured)
   );
+  const phoneMode = connectMode === "phone";
+  const normalizedPairingPhone = normalizePairingPhone(pairingPhone);
+  const canStartConnection = canGenerateQr && (!phoneMode || normalizedPairingPhone.length >= 10);
   const generateQrLabel = selectedHasInstance ? "Gerar QR Code" : "Criar instancia e gerar QR";
   const agentPayload = {
     agentKey: selectedAgentKey,
@@ -978,6 +1118,12 @@ function ConnectionTab({
     companyName: selectedAgent?.companyName,
     sector: selectedAgent?.sector,
   };
+  const connectionPayload = {
+    ...agentPayload,
+    phone: phoneMode ? normalizedPairingPhone : "",
+  };
+  const rawDisconnectReason = pairingConnection?.lastDisconnectReason || state.lastDisconnectReason || state.lastError;
+  const disconnectReason = friendlyDisconnectReason(rawDisconnectReason);
 
   return (
     <Panel title={`Conexao de ${agentLabel}`} eyebrow="Numero / agente / status" action={<StatusPill ok={connected} label={connected ? "Online" : "Pendente"} />}>
@@ -1035,22 +1181,74 @@ function ConnectionTab({
             />
           </div>
         ) : (
-          <div className="mt-4 flex flex-wrap gap-2">
-            <ActionButton
-              disabled={!canGenerateQr}
-              icon={<QrCode size={14} />}
-              label={generateQrLabel}
-              loading={loading === "generateQr"}
-              onClick={() => runInstanceAction("generateQr", agentPayload)}
-            />
-            {selectedHasInstance && (
+          <div className="mt-4 grid gap-3">
+            <div className="grid gap-3 lg:grid-cols-[minmax(0,280px)_minmax(0,1fr)]">
+              <div className="grid gap-1">
+                <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Modo de conexao</span>
+                <div className="grid grid-cols-2 gap-1 rounded-lg border border-[var(--admin-border)] bg-[#050505] p-1">
+                  {([
+                    ["qr", "QR Code"],
+                    ["phone", "Numero"],
+                  ] as const).map(([mode, label]) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setConnectMode(mode)}
+                      className={cn(
+                        "min-h-9 rounded-md px-3 text-xs font-bold transition",
+                        connectMode === mode
+                          ? "bg-[rgba(0,243,255,0.13)] text-[var(--admin-cyan)] shadow-[0_0_0_1px_rgba(0,243,255,0.2)]"
+                          : "text-[var(--admin-muted)] hover:bg-[rgba(255,255,255,0.04)] hover:text-white"
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {phoneMode && (
+                <label className="grid gap-1">
+                  <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Telefone com DDI</span>
+                  <input
+                    inputMode="numeric"
+                    maxLength={16}
+                    onChange={(event) => setPairingPhone(normalizePairingPhone(event.target.value))}
+                    placeholder="5511999999999"
+                    value={pairingPhone}
+                    className="h-11 rounded-lg border border-[var(--admin-border)] bg-[#050505] px-3 font-mono text-sm text-white outline-none transition focus:border-[var(--admin-cyan)]"
+                  />
+                </label>
+              )}
+            </div>
+
+            <div className="flex flex-wrap gap-2">
               <ActionButton
-                icon={<RefreshCw size={14} />}
-                label="Atualizar status"
-                loading={loading === "status"}
-                onClick={() => runInstanceAction("status", { agentKey: selectedAgentKey })}
+                disabled={!canStartConnection}
+                icon={phoneMode ? <Phone size={14} /> : <QrCode size={14} />}
+                label={phoneMode ? "Gerar codigo" : generateQrLabel}
+                loading={loading === "generateQr"}
+                onClick={() => runInstanceAction("generateQr", connectionPayload)}
               />
-            )}
+              {selectedHasInstance && (
+                <>
+                  <ActionButton
+                    icon={<RefreshCw size={14} />}
+                    label="Atualizar status"
+                    loading={loading === "status"}
+                    onClick={() => runInstanceAction("status", { agentKey: selectedAgentKey })}
+                  />
+                  <ActionButton
+                    disabled={!canStartConnection}
+                    icon={<RefreshCw size={14} />}
+                    label="Resetar sessao"
+                    loading={loading === "reset"}
+                    onClick={() => runInstanceAction("reset", connectionPayload)}
+                    tone="danger"
+                  />
+                </>
+              )}
+            </div>
           </div>
         )}
 
@@ -1063,12 +1261,32 @@ function ConnectionTab({
         {pairingConnection && (
           <div className="mt-4 rounded-lg border border-[rgba(0,243,255,0.22)] bg-[rgba(0,243,255,0.06)] p-4">
             <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-cyan)]">Pareamento de {pairingLabel}</p>
-            {pairingConnection.pairingCode && <p className="mt-2 font-mono text-lg font-bold text-white">{pairingConnection.pairingCode}</p>}
+            {pairingConnection.status && (
+              <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--admin-muted)]">
+                Status: {pairingConnection.status}
+              </p>
+            )}
+            {pairingConnection.pairingCode && (
+              <div className="mt-3">
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Codigo de pareamento</p>
+                <p className="mt-1 rounded-lg border border-[rgba(255,255,255,0.14)] bg-black px-4 py-3 font-mono text-2xl font-bold tracking-[0.18em] text-white">
+                  {pairingConnection.pairingCode}
+                </p>
+                <p className="mt-2 text-xs leading-5 text-[var(--admin-muted)]">
+                  No WhatsApp, use dispositivos conectados e parear com codigo.
+                </p>
+              </div>
+            )}
             {pairingConnection.qrCodeDataUrl && (
               /* eslint-disable-next-line @next/next/no-img-element */
               <img alt="QR code de conexao do WhatsApp" src={pairingConnection.qrCodeDataUrl} className="mt-3 h-44 w-44 rounded-lg border border-[var(--admin-border)] bg-white p-2" />
             )}
             {pairingConnection.qrCode && <p className="mt-2 break-all font-mono text-xs text-[var(--admin-muted)]">{pairingConnection.qrCode}</p>}
+            {disconnectReason && (
+              <div className="mt-3 rounded-lg border border-[rgba(239,68,68,0.32)] bg-[rgba(239,68,68,0.08)] px-3 py-2 text-xs leading-5 text-[var(--admin-red)]">
+                Diagnostico: {disconnectReason}
+              </div>
+            )}
           </div>
         )}
       </div>

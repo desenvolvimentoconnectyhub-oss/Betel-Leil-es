@@ -7,6 +7,7 @@ export const WILLIAN_AGENT_KEY = "multichannel-dispatch";
 export const WILLIAN_AGENT_NAME = "Willian";
 export const WILLIAN_DEFAULT_INSTANCE_NAME = "willian-betel";
 export const CONNECTYHUB_PROVIDER = "connectyhub";
+const CONNECTYHUB_CONNECT_SYSTEM_NAME = "ViralCheck";
 export const CONNECTYHUB_WEBHOOK_EVENTS = [
   "messages",
   "messages_update",
@@ -384,9 +385,21 @@ function findFirstString(payload: unknown, keys: string[]): string {
 function extractConnectionInfo(payload: unknown): WillianConnectionInfo {
   const qrCode = findFirstString(payload, ["qrCode", "qrcode", "qr", "base64", "image"]);
   const pairingCode = findFirstString(payload, ["pairingCode", "pairCode", "paircode", "code"]);
+  const finalStatus = findFirstString(payload, ["finalStatus", "final_status"]);
+  const lastDisconnectReason = findFirstString(payload, [
+    "lastDisconnectReason",
+    "last_disconnect_reason",
+    "disconnectReason",
+    "disconnect_reason",
+    "reason",
+  ]);
+  const status = normalizeStatusPayload(payload).state;
   const info: WillianConnectionInfo = {};
 
+  if (status) info.status = status;
+  if (finalStatus) info.finalStatus = finalStatus;
   if (pairingCode) info.pairingCode = pairingCode;
+  if (lastDisconnectReason) info.lastDisconnectReason = lastDisconnectReason;
   if (qrCode) {
     if (qrCode.startsWith("data:image")) info.qrCodeDataUrl = qrCode;
     else if (qrCode.length > 80 && /^[A-Za-z0-9+/=]+$/.test(qrCode)) info.qrCodeDataUrl = `data:image/png;base64,${qrCode}`;
@@ -394,6 +407,16 @@ function extractConnectionInfo(payload: unknown): WillianConnectionInfo {
   }
 
   return info;
+}
+
+function buildConnectBody(input: { phone?: string; browser?: string; systemName?: string } = {}) {
+  const body: Record<string, unknown> = {
+    browser: cleanString(input.browser, "auto"),
+    systemName: cleanString(input.systemName, CONNECTYHUB_CONNECT_SYSTEM_NAME),
+  };
+  const phone = normalizeWhatsAppNumber(input.phone || "");
+  if (phone) body.phone = phone;
+  return body;
 }
 
 const profileImageKeys = [
@@ -1275,6 +1298,9 @@ export async function getWillianInstanceState(options: { checkRemote?: boolean }
       connectyhubRequest("/webhooks", { method: "GET", timeoutMs: 10000 }).catch(() => []),
     ]);
     state.status = normalizeStatusPayload(statusPayload);
+    state.connection = extractConnectionInfo(statusPayload);
+    state.finalStatus = state.connection.finalStatus;
+    state.lastDisconnectReason = state.connection.lastDisconnectReason;
     state.webhookCount = asArrayPayload(webhookPayload).length;
 
     if (state.status.connected || state.status.loggedIn) {
@@ -1394,6 +1420,7 @@ export async function createConnectyHubWhatsappAgentQrCode(input: {
   agentName?: string;
   browser?: string;
   companyName?: string;
+  phone?: string;
   sector?: string;
 }) {
   const config = await getWillianConfig();
@@ -1465,7 +1492,7 @@ export async function createConnectyHubWhatsappAgentQrCode(input: {
   });
 
   const connectPayload = await connectyhubRequest(`/instances/${encodeURIComponent(instanceId)}/connect`, {
-    body: {},
+    body: buildConnectBody({ browser: input.browser, phone: input.phone }),
   });
   const status = normalizeStatusPayload(connectPayload);
   await persistConnectyHubInstance({
@@ -1539,6 +1566,8 @@ export async function fetchWhatsappAgentRemoteStatus(input: { agentKey: string }
 
   return {
     payload: sanitizePayload(payload),
+    connection: extractConnectionInfo(payload),
+    lastDisconnectReason: extractConnectionInfo(payload).lastDisconnectReason,
     status,
   };
 }
@@ -1640,11 +1669,9 @@ export async function connectWillianConnectyHubInstance(input: { phone?: string;
   const instanceId = await resolveConnectyHubInstanceId(config);
   if (!instanceId) throw new Error("Crie ou vincule uma instancia ConnectyHub antes de conectar.");
 
-  const body: Record<string, unknown> = {};
-  const phone = normalizeWhatsAppNumber(input.phone || "");
-  if (phone) body.phone = phone;
-
-  const payload = await connectyhubRequest(`/instances/${encodeURIComponent(instanceId)}/connect`, { body });
+  const payload = await connectyhubRequest(`/instances/${encodeURIComponent(instanceId)}/connect`, {
+    body: buildConnectBody(input),
+  });
   const status = normalizeStatusPayload(payload);
   const profile =
     status.connected || status.loggedIn
@@ -1742,6 +1769,8 @@ export async function fetchWillianRemoteStatus() {
 
   return {
     payload: sanitizePayload(payload),
+    connection: extractConnectionInfo(payload),
+    lastDisconnectReason: extractConnectionInfo(payload).lastDisconnectReason,
     status,
     profile,
   };
@@ -1772,8 +1801,98 @@ export async function disconnectWillianConnectyHubInstance() {
   return runInstanceProviderAction("/provider/instance/disconnect", "disconnected");
 }
 
-export async function resetWillianConnectyHubInstance() {
-  return runInstanceProviderAction("/provider/instance/reset", "resetting");
+export async function resetWillianConnectyHubInstance(input: { phone?: string; browser?: string; reconnect?: boolean } = {}) {
+  const config = await getWillianConfig();
+  const instanceId = await resolveConnectyHubInstanceId(config);
+  if (!instanceId) throw new Error("Instancia ConnectyHub nao localizada para reset.");
+
+  const resetPayload = await connectyhubRequest(`/instances/${encodeURIComponent(instanceId)}/reset`, {
+    method: "POST",
+    timeoutMs: 15000,
+  });
+
+  await persistConnectyHubInstance({
+    instanceId,
+    instanceName: config.instanceName,
+    webhookUrl: config.webhookUrl,
+    statusPayload: { status: "resetting", payload: resetPayload },
+  });
+
+  if (input.reconnect === false) {
+    return { payload: sanitizePayload(resetPayload), instanceId: maskSecret(instanceId), status: "resetting" };
+  }
+
+  const reconnect = await connectWillianConnectyHubInstance({
+    browser: input.browser,
+    phone: input.phone,
+  });
+
+  return {
+    payload: sanitizePayload(resetPayload),
+    instanceId: maskSecret(instanceId),
+    status: "resetting",
+    reconnect,
+    connection: reconnect.connection,
+  };
+}
+
+export async function resetConnectyHubWhatsappAgent(input: { agentKey: string; phone?: string; browser?: string; reconnect?: boolean }) {
+  const agentKey = cleanString(input.agentKey);
+  if (!agentKey) throw new Error("Agente WhatsApp nao informado para reset.");
+  if (agentKey === WILLIAN_AGENT_KEY) {
+    return resetWillianConnectyHubInstance({
+      browser: input.browser,
+      phone: input.phone,
+      reconnect: input.reconnect,
+    });
+  }
+
+  const instance = await findPersistedWhatsappInstance(agentKey);
+  const instanceId = cleanString(instance?.provider_instance_id);
+  const instanceName = cleanString(instance?.instance_name);
+  if (!instanceId || !instanceName) throw new Error("Instancia ConnectyHub nao localizada para reset deste agente.");
+
+  const localAgent = await getLocalWhatsappAgent(agentKey);
+  const resetPayload = await connectyhubRequest(`/instances/${encodeURIComponent(instanceId)}/reset`, {
+    method: "POST",
+    timeoutMs: 15000,
+  });
+
+  await persistConnectyHubInstance({
+    agentKey,
+    agentName: localAgent?.agentName || agentKey,
+    instanceId,
+    instanceName,
+    persistWillianConfig: false,
+    statusPayload: { status: "resetting", payload: resetPayload },
+  });
+
+  if (input.reconnect === false) {
+    return { payload: sanitizePayload(resetPayload), agentKey, instanceId: maskSecret(instanceId), status: "resetting" };
+  }
+
+  const connectPayload = await connectyhubRequest(`/instances/${encodeURIComponent(instanceId)}/connect`, {
+    body: buildConnectBody({ browser: input.browser, phone: input.phone }),
+  });
+  const status = normalizeStatusPayload(connectPayload);
+  await persistConnectyHubInstance({
+    agentKey,
+    agentName: localAgent?.agentName || agentKey,
+    instanceId,
+    instanceName,
+    persistWillianConfig: false,
+    statusPayload: connectPayload,
+  });
+
+  return {
+    payload: sanitizePayload(resetPayload),
+    agentKey,
+    instanceId: maskSecret(instanceId),
+    status: "resetting",
+    reconnect: sanitizePayload(connectPayload),
+    connection: extractConnectionInfo(connectPayload),
+    connected: status.connected || status.loggedIn,
+  };
 }
 
 export async function deleteWillianConnectyHubInstance() {

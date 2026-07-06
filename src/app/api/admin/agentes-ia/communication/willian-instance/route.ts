@@ -15,6 +15,7 @@ import {
   fetchWillianRemoteStatus,
   fetchWillianWebhookDeliveries,
   getWillianInstanceState,
+  resetConnectyHubWhatsappAgent,
   resetWillianConnectyHubInstance,
   testWillianWebhookDelivery,
   WILLIAN_AGENT_KEY,
@@ -109,9 +110,9 @@ async function generateWillianQrCode(input: { browser?: string; instanceName?: s
   };
 }
 
-async function generateWhatsappAgentQrCode(input: { agentKey?: string; agentName?: string; browser?: string; companyName?: string; sector?: string }) {
+async function generateWhatsappAgentQrCode(input: { agentKey?: string; agentName?: string; browser?: string; companyName?: string; phone?: string; sector?: string }) {
   const agentKey = cleanString(input.agentKey);
-  if (!agentKey || agentKey === WILLIAN_AGENT_KEY) return generateWillianQrCode({ browser: input.browser });
+  if (!agentKey || agentKey === WILLIAN_AGENT_KEY) return generateWillianQrCode({ browser: input.browser, phone: input.phone });
 
   const steps: Record<string, unknown> = {};
   try {
@@ -126,6 +127,7 @@ async function generateWhatsappAgentQrCode(input: { agentKey?: string; agentName
     agentName: cleanString(input.agentName),
     browser: cleanString(input.browser, "auto"),
     companyName: cleanString(input.companyName),
+    phone: cleanString(input.phone),
     sector: cleanString(input.sector),
   });
 
@@ -181,6 +183,7 @@ export async function POST(request: Request) {
         companyName: cleanString(body.companyName),
         sector: cleanString(body.sector),
         browser: cleanString(body.browser, "auto"),
+        phone: cleanString(body.phone),
       });
     } else if (action === "connect") {
       result = await connectWillianConnectyHubInstance({
@@ -205,7 +208,17 @@ export async function POST(request: Request) {
         agentKey: cleanString(body.agentKey),
       });
     } else if (action === "reset") {
-      result = await resetWillianConnectyHubInstance();
+      const agentKey = cleanString(body.agentKey);
+      result = agentKey && agentKey !== WILLIAN_AGENT_KEY
+        ? await resetConnectyHubWhatsappAgent({
+            agentKey,
+            browser: cleanString(body.browser, "auto"),
+            phone: cleanString(body.phone),
+          })
+        : await resetWillianConnectyHubInstance({
+            browser: cleanString(body.browser, "auto"),
+            phone: cleanString(body.phone),
+          });
     } else if (action === "deleteInstance") {
       result = await deleteWillianConnectyHubInstance();
     } else if (action === "deleteWhatsappAgent") {

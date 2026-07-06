@@ -1,7 +1,10 @@
 export type WillianConnectionInfo = {
+  status?: string;
+  finalStatus?: string;
   pairingCode?: string;
   qrCode?: string;
   qrCodeDataUrl?: string;
+  lastDisconnectReason?: string;
 };
 
 export type WhatsAppAgentInstanceSummary = {
@@ -52,6 +55,9 @@ export type WillianInstanceState = {
     jid: unknown;
     state: string;
   };
+  connection?: WillianConnectionInfo;
+  finalStatus?: string;
+  lastDisconnectReason?: string;
   webhookCount?: number;
   agentInstances?: WhatsAppAgentInstanceSummary[];
   missing: string[];
