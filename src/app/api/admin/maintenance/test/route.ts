@@ -310,8 +310,8 @@ async function testDadosGov(): Promise<TestResult> {
   return testPublicGet(
     "dadosgov",
     "Dados.gov.br",
-    joinUrl(baseUrl, "conjuntos-dados/buscar?termo=imoveis&pagina=1&tamanho=1"),
-    { headers: { Authorization: `Bearer ${token}` } }
+    joinUrl(baseUrl, "conjuntos-dados?nomeConjuntoDados=imoveis&isPrivado=false&pagina=1"),
+    { headers: { "chave-api-dados-abertos": token } }
   );
 }
 
