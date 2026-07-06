@@ -24,6 +24,8 @@ export const CONNECTYHUB_WEBHOOK_EVENTS = [
   "blocks",
   "sender",
 ] as const;
+const PASSKEY_BLOCKED_STATUS = "passkey_blocked";
+const PASSKEY_PAIRING_UNSUPPORTED_REASON = "Passkey pairing not supported";
 
 type ConfigSource = "env" | "app_config" | "default" | "missing";
 
@@ -382,6 +384,35 @@ function findFirstString(payload: unknown, keys: string[]): string {
   return "";
 }
 
+function payloadHasPasskeyBlock(payload: unknown, depth = 0): boolean {
+  if (!payload || depth > 8) return false;
+  if (typeof payload === "string") {
+    const text = payload.toLowerCase();
+    return (
+      text.includes(PASSKEY_PAIRING_UNSUPPORTED_REASON.toLowerCase()) ||
+      text.includes(PASSKEY_BLOCKED_STATUS)
+    );
+  }
+  if (Array.isArray(payload)) return payload.some((item) => payloadHasPasskeyBlock(item, depth + 1));
+  if (typeof payload !== "object") return false;
+
+  const record = asRecord(payload);
+  const lastDisconnectReason = cleanString(
+    record.lastDisconnectReason ||
+      record.last_disconnect_reason ||
+      record.disconnectReason ||
+      record.disconnect_reason
+  ).toLowerCase();
+  const finalStatus = cleanString(record.finalStatus || record.final_status).toLowerCase();
+  const eventType = cleanString(record.type).toLowerCase();
+
+  if (lastDisconnectReason.includes(PASSKEY_PAIRING_UNSUPPORTED_REASON.toLowerCase())) return true;
+  if (finalStatus === PASSKEY_BLOCKED_STATUS) return true;
+  if (eventType === PASSKEY_BLOCKED_STATUS) return true;
+
+  return Object.values(record).some((value) => payloadHasPasskeyBlock(value, depth + 1));
+}
+
 function extractConnectionInfo(payload: unknown): WillianConnectionInfo {
   const qrCode = findFirstString(payload, ["qrCode", "qrcode", "qr", "base64", "image"]);
   const pairingCode = findFirstString(payload, ["pairingCode", "pairCode", "paircode", "code"]);
@@ -400,6 +431,10 @@ function extractConnectionInfo(payload: unknown): WillianConnectionInfo {
   if (finalStatus) info.finalStatus = finalStatus;
   if (pairingCode) info.pairingCode = pairingCode;
   if (lastDisconnectReason) info.lastDisconnectReason = lastDisconnectReason;
+  if (payloadHasPasskeyBlock(payload)) {
+    info.passkeyBlocked = true;
+    info.technicalReason = PASSKEY_PAIRING_UNSUPPORTED_REASON;
+  }
   if (qrCode) {
     if (qrCode.startsWith("data:image")) info.qrCodeDataUrl = qrCode;
     else if (qrCode.length > 80 && /^[A-Za-z0-9+/=]+$/.test(qrCode)) info.qrCodeDataUrl = `data:image/png;base64,${qrCode}`;

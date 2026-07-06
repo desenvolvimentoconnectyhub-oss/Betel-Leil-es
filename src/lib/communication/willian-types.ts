@@ -5,6 +5,8 @@ export type WillianConnectionInfo = {
   qrCode?: string;
   qrCodeDataUrl?: string;
   lastDisconnectReason?: string;
+  passkeyBlocked?: boolean;
+  technicalReason?: string;
 };
 
 export type WhatsAppAgentInstanceSummary = {

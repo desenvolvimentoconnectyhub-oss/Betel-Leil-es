@@ -91,6 +91,8 @@ type ElevenLabsVoice = {
 const WILLIAN_VOICE_ENDPOINT = "/api/admin/agentes-ia/communication/willian-voice";
 const PRIMARY_WHATSAPP_AGENT_KEY = "multichannel-dispatch";
 const PRIMARY_WHATSAPP_AGENT_LABEL = "Agente de WhatsApp";
+const PASSKEY_BLOCKED_STATUS = "passkey_blocked";
+const PASSKEY_PAIRING_UNSUPPORTED_REASON = "Passkey pairing not supported";
 
 function linesToArray(value: string) {
   return value
@@ -141,9 +143,13 @@ function containsPasskeySignal(...values: unknown[]) {
 }
 
 function connectionHasPasskeyBlock(connection?: WillianConnectionInfo | null, error?: unknown) {
+  const lastDisconnectReason = cleanFormValue(connection?.lastDisconnectReason).toLowerCase();
+  const finalStatus = cleanFormValue(connection?.finalStatus).toLowerCase();
+
   return Boolean(
-    connection?.lastDisconnectReason === "Passkey pairing not supported" ||
-      connection?.finalStatus === "passkey_blocked" ||
+    connection?.passkeyBlocked ||
+      lastDisconnectReason.includes(PASSKEY_PAIRING_UNSUPPORTED_REASON.toLowerCase()) ||
+      finalStatus === PASSKEY_BLOCKED_STATUS ||
       containsPasskeySignal(connection?.lastDisconnectReason, connection?.finalStatus, error)
   );
 }
@@ -375,6 +381,22 @@ export function WillianAgentPanel({
     setState(nextState);
     setAgentInstances(nextState.agentInstances || []);
   }, []);
+  const openPasskeyBlockedDialog = useCallback((nextConnection?: WillianConnectionInfo | null) => {
+    setPasskeyDialogOpen(true);
+    setFeedback(null);
+    setConnection((current) => ({
+      ...(current || {}),
+      ...(nextConnection || {}),
+      pairingCode: undefined,
+      passkeyBlocked: true,
+      qrCode: undefined,
+      qrCodeDataUrl: undefined,
+      technicalReason:
+        nextConnection?.technicalReason ||
+        current?.technicalReason ||
+        PASSKEY_PAIRING_UNSUPPORTED_REASON,
+    }));
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -387,7 +409,12 @@ export function WillianAgentPanel({
         });
         const result = await res.json();
         const nextState = result?.data?.state as WillianInstanceState | undefined;
-        if (!cancelled) applyInstanceState(nextState);
+        if (!cancelled) {
+          applyInstanceState(nextState);
+          if (connectionHasPasskeyBlock(nextState?.connection, nextState)) {
+            openPasskeyBlockedDialog(nextState?.connection);
+          }
+        }
       } catch {
         // The server render still shows the local state if remote status is temporarily unavailable.
       }
@@ -398,10 +425,10 @@ export function WillianAgentPanel({
     return () => {
       cancelled = true;
     };
-  }, [applyInstanceState]);
+  }, [applyInstanceState, openPasskeyBlockedDialog]);
 
   useEffect(() => {
-    if (!connection) return;
+    if (!connection || connection.passkeyBlocked) return;
 
     let cancelled = false;
     let attempts = 0;
@@ -424,7 +451,9 @@ export function WillianAgentPanel({
         const nextState = result?.data?.state as WillianInstanceState | undefined;
         const resultConnection = (result?.data?.result?.connection || nextState?.connection) as WillianConnectionInfo | undefined;
         if (!cancelled && connectionHasPasskeyBlock(resultConnection, result?.error || result)) {
-          setPasskeyDialogOpen(true);
+          if (nextState) applyInstanceState(nextState);
+          openPasskeyBlockedDialog(resultConnection);
+          return;
         }
         if (cancelled || !nextState) return;
 
@@ -432,7 +461,8 @@ export function WillianAgentPanel({
         const nextConnection = resultConnection;
         if (nextConnection) {
           if (connectionHasPasskeyBlock(nextConnection, result?.data?.result || result?.error)) {
-            setPasskeyDialogOpen(true);
+            openPasskeyBlockedDialog(nextConnection);
+            return;
           }
           setConnection((current) => ({
             ...(current || {}),
@@ -476,7 +506,7 @@ export function WillianAgentPanel({
       cancelled = true;
       if (timer) window.clearTimeout(timer);
     };
-  }, [applyInstanceState, connection, pairingTarget, state.agentKey]);
+  }, [applyInstanceState, connection, openPasskeyBlockedDialog, pairingTarget, state.agentKey]);
 
   const whatsappAgents = useMemo<WhatsAppAgentInstanceSummary[]>(() => {
     if (agentInstances.length) return agentInstances;
@@ -652,17 +682,15 @@ export function WillianAgentPanel({
         result?.data?.result?.connection ||
         result?.data?.result?.reconnect?.connection ||
         result?.data?.result?.connect?.connection;
+      const passkeyBlocked = connectionHasPasskeyBlock(nextConnection, result?.error || result?.data?.result || result);
       const actionAgentKey = cleanFormValue(payload.agentKey);
       const actionAgentName = cleanFormValue(payload.agentName);
       const hasPairing =
-        Boolean(nextConnection?.qrCodeDataUrl) ||
-        Boolean(nextConnection?.qrCode) ||
-        Boolean(nextConnection?.pairingCode);
+        !passkeyBlocked &&
+        (Boolean(nextConnection?.qrCodeDataUrl) ||
+          Boolean(nextConnection?.qrCode) ||
+          Boolean(nextConnection?.pairingCode));
       if (nextConnection) {
-        if (connectionHasPasskeyBlock(nextConnection, result?.error || result?.data?.result)) {
-          setPasskeyDialogOpen(true);
-        }
-        setConnection(nextConnection);
         setPairingTarget({
           agentKey: cleanFormValue(createdAgent?.agentKey) || actionAgentKey || selectedConfigAgentKey,
           agentName:
@@ -671,14 +699,19 @@ export function WillianAgentPanel({
             displayWhatsappAgentName(selectedWhatsappAgent) ||
             PRIMARY_WHATSAPP_AGENT_LABEL,
         });
+        if (passkeyBlocked) {
+          openPasskeyBlockedDialog(nextConnection);
+        } else {
+          setConnection(nextConnection);
+        }
       }
       if (!res.ok || !result.success) {
-        if (connectionHasPasskeyBlock(nextConnection, result.error || result)) {
-          setPasskeyDialogOpen(true);
+        if (passkeyBlocked) {
+          openPasskeyBlockedDialog(nextConnection);
         } else {
           setFeedback({ type: "err", msg: result.error || "Nao foi possivel operar a instancia." });
         }
-      } else {
+      } else if (!passkeyBlocked) {
         const labels: Record<string, string> = {
           create: "Instancia criada ou atualizada.",
           createWhatsappAgent: "Agente criado. Abra a aba Conexao para criar a instancia e gerar o QR Code.",
@@ -715,7 +748,7 @@ export function WillianAgentPanel({
       }
     } catch (error) {
       if (containsPasskeySignal(error)) {
-        setPasskeyDialogOpen(true);
+        openPasskeyBlockedDialog();
       } else {
         setFeedback({ type: "err", msg: "Falha de rede ao falar com a rota do agente WhatsApp." });
       }
@@ -907,23 +940,23 @@ export function WillianAgentPanel({
               Verificação extra solicitada
             </h3>
             <p className="mt-3 text-sm leading-6 text-white/82">
-              Esta conta do WhatsApp pediu uma verificação por chave de acesso. Nosso serviço ainda não suporta concluir essa etapa pelo painel.
+              Esta conta pediu uma verificação extra por chave de acesso. Esse tipo de verificação ainda não pode ser concluído diretamente pelo QR Code do painel.
             </p>
             <p className="mt-3 text-sm leading-6 text-[var(--admin-muted)]">
-              Você pode tentar resetar a conexão e gerar um novo QR Code. Se a conta pedir a mesma verificação novamente, será necessário usar outra conta enquanto acompanhamos essa limitação.
+              Você pode tentar resetar a conexão e gerar um novo QR Code. Se o reset não resolver, será necessário usar uma conexão assistida por migração de sessão.
             </p>
-            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-              <ActionButton
-                icon={<CheckCircle2 size={14} />}
-                label="Entendi"
-                onClick={() => setPasskeyDialogOpen(false)}
-              />
+            <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-end">
               <ActionButton
                 icon={<RefreshCw size={14} />}
                 label="Tentar reset"
                 loading={loading === "reset"}
                 onClick={handlePasskeyReset}
                 tone="danger"
+              />
+              <ActionButton
+                icon={<CheckCircle2 size={14} />}
+                label="Entendi"
+                onClick={() => setPasskeyDialogOpen(false)}
               />
             </div>
           </div>
@@ -1124,6 +1157,7 @@ function ConnectionTab({
   };
   const rawDisconnectReason = pairingConnection?.lastDisconnectReason || state.lastDisconnectReason || state.lastError;
   const disconnectReason = friendlyDisconnectReason(rawDisconnectReason);
+  const passkeyBlocked = connectionHasPasskeyBlock(pairingConnection, rawDisconnectReason);
 
   return (
     <Panel title={`Conexao de ${agentLabel}`} eyebrow="Numero / agente / status" action={<StatusPill ok={connected} label={connected ? "Online" : "Pendente"} />}>
@@ -1266,22 +1300,30 @@ function ConnectionTab({
                 Status: {pairingConnection.status}
               </p>
             )}
-            {pairingConnection.pairingCode && (
-              <div className="mt-3">
-                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Codigo de pareamento</p>
-                <p className="mt-1 rounded-lg border border-[rgba(255,255,255,0.14)] bg-black px-4 py-3 font-mono text-2xl font-bold tracking-[0.18em] text-white">
-                  {pairingConnection.pairingCode}
-                </p>
-                <p className="mt-2 text-xs leading-5 text-[var(--admin-muted)]">
-                  No WhatsApp, use dispositivos conectados e parear com codigo.
-                </p>
+            {passkeyBlocked ? (
+              <div className="mt-3 rounded-lg border border-[rgba(234,179,8,0.28)] bg-[rgba(234,179,8,0.08)] px-3 py-2 text-xs leading-5 text-[var(--admin-yellow)]">
+                Pareamento pausado por verificação extra de chave de acesso. Tente resetar e gerar um novo QR Code; se voltar ao mesmo ponto, siga com conexão assistida por migração de sessão.
               </div>
+            ) : (
+              <>
+                {pairingConnection.pairingCode && (
+                  <div className="mt-3">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Codigo de pareamento</p>
+                    <p className="mt-1 rounded-lg border border-[rgba(255,255,255,0.14)] bg-black px-4 py-3 font-mono text-2xl font-bold tracking-[0.18em] text-white">
+                      {pairingConnection.pairingCode}
+                    </p>
+                    <p className="mt-2 text-xs leading-5 text-[var(--admin-muted)]">
+                      No WhatsApp, use dispositivos conectados e parear com codigo.
+                    </p>
+                  </div>
+                )}
+                {pairingConnection.qrCodeDataUrl && (
+                  /* eslint-disable-next-line @next/next/no-img-element */
+                  <img alt="QR code de conexao do WhatsApp" src={pairingConnection.qrCodeDataUrl} className="mt-3 h-44 w-44 rounded-lg border border-[var(--admin-border)] bg-white p-2" />
+                )}
+                {pairingConnection.qrCode && <p className="mt-2 break-all font-mono text-xs text-[var(--admin-muted)]">{pairingConnection.qrCode}</p>}
+              </>
             )}
-            {pairingConnection.qrCodeDataUrl && (
-              /* eslint-disable-next-line @next/next/no-img-element */
-              <img alt="QR code de conexao do WhatsApp" src={pairingConnection.qrCodeDataUrl} className="mt-3 h-44 w-44 rounded-lg border border-[var(--admin-border)] bg-white p-2" />
-            )}
-            {pairingConnection.qrCode && <p className="mt-2 break-all font-mono text-xs text-[var(--admin-muted)]">{pairingConnection.qrCode}</p>}
             {disconnectReason && (
               <div className="mt-3 rounded-lg border border-[rgba(239,68,68,0.32)] bg-[rgba(239,68,68,0.08)] px-3 py-2 text-xs leading-5 text-[var(--admin-red)]">
                 Diagnostico: {disconnectReason}
