@@ -14,6 +14,11 @@ import { screenScraperCandidatesByWillianPattern } from "./scraper-criteria";
 import { mirrorRemoteImagesToR2 } from "@/lib/storage/r2";
 import { assessRealEstateAsset, isLikelyExactPropertySourceUrl, isLikelyPropertyImageUrl } from "./quality";
 import type { ScraperCandidate, ScraperResult, ScraperTarget } from "./types";
+import {
+  sendScraperWhatsAppReport,
+  type ScraperCronRunSummary,
+  type ScraperTargetRunReport,
+} from "./whatsapp-report";
 
 const DEFAULT_SCRAPER_CRON_MAX_TARGETS = 20;
 const MAX_SCRAPER_CRON_TARGETS = 25;
@@ -378,6 +383,10 @@ export async function runScraperForTarget(
   ingested?: string[];
   ingestFailed?: { title: string; error: string }[];
   ingestSkipped?: { title: string; reason: string }[];
+  criteriaSkipped?: { title: string; reason: string }[];
+  itemsFound?: number;
+  itemsIngested?: number;
+  itemsSkipped?: number;
   rateLimited?: boolean;
 }> {
   const targetResult = await getScraperTargetByCode(targetCode);
@@ -406,8 +415,18 @@ export async function runScraperForTarget(
   const screening = screenScraperCandidatesByWillianPattern(result.candidates);
   const ingest = screening.accepted.length ? await ingestScraperCandidates(target, screening.accepted) : { ingested: [], failed: [], skipped: [] };
   const hasIngestFailure = ingest.failed.length > 0;
+  const criteriaSkipped = screening.skipped.map((item) => ({
+    title: item.candidate.title || item.candidate.sourceUrl || item.reason,
+    reason: item.detail || item.reason,
+  }));
   const sourceUrlSkippedCount = ingest.skipped.filter((item) => item.reason.toLowerCase().includes("link exato")).length;
   const noPhotoValueSkippedCount = ingest.skipped.filter((item) => item.reason.toLowerCase().includes("sem foto")).length;
+  const itemsFound = result.candidates.length;
+  const itemsIngested = ingest.ingested.length;
+  const itemsSkipped =
+    criteriaSkipped.length +
+    ingest.skipped.length +
+    Math.max(screening.accepted.length - ingest.ingested.length - ingest.failed.length - ingest.skipped.length, 0);
   const finalStatus =
     result.status === "failed" ? "failed" : result.errorMessage || hasIngestFailure ? "partial" : "completed";
   const errorMessage = [
@@ -421,9 +440,9 @@ export async function runScraperForTarget(
 
   await updateScraperRunRecord(runCode, {
     status: finalStatus,
-    itemsFound: result.candidates.length,
-    itemsIngested: ingest.ingested.length,
-    itemsSkipped: screening.skipped.length + ingest.skipped.length + Math.max(screening.accepted.length - ingest.ingested.length - ingest.failed.length - ingest.skipped.length, 0),
+    itemsFound,
+    itemsIngested,
+    itemsSkipped,
     itemsDuplicate: 0,
     pagesScraped: result.pagesScraped,
     durationMs: result.durationMs,
@@ -432,7 +451,7 @@ export async function runScraperForTarget(
 
   await updateScraperTargetRunState(target.targetCode, {
     status: finalStatus,
-    itemsFound: result.candidates.length,
+    itemsFound,
     errorMessage: errorMessage || undefined,
     consecutiveErrors: target.consecutiveErrors,
     errorCount: target.errorCount,
@@ -445,21 +464,40 @@ export async function runScraperForTarget(
     ingested: ingest.ingested,
     ingestFailed: ingest.failed,
     ingestSkipped: ingest.skipped,
+    criteriaSkipped,
+    itemsFound,
+    itemsIngested,
+    itemsSkipped,
     rateLimited,
   };
 }
 
-export async function runScraperCron(options: { maxTargets?: number } = {}): Promise<{
-  processed: string[];
-  failed: string[];
-  skipped: string[];
-}> {
+function makeSkippedTargetReport(target: ScraperTarget, skipReason: string): ScraperTargetRunReport {
+  return {
+    targetCode: target.targetCode,
+    targetName: target.name,
+    status: "skipped",
+    skipReason,
+    itemsFound: 0,
+    itemsIngested: 0,
+    itemsSkipped: 0,
+    itemsFailed: 0,
+    pagesScraped: 0,
+    durationMs: 0,
+  };
+}
+
+export async function runScraperCron(
+  options: { maxTargets?: number; notify?: boolean; notificationDryRun?: boolean } = {}
+): Promise<ScraperCronRunSummary> {
   const { listScraperTargets } = await import("./scraper-repository");
   const targetsResult = await listScraperTargets();
 
+  const startedAt = new Date().toISOString();
   const processed: string[] = [];
   const failed: string[] = [];
   const skipped: string[] = [];
+  const targets: ScraperTargetRunReport[] = [];
   const configuredMaxTargets = Number(process.env.SCRAPER_CRON_MAX_TARGETS);
   const maxTargets = Math.min(
     MAX_SCRAPER_CRON_TARGETS,
@@ -476,25 +514,45 @@ export async function runScraperCron(options: { maxTargets?: number } = {}): Pro
   for (const target of sortTargetsForCron(targetsResult.data)) {
     if (quotaBlocked) {
       skipped.push(target.targetCode);
+      targets.push(makeSkippedTargetReport(target, "quota_blocked"));
       continue;
     }
 
     if (processed.length + failed.length >= maxTargets) {
       skipped.push(target.targetCode);
+      targets.push(makeSkippedTargetReport(target, "max_targets_reached"));
       continue;
     }
 
     if (!target.enabled) {
       skipped.push(target.targetCode);
+      targets.push(makeSkippedTargetReport(target, "target_disabled"));
       continue;
     }
 
     if (target.consecutiveErrors >= target.maxRetries) {
       skipped.push(target.targetCode);
+      targets.push(makeSkippedTargetReport(target, "max_retries_reached"));
       continue;
     }
 
     const result = await runScraperForTarget(target.targetCode);
+    targets.push({
+      targetCode: target.targetCode,
+      targetName: target.name,
+      runCode: result.runCode,
+      status: result.result?.status || (result.ok ? "completed" : "failed"),
+      rateLimited: Boolean(result.rateLimited),
+      itemsFound: result.itemsFound || result.result?.candidates.length || 0,
+      itemsIngested: result.itemsIngested || result.ingested?.length || 0,
+      itemsSkipped: result.itemsSkipped || 0,
+      itemsFailed: result.ingestFailed?.length || 0,
+      pagesScraped: result.result?.pagesScraped || 0,
+      durationMs: result.result?.durationMs || 0,
+      errorMessage: result.error || result.result?.errorMessage,
+      skippedDetails: [...(result.criteriaSkipped || []), ...(result.ingestSkipped || [])],
+      failedDetails: result.ingestFailed || [],
+    });
 
     if (result.rateLimited) {
       failed.push(target.targetCode);
@@ -509,5 +567,36 @@ export async function runScraperCron(options: { maxTargets?: number } = {}): Pro
     }
   }
 
-  return { processed, failed, skipped };
+  const cronResult: ScraperCronRunSummary = {
+    processed,
+    failed,
+    skipped,
+    targets,
+    startedAt,
+    finishedAt: new Date().toISOString(),
+    quotaBlocked,
+  };
+
+  if (options.notify !== false) {
+    try {
+      cronResult.notification = await sendScraperWhatsAppReport(cronResult, {
+        dryRun: Boolean(options.notificationDryRun),
+      });
+    } catch (error) {
+      cronResult.notification = {
+        enabled: true,
+        skipped: true,
+        reason: error instanceof Error ? error.message : "Falha desconhecida ao enviar relatorio WhatsApp.",
+        messageCode: `SCR-RPT-ERROR-${Date.now().toString(36).toUpperCase()}`,
+        recipients: [],
+        attempted: 0,
+        sent: 0,
+        failed: 1,
+        messagePreview: "",
+        providerStatuses: [],
+      };
+    }
+  }
+
+  return cronResult;
 }

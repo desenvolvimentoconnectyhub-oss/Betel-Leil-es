@@ -43,11 +43,24 @@ function enumField<T extends string>(value: unknown, fallback: T, allowed: reado
   return typeof value === "string" && allowed.includes(value as T) ? (value as T) : fallback;
 }
 
+function firstDefined(...values: unknown[]) {
+  return values.find((value) => value !== undefined && value !== null);
+}
+
+function responseModeToConversationMode(value: unknown, fallback: WillianAgentConfig["behavior"]["conversationMode"]) {
+  if (value === "text") return "always_text";
+  if (value === "audio") return "always_audio";
+  if (value === "mirror") return "mirror";
+  return fallback;
+}
+
 export function normalizeWillianAgentConfig(input: unknown): WillianAgentConfig {
   const source = asRecord(input);
   const behavior = asRecord(source.behavior);
   const qualification = asRecord(source.qualification);
   const prompt = asRecord(source.prompt);
+  const cloneProfile = asRecord(firstDefined(source.cloneProfile, source.whatsapp_clone_profile));
+  const cloneMemory = asRecord(firstDefined(source.cloneMemory, source.whatsapp_clone_memory));
   const multichannel = asRecord(source.multichannel);
   const files = asRecord(source.files);
   const memory = asRecord(source.memory);
@@ -55,6 +68,7 @@ export function normalizeWillianAgentConfig(input: unknown): WillianAgentConfig 
   const quoteReplyMode = enumField(behavior.quoteReplyMode, defaults.behavior.quoteReplyMode, ["off", "smart", "always"]);
   const agentKey = stringField(source.agentKey, defaults.agentKey);
   const agentName = stringField(source.agentName || source.name, agentKey === defaults.agentKey ? defaults.agentName : "Agente de WhatsApp");
+  const responseConversationMode = responseModeToConversationMode(behavior.responseMode, defaults.behavior.conversationMode);
 
   return {
     agentKey,
@@ -63,16 +77,20 @@ export function normalizeWillianAgentConfig(input: unknown): WillianAgentConfig 
     companyName: stringField(source.companyName, defaults.companyName),
     status: enumField(source.status, "saved", ["draft", "saved", "needs_review"]),
     updatedAt: stringField(source.updatedAt, new Date().toISOString()),
+    globalPrompt: stringField(
+      firstDefined(source.globalPrompt, source.whatsapp_global_prompt),
+      defaults.globalPrompt
+    ),
     behavior: {
-      active: boolField(behavior.active, defaults.behavior.active),
+      active: boolField(firstDefined(behavior.active, behavior.agentEnabled), defaults.behavior.active),
       cloneStyle: boolField(behavior.cloneStyle, defaults.behavior.cloneStyle),
-      splitReplies: boolField(behavior.splitReplies, defaults.behavior.splitReplies),
+      splitReplies: boolField(firstDefined(behavior.splitReplies, behavior.splitMessages), defaults.behavior.splitReplies),
       presenceMode: enumField(behavior.presenceMode, defaults.behavior.presenceMode, [
         "reply_only",
         "natural",
         "always_online",
       ]),
-      conversationMode: enumField(behavior.conversationMode, defaults.behavior.conversationMode, [
+      conversationMode: enumField(behavior.conversationMode, responseConversationMode, [
         "always_text",
         "always_audio",
         "mirror",
@@ -81,15 +99,18 @@ export function normalizeWillianAgentConfig(input: unknown): WillianAgentConfig 
       rapport: enumField(behavior.rapport, defaults.behavior.rapport, ["disabled", "suave", "forte"]),
       availability: enumField(behavior.availability, defaults.behavior.availability, ["business_hours", "always"]),
       voiceProvider: stringField(behavior.voiceProvider, defaults.behavior.voiceProvider),
-      voiceCloneEnabled: boolField(behavior.voiceCloneEnabled, defaults.behavior.voiceCloneEnabled),
-      voiceCloneConsent: boolField(behavior.voiceCloneConsent, defaults.behavior.voiceCloneConsent),
+      voiceCloneEnabled: boolField(
+        firstDefined(behavior.voiceCloneEnabled, behavior.audioVoiceId ? true : undefined),
+        defaults.behavior.voiceCloneEnabled
+      ),
+      voiceCloneConsent: boolField(firstDefined(behavior.voiceCloneConsent, behavior.voiceConsent), defaults.behavior.voiceCloneConsent),
       voiceCloneStatus: enumField(behavior.voiceCloneStatus, defaults.behavior.voiceCloneStatus, [
         "inactive",
         "testing",
         "active",
       ]),
-      selectedVoiceId: stringField(behavior.selectedVoiceId, defaults.behavior.selectedVoiceId),
-      selectedVoiceLabel: stringField(behavior.selectedVoiceLabel, defaults.behavior.selectedVoiceLabel),
+      selectedVoiceId: stringField(firstDefined(behavior.selectedVoiceId, behavior.audioVoiceId), defaults.behavior.selectedVoiceId),
+      selectedVoiceLabel: stringField(firstDefined(behavior.selectedVoiceLabel, behavior.audioVoiceName), defaults.behavior.selectedVoiceLabel),
       voiceSearch: stringField(behavior.voiceSearch, defaults.behavior.voiceSearch),
       audioVoiceSource: stringField(behavior.audioVoiceSource, defaults.behavior.audioVoiceSource),
       audioVoicePublicOwnerId: stringField(
@@ -136,15 +157,15 @@ export function normalizeWillianAgentConfig(input: unknown): WillianAgentConfig 
         80
       ),
       humanIntervention: boolField(behavior.humanIntervention, defaults.behavior.humanIntervention),
-      alertHuman: boolField(behavior.alertHuman, defaults.behavior.alertHuman),
-      antiLoop: boolField(behavior.antiLoop, defaults.behavior.antiLoop),
+      alertHuman: boolField(firstDefined(behavior.alertHuman, behavior.humanHandoffNotifications), defaults.behavior.alertHuman),
+      antiLoop: boolField(firstDefined(behavior.antiLoop, behavior.botLoopProtection), defaults.behavior.antiLoop),
       cooldownEnabled: boolField(behavior.cooldownEnabled, defaults.behavior.cooldownEnabled),
       cooldownMinutes: clampNumber(behavior.cooldownMinutes, defaults.behavior.cooldownMinutes, 0, 1440),
       responsibleNumbers: stringField(behavior.responsibleNumbers, defaults.behavior.responsibleNumbers),
       interInstanceTest: boolField(behavior.interInstanceTest, defaults.behavior.interInstanceTest),
       realCloneTest: boolField(behavior.realCloneTest, defaults.behavior.realCloneTest),
       turingBenchmark: boolField(behavior.turingBenchmark, defaults.behavior.turingBenchmark),
-      serveGroups: boolField(behavior.serveGroups, defaults.behavior.serveGroups),
+      serveGroups: boolField(firstDefined(behavior.serveGroups, behavior.allowGroupChats), defaults.behavior.serveGroups),
       aiWindowActive: boolField(behavior.aiWindowActive, defaults.behavior.aiWindowActive),
       groupsEnabled: boolField(behavior.groupsEnabled, defaults.behavior.groupsEnabled),
       groupReplyMode: enumField(behavior.groupReplyMode, defaults.behavior.groupReplyMode, ["all", "mentions", "admins"]),
@@ -192,7 +213,10 @@ export function normalizeWillianAgentConfig(input: unknown): WillianAgentConfig 
         defaults.behavior.contactPollReactionProtection
       ),
       topicChangeProtection: boolField(behavior.topicChangeProtection, defaults.behavior.topicChangeProtection),
-      promptInjectionProtection: boolField(behavior.promptInjectionProtection, defaults.behavior.promptInjectionProtection),
+      promptInjectionProtection: boolField(
+        firstDefined(behavior.promptInjectionProtection, behavior.promptInjectionGuard),
+        defaults.behavior.promptInjectionProtection
+      ),
       identityGuard: boolField(behavior.identityGuard, defaults.behavior.identityGuard),
       buttonsEnabled: boolField(behavior.buttonsEnabled, defaults.behavior.buttonsEnabled),
       trackedLinksEnabled: boolField(behavior.trackedLinksEnabled, defaults.behavior.trackedLinksEnabled),
@@ -296,6 +320,31 @@ export function normalizeWillianAgentConfig(input: unknown): WillianAgentConfig 
       buttonUrl: stringField(prompt.buttonUrl, defaults.prompt.buttonUrl),
       tags: asStringArray(prompt.tags, defaults.prompt.tags),
     },
+    cloneProfile: {
+      enabled: boolField(cloneProfile.enabled, defaults.cloneProfile.enabled),
+      source: enumField(cloneProfile.source, defaults.cloneProfile.source, ["manual", "voice", "conversation", "hybrid"]),
+      displayName: stringField(cloneProfile.displayName, defaults.cloneProfile.displayName),
+      roleIdentity: stringField(cloneProfile.roleIdentity, defaults.cloneProfile.roleIdentity),
+      tone: stringField(cloneProfile.tone, defaults.cloneProfile.tone),
+      vocabulary: stringField(cloneProfile.vocabulary, defaults.cloneProfile.vocabulary),
+      responseRhythm: stringField(cloneProfile.responseRhythm, defaults.cloneProfile.responseRhythm),
+      salesStyle: stringField(cloneProfile.salesStyle, defaults.cloneProfile.salesStyle),
+      objectionStyle: stringField(cloneProfile.objectionStyle, defaults.cloneProfile.objectionStyle),
+      closingStyle: stringField(cloneProfile.closingStyle, defaults.cloneProfile.closingStyle),
+      emojiStyle: stringField(cloneProfile.emojiStyle, defaults.cloneProfile.emojiStyle),
+      audioStyle: stringField(cloneProfile.audioStyle, defaults.cloneProfile.audioStyle),
+      forbiddenPatterns: stringField(cloneProfile.forbiddenPatterns, defaults.cloneProfile.forbiddenPatterns),
+      notes: stringField(cloneProfile.notes, defaults.cloneProfile.notes),
+    },
+    cloneMemory: {
+      summary: stringField(cloneMemory.summary, defaults.cloneMemory.summary),
+      stylePatterns: asStringArray(cloneMemory.stylePatterns, defaults.cloneMemory.stylePatterns),
+      phrasePatterns: asStringArray(cloneMemory.phrasePatterns, defaults.cloneMemory.phrasePatterns),
+      salesPatterns: asStringArray(cloneMemory.salesPatterns, defaults.cloneMemory.salesPatterns),
+      correctionNotes: asStringArray(cloneMemory.correctionNotes, defaults.cloneMemory.correctionNotes),
+      avoidPatterns: asStringArray(cloneMemory.avoidPatterns, defaults.cloneMemory.avoidPatterns),
+      updatedAt: typeof cloneMemory.updatedAt === "string" ? cloneMemory.updatedAt : defaults.cloneMemory.updatedAt,
+    },
     multichannel: {
       groupStatus: enumField(multichannel.groupStatus, defaults.multichannel.groupStatus, ["paused", "enabled", "blocked"]),
       statusStatus: enumField(multichannel.statusStatus, defaults.multichannel.statusStatus, ["paused", "enabled", "blocked"]),
@@ -355,6 +404,8 @@ export async function getWhatsAppAgentConfig(agentKey = WILLIAN_AGENT_KEY): Prom
       asRecord(metadata.whatsappAgentConfig).agentKey
         ? asRecord(metadata.whatsappAgentConfig)
         : asRecord(metadata.whatsapp_agent_config);
+    const metadataCloneProfile = asRecord(firstDefined(metadata.whatsapp_clone_profile, metadata.cloneProfile));
+    const metadataCloneMemory = asRecord(firstDefined(metadata.whatsapp_clone_memory, metadata.cloneMemory));
     const normalized = normalizeWillianAgentConfig({
       ...fallback,
       ...savedConfig,
@@ -362,6 +413,10 @@ export async function getWhatsAppAgentConfig(agentKey = WILLIAN_AGENT_KEY): Prom
       agentName: stringField(row.name, fallback.agentName),
       roleTitle: stringField(row.role, stringField(metadata.roleTitle, fallback.roleTitle)),
       companyName: stringField(metadata.companyName, fallback.companyName),
+      globalPrompt: stringField(
+        asRecord(savedConfig).globalPrompt,
+        stringField(metadata.whatsapp_global_prompt, fallback.globalPrompt)
+      ),
       status: "saved",
       behavior: {
         ...fallback.behavior,
@@ -380,6 +435,16 @@ export async function getWhatsAppAgentConfig(agentKey = WILLIAN_AGENT_KEY): Prom
           asRecord(savedConfig.prompt).agentPrompt,
           stringField(row.system_prompt, fallback.prompt.agentPrompt)
         ),
+      },
+      cloneProfile: {
+        ...fallback.cloneProfile,
+        ...metadataCloneProfile,
+        ...asRecord(savedConfig.cloneProfile),
+      },
+      cloneMemory: {
+        ...fallback.cloneMemory,
+        ...metadataCloneMemory,
+        ...asRecord(savedConfig.cloneMemory),
       },
     });
     return normalized;
@@ -448,31 +513,40 @@ export async function saveWhatsAppAgentConfig(input: unknown) {
     .maybeSingle();
   const metadata = asRecord((currentAgent as Record<string, unknown> | null)?.metadata);
 
-  const { error: agentError } = await supabase
-    .from("ai_agents")
-    .update({
+  const agentPayload = {
+      agent_key: targetAgentKey,
       name: config.agentName,
       role: config.roleTitle,
       status: config.behavior.active ? "active" : "paused",
+      prompt_name: `whatsapp_${targetAgentKey.replace(/[^a-zA-Z0-9]+/g, "_")}`,
+      prompt_version: "v1.clone",
       system_prompt: config.prompt.agentPrompt,
       metadata: {
         ...metadata,
+        scope: "organization",
+        client_created: true,
+        agent_kind: "whatsapp",
         channel: "whatsapp",
         companyName: config.companyName,
         roleTitle: config.roleTitle,
+        whatsapp_global_prompt: config.globalPrompt,
+        whatsapp_behavior_config: config.behavior,
+        whatsapp_clone_profile: config.cloneProfile,
+        whatsapp_clone_memory: config.cloneMemory,
+        lead_qualification_config: config.qualification,
         whatsappAgentConfig: config,
         whatsapp_agent_config: config,
-        cloneProfile: {
-          dnaManual: config.prompt.dnaManual,
-          humanizationMetric: config.prompt.humanizationMetric,
-        },
-        cloneMemory: config.prompt.cloneMemory,
+        cloneProfile: config.cloneProfile,
+        cloneMemory: config.cloneMemory,
         knowledgeFiles: config.files.companyFiles,
       },
       whatsapp_behavior_config: config.behavior,
       lead_qualification_config: config.qualification,
-    })
-    .eq("agent_key", targetAgentKey);
+    };
+
+  const { error: agentError } = await supabase
+    .from("ai_agents")
+    .upsert(agentPayload, { onConflict: "agent_key" });
 
   if (agentError) return { ok: false, error: agentError.message, config };
 

@@ -416,12 +416,12 @@ export async function getMaintenanceStatus(): Promise<MaintenancePayload> {
       "INNGEST_SIGNING_KEY",
     ], { group: "Essenciais para Operacao", usedBy: "Pipeline inteiro", site: "inngest.com" }, appConfig),
 
-    staticCheck("connectyhub", "WhatsApp / ConnectyHub", "Ponte WhatsApp configurada.", [
+    staticCheck("connectyhub", "WhatsApp Global / ConnectyHub", "Ponte global de WhatsApp configurada.", [
       "CONNECTYHUB_API_URL",
       "CONNECTYHUB_API_TOKEN",
       "CONNECTYHUB_WEBHOOK_SECRET",
       "CONNECTYHUB_WEBHOOK_URL",
-    ], { group: "Essenciais para Operacao", usedBy: "Willian, Camila, Tiago", site: "connectyhub.com.br" }, appConfig),
+    ], { group: "Essenciais para Operacao", usedBy: "Notificacoes do sistema e agentes WhatsApp", site: "connectyhub.com.br" }, appConfig),
 
     staticCheck("resend", "Resend (Email)", "Email transacional configurado.", [
       "RESEND_API_KEY",

@@ -2,11 +2,13 @@ import "server-only";
 
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { bootstrapAdmin, normalizePhone } from "@/lib/auth/bootstrap-admin";
+import { sendGlobalWhatsAppText } from "@/lib/communication/connectyhub-client";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { DataResult, MutationResult } from "./shared";
 
 export type AdminUserRole = "owner" | "admin" | "manager" | "analyst" | "viewer";
 export type AdminUserStatus = "active" | "invited" | "suspended" | "disabled";
+export type AdminUserInviteStatus = "not_sent" | "sent" | "failed" | "linked_existing";
 
 export type AdminUserListItem = {
   id: string;
@@ -15,9 +17,14 @@ export type AdminUserListItem = {
   authUserId: string | null;
   displayName: string;
   email: string;
+  phone: string;
   role: AdminUserRole;
   status: AdminUserStatus;
   permissions: Record<string, unknown>;
+  inviteStatus: AdminUserInviteStatus;
+  inviteError: string | null;
+  invitedAt: string | null;
+  invitedByAdminUserId: string | null;
   lastSeenAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -26,9 +33,11 @@ export type AdminUserListItem = {
 export type CreateAdminUserInput = {
   displayName: string;
   email: string;
+  phone?: string;
   role: AdminUserRole;
   status: AdminUserStatus;
   organizationName?: string;
+  invitedByAdminId?: string | null;
 };
 
 export type CreateBootstrapAdminAccountInput = {
@@ -38,15 +47,29 @@ export type CreateBootstrapAdminAccountInput = {
   password: string;
 };
 
+type AdminInviteLinkKind = "invite" | "recovery";
+
+type AdminInviteDeliveryResult = {
+  authUserId: string | null;
+  inviteStatus: AdminUserInviteStatus;
+  inviteError: string | null;
+  invitedAt: string | null;
+};
+
 type AdminUserDbRow = {
   id: string;
   organization_id: string | null;
   auth_user_id: string | null;
   display_name: string | null;
   email: string | null;
+  phone: string | null;
   role: string | null;
   status: string | null;
   permissions: Record<string, unknown> | null;
+  invite_status: string | null;
+  invite_error: string | null;
+  invited_at: string | null;
+  invited_by_admin_user_id: string | null;
   last_seen_at: string | null;
   created_at: string | null;
   updated_at: string | null;
@@ -56,6 +79,7 @@ type AdminUserDbRow = {
 const defaultOrganizationName = "Betel Leiloes";
 const validRoles: AdminUserRole[] = ["owner", "admin", "manager", "analyst", "viewer"];
 const validStatuses: AdminUserStatus[] = ["active", "invited", "suspended", "disabled"];
+const validInviteStatuses: AdminUserInviteStatus[] = ["not_sent", "sent", "failed", "linked_existing"];
 
 function normalizeRole(value: string): AdminUserRole {
   return validRoles.includes(value as AdminUserRole) ? (value as AdminUserRole) : "analyst";
@@ -65,12 +89,223 @@ function normalizeStatus(value: string): AdminUserStatus {
   return validStatuses.includes(value as AdminUserStatus) ? (value as AdminUserStatus) : "active";
 }
 
+function normalizeInviteStatus(value: string | null | undefined): AdminUserInviteStatus {
+  return validInviteStatuses.includes(value as AdminUserInviteStatus)
+    ? (value as AdminUserInviteStatus)
+    : "not_sent";
+}
+
 function permissionsForRole(role: AdminUserRole) {
   if (role === "owner") return { all: true };
   if (role === "admin") return { admin: true, users: true, operations: true };
   if (role === "manager") return { operations: true, review: true };
   if (role === "analyst") return { opportunities: true, review: true };
   return { read: true };
+}
+
+function getAdminInviteRedirectUrl() {
+  const explicit = process.env.BETEL_ADMIN_INVITE_REDIRECT_URL?.trim();
+  if (explicit) return explicit;
+
+  const appUrl =
+    process.env.NEXT_PUBLIC_APP_URL?.trim() ||
+    process.env.BETEL_PUBLIC_APP_URL?.trim() ||
+    process.env.NEXT_PUBLIC_SITE_URL?.trim();
+
+  if (!appUrl) return undefined;
+
+  try {
+    const url = new URL("/definir-senha", appUrl);
+    url.searchParams.set("next", "/admin");
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function makeAdminInviteMessageCode(email: string) {
+  const slug = email.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").slice(0, 24) || "usuario";
+  const suffix = Math.random().toString(36).slice(2, 8).toUpperCase();
+  return `ADMIN-INVITE-${Date.now().toString(36).toUpperCase()}-${slug}-${suffix}`;
+}
+
+function firstName(displayName: string) {
+  return displayName.trim().split(/\s+/)[0] || "tudo bem";
+}
+
+function failedInviteDelivery(error: unknown, fallback: string, authUserId: string | null = null): AdminInviteDeliveryResult {
+  return {
+    authUserId,
+    inviteStatus: "failed",
+    inviteError: error instanceof Error ? error.message : fallback,
+    invitedAt: null,
+  };
+}
+
+async function sendAdminInviteWhatsApp(input: {
+  displayName: string;
+  email: string;
+  phone: string;
+  role: AdminUserRole;
+  actionLink: string;
+  linkKind: AdminInviteLinkKind;
+}): Promise<{ ok: boolean; error?: string }> {
+  const messageCode = makeAdminInviteMessageCode(input.email);
+  const greeting = firstName(input.displayName);
+  const linkPurpose = input.linkKind === "recovery" ? "redefinir sua senha" : "cadastrar sua senha";
+
+  const delivery = await sendGlobalWhatsAppText({
+    messageCode,
+    runCode: `ADMIN-USER-${messageCode}`,
+    subject: `Oi, ${greeting}. Seu acesso ao painel da Betel foi liberado.`,
+    messagePreview: [
+      `Use este link para ${linkPurpose} e acessar o painel admin:`,
+      input.actionLink,
+      "",
+      "Esse link e pessoal. Se expirar, peca para o admin reenviar outro convite.",
+    ].join("\n"),
+    guardrailSummary: "",
+    payload: {
+      eventType: "admin_user_password_link",
+      recipient: {
+        name: input.displayName,
+        email: input.email,
+        phone: input.phone,
+      },
+      auth: {
+        role: input.role,
+        linkKind: input.linkKind,
+      },
+    },
+  });
+
+  if (!delivery.ok) {
+    return {
+      ok: false,
+      error: delivery.errorMessage || `ConnectyHub nao aceitou o WhatsApp (${delivery.providerStatus}).`,
+    };
+  }
+
+  return { ok: true };
+}
+
+async function generateAdminPasswordLink(
+  supabase: SupabaseClient,
+  input: {
+    email: string;
+    displayName: string;
+    phone: string;
+    role: AdminUserRole;
+    linkKind: AdminInviteLinkKind;
+  }
+) {
+  const redirectTo = getAdminInviteRedirectUrl();
+
+  if (input.linkKind === "invite") {
+    const options: { data: Record<string, string>; redirectTo?: string } = {
+      data: {
+        name: input.displayName,
+        phone: input.phone,
+        role: input.role,
+        source: "admin_user_invite",
+        invite_channel: "whatsapp",
+      },
+    };
+    if (redirectTo) options.redirectTo = redirectTo;
+
+    return supabase.auth.admin.generateLink({
+      type: "invite",
+      email: input.email,
+      options,
+    });
+  }
+
+  const options: { redirectTo?: string } = {};
+  if (redirectTo) options.redirectTo = redirectTo;
+
+  return supabase.auth.admin.generateLink({
+    type: "recovery",
+    email: input.email,
+    ...(redirectTo ? { options } : {}),
+  });
+}
+
+async function deliverAdminPasswordInvite(
+  supabase: SupabaseClient,
+  input: {
+    displayName: string;
+    email: string;
+    phone: string;
+    role: AdminUserRole;
+  }
+): Promise<AdminInviteDeliveryResult> {
+  const invitedAt = new Date().toISOString();
+  let authUserId: string | null = null;
+  let linkKind: AdminInviteLinkKind = "invite";
+
+  try {
+    const existingAuthUser = await findAuthUserByEmail(supabase, input.email);
+
+    if (existingAuthUser?.id) {
+      authUserId = existingAuthUser.id;
+      linkKind = "recovery";
+
+      const { error: updateAuthError } = await supabase.auth.admin.updateUserById(existingAuthUser.id, {
+        user_metadata: {
+          ...existingAuthUser.user_metadata,
+          name: input.displayName,
+          phone: input.phone,
+          role: input.role,
+          source: "admin_user_management",
+          invite_channel: "whatsapp",
+        },
+      });
+
+      if (updateAuthError) {
+        return failedInviteDelivery(updateAuthError, "Nao foi possivel atualizar o usuario no Supabase Auth.", authUserId);
+      }
+    }
+
+    const { data: linkData, error: linkError } = await generateAdminPasswordLink(supabase, {
+      ...input,
+      linkKind,
+    });
+
+    const actionLink = linkData?.properties?.action_link;
+    authUserId = linkData?.user?.id || authUserId;
+
+    if (linkError || !actionLink || !authUserId) {
+      return failedInviteDelivery(
+        linkError,
+        "Nao foi possivel gerar o link seguro de senha no Supabase Auth.",
+        authUserId
+      );
+    }
+
+    const whatsapp = await sendAdminInviteWhatsApp({
+      ...input,
+      actionLink,
+      linkKind,
+    });
+
+    if (!whatsapp.ok) {
+      return {
+        authUserId,
+        inviteStatus: "failed",
+        inviteError: whatsapp.error || "Nao foi possivel enviar o link pelo WhatsApp.",
+        invitedAt: null,
+      };
+    }
+
+    return {
+      authUserId,
+      inviteStatus: "sent",
+      inviteError: null,
+      invitedAt,
+    };
+  } catch (error) {
+    return failedInviteDelivery(error, "Nao foi possivel gerar ou enviar o convite administrativo.", authUserId);
+  }
 }
 
 async function findAuthUserByEmail(supabase: SupabaseClient, email: string): Promise<User | null> {
@@ -96,9 +331,14 @@ function normalizeAdminUser(row: AdminUserDbRow): AdminUserListItem {
     authUserId: row.auth_user_id,
     displayName: row.display_name || row.email || "Admin",
     email: row.email || "",
+    phone: row.phone || "",
     role: normalizeRole(row.role || "analyst"),
     status: normalizeStatus(row.status || "active"),
     permissions: row.permissions || {},
+    inviteStatus: normalizeInviteStatus(row.invite_status),
+    inviteError: row.invite_error,
+    invitedAt: row.invited_at,
+    invitedByAdminUserId: row.invited_by_admin_user_id,
     lastSeenAt: row.last_seen_at,
     createdAt: row.created_at || "",
     updatedAt: row.updated_at || "",
@@ -166,17 +406,26 @@ export async function listAdminUsers(limit = 80): Promise<DataResult<AdminUserLi
 
 export async function createAdminUserRecord(
   input: CreateAdminUserInput
-): Promise<MutationResult<{ id: string; mode: "created" | "updated" }>> {
+): Promise<
+  MutationResult<{
+    id: string;
+    mode: "created" | "updated";
+    inviteStatus: AdminUserInviteStatus;
+    inviteError?: string;
+  }>
+> {
   const supabase = getSupabaseAdminClient();
   if (!supabase) return { ok: false, error: "Supabase admin nao configurado." };
 
   const displayName = input.displayName.trim();
   const email = input.email.trim().toLowerCase();
+  const phone = normalizePhone(input.phone || "");
   const role = normalizeRole(input.role);
   const status = normalizeStatus(input.status);
 
   if (!displayName) return { ok: false, error: "Informe o nome do usuario." };
   if (!email || !email.includes("@")) return { ok: false, error: "Informe um email valido." };
+  if (!phone || phone.length < 10) return { ok: false, error: "Informe um telefone valido." };
 
   const organization = await ensureAdminOrganization(input.organizationName || defaultOrganizationName);
   if (!organization.ok || !organization.data?.id) {
@@ -185,27 +434,51 @@ export async function createAdminUserRecord(
 
   const { data: existing, error: existingError } = await supabase
     .from("admin_users")
-    .select("id")
+    .select("id,auth_user_id")
     .ilike("email", email)
     .limit(1)
     .maybeSingle();
 
   if (existingError) return { ok: false, error: existingError.message };
 
+  const now = new Date().toISOString();
+  let authUserId = typeof existing?.auth_user_id === "string" ? existing.auth_user_id : null;
+  const inviteDelivery = await deliverAdminPasswordInvite(supabase, {
+    displayName,
+    email,
+    phone,
+    role,
+  });
+  authUserId = inviteDelivery.authUserId || authUserId;
+
   const payload = {
     organization_id: organization.data.id,
+    auth_user_id: authUserId,
     display_name: displayName,
     email,
+    phone,
     role,
     status,
     permissions: permissionsForRole(role),
-    updated_at: new Date().toISOString(),
+    invite_status: inviteDelivery.inviteStatus,
+    invite_error: inviteDelivery.inviteError,
+    invited_at: inviteDelivery.invitedAt,
+    invited_by_admin_user_id: input.invitedByAdminId || null,
+    updated_at: now,
   };
 
   if (existing?.id) {
     const { error } = await supabase.from("admin_users").update(payload).eq("id", existing.id);
     if (error) return { ok: false, error: error.message };
-    return { ok: true, data: { id: existing.id, mode: "updated" } };
+    return {
+      ok: true,
+      data: {
+        id: existing.id,
+        mode: "updated",
+        inviteStatus: inviteDelivery.inviteStatus,
+        ...(inviteDelivery.inviteError ? { inviteError: inviteDelivery.inviteError } : {}),
+      },
+    };
   }
 
   const { data, error } = await supabase
@@ -215,7 +488,83 @@ export async function createAdminUserRecord(
     .single();
 
   if (error || !data?.id) return { ok: false, error: error?.message || "Nao foi possivel cadastrar o usuario." };
-  return { ok: true, data: { id: data.id, mode: "created" } };
+  return {
+    ok: true,
+    data: {
+      id: data.id,
+      mode: "created",
+      inviteStatus: inviteDelivery.inviteStatus,
+      ...(inviteDelivery.inviteError ? { inviteError: inviteDelivery.inviteError } : {}),
+    },
+  };
+}
+
+export async function resendAdminUserInviteRecord(
+  id: string,
+  invitedByAdminId?: string | null
+): Promise<
+  MutationResult<{
+    id: string;
+    inviteStatus: AdminUserInviteStatus;
+    inviteError?: string;
+  }>
+> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return { ok: false, error: "Supabase admin nao configurado." };
+
+  const adminUserId = id.trim();
+  if (!adminUserId) return { ok: false, error: "Usuario nao informado." };
+
+  const { data: row, error: rowError } = await supabase
+    .from("admin_users")
+    .select("id,auth_user_id,display_name,email,phone,role,status")
+    .eq("id", adminUserId)
+    .maybeSingle();
+
+  if (rowError) return { ok: false, error: rowError.message };
+  if (!row) return { ok: false, error: "Usuario administrativo nao encontrado." };
+
+  const currentAuthUserId = typeof row.auth_user_id === "string" ? row.auth_user_id : null;
+  const displayName = String(row.display_name || row.email || "Admin").trim();
+  const email = String(row.email || "").trim().toLowerCase();
+  const phone = normalizePhone(String(row.phone || ""));
+  const role = normalizeRole(String(row.role || "analyst"));
+  const status = normalizeStatus(String(row.status || "active"));
+
+  if (status !== "active") return { ok: false, error: "Ative o usuario antes de reenviar o convite." };
+  if (!email || !email.includes("@")) return { ok: false, error: "Usuario sem email valido para convite." };
+  if (!phone || phone.length < 10) return { ok: false, error: "Usuario sem telefone valido para WhatsApp." };
+
+  const inviteDelivery = await deliverAdminPasswordInvite(supabase, {
+    displayName,
+    email,
+    phone,
+    role,
+  });
+
+  const { error: updateError } = await supabase
+    .from("admin_users")
+    .update({
+      auth_user_id: inviteDelivery.authUserId || currentAuthUserId,
+      phone,
+      invite_status: inviteDelivery.inviteStatus,
+      invite_error: inviteDelivery.inviteError,
+      invited_at: inviteDelivery.invitedAt,
+      invited_by_admin_user_id: invitedByAdminId || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", adminUserId);
+
+  if (updateError) return { ok: false, error: updateError.message };
+
+  return {
+    ok: true,
+    data: {
+      id: adminUserId,
+      inviteStatus: inviteDelivery.inviteStatus,
+      ...(inviteDelivery.inviteError ? { inviteError: inviteDelivery.inviteError } : {}),
+    },
+  };
 }
 
 export async function createBootstrapAdminAccountRecord(

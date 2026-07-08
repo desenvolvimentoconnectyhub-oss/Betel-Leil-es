@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { requireCurrentAdmin } from "@/lib/auth/admin";
 import {
   createAdminUserRecord,
+  resendAdminUserInviteRecord,
   updateAdminUserStatusRecord,
   type AdminUserRole,
   type AdminUserStatus,
@@ -33,7 +34,7 @@ async function requireUserManager(errorPath = "/admin/usuarios") {
 }
 
 export async function createAdminUserAction(formData: FormData) {
-  await requireUserManager();
+  const admin = await requireUserManager();
 
   const roleValue = field(formData, "role", "analyst");
   const statusValue = field(formData, "status", "active");
@@ -43,9 +44,11 @@ export async function createAdminUserAction(formData: FormData) {
   const result = await createAdminUserRecord({
     displayName: field(formData, "displayName"),
     email: field(formData, "email"),
+    phone: field(formData, "phone"),
     role,
     status,
     organizationName: field(formData, "organizationName", "Betel Leiloes"),
+    invitedByAdminId: admin.id,
   });
 
   if (!result.ok) {
@@ -53,13 +56,45 @@ export async function createAdminUserAction(formData: FormData) {
   }
 
   revalidatePath("/admin/usuarios");
+  if (result.data?.inviteStatus === "failed") {
+    redirectWith(
+      "/admin/usuarios",
+      "error",
+      `Usuario salvo, mas o convite nao foi enviado: ${result.data.inviteError || "erro desconhecido."}`
+    );
+  }
+
   redirectWith(
     "/admin/usuarios",
     "success",
-    result.data?.mode === "updated"
-      ? "Usuario administrativo atualizado."
-      : "Usuario administrativo cadastrado. Agora crie/habilite o mesmo email no Supabase Auth."
+    result.data?.inviteStatus === "linked_existing"
+      ? "Usuario salvo e vinculado a uma conta Supabase Auth existente."
+      : result.data?.mode === "updated"
+        ? "Usuario administrativo atualizado e link de senha enviado pelo WhatsApp."
+        : "Usuario administrativo cadastrado e link de senha enviado pelo WhatsApp."
   );
+}
+
+export async function resendAdminUserInviteAction(formData: FormData) {
+  const admin = await requireUserManager();
+  const id = field(formData, "id");
+
+  const result = await resendAdminUserInviteRecord(id, admin.id);
+
+  if (!result.ok) {
+    redirectWith("/admin/usuarios", "error", result.error || "Nao foi possivel reenviar o convite.");
+  }
+
+  revalidatePath("/admin/usuarios");
+  if (result.data?.inviteStatus === "failed") {
+    redirectWith(
+      "/admin/usuarios",
+      "error",
+      `Usuario salvo, mas o WhatsApp nao foi enviado: ${result.data.inviteError || "erro desconhecido."}`
+    );
+  }
+
+  redirectWith("/admin/usuarios", "success", "Link de senha reenviado pelo WhatsApp.");
 }
 
 export async function updateAdminUserStatusAction(formData: FormData) {

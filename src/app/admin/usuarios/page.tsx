@@ -1,5 +1,16 @@
-import { AlertCircle, CheckCircle2, Clock3, Link2, ShieldCheck, UserPlus, Users } from "lucide-react";
-import { createAdminUserAction, updateAdminUserStatusAction } from "./actions";
+import {
+  AlertCircle,
+  CheckCircle2,
+  Clock3,
+  Link2,
+  MessageCircle,
+  Phone,
+  Send,
+  ShieldCheck,
+  UserPlus,
+  Users,
+} from "lucide-react";
+import { createAdminUserAction, resendAdminUserInviteAction, updateAdminUserStatusAction } from "./actions";
 import { DashboardCard } from "@/components/admin/DashboardCard";
 import { StatusBadge } from "@/components/admin/StatusBadge";
 import { Button } from "@/components/ui/button";
@@ -23,14 +34,32 @@ function formatDate(value: string | null) {
 
 function accessLabel(user: AdminUserListItem) {
   if (user.status !== "active") return "Bloqueado";
-  if (user.authUserId) return "Liberado";
+  if (user.authUserId && user.lastSeenAt) return "Liberado";
+  if (user.inviteStatus === "sent") return "Convite enviado";
+  if (user.inviteStatus === "linked_existing") return "Conta vinculada";
+  if (user.inviteStatus === "failed") return "Convite falhou";
+  if (user.authUserId) return "Aguardando senha";
   return "Aguardando Auth";
 }
 
 function accessTone(user: AdminUserListItem): "green" | "yellow" | "red" | "muted" {
   if (user.status !== "active") return user.status === "suspended" || user.status === "disabled" ? "red" : "muted";
-  if (user.authUserId) return "green";
+  if (user.authUserId && user.lastSeenAt) return "green";
+  if (user.inviteStatus === "failed") return "red";
   return "yellow";
+}
+
+function inviteLabel(user: AdminUserListItem) {
+  if (user.inviteStatus === "sent") return "WhatsApp enviado";
+  if (user.inviteStatus === "linked_existing") return "Conta existente";
+  if (user.inviteStatus === "failed") return "Falhou";
+  return "Nao enviado";
+}
+
+function inviteTone(user: AdminUserListItem): "green" | "yellow" | "red" | "muted" {
+  if (user.inviteStatus === "sent" || user.inviteStatus === "linked_existing") return "green";
+  if (user.inviteStatus === "failed") return "red";
+  return "muted";
 }
 
 function countBy(users: AdminUserListItem[], predicate: (user: AdminUserListItem) => boolean) {
@@ -79,6 +108,26 @@ function StatusAction({ user, nextStatus, label }: { user: AdminUserListItem; ne
   );
 }
 
+function ResendInviteAction({ user }: { user: AdminUserListItem }) {
+  const canResend = user.status === "active" && Boolean(user.phone) && (!user.lastSeenAt || user.inviteStatus === "failed");
+  if (!canResend) return null;
+
+  return (
+    <form action={resendAdminUserInviteAction}>
+      <input type="hidden" name="id" value={user.id} />
+      <Button
+        type="submit"
+        size="sm"
+        variant="outline"
+        className="h-7 rounded-md border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] text-xs text-white hover:text-white"
+      >
+        <Send size={13} />
+        Reenviar
+      </Button>
+    </form>
+  );
+}
+
 export default async function AdminUsersPage({
   searchParams,
 }: {
@@ -91,7 +140,7 @@ export default async function AdminUsersPage({
   const message = typeof params.message === "string" ? params.message : undefined;
   const activeCount = countBy(users, (user) => user.status === "active");
   const linkedCount = countBy(users, (user) => user.status === "active" && Boolean(user.authUserId));
-  const pendingAuthCount = countBy(users, (user) => user.status === "active" && !user.authUserId);
+  const pendingInviteCount = countBy(users, (user) => user.inviteStatus === "sent" && !user.lastSeenAt);
 
   return (
     <div className="mx-auto max-w-[1600px] px-4 py-4 lg:px-5">
@@ -106,8 +155,8 @@ export default async function AdminUsersPage({
             </div>
             <h1 className="text-2xl font-semibold tracking-tight text-white">Usuarios administrativos</h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--admin-muted)]">
-              Cadastre o perfil interno, mantenha status e papel sob controle, e vincule o acesso ao Supabase Auth pelo
-              mesmo email.
+              Cadastre o perfil interno, defina o nivel de acesso e envie pelo WhatsApp o link para criar a senha no
+              Supabase Auth.
             </p>
             {usersResult.reason && <p className="mt-2 text-xs text-[var(--admin-yellow)]">{usersResult.reason}</p>}
           </div>
@@ -121,8 +170,8 @@ export default async function AdminUsersPage({
               <div className="text-[10px] uppercase tracking-[0.12em] text-[var(--admin-muted)]">liberados</div>
             </div>
             <div className="rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] px-3 py-2">
-              <div className="font-mono text-xl font-bold text-[var(--admin-yellow)]">{pendingAuthCount}</div>
-              <div className="text-[10px] uppercase tracking-[0.12em] text-[var(--admin-muted)]">auth</div>
+              <div className="font-mono text-xl font-bold text-[var(--admin-yellow)]">{pendingInviteCount}</div>
+              <div className="text-[10px] uppercase tracking-[0.12em] text-[var(--admin-muted)]">convites</div>
             </div>
           </div>
         </div>
@@ -160,10 +209,23 @@ export default async function AdminUsersPage({
                 className="h-10 rounded-md border border-[var(--admin-border)] bg-[rgba(0,0,0,0.28)] px-3 text-sm text-white outline-none transition placeholder:text-[var(--admin-muted)] focus:border-[var(--admin-cyan)]"
               />
             </div>
+            <div className="grid gap-2">
+              <label htmlFor="phone" className="text-xs font-semibold text-[var(--admin-soft)]">
+                Telefone
+              </label>
+              <input
+                id="phone"
+                name="phone"
+                type="tel"
+                required
+                placeholder="(47) 98857-7996"
+                className="h-10 rounded-md border border-[var(--admin-border)] bg-[rgba(0,0,0,0.28)] px-3 text-sm text-white outline-none transition placeholder:text-[var(--admin-muted)] focus:border-[var(--admin-cyan)]"
+              />
+            </div>
             <div className="grid gap-2 sm:grid-cols-2">
               <div className="grid gap-2">
                 <label htmlFor="role" className="text-xs font-semibold text-[var(--admin-soft)]">
-                  Papel
+                  Nivel de acesso
                 </label>
                 <select
                   id="role"
@@ -211,7 +273,7 @@ export default async function AdminUsersPage({
               className="h-10 bg-[var(--admin-cyan)] font-bold text-black hover:bg-white"
             >
               <UserPlus size={16} />
-              Cadastrar usuario
+              Cadastrar e enviar WhatsApp
             </Button>
           </form>
 
@@ -222,7 +284,7 @@ export default async function AdminUsersPage({
             </div>
             <div className="flex items-start gap-2">
               <Link2 size={15} className="mt-0.5 shrink-0 text-[var(--admin-cyan)]" />
-              <span>O vinculo acontece no primeiro login quando o email for igual.</span>
+              <span>O usuario recebe no WhatsApp um link seguro para definir a senha e acessar o painel.</span>
             </div>
           </div>
         </DashboardCard>
@@ -234,12 +296,13 @@ export default async function AdminUsersPage({
           contentClassName="p-0"
         >
           <div className="overflow-x-auto">
-            <table className="min-w-[860px] w-full border-separate border-spacing-0 text-left">
+            <table className="min-w-[1080px] w-full border-separate border-spacing-0 text-left">
               <thead>
                 <tr className="border-b border-[var(--admin-border)] text-[10px] uppercase tracking-[0.14em] text-[var(--admin-muted)]">
                   <th className="px-4 py-3 font-semibold">Usuario</th>
                   <th className="px-4 py-3 font-semibold">Papel</th>
                   <th className="px-4 py-3 font-semibold">Acesso</th>
+                  <th className="px-4 py-3 font-semibold">Convite</th>
                   <th className="px-4 py-3 font-semibold">Ultimo acesso</th>
                   <th className="px-4 py-3 text-right font-semibold">Acao</th>
                 </tr>
@@ -250,6 +313,12 @@ export default async function AdminUsersPage({
                     <td className="border-t border-[var(--admin-border)] px-4 py-3">
                       <div className="font-semibold text-white">{user.displayName}</div>
                       <div className="mt-0.5 max-w-xs truncate text-xs text-[var(--admin-muted)]">{user.email}</div>
+                      {user.phone && (
+                        <div className="mt-1 inline-flex items-center gap-1 text-xs text-[var(--admin-soft)]">
+                          <Phone size={12} />
+                          {user.phone}
+                        </div>
+                      )}
                       <div className="mt-1 text-[10px] uppercase tracking-[0.12em] text-[var(--admin-muted)]">
                         {user.organizationName}
                       </div>
@@ -270,11 +339,28 @@ export default async function AdminUsersPage({
                         )}
                       </div>
                     </td>
+                    <td className="border-t border-[var(--admin-border)] px-4 py-3">
+                      <div className="flex flex-col gap-1">
+                        <StatusBadge tone={inviteTone(user)}>{inviteLabel(user)}</StatusBadge>
+                        {user.invitedAt && (
+                          <span className="inline-flex items-center gap-1 text-xs text-[var(--admin-muted)]">
+                            <MessageCircle size={13} />
+                            {formatDate(user.invitedAt)}
+                          </span>
+                        )}
+                        {user.inviteError && (
+                          <span className="max-w-[240px] truncate text-xs text-[var(--admin-red)]" title={user.inviteError}>
+                            {user.inviteError}
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td className="border-t border-[var(--admin-border)] px-4 py-3 text-sm text-[var(--admin-soft)]">
                       {formatDate(user.lastSeenAt)}
                     </td>
                     <td className="border-t border-[var(--admin-border)] px-4 py-3">
                       <div className="flex justify-end gap-2">
+                        <ResendInviteAction user={user} />
                         {user.status === "active" ? (
                           <StatusAction user={user} nextStatus="suspended" label="Suspender" />
                         ) : (
@@ -286,7 +372,7 @@ export default async function AdminUsersPage({
                 ))}
                 {!users.length && (
                   <tr>
-                    <td colSpan={5} className="px-4 py-10 text-center text-sm text-[var(--admin-muted)]">
+                    <td colSpan={6} className="px-4 py-10 text-center text-sm text-[var(--admin-muted)]">
                       Nenhum usuario administrativo cadastrado.
                     </td>
                   </tr>

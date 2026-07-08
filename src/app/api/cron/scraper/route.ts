@@ -21,6 +21,18 @@ function shouldForceRun(request: Request) {
   return url.searchParams.get("force") === "1" || url.searchParams.get("force") === "true";
 }
 
+function shouldNotify(request: Request) {
+  const url = new URL(request.url);
+  const value = (url.searchParams.get("notify") || "").toLowerCase();
+  return value !== "0" && value !== "false" && value !== "off";
+}
+
+function shouldDryRunNotification(request: Request) {
+  const url = new URL(request.url);
+  const value = (url.searchParams.get("notifyDryRun") || "").toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
+}
+
 export async function GET(request: Request) {
   const authHeader = request.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
@@ -43,11 +55,16 @@ export async function GET(request: Request) {
     });
   }
 
-  const result = await runScraperCron({ maxTargets });
+  const result = await runScraperCron({
+    maxTargets,
+    notify: shouldNotify(request),
+    notificationDryRun: shouldDryRunNotification(request),
+  });
 
   return NextResponse.json({
     ok: true,
     maxTargets,
+    notify: shouldNotify(request),
     clock: decision.clock,
     ...result,
     timestamp: new Date().toISOString(),

@@ -70,7 +70,7 @@ function hasRealEstateAssetIntent(row: OpportunityDbRow) {
   }).rejected;
 }
 
-function shouldShowInPortfolio(row: OpportunityDbRow) {
+export function shouldShowInPortfolio(row: OpportunityDbRow) {
   const status = [
     asString(row.stage),
     asString(row.ai_status),

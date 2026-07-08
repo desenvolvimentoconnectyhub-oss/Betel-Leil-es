@@ -1,6 +1,6 @@
 import "server-only";
 
-import { sendWillianWhatsAppText } from "@/lib/communication/connectyhub-client";
+import { sendGlobalWhatsAppText } from "@/lib/communication/connectyhub-client";
 
 export type CommunicationDeliveryAdapterMode = "mock" | "manual" | "sandbox" | "provider";
 
@@ -132,7 +132,7 @@ function getChannelAdapterConfig(channel: string, provider: string): ChannelAdap
 
     return {
       channelKey,
-      adapterLabel: "WhatsApp / ConnectyHub",
+      adapterLabel: "WhatsApp Global / ConnectyHub",
       provider: cleanString(provider, process.env.BETEL_WHATSAPP_PROVIDER || "connectyhub"),
       endpointUrl: process.env.BETEL_WHATSAPP_DELIVERY_WEBHOOK_URL || connectyhubEndpoint || fallbackEndpoint,
       token:
@@ -404,7 +404,7 @@ export async function executeCommunicationDeliveryAdapter(
   }
 
   if (config.channelKey === "whatsapp") {
-    const providerResult = await sendWillianWhatsAppText({
+    const providerResult = await sendGlobalWhatsAppText({
       messageCode: input.messageCode,
       runCode: input.runCode,
       subject: input.subject,

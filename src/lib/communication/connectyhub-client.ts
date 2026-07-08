@@ -6,6 +6,9 @@ import type { WhatsAppAgentInstanceSummary, WillianConnectionInfo, WillianInstan
 export const WILLIAN_AGENT_KEY = "multichannel-dispatch";
 export const WILLIAN_AGENT_NAME = "Willian";
 export const WILLIAN_DEFAULT_INSTANCE_NAME = "willian-betel";
+export const GLOBAL_WHATSAPP_AGENT_KEY = WILLIAN_AGENT_KEY;
+export const GLOBAL_WHATSAPP_AGENT_NAME = "WhatsApp Global";
+export const GLOBAL_WHATSAPP_DEFAULT_INSTANCE_NAME = WILLIAN_DEFAULT_INSTANCE_NAME;
 export const CONNECTYHUB_PROVIDER = "connectyhub";
 const CONNECTYHUB_CONNECT_SYSTEM_NAME = "ViralCheck";
 export const CONNECTYHUB_WEBHOOK_EVENTS = [
@@ -163,11 +166,44 @@ function isConnectyHubApiKey(value: string) {
   return token.length >= 20 && !/\s/.test(token);
 }
 
+const globalWhatsappInstanceNameKeys = [
+  "BETEL_GLOBAL_WHATSAPP_INSTANCE_NAME",
+  "BETEL_GLOBAL_CONNECTYHUB_INSTANCE_NAME",
+  "BETEL_WILLIAN_CONNECTYHUB_INSTANCE_NAME",
+];
+const globalWhatsappInstanceIdKeys = [
+  "BETEL_GLOBAL_WHATSAPP_INSTANCE_ID",
+  "BETEL_GLOBAL_CONNECTYHUB_INSTANCE_ID",
+  "BETEL_WILLIAN_CONNECTYHUB_INSTANCE_ID",
+];
+const globalWhatsappPhoneKeys = [
+  "BETEL_GLOBAL_WHATSAPP_PHONE_NUMBER",
+  "BETEL_WILLIAN_WHATSAPP_PHONE_NUMBER",
+];
+const globalWhatsappDisplayNameKeys = [
+  "BETEL_GLOBAL_WHATSAPP_DISPLAY_NAME",
+  "BETEL_WILLIAN_WHATSAPP_DISPLAY_NAME",
+];
+const globalWhatsappProfileImageKeys = [
+  "BETEL_GLOBAL_WHATSAPP_PROFILE_IMAGE_URL",
+  "BETEL_WILLIAN_WHATSAPP_PROFILE_IMAGE_URL",
+];
+const globalWhatsappProfileSyncedAtKeys = [
+  "BETEL_GLOBAL_WHATSAPP_PROFILE_SYNCED_AT",
+  "BETEL_WILLIAN_WHATSAPP_PROFILE_SYNCED_AT",
+];
+
 const willianConfigKeys = [
   "CONNECTYHUB_API_URL",
   "CONNECTYHUB_API_TOKEN",
   "CONNECTYHUB_WEBHOOK_SECRET",
   "CONNECTYHUB_WEBHOOK_URL",
+  ...globalWhatsappInstanceNameKeys,
+  ...globalWhatsappInstanceIdKeys,
+  ...globalWhatsappPhoneKeys,
+  ...globalWhatsappDisplayNameKeys,
+  ...globalWhatsappProfileImageKeys,
+  ...globalWhatsappProfileSyncedAtKeys,
   "BETEL_WILLIAN_CONNECTYHUB_INSTANCE_NAME",
   "BETEL_WILLIAN_CONNECTYHUB_INSTANCE_ID",
   "BETEL_WILLIAN_WHATSAPP_PHONE_NUMBER",
@@ -188,12 +224,12 @@ async function getWillianConfig() {
   const apiToken = configFrom(["CONNECTYHUB_API_TOKEN"], appConfig);
   const webhookSecret = configFrom(["CONNECTYHUB_WEBHOOK_SECRET"], appConfig);
   const webhookUrl = configFrom(["CONNECTYHUB_WEBHOOK_URL"], appConfig);
-  const instanceName = configFrom(["BETEL_WILLIAN_CONNECTYHUB_INSTANCE_NAME"], appConfig, WILLIAN_DEFAULT_INSTANCE_NAME);
-  const instanceId = configFrom(["BETEL_WILLIAN_CONNECTYHUB_INSTANCE_ID"], appConfig);
-  const phoneNumber = configFrom(["BETEL_WILLIAN_WHATSAPP_PHONE_NUMBER"], appConfig);
-  const displayName = configFrom(["BETEL_WILLIAN_WHATSAPP_DISPLAY_NAME"], appConfig);
-  const profileImageUrl = configFrom(["BETEL_WILLIAN_WHATSAPP_PROFILE_IMAGE_URL"], appConfig);
-  const profileImageSyncedAt = configFrom(["BETEL_WILLIAN_WHATSAPP_PROFILE_SYNCED_AT"], appConfig);
+  const instanceName = configFrom(globalWhatsappInstanceNameKeys, appConfig, GLOBAL_WHATSAPP_DEFAULT_INSTANCE_NAME);
+  const instanceId = configFrom(globalWhatsappInstanceIdKeys, appConfig);
+  const phoneNumber = configFrom(globalWhatsappPhoneKeys, appConfig);
+  const displayName = configFrom(globalWhatsappDisplayNameKeys, appConfig);
+  const profileImageUrl = configFrom(globalWhatsappProfileImageKeys, appConfig);
+  const profileImageSyncedAt = configFrom(globalWhatsappProfileSyncedAtKeys, appConfig);
   const emailProvider = configFrom(["BETEL_EMAIL_PROVIDER"], appConfig, "resend");
   const resendKey = configFrom(["RESEND_API_KEY"], appConfig);
   const emailFrom = configFrom(["BETEL_EMAIL_FROM"], appConfig);
@@ -840,18 +876,32 @@ async function persistConnectyHubInstance(input: {
   if (persistWillianConfig) {
     const records: Array<{ key: string; value: string; description: string; secret?: boolean }> = [];
     if (input.instanceId) {
-      records.push({
-        key: "BETEL_WILLIAN_CONNECTYHUB_INSTANCE_ID",
-        value: input.instanceId,
-        description: "ID da instancia ConnectyHub usada pelo agente Willian.",
-      });
+      records.push(
+        {
+          key: "BETEL_GLOBAL_WHATSAPP_INSTANCE_ID",
+          value: input.instanceId,
+          description: "ID da instancia ConnectyHub usada pelo WhatsApp Global da Betel.",
+        },
+        {
+          key: "BETEL_WILLIAN_CONNECTYHUB_INSTANCE_ID",
+          value: input.instanceId,
+          description: "Compatibilidade: ID da instancia ConnectyHub usada pelo antigo agente Willian.",
+        }
+      );
     }
     if (input.instanceName) {
-      records.push({
-        key: "BETEL_WILLIAN_CONNECTYHUB_INSTANCE_NAME",
-        value: input.instanceName,
-        description: "Nome da instancia ConnectyHub usada pelo agente Willian.",
-      });
+      records.push(
+        {
+          key: "BETEL_GLOBAL_WHATSAPP_INSTANCE_NAME",
+          value: input.instanceName,
+          description: "Nome da instancia ConnectyHub usada pelo WhatsApp Global da Betel.",
+        },
+        {
+          key: "BETEL_WILLIAN_CONNECTYHUB_INSTANCE_NAME",
+          value: input.instanceName,
+          description: "Compatibilidade: nome da instancia ConnectyHub usada pelo antigo agente Willian.",
+        }
+      );
     }
     await upsertAppConfig(records);
   }
@@ -1189,6 +1239,15 @@ function ensureWillianSummary(state: WillianInstanceState, summaries: WhatsAppAg
 
 async function clearPersistedConnectyHubInstance() {
   await deleteAppConfig([
+    "BETEL_GLOBAL_WHATSAPP_INSTANCE_NAME",
+    "BETEL_GLOBAL_WHATSAPP_INSTANCE_ID",
+    "BETEL_GLOBAL_CONNECTYHUB_INSTANCE_NAME",
+    "BETEL_GLOBAL_CONNECTYHUB_INSTANCE_ID",
+    "BETEL_GLOBAL_WHATSAPP_PHONE_NUMBER",
+    "BETEL_GLOBAL_WHATSAPP_DISPLAY_NAME",
+    "BETEL_GLOBAL_WHATSAPP_PROFILE_IMAGE_URL",
+    "BETEL_GLOBAL_WHATSAPP_PROFILE_SYNCED_AT",
+    "BETEL_WILLIAN_CONNECTYHUB_INSTANCE_NAME",
     "BETEL_WILLIAN_CONNECTYHUB_INSTANCE_ID",
     "BETEL_WILLIAN_WHATSAPP_PHONE_NUMBER",
     "BETEL_WILLIAN_WHATSAPP_DISPLAY_NAME",
@@ -1235,30 +1294,54 @@ export async function syncWillianWhatsappProfileFromConnectyHub(input: { connect
 
   const records: Array<{ key: string; value: string; description: string; secret?: boolean }> = [];
   if (phoneNumber) {
-    records.push({
-      key: "BETEL_WILLIAN_WHATSAPP_PHONE_NUMBER",
-      value: phoneNumber,
-      description: "Numero de WhatsApp conectado na instancia do agente Willian.",
-    });
+    records.push(
+      {
+        key: "BETEL_GLOBAL_WHATSAPP_PHONE_NUMBER",
+        value: phoneNumber,
+        description: "Numero conectado ao WhatsApp Global da Betel.",
+      },
+      {
+        key: "BETEL_WILLIAN_WHATSAPP_PHONE_NUMBER",
+        value: phoneNumber,
+        description: "Compatibilidade: numero de WhatsApp conectado ao antigo agente Willian.",
+      }
+    );
   }
   if (displayName) {
-    records.push({
-      key: "BETEL_WILLIAN_WHATSAPP_DISPLAY_NAME",
-      value: displayName,
-      description: "Nome de exibicao do WhatsApp conectado na instancia do agente Willian.",
-    });
+    records.push(
+      {
+        key: "BETEL_GLOBAL_WHATSAPP_DISPLAY_NAME",
+        value: displayName,
+        description: "Nome de exibicao do WhatsApp Global da Betel.",
+      },
+      {
+        key: "BETEL_WILLIAN_WHATSAPP_DISPLAY_NAME",
+        value: displayName,
+        description: "Compatibilidade: nome de exibicao do WhatsApp conectado ao antigo agente Willian.",
+      }
+    );
   }
   if (profileImageUrl) {
     records.push(
       {
+        key: "BETEL_GLOBAL_WHATSAPP_PROFILE_IMAGE_URL",
+        value: profileImageUrl,
+        description: "Foto de perfil do WhatsApp Global da Betel.",
+      },
+      {
+        key: "BETEL_GLOBAL_WHATSAPP_PROFILE_SYNCED_AT",
+        value: syncedAt,
+        description: "Data da ultima sincronizacao da foto do WhatsApp Global da Betel.",
+      },
+      {
         key: "BETEL_WILLIAN_WHATSAPP_PROFILE_IMAGE_URL",
         value: profileImageUrl,
-        description: "Foto de perfil do WhatsApp conectado na instancia do agente Willian.",
+        description: "Compatibilidade: foto de perfil do WhatsApp conectado ao antigo agente Willian.",
       },
       {
         key: "BETEL_WILLIAN_WHATSAPP_PROFILE_SYNCED_AT",
         value: syncedAt,
-        description: "Data da ultima sincronizacao da foto do WhatsApp do agente Willian.",
+        description: "Compatibilidade: data da ultima sincronizacao da foto do antigo agente Willian.",
       }
     );
   }
@@ -2007,14 +2090,16 @@ export function normalizeWhatsAppNumber(value: string) {
   return digits;
 }
 
-export async function sendWillianWhatsAppText(input: {
+export type GlobalWhatsAppTextInput = {
   messageCode: string;
   runCode: string;
   subject: string;
   messagePreview: string;
   guardrailSummary: string;
   payload: Record<string, unknown>;
-}): Promise<ConnectyHubDeliveryResult> {
+};
+
+export async function sendGlobalWhatsAppText(input: GlobalWhatsAppTextInput): Promise<ConnectyHubDeliveryResult> {
   const startedMs = Date.now();
   const processedAt = new Date().toISOString();
   const recipient = asRecord(input.payload.recipient);
@@ -2031,7 +2116,7 @@ export async function sendWillianWhatsAppText(input: {
       processedAt,
       errorMessage: !config.apiToken
         ? "CONNECTYHUB_API_TOKEN nao configurado."
-        : "Instancia ConnectyHub do agente WhatsApp nao configurada.",
+        : "Instancia ConnectyHub do WhatsApp Global nao configurada.",
     };
   }
 
@@ -2085,6 +2170,10 @@ export async function sendWillianWhatsAppText(input: {
       errorMessage: error instanceof Error ? error.message : "Erro desconhecido na ConnectyHub.",
     };
   }
+}
+
+export async function sendWillianWhatsAppText(input: GlobalWhatsAppTextInput): Promise<ConnectyHubDeliveryResult> {
+  return sendGlobalWhatsAppText(input);
 }
 
 export async function sendWillianWhatsAppReply(input: {
