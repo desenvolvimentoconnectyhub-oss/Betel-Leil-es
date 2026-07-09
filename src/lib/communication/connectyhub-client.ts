@@ -741,6 +741,52 @@ function explainConnectyHubError(input: { code: string; message: string; path: s
   return `ConnectyHub retornou HTTP ${input.status}${codeSuffix}: ${input.message}`;
 }
 
+function isConnectyHubIdempotencyStoreError(error: unknown) {
+  const normalized = (error instanceof Error ? error.message : String(error || "")).toLowerCase();
+  return (
+    normalized.includes("idempotency_lookup_failed") ||
+    normalized.includes("connectyhub_api_idempotency_keys") ||
+    (normalized.includes("schema cache") && normalized.includes("idempotency"))
+  );
+}
+
+async function connectyhubRequestWithIdempotencyFallback(
+  path: string,
+  options: ConnectyHubRequestOptions & { idempotencyKey?: string }
+) {
+  const idempotencyKey = cleanString(options.idempotencyKey);
+  const baseOptions: ConnectyHubRequestOptions = {
+    ...(options.body ? { body: options.body } : {}),
+    ...(options.headers ? { headers: { ...options.headers } } : {}),
+    ...(options.method ? { method: options.method } : {}),
+    ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
+  };
+
+  if (!idempotencyKey) {
+    return { payload: await connectyhubRequest(path, baseOptions), usedIdempotencyKey: false };
+  }
+
+  try {
+    return {
+      payload: await connectyhubRequest(path, {
+        ...baseOptions,
+        headers: {
+          ...(baseOptions.headers || {}),
+          "Idempotency-Key": idempotencyKey,
+        },
+      }),
+      usedIdempotencyKey: true,
+    };
+  } catch (error) {
+    if (!isConnectyHubIdempotencyStoreError(error)) throw error;
+
+    return {
+      payload: await connectyhubRequest(path, baseOptions),
+      usedIdempotencyKey: false,
+    };
+  }
+}
+
 function extractInstanceId(payload: unknown) {
   const data = asRecord(payload);
   const instance = asRecord(data.instance);
@@ -2138,7 +2184,7 @@ export async function sendGlobalWhatsAppText(input: GlobalWhatsAppTextInput): Pr
   ].filter(Boolean).join("\n");
 
   try {
-    const payload = await connectyhubRequest("/messages/text", {
+    const { payload, usedIdempotencyKey } = await connectyhubRequestWithIdempotencyFallback("/messages/text", {
       body: {
         instanceId,
         number: phone,
@@ -2146,14 +2192,12 @@ export async function sendGlobalWhatsAppText(input: GlobalWhatsAppTextInput): Pr
         linkPreview: true,
         trackId: input.messageCode,
       },
-      headers: {
-        "Idempotency-Key": input.messageCode || input.runCode,
-      },
+      idempotencyKey: input.messageCode || input.runCode,
       timeoutMs: 15000,
     });
     return {
       ok: true,
-      providerStatus: "connectyhub_accepted",
+      providerStatus: usedIdempotencyKey ? "connectyhub_accepted" : "connectyhub_accepted_without_idempotency",
       endpointConfigured: true,
       latencyMs: Math.max(Date.now() - startedMs, 1),
       processedAt,
@@ -2205,7 +2249,7 @@ export async function sendWillianWhatsAppReply(input: {
   }
 
   try {
-    const payload = await connectyhubRequest("/messages/text", {
+    const { payload, usedIdempotencyKey } = await connectyhubRequestWithIdempotencyFallback("/messages/text", {
       body: {
         instanceId,
         number: phone,
@@ -2213,15 +2257,13 @@ export async function sendWillianWhatsAppReply(input: {
         linkPreview: true,
         trackId: input.trackId,
       },
-      headers: {
-        "Idempotency-Key": input.trackId,
-      },
+      idempotencyKey: input.trackId,
       timeoutMs: 15000,
     });
 
     return {
       ok: true,
-      providerStatus: "connectyhub_accepted",
+      providerStatus: usedIdempotencyKey ? "connectyhub_accepted" : "connectyhub_accepted_without_idempotency",
       endpointConfigured: true,
       latencyMs: Math.max(Date.now() - startedMs, 1),
       processedAt,
@@ -2276,7 +2318,7 @@ export async function sendWhatsAppAgentReply(input: {
   }
 
   try {
-    const payload = await connectyhubRequest("/messages/text", {
+    const { payload, usedIdempotencyKey } = await connectyhubRequestWithIdempotencyFallback("/messages/text", {
       body: {
         instanceId,
         number: phone,
@@ -2284,15 +2326,13 @@ export async function sendWhatsAppAgentReply(input: {
         linkPreview: true,
         trackId: input.trackId,
       },
-      headers: {
-        "Idempotency-Key": input.trackId,
-      },
+      idempotencyKey: input.trackId,
       timeoutMs: 15000,
     });
 
     return {
       ok: true,
-      providerStatus: "connectyhub_accepted",
+      providerStatus: usedIdempotencyKey ? "connectyhub_accepted" : "connectyhub_accepted_without_idempotency",
       endpointConfigured: true,
       latencyMs: Math.max(Date.now() - startedMs, 1),
       processedAt,
@@ -2326,7 +2366,7 @@ export async function sendWillianWhatsAppMedia(input: {
     throw new Error("Envio de midia WhatsApp incompleto.");
   }
 
-  const payload = await connectyhubRequest("/messages/media", {
+  const { payload } = await connectyhubRequestWithIdempotencyFallback("/messages/media", {
     body: {
       instanceId,
       number,
@@ -2336,9 +2376,7 @@ export async function sendWillianWhatsAppMedia(input: {
       docName: input.docName,
       trackId: input.trackId,
     },
-    headers: {
-      "Idempotency-Key": input.trackId,
-    },
+    idempotencyKey: input.trackId,
     timeoutMs: 20000,
   });
 
