@@ -44,6 +44,18 @@ type ConnectyHubRequestOptions = {
   timeoutMs?: number;
 };
 
+type WhatsAppActionButtonInput = {
+  label: string;
+  url: string;
+  footerText?: string;
+};
+
+type ConnectyHubWhatsAppMessageResult = {
+  payload: unknown;
+  usedIdempotencyKey: boolean;
+  sentAsButton: boolean;
+};
+
 export type ConnectyHubDeliveryResult = {
   ok: boolean;
   providerStatus: string;
@@ -89,6 +101,35 @@ function maskSecret(value: string) {
 
 function preview(text: string, limit = 500) {
   return text.length > limit ? `${text.slice(0, limit)}...` : text;
+}
+
+function clampLabel(value: string, fallback: string, limit = 32) {
+  const clean = cleanString(value).replace(/[|\r\n]+/g, " ").replace(/\s+/g, " ").trim();
+  const label = clean || fallback;
+  return label.length > limit ? label.slice(0, limit).trim() : label;
+}
+
+function findFirstHttpUrl(text: string) {
+  const match = text.match(/https?:\/\/[^\s<>)\]]+/i);
+  if (!match) return "";
+  return match[0].replace(/[.,;!?]+$/g, "");
+}
+
+function normalizeActionButton(input: WhatsAppActionButtonInput | undefined, text: string) {
+  const explicitUrl = cleanString(input?.url);
+  const inferredUrl = explicitUrl || findFirstHttpUrl(text);
+  if (!inferredUrl || !/^https?:\/\//i.test(inferredUrl)) return null;
+
+  return {
+    label: clampLabel(input?.label || "", "Abrir link"),
+    url: inferredUrl,
+    footerText: clampLabel(input?.footerText || "", "Betel Leiloes", 48),
+    explicit: Boolean(explicitUrl),
+  };
+}
+
+function removeButtonUrlFromText(text: string, url: string) {
+  return text.replace(url, "").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 function configAliases(keys: string[]) {
@@ -785,6 +826,57 @@ async function connectyhubRequestWithIdempotencyFallback(
       usedIdempotencyKey: false,
     };
   }
+}
+
+async function sendConnectyHubWhatsAppMessage(input: {
+  instanceId: string;
+  number: string;
+  text: string;
+  trackId: string;
+  idempotencyKey?: string;
+  actionButton?: WhatsAppActionButtonInput;
+  timeoutMs?: number;
+}): Promise<ConnectyHubWhatsAppMessageResult> {
+  const button = normalizeActionButton(input.actionButton, input.text);
+  const timeoutMs = input.timeoutMs || 15000;
+
+  if (button) {
+    const buttonText = button.explicit ? input.text.trim() : removeButtonUrlFromText(input.text, button.url);
+
+    const { payload, usedIdempotencyKey } = await connectyhubRequestWithIdempotencyFallback("/provider/send/menu", {
+      body: {
+        instanceId: input.instanceId,
+        payload: {
+          number: input.number,
+          type: "button",
+          text: buttonText || input.text.trim(),
+          choices: [`${button.label}|${button.url}`],
+          footerText: button.footerText,
+          track_source: "betel_ai",
+          track_id: input.trackId,
+          readchat: true,
+        },
+      },
+      idempotencyKey: input.idempotencyKey || input.trackId,
+      timeoutMs,
+    });
+
+    return { payload, usedIdempotencyKey, sentAsButton: true };
+  }
+
+  const { payload, usedIdempotencyKey } = await connectyhubRequestWithIdempotencyFallback("/messages/text", {
+    body: {
+      instanceId: input.instanceId,
+      number: input.number,
+      text: input.text,
+      linkPreview: true,
+      trackId: input.trackId,
+    },
+    idempotencyKey: input.idempotencyKey || input.trackId,
+    timeoutMs,
+  });
+
+  return { payload, usedIdempotencyKey, sentAsButton: false };
 }
 
 function extractInstanceId(payload: unknown) {
@@ -2143,6 +2235,7 @@ export type GlobalWhatsAppTextInput = {
   messagePreview: string;
   guardrailSummary: string;
   payload: Record<string, unknown>;
+  actionButton?: WhatsAppActionButtonInput;
 };
 
 export async function sendGlobalWhatsAppText(input: GlobalWhatsAppTextInput): Promise<ConnectyHubDeliveryResult> {
@@ -2184,25 +2277,29 @@ export async function sendGlobalWhatsAppText(input: GlobalWhatsAppTextInput): Pr
   ].filter(Boolean).join("\n");
 
   try {
-    const { payload, usedIdempotencyKey } = await connectyhubRequestWithIdempotencyFallback("/messages/text", {
-      body: {
-        instanceId,
-        number: phone,
-        text,
-        linkPreview: true,
-        trackId: input.messageCode,
-      },
+    const delivery = await sendConnectyHubWhatsAppMessage({
+      instanceId,
+      number: phone,
+      text,
+      trackId: input.messageCode,
       idempotencyKey: input.messageCode || input.runCode,
+      actionButton: input.actionButton,
       timeoutMs: 15000,
     });
     return {
       ok: true,
-      providerStatus: usedIdempotencyKey ? "connectyhub_accepted" : "connectyhub_accepted_without_idempotency",
+      providerStatus: delivery.sentAsButton
+        ? delivery.usedIdempotencyKey
+          ? "connectyhub_button_accepted"
+          : "connectyhub_button_accepted_without_idempotency"
+        : delivery.usedIdempotencyKey
+          ? "connectyhub_accepted"
+          : "connectyhub_accepted_without_idempotency",
       endpointConfigured: true,
       latencyMs: Math.max(Date.now() - startedMs, 1),
       processedAt,
-      externalDeliveryId: extractDeliveryId(payload),
-      responsePreview: preview(JSON.stringify(sanitizePayload(payload))),
+      externalDeliveryId: extractDeliveryId(delivery.payload),
+      responsePreview: preview(JSON.stringify(sanitizePayload(delivery.payload))),
     };
   } catch (error) {
     return {
@@ -2249,26 +2346,29 @@ export async function sendWillianWhatsAppReply(input: {
   }
 
   try {
-    const { payload, usedIdempotencyKey } = await connectyhubRequestWithIdempotencyFallback("/messages/text", {
-      body: {
-        instanceId,
-        number: phone,
-        text: input.text.trim(),
-        linkPreview: true,
-        trackId: input.trackId,
-      },
+    const delivery = await sendConnectyHubWhatsAppMessage({
+      instanceId,
+      number: phone,
+      text: input.text.trim(),
+      trackId: input.trackId,
       idempotencyKey: input.trackId,
       timeoutMs: 15000,
     });
 
     return {
       ok: true,
-      providerStatus: usedIdempotencyKey ? "connectyhub_accepted" : "connectyhub_accepted_without_idempotency",
+      providerStatus: delivery.sentAsButton
+        ? delivery.usedIdempotencyKey
+          ? "connectyhub_button_accepted"
+          : "connectyhub_button_accepted_without_idempotency"
+        : delivery.usedIdempotencyKey
+          ? "connectyhub_accepted"
+          : "connectyhub_accepted_without_idempotency",
       endpointConfigured: true,
       latencyMs: Math.max(Date.now() - startedMs, 1),
       processedAt,
-      externalDeliveryId: extractDeliveryId(payload),
-      responsePreview: preview(JSON.stringify(sanitizePayload(payload))),
+      externalDeliveryId: extractDeliveryId(delivery.payload),
+      responsePreview: preview(JSON.stringify(sanitizePayload(delivery.payload))),
     };
   } catch (error) {
     return {
@@ -2318,26 +2418,29 @@ export async function sendWhatsAppAgentReply(input: {
   }
 
   try {
-    const { payload, usedIdempotencyKey } = await connectyhubRequestWithIdempotencyFallback("/messages/text", {
-      body: {
-        instanceId,
-        number: phone,
-        text: input.text.trim(),
-        linkPreview: true,
-        trackId: input.trackId,
-      },
+    const delivery = await sendConnectyHubWhatsAppMessage({
+      instanceId,
+      number: phone,
+      text: input.text.trim(),
+      trackId: input.trackId,
       idempotencyKey: input.trackId,
       timeoutMs: 15000,
     });
 
     return {
       ok: true,
-      providerStatus: usedIdempotencyKey ? "connectyhub_accepted" : "connectyhub_accepted_without_idempotency",
+      providerStatus: delivery.sentAsButton
+        ? delivery.usedIdempotencyKey
+          ? "connectyhub_button_accepted"
+          : "connectyhub_button_accepted_without_idempotency"
+        : delivery.usedIdempotencyKey
+          ? "connectyhub_accepted"
+          : "connectyhub_accepted_without_idempotency",
       endpointConfigured: true,
       latencyMs: Math.max(Date.now() - startedMs, 1),
       processedAt,
-      externalDeliveryId: extractDeliveryId(payload),
-      responsePreview: preview(JSON.stringify(sanitizePayload(payload))),
+      externalDeliveryId: extractDeliveryId(delivery.payload),
+      responsePreview: preview(JSON.stringify(sanitizePayload(delivery.payload))),
     };
   } catch (error) {
     return {

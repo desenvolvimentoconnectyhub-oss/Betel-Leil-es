@@ -157,18 +157,23 @@ async function sendAdminInviteWhatsApp(input: {
   const messageCode = makeAdminInviteMessageCode(input.email);
   const greeting = firstName(input.displayName);
   const linkPurpose = input.linkKind === "recovery" ? "redefinir sua senha" : "cadastrar sua senha";
+  const buttonLabel = input.linkKind === "recovery" ? "Redefinir senha" : "Cadastrar senha";
 
   const delivery = await sendGlobalWhatsAppText({
     messageCode,
     runCode: `ADMIN-USER-${messageCode}`,
     subject: `Oi, ${greeting}. Seu acesso ao painel da Betel foi liberado.`,
     messagePreview: [
-      `Use este link para ${linkPurpose} e acessar o painel admin:`,
-      input.actionLink,
+      `Toque no botao abaixo para ${linkPurpose} e acessar o painel admin.`,
       "",
       "Esse link e pessoal. Se expirar, peca para o admin reenviar outro convite.",
     ].join("\n"),
     guardrailSummary: "",
+    actionButton: {
+      label: buttonLabel,
+      url: input.actionLink,
+      footerText: "Acesso seguro Betel Leiloes",
+    },
     payload: {
       eventType: "admin_user_password_link",
       recipient: {
