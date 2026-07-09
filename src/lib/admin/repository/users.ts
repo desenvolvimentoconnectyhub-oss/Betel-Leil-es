@@ -40,6 +40,10 @@ export type CreateAdminUserInput = {
   invitedByAdminId?: string | null;
 };
 
+export type UpdateAdminUserInput = CreateAdminUserInput & {
+  id: string;
+};
+
 export type CreateBootstrapAdminAccountInput = {
   displayName: string;
   email: string;
@@ -493,6 +497,109 @@ export async function createAdminUserRecord(
     data: {
       id: data.id,
       mode: "created",
+      inviteStatus: inviteDelivery.inviteStatus,
+      ...(inviteDelivery.inviteError ? { inviteError: inviteDelivery.inviteError } : {}),
+    },
+  };
+}
+
+export async function updateAdminUserRecord(
+  input: UpdateAdminUserInput
+): Promise<
+  MutationResult<{
+    id: string;
+    inviteStatus: AdminUserInviteStatus;
+    inviteError?: string;
+  }>
+> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return { ok: false, error: "Supabase admin nao configurado." };
+
+  const adminUserId = input.id.trim();
+  const displayName = input.displayName.trim();
+  const email = input.email.trim().toLowerCase();
+  const phone = normalizePhone(input.phone || "");
+  const role = normalizeRole(input.role);
+  const status = normalizeStatus(input.status);
+
+  if (!adminUserId) return { ok: false, error: "Usuario nao informado." };
+  if (!displayName) return { ok: false, error: "Informe o nome do usuario." };
+  if (!email || !email.includes("@")) return { ok: false, error: "Informe um email valido." };
+  if (!phone || phone.length < 10) return { ok: false, error: "Informe um telefone valido." };
+
+  const { data: current, error: currentError } = await supabase
+    .from("admin_users")
+    .select("id,auth_user_id,email")
+    .eq("id", adminUserId)
+    .maybeSingle();
+
+  if (currentError) return { ok: false, error: currentError.message };
+  if (!current) return { ok: false, error: "Usuario administrativo nao encontrado." };
+
+  const { data: emailConflict, error: conflictError } = await supabase
+    .from("admin_users")
+    .select("id")
+    .ilike("email", email)
+    .neq("id", adminUserId)
+    .limit(1)
+    .maybeSingle();
+
+  if (conflictError) return { ok: false, error: conflictError.message };
+  if (emailConflict?.id) return { ok: false, error: "Ja existe outro usuario administrativo com este email." };
+
+  const organization = await ensureAdminOrganization(input.organizationName || defaultOrganizationName);
+  if (!organization.ok || !organization.data?.id) {
+    return { ok: false, error: organization.error || "Organizacao administrativa indisponivel." };
+  }
+
+  const currentAuthUserId = typeof current.auth_user_id === "string" ? current.auth_user_id : null;
+  if (currentAuthUserId) {
+    const { error: updateAuthError } = await supabase.auth.admin.updateUserById(currentAuthUserId, {
+      email,
+      user_metadata: {
+        name: displayName,
+        phone,
+        role,
+        source: "admin_user_management",
+        invite_channel: "whatsapp",
+      },
+    });
+
+    if (updateAuthError) return { ok: false, error: updateAuthError.message };
+  }
+
+  const inviteDelivery = await deliverAdminPasswordInvite(supabase, {
+    displayName,
+    email,
+    phone,
+    role,
+  });
+
+  const { error: updateError } = await supabase
+    .from("admin_users")
+    .update({
+      organization_id: organization.data.id,
+      auth_user_id: inviteDelivery.authUserId || currentAuthUserId,
+      display_name: displayName,
+      email,
+      phone,
+      role,
+      status,
+      permissions: permissionsForRole(role),
+      invite_status: inviteDelivery.inviteStatus,
+      invite_error: inviteDelivery.inviteError,
+      invited_at: inviteDelivery.invitedAt,
+      invited_by_admin_user_id: input.invitedByAdminId || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", adminUserId);
+
+  if (updateError) return { ok: false, error: updateError.message };
+
+  return {
+    ok: true,
+    data: {
+      id: adminUserId,
       inviteStatus: inviteDelivery.inviteStatus,
       ...(inviteDelivery.inviteError ? { inviteError: inviteDelivery.inviteError } : {}),
     },

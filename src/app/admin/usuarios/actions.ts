@@ -6,6 +6,7 @@ import { requireCurrentAdmin } from "@/lib/auth/admin";
 import {
   createAdminUserRecord,
   resendAdminUserInviteRecord,
+  updateAdminUserRecord,
   updateAdminUserStatusRecord,
   type AdminUserRole,
   type AdminUserStatus,
@@ -73,6 +74,42 @@ export async function createAdminUserAction(formData: FormData) {
         ? "Usuario administrativo atualizado e link de senha enviado pelo WhatsApp."
         : "Usuario administrativo cadastrado e link de senha enviado pelo WhatsApp."
   );
+}
+
+export async function updateAdminUserAction(formData: FormData) {
+  const admin = await requireUserManager();
+
+  const id = field(formData, "id");
+  const roleValue = field(formData, "role", "analyst");
+  const statusValue = field(formData, "status", "active");
+  const role = (allowedRoles.has(roleValue) ? roleValue : "analyst") as AdminUserRole;
+  const status = (allowedStatuses.has(statusValue) ? statusValue : "active") as AdminUserStatus;
+
+  const result = await updateAdminUserRecord({
+    id,
+    displayName: field(formData, "displayName"),
+    email: field(formData, "email"),
+    phone: field(formData, "phone"),
+    role,
+    status,
+    organizationName: field(formData, "organizationName", "Betel Leiloes"),
+    invitedByAdminId: admin.id,
+  });
+
+  if (!result.ok) {
+    redirectWith("/admin/usuarios", "error", result.error || "Nao foi possivel editar o usuario.");
+  }
+
+  revalidatePath("/admin/usuarios");
+  if (result.data?.inviteStatus === "failed") {
+    redirectWith(
+      "/admin/usuarios",
+      "error",
+      `Usuario atualizado, mas o WhatsApp nao foi enviado: ${result.data.inviteError || "erro desconhecido."}`
+    );
+  }
+
+  redirectWith("/admin/usuarios", "success", "Usuario atualizado e link de senha reenviado pelo WhatsApp.");
 }
 
 export async function resendAdminUserInviteAction(formData: FormData) {

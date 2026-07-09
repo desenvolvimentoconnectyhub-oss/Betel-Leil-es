@@ -2,6 +2,7 @@ import {
   AlertCircle,
   CheckCircle2,
   Clock3,
+  Pencil,
   Link2,
   MessageCircle,
   Phone,
@@ -9,8 +10,15 @@ import {
   ShieldCheck,
   UserPlus,
   Users,
+  X,
 } from "lucide-react";
-import { createAdminUserAction, resendAdminUserInviteAction, updateAdminUserStatusAction } from "./actions";
+import Link from "next/link";
+import {
+  createAdminUserAction,
+  resendAdminUserInviteAction,
+  updateAdminUserAction,
+  updateAdminUserStatusAction,
+} from "./actions";
 import { DashboardCard } from "@/components/admin/DashboardCard";
 import { StatusBadge } from "@/components/admin/StatusBadge";
 import { Button } from "@/components/ui/button";
@@ -128,6 +136,22 @@ function ResendInviteAction({ user }: { user: AdminUserListItem }) {
   );
 }
 
+function EditUserAction({ user }: { user: AdminUserListItem }) {
+  return (
+    <Button
+      asChild
+      size="sm"
+      variant="outline"
+      className="h-7 rounded-md border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] text-xs text-white hover:text-white"
+    >
+      <Link href={`/admin/usuarios?edit=${encodeURIComponent(user.id)}`}>
+        <Pencil size={13} />
+        Editar
+      </Link>
+    </Button>
+  );
+}
+
 export default async function AdminUsersPage({
   searchParams,
 }: {
@@ -141,6 +165,16 @@ export default async function AdminUsersPage({
   const activeCount = countBy(users, (user) => user.status === "active");
   const linkedCount = countBy(users, (user) => user.status === "active" && Boolean(user.authUserId));
   const pendingInviteCount = countBy(users, (user) => user.inviteStatus === "sent" && !user.lastSeenAt);
+  const editId = typeof params.edit === "string" ? params.edit : "";
+  const editingUser = editId ? users.find((user) => user.id === editId) || null : null;
+  const formAction = editingUser ? updateAdminUserAction : createAdminUserAction;
+  const formTitle = editingUser ? "Editar usuario" : "Novo usuario";
+  const formEyebrow = editingUser ? "admin / edicao" : "admin / acesso";
+  const formIcon = editingUser ? (
+    <Pencil size={18} className="text-[var(--admin-cyan)]" />
+  ) : (
+    <UserPlus size={18} className="text-[var(--admin-cyan)]" />
+  );
 
   return (
     <div className="mx-auto max-w-[1600px] px-4 py-4 lg:px-5">
@@ -179,11 +213,17 @@ export default async function AdminUsersPage({
 
       <section className="grid gap-4 xl:grid-cols-[minmax(360px,0.72fr)_minmax(0,1.28fr)]">
         <DashboardCard
-          title="Novo usuario"
-          eyebrow="admin / acesso"
-          action={<UserPlus size={18} className="text-[var(--admin-cyan)]" />}
+          title={formTitle}
+          eyebrow={formEyebrow}
+          action={formIcon}
         >
-          <form action={createAdminUserAction} className="grid gap-4">
+          {editId && !editingUser && (
+            <div className="mb-4 rounded-md border border-[rgba(239,68,68,0.28)] bg-[rgba(239,68,68,0.08)] px-3 py-2 text-xs text-red-100">
+              Usuario selecionado para edicao nao foi encontrado.
+            </div>
+          )}
+          <form action={formAction} className="grid gap-4">
+            {editingUser && <input type="hidden" name="id" value={editingUser.id} />}
             <div className="grid gap-2">
               <label htmlFor="displayName" className="text-xs font-semibold text-[var(--admin-soft)]">
                 Nome
@@ -192,6 +232,7 @@ export default async function AdminUsersPage({
                 id="displayName"
                 name="displayName"
                 required
+                defaultValue={editingUser?.displayName || ""}
                 placeholder="Betel Admin"
                 className="h-10 rounded-md border border-[var(--admin-border)] bg-[rgba(0,0,0,0.28)] px-3 text-sm text-white outline-none transition placeholder:text-[var(--admin-muted)] focus:border-[var(--admin-cyan)]"
               />
@@ -205,6 +246,7 @@ export default async function AdminUsersPage({
                 name="email"
                 type="email"
                 required
+                defaultValue={editingUser?.email || ""}
                 placeholder="admin@betel.ai"
                 className="h-10 rounded-md border border-[var(--admin-border)] bg-[rgba(0,0,0,0.28)] px-3 text-sm text-white outline-none transition placeholder:text-[var(--admin-muted)] focus:border-[var(--admin-cyan)]"
               />
@@ -218,6 +260,7 @@ export default async function AdminUsersPage({
                 name="phone"
                 type="tel"
                 required
+                defaultValue={editingUser?.phone || ""}
                 placeholder="(47) 98857-7996"
                 className="h-10 rounded-md border border-[var(--admin-border)] bg-[rgba(0,0,0,0.28)] px-3 text-sm text-white outline-none transition placeholder:text-[var(--admin-muted)] focus:border-[var(--admin-cyan)]"
               />
@@ -230,7 +273,7 @@ export default async function AdminUsersPage({
                 <select
                   id="role"
                   name="role"
-                  defaultValue="admin"
+                  defaultValue={editingUser?.role || "admin"}
                   className="h-10 rounded-md border border-[var(--admin-border)] bg-[#050505] px-3 text-sm text-white outline-none transition focus:border-[var(--admin-cyan)]"
                 >
                   <option value="owner">Owner</option>
@@ -247,7 +290,7 @@ export default async function AdminUsersPage({
                 <select
                   id="status"
                   name="status"
-                  defaultValue="active"
+                  defaultValue={editingUser?.status || "active"}
                   className="h-10 rounded-md border border-[var(--admin-border)] bg-[#050505] px-3 text-sm text-white outline-none transition focus:border-[var(--admin-cyan)]"
                 >
                   <option value="active">Ativo</option>
@@ -264,17 +307,32 @@ export default async function AdminUsersPage({
               <input
                 id="organizationName"
                 name="organizationName"
-                defaultValue="Betel Leiloes"
+                defaultValue={editingUser?.organizationName || "Betel Leiloes"}
                 className="h-10 rounded-md border border-[var(--admin-border)] bg-[rgba(0,0,0,0.28)] px-3 text-sm text-white outline-none transition placeholder:text-[var(--admin-muted)] focus:border-[var(--admin-cyan)]"
               />
             </div>
-            <Button
-              type="submit"
-              className="h-10 bg-[var(--admin-cyan)] font-bold text-black hover:bg-white"
-            >
-              <UserPlus size={16} />
-              Cadastrar e enviar WhatsApp
-            </Button>
+            <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+              <Button
+                type="submit"
+                className="h-10 bg-[var(--admin-cyan)] font-bold text-black hover:bg-white"
+              >
+                {editingUser ? <Pencil size={16} /> : <UserPlus size={16} />}
+                {editingUser ? "Salvar e reenviar WhatsApp" : "Cadastrar e enviar WhatsApp"}
+              </Button>
+              {editingUser && (
+                <Button
+                  asChild
+                  type="button"
+                  variant="outline"
+                  className="h-10 rounded-md border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] text-white hover:text-white"
+                >
+                  <Link href="/admin/usuarios">
+                    <X size={16} />
+                    Cancelar
+                  </Link>
+                </Button>
+              )}
+            </div>
           </form>
 
           <div className="mt-4 grid gap-2 rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] p-3 text-xs leading-5 text-[var(--admin-muted)]">
@@ -360,6 +418,7 @@ export default async function AdminUsersPage({
                     </td>
                     <td className="border-t border-[var(--admin-border)] px-4 py-3">
                       <div className="flex justify-end gap-2">
+                        <EditUserAction user={user} />
                         <ResendInviteAction user={user} />
                         {user.status === "active" ? (
                           <StatusAction user={user} nextStatus="suspended" label="Suspender" />
