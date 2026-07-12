@@ -1,6 +1,6 @@
 import "server-only";
 
-import { sendGlobalWhatsAppText } from "@/lib/communication/connectyhub-client";
+import { sendGlobalWhatsAppText, type WhatsAppActionButtonInput } from "@/lib/communication/connectyhub-client";
 
 export type CommunicationDeliveryAdapterMode = "mock" | "manual" | "sandbox" | "provider";
 
@@ -14,6 +14,7 @@ export type CommunicationDeliveryAdapterInput = {
   subject: string;
   messagePreview: string;
   guardrailSummary: string;
+  actionButton?: WhatsAppActionButtonInput;
   payload: Record<string, unknown>;
   adapterMode: string;
   provider: string;
@@ -346,6 +347,7 @@ export async function executeCommunicationDeliveryAdapter(
     subject: input.subject,
     messagePreview: input.messagePreview,
     guardrailSummary: input.guardrailSummary,
+    actionButton: input.actionButton,
     provider,
     providerReleased,
     operatorLabel: input.operatorLabel,
@@ -410,6 +412,7 @@ export async function executeCommunicationDeliveryAdapter(
       subject: input.subject,
       messagePreview: input.messagePreview,
       guardrailSummary: input.guardrailSummary,
+      actionButton: input.actionButton,
       payload: input.payload,
     });
 

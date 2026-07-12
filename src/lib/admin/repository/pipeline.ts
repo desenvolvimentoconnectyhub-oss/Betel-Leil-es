@@ -1406,6 +1406,9 @@ export async function releaseCommunicationFromSnapshotRecord(
     messageIntent:
       input.messageIntent ||
       "Preparar comunicacao supervisionada da oportunidade aprovada, separando mensagem completa para cliente pagante e teaser seguro para lead frio.",
+    templateKey: input.templateKey,
+    recipientKeys: input.recipientKeys,
+    recipientSegmentKeys: input.recipientSegmentKeys,
     operatorLabel: input.operatorLabel || "Growth Betel",
   });
 

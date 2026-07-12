@@ -44,7 +44,7 @@ type ConnectyHubRequestOptions = {
   timeoutMs?: number;
 };
 
-type WhatsAppActionButtonInput = {
+export type WhatsAppActionButtonInput = {
   label: string;
   url: string;
   footerText?: string;

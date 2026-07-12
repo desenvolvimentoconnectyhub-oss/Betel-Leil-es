@@ -285,6 +285,41 @@ export const adminModules: AdminModule[] = [
     ],
   }),
   createAdminModule({
+    slug: "mensagens",
+    legacySlugs: ["messages", "comunicacoes", "templates"],
+    group: "Inteligencia",
+    label: "Mensagens",
+    title: "Mensagens",
+    eyebrow: "templates / destinatarios",
+    description:
+      "Central para personalizar mensagens, escolher destinatarios, configurar rotas de relatorio e criar envios supervisionados.",
+    icon: "MessageSquareText",
+    accent: "cyan",
+    status: "build",
+    statusLabel: "Templates",
+    metrics: [
+      { label: "Templates", value: "7", detail: "defaults + Supabase" },
+      { label: "Rotas", value: "1", detail: "relatorio scraper" },
+      { label: "Outbox", value: "fila", detail: "entrega auditavel" },
+    ],
+    workflow: ["Editar template", "Escolher destinatarios", "Pre-visualizar", "Criar outbox", "Processar entrega"],
+    focus: ["Texto final", "Usuario especifico", "Segmentos", "Auditoria"],
+    records: [
+      {
+        title: "Relatorio do scraper",
+        meta: "Rota decide quais administradores recebem o resumo operacional",
+        status: "Ativo",
+        owner: "Operacao",
+      },
+      {
+        title: "Mensagem direta",
+        meta: "Admin escolhe segmento, usuario especifico ou contato manual",
+        status: "Outbox",
+        owner: "Growth",
+      },
+    ],
+  }),
+  createAdminModule({
     slug: "central-inteligencia",
     legacySlugs: ["intelligence-center", "intel"],
     group: "Inteligencia",

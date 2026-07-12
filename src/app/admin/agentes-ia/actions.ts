@@ -282,6 +282,9 @@ function parseCommunicationDispatchForm(formData: FormData): DispatchCommunicati
     channels: listField(formData, "channels"),
     messageIntent: field(formData, "messageIntent"),
     operatorLabel: field(formData, "operatorLabel", "Growth Betel"),
+    templateKey: field(formData, "templateKey"),
+    recipientKeys: listField(formData, "recipientKeys"),
+    recipientSegmentKeys: listField(formData, "recipientSegmentKeys"),
   };
 }
 

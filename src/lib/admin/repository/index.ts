@@ -5,3 +5,4 @@ export * from "./pipeline";
 export * from "./intelligence";
 export * from "./users";
 export * from "./validation-pipeline";
+export * from "./messages";

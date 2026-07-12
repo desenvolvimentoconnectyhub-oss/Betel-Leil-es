@@ -41,6 +41,9 @@ export async function POST(request: Request) {
     channels: asStringList(body.channels),
     messageIntent: asString(body.messageIntent),
     operatorLabel: asString(body.operatorLabel, "Growth Betel"),
+    templateKey: asString(body.templateKey),
+    recipientKeys: asStringList(body.recipientKeys),
+    recipientSegmentKeys: asStringList(body.recipientSegmentKeys),
   });
 
   if (!result.ok) {

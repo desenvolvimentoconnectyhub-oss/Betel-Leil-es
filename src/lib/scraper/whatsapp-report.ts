@@ -8,6 +8,13 @@ import {
   normalizeWhatsAppNumber,
   sendGlobalWhatsAppText,
 } from "@/lib/communication/connectyhub-client";
+import {
+  messageVariablesForRecipient,
+  renderMessageTemplate,
+  resolveRouteRecipients,
+  type ManualMessageRecipient,
+  type MessageRecipient,
+} from "@/lib/communication/message-templates";
 import type { ScraperRunStatus } from "./types";
 
 type DbRow = Record<string, unknown>;
@@ -63,9 +70,11 @@ export type ScraperWhatsAppReportResult = {
 
 type ReportConfig = {
   enabled: boolean;
-  recipients: string[];
+  recipients: MessageRecipient[];
   appUrl: string;
   source: string;
+  templateKey: string;
+  channel: string;
 };
 
 type OpportunityBaseStats = {
@@ -176,7 +185,10 @@ async function resolveReportConfig(): Promise<ReportConfig> {
     .join(",");
   const globalAgentConfig = await getWillianAgentConfig().catch(() => null);
   const fallbackNumbers = globalAgentConfig?.behavior.responsibleNumbers || "";
-  const recipients = unique(splitWhatsappNumbers(configuredNumbers || fallbackNumbers));
+  const fallbackRecipients: ManualMessageRecipient[] = unique(splitWhatsappNumbers(configuredNumbers || fallbackNumbers)).map(
+    (phone) => ({ name: "Operacao Betel", phone })
+  );
+  const { route, recipients } = await resolveRouteRecipients("scraper.report.admin", fallbackRecipients);
   const appUrl = configValue(
     ["BETEL_SCRAPER_REPORT_ADMIN_URL"],
     appConfig,
@@ -184,10 +196,18 @@ async function resolveReportConfig(): Promise<ReportConfig> {
   ).replace(/\/+$/, "");
 
   return {
-    enabled: readBoolean(enabledRaw, true),
+    enabled: readBoolean(enabledRaw, true) && route.enabled,
     recipients,
     appUrl,
-    source: configuredNumbers ? "global_whatsapp_notification_config" : fallbackNumbers ? "global_responsible_numbers" : "missing",
+    source: route.recipientSegmentKeys.length || route.recipientKeys.length || route.manualRecipients.length
+      ? "message_route"
+      : configuredNumbers
+        ? "global_whatsapp_notification_config"
+        : fallbackNumbers
+          ? "global_responsible_numbers"
+          : "missing",
+    templateKey: route.templateKey || "scraper.report.admin",
+    channel: route.channel || "whatsapp",
   };
 }
 
@@ -379,7 +399,7 @@ async function getOpportunityBaseStats(): Promise<OpportunityBaseStats> {
   };
 }
 
-function formatReportMessage(summary: ScraperCronRunSummary, baseStats: OpportunityBaseStats, appUrl: string) {
+function buildReportTemplateVariables(summary: ScraperCronRunSummary, baseStats: OpportunityBaseStats, appUrl: string) {
   const run = summarizeRun(summary);
   const discardReasons = topCounts(run.discardReasons, 4);
   const stageLine = topCounts(baseStats.stageCounts, 4);
@@ -390,26 +410,52 @@ function formatReportMessage(summary: ScraperCronRunSummary, baseStats: Opportun
     : plural(baseStats.visibleOpportunities, "visivel na vitrine", "visiveis na vitrine");
   const panelUrl = appUrl ? `${appUrl}/admin/fontes/capturas` : "/admin/fontes/capturas";
 
+  return {
+    period_label: `${formatBetelDate(summary.startedAt)} ate ${formatBetelDate(summary.finishedAt)}`,
+    sources_summary: `${summary.processed.length} processadas, ${summary.failed.length} com falha, ${summary.skipped.length} ignoradas.`,
+    run_summary: `${plural(run.itemsFound, "imovel encontrado", "imoveis encontrados")}; ${plural(run.itemsIngested, "gravado", "gravados")}; ${plural(run.itemsSkipped + run.itemsFailed, "descartado/falhou", "descartados/falharam")}.`,
+    base_summary: `${plural(baseStats.totalOpportunities, "imovel no banco", "imoveis no banco")}; ${visibleLabel}; ${plural(baseStats.totalSnapshots, "captura registrada", "capturas registradas")}.`,
+    validation_summary: `${baseStats.validation.completed} validados, ${baseStats.validation.inReview} em analise, ${baseStats.validation.blocked} bloqueados, ${baseStats.validation.discarded} descartados.`,
+    stage_line: stageLine ? `Etapas: ${stageLine}.` : "",
+    ai_line: aiLine ? `IA: ${aiLine}.` : "",
+    legal_line: legalLine ? `Juridico: ${legalLine}.` : "",
+    discard_reasons: discardReasons ? `Principais filtros da rodada: ${discardReasons}.` : "",
+    base_observation: baseStats.reason ? `Observacao: base parcial (${baseStats.reason}).` : "",
+    validation_observation: baseStats.validation.reason ? `Validacao: ${baseStats.validation.reason}.` : "",
+    panel_url: panelUrl,
+    targets_processed: summary.processed.length,
+    targets_failed: summary.failed.length,
+    targets_skipped: summary.skipped.length,
+    items_found: run.itemsFound,
+    items_ingested: run.itemsIngested,
+    items_skipped: run.itemsSkipped,
+    items_failed: run.itemsFailed,
+  };
+}
+
+function formatReportMessage(summary: ScraperCronRunSummary, baseStats: OpportunityBaseStats, appUrl: string) {
+  const variables = buildReportTemplateVariables(summary, baseStats, appUrl);
+
   return [
     "Betel AI - coleta do scraper concluida",
     "",
-    `Periodo: ${formatBetelDate(summary.startedAt)} ate ${formatBetelDate(summary.finishedAt)}`,
-    `Fontes: ${summary.processed.length} processadas, ${summary.failed.length} com falha, ${summary.skipped.length} ignoradas.`,
-    `Rodada: ${plural(run.itemsFound, "imovel encontrado", "imoveis encontrados")}; ${plural(run.itemsIngested, "gravado", "gravados")}; ${plural(run.itemsSkipped + run.itemsFailed, "descartado/falhou", "descartados/falharam")}.`,
+    `Periodo: ${variables.period_label}`,
+    `Fontes: ${variables.sources_summary}`,
+    `Rodada: ${variables.run_summary}`,
     "",
     "Base atual:",
-    `${plural(baseStats.totalOpportunities, "imovel no banco", "imoveis no banco")}; ${visibleLabel}; ${plural(baseStats.totalSnapshots, "captura registrada", "capturas registradas")}.`,
+    String(variables.base_summary),
     "",
     "Situacao dos imoveis:",
-    `Validacao: ${baseStats.validation.completed} validados, ${baseStats.validation.inReview} em analise, ${baseStats.validation.blocked} bloqueados, ${baseStats.validation.discarded} descartados.`,
-    stageLine ? `Etapas: ${stageLine}.` : null,
-    aiLine ? `IA: ${aiLine}.` : null,
-    legalLine ? `Juridico: ${legalLine}.` : null,
-    discardReasons ? `Principais filtros da rodada: ${discardReasons}.` : null,
-    baseStats.reason ? `Observacao: base parcial (${baseStats.reason}).` : null,
-    baseStats.validation.reason ? `Validacao: ${baseStats.validation.reason}.` : null,
+    `Validacao: ${variables.validation_summary}`,
+    variables.stage_line ? String(variables.stage_line) : null,
+    variables.ai_line ? String(variables.ai_line) : null,
+    variables.legal_line ? String(variables.legal_line) : null,
+    variables.discard_reasons ? String(variables.discard_reasons) : null,
+    variables.base_observation ? String(variables.base_observation) : null,
+    variables.validation_observation ? String(variables.validation_observation) : null,
     "",
-    `Painel: ${panelUrl}`,
+    `Painel: ${variables.panel_url}`,
   ]
     .filter((line): line is string => line !== null)
     .join("\n");
@@ -465,12 +511,19 @@ export async function sendScraperWhatsAppReport(
   const baseStats = await getOpportunityBaseStats();
   const config = await resolveReportConfig();
   const messageCode = makeReportCode(summary);
-  const messageText = formatReportMessage(summary, baseStats, config.appUrl);
+  const reportVariables = buildReportTemplateVariables(summary, baseStats, config.appUrl);
+  const previewRender = await renderMessageTemplate({
+    templateKey: config.templateKey,
+    channel: config.channel,
+    audienceKey: "admin",
+    variables: reportVariables,
+  });
+  const messageText = previewRender.body || formatReportMessage(summary, baseStats, config.appUrl);
   const skippedBase = {
     enabled: config.enabled,
     skipped: true,
     messageCode,
-    recipients: config.recipients,
+    recipients: config.recipients.map((recipient) => recipient.phone || recipient.email || recipient.key),
     attempted: 0,
     sent: 0,
     failed: 0,
@@ -524,20 +577,41 @@ export async function sendScraperWhatsAppReport(
 
   for (const [index, recipient] of config.recipients.entries()) {
     const targetMessageCode = config.recipients.length === 1 ? messageCode : `${messageCode}-${index + 1}`;
+    const rendered = await renderMessageTemplate({
+      templateKey: config.templateKey,
+      channel: config.channel,
+      audienceKey: "admin",
+      variables: {
+        ...reportVariables,
+        ...messageVariablesForRecipient(recipient),
+      },
+    });
+    const targetMessageText = rendered.body || messageText;
 
     await recordScraperReportNotification({
       messageCode: targetMessageCode,
-      recipientPhone: recipient,
+      recipientPhone: recipient.phone,
       status: options.dryRun ? "prepared" : "prepared",
       summary,
-      messageText,
-      payload: { configSource: config.source, baseStats, dryRun: Boolean(options.dryRun) },
+      messageText: targetMessageText,
+      payload: {
+        configSource: config.source,
+        baseStats,
+        dryRun: Boolean(options.dryRun),
+        templateKey: rendered.template.templateKey,
+        templateVersion: rendered.template.version,
+        recipient: {
+          key: recipient.key,
+          type: recipient.type,
+          label: recipient.label,
+        },
+      },
     }).catch(() => undefined);
 
     if (options.dryRun) {
       providerStatuses.push({
         messageCode: targetMessageCode,
-        recipient,
+        recipient: recipient.phone || recipient.email || recipient.key,
         status: "prepared",
         providerStatus: "dry_run",
       });
@@ -547,11 +621,18 @@ export async function sendScraperWhatsAppReport(
     const delivery = await sendGlobalWhatsAppText({
       messageCode: targetMessageCode,
       runCode: targetMessageCode,
-      subject: "Betel AI - relatorio do scraper",
-      messagePreview: messageText,
-      guardrailSummary: "Aviso interno automatico da coleta. Nao e campanha comercial.",
+      subject: rendered.subject || "Betel AI - relatorio do scraper",
+      messagePreview: targetMessageText,
+      guardrailSummary: rendered.guardrailSummary,
+      actionButton: rendered.actionButton,
       payload: {
-        recipient: { phone: recipient, label: "Operacao Betel" },
+        recipient: {
+          phone: recipient.phone,
+          email: recipient.email,
+          label: recipient.label,
+          key: recipient.key,
+          type: recipient.type,
+        },
         scraperReport: {
           startedAt: summary.startedAt,
           finishedAt: summary.finishedAt,
@@ -565,10 +646,10 @@ export async function sendScraperWhatsAppReport(
     const status = delivery.ok ? "sent" : "failed";
     await recordScraperReportNotification({
       messageCode: targetMessageCode,
-      recipientPhone: recipient,
+      recipientPhone: recipient.phone,
       status,
       summary,
-      messageText,
+      messageText: targetMessageText,
       providerStatus: delivery.providerStatus,
       externalDeliveryId: delivery.externalDeliveryId,
       errorMessage: delivery.errorMessage,
@@ -576,12 +657,14 @@ export async function sendScraperWhatsAppReport(
         configSource: config.source,
         baseStats,
         responsePreview: delivery.responsePreview,
+        templateKey: rendered.template.templateKey,
+        templateVersion: rendered.template.version,
       },
     }).catch(() => undefined);
 
     providerStatuses.push({
       messageCode: targetMessageCode,
-      recipient,
+      recipient: recipient.phone || recipient.email || recipient.key,
       status,
       providerStatus: delivery.providerStatus,
       errorMessage: delivery.errorMessage,
@@ -596,7 +679,7 @@ export async function sendScraperWhatsAppReport(
     enabled: true,
     skipped: false,
     messageCode,
-    recipients: config.recipients,
+    recipients: config.recipients.map((recipient) => recipient.phone || recipient.email || recipient.key),
     attempted: providerStatuses.length,
     sent,
     failed,

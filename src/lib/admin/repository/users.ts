@@ -3,6 +3,7 @@ import "server-only";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { bootstrapAdmin, normalizePhone } from "@/lib/auth/bootstrap-admin";
 import { sendGlobalWhatsAppText } from "@/lib/communication/connectyhub-client";
+import { renderMessageTemplate } from "@/lib/communication/message-templates";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { DataResult, MutationResult } from "./shared";
 
@@ -158,24 +159,46 @@ async function sendAdminInviteWhatsApp(input: {
   const greeting = firstName(input.displayName);
   const linkPurpose = input.linkKind === "recovery" ? "redefinir sua senha" : "cadastrar sua senha";
   const buttonLabel = input.linkKind === "recovery" ? "Redefinir senha" : "Cadastrar senha";
+  const rendered = await renderMessageTemplate({
+    templateKey: input.linkKind === "recovery" ? "admin.recovery" : "admin.invite",
+    channel: "whatsapp",
+    audienceKey: "admin",
+    variables: {
+      recipient_name: input.displayName,
+      recipient_first_name: greeting,
+      recipient_email: input.email,
+      recipient_phone: input.phone,
+      recipient_role: input.role,
+      action_link: input.actionLink,
+      link_purpose: linkPurpose,
+      button_label: buttonLabel,
+    },
+  });
 
   const delivery = await sendGlobalWhatsAppText({
     messageCode,
     runCode: `ADMIN-USER-${messageCode}`,
-    subject: `Oi, ${greeting}. Seu acesso ao painel da Betel foi liberado.`,
-    messagePreview: [
-      `Toque no botao abaixo para ${linkPurpose} e acessar o painel admin.`,
-      "",
-      "Esse link e pessoal. Se expirar, peca para o admin reenviar outro convite.",
-    ].join("\n"),
-    guardrailSummary: "",
-    actionButton: {
+    subject: rendered.subject || `Oi, ${greeting}. Seu acesso ao painel da Betel foi liberado.`,
+    messagePreview:
+      rendered.body ||
+      [
+        `Toque no botao abaixo para ${linkPurpose} e acessar o painel admin.`,
+        "",
+        "Esse link e pessoal. Se expirar, peca para o admin reenviar outro convite.",
+      ].join("\n"),
+    guardrailSummary: rendered.guardrailSummary,
+    actionButton: rendered.actionButton || {
       label: buttonLabel,
       url: input.actionLink,
       footerText: "Acesso seguro Betel Leiloes",
     },
     payload: {
       eventType: "admin_user_password_link",
+      template: {
+        key: rendered.template.templateKey,
+        version: rendered.template.version,
+        missingVariables: rendered.missingVariables,
+      },
       recipient: {
         name: input.displayName,
         email: input.email,

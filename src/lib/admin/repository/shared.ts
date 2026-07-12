@@ -388,6 +388,9 @@ export type ReleaseCommunicationFromSnapshotInput = {
   audienceScope?: string;
   channels?: string[];
   messageIntent?: string;
+  templateKey?: string;
+  recipientKeys?: string[];
+  recipientSegmentKeys?: string[];
   operatorLabel?: string;
   reviewerLabel?: string;
   notes?: string;
@@ -636,6 +639,10 @@ export type DispatchCommunicationInput = {
   channels: string[];
   messageIntent: string;
   operatorLabel: string;
+  templateKey?: string;
+  recipientKeys?: string[];
+  recipientSegmentKeys?: string[];
+  manualRecipients?: Array<{ label?: string; name?: string; email?: string; phone?: string }>;
 };
 
 export type DispatchCommunicationOutput = {

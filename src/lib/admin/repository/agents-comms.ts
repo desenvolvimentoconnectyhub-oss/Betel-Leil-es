@@ -68,6 +68,7 @@ import {
 } from "./shared";
 import { getWillianInstanceState } from "@/lib/communication/connectyhub-client";
 import { getWillianAgentConfig } from "@/lib/communication/willian-agent-config";
+import { renderMessageTemplate } from "@/lib/communication/message-templates";
 
 export async function getAgentOfficeData(): Promise<DataResult<AgentOfficeData>> {
   const fallback = staticAgentOfficeData();
@@ -1136,6 +1137,119 @@ export async function updateAgentStatusRecord(
   return { ok: true, data: { agentKey, status } };
 }
 
+function communicationSelectionSet(values: string[] | undefined) {
+  return new Set((values || []).map((value) => asString(value).trim()).filter(Boolean));
+}
+
+function recipientSelectionKeys(recipient: CommunicationRecipient) {
+  return [
+    recipient.recipientKey,
+    recipient.investorId ? `investor:${recipient.investorId}` : "",
+    recipient.email ? `investor:${recipient.email}` : "",
+    recipient.phone ? `investor:${recipient.phone}` : "",
+    recipient.email,
+    recipient.phone,
+  ].filter(Boolean);
+}
+
+function communicationRecipientMatchesSelection(
+  recipient: CommunicationRecipient,
+  recipientKeys: Set<string>,
+  segmentKeys: Set<string>
+) {
+  if (!recipientKeys.size && !segmentKeys.size) return true;
+  if (recipientSelectionKeys(recipient).some((key) => recipientKeys.has(key))) return true;
+  if (segmentKeys.has("investors.all") && recipient.optInSource === "investor_profile") return true;
+  if (segmentKeys.has("investors.premium") && recipient.fullAccess) return true;
+  if (segmentKeys.has("community") && recipient.recipientKey === "community") return true;
+  return false;
+}
+
+function filterCommunicationRecipientsByInput(
+  recipients: CommunicationRecipient[],
+  input: DispatchCommunicationInput
+) {
+  const recipientKeys = communicationSelectionSet(input.recipientKeys);
+  const segmentKeys = communicationSelectionSet(input.recipientSegmentKeys);
+  return recipients.filter((recipient) => communicationRecipientMatchesSelection(recipient, recipientKeys, segmentKeys));
+}
+
+function communicationTemplateKeyFor(
+  target: CommunicationDispatchTarget,
+  channel: string,
+  detailLevel: string,
+  override?: string
+) {
+  if (override) return override;
+  const channelKey = normalizeCommunicationChannelKey(channel);
+  if (target.key === "community" || channelKey === "community") return "opportunity.community";
+  if (target.key === "cold_leads" || detailLevel === "teaser") return "opportunity.cold";
+  return "opportunity.paid";
+}
+
+function opportunityAdminUrl(opportunityCode: string) {
+  const baseUrl =
+    process.env.BETEL_PUBLIC_APP_URL?.trim() ||
+    process.env.NEXT_PUBLIC_APP_URL?.trim() ||
+    process.env.NEXT_PUBLIC_SITE_URL?.trim() ||
+    "";
+  const path = `/admin/oportunidades?codigo=${encodeURIComponent(opportunityCode)}`;
+  if (!baseUrl) return path;
+  try {
+    return new URL(path, baseUrl).toString();
+  } catch {
+    return path;
+  }
+}
+
+function communicationTemplateVariables(input: {
+  target: CommunicationDispatchTarget;
+  recipient: CommunicationRecipient;
+  opportunity: AuctionOpportunity | null;
+  opportunityCode: string;
+  channel: string;
+  detailLevel: string;
+  messageIntent: string;
+  operatorLabel: string;
+  sourceRunCode: string;
+}) {
+  const opportunity = asRecord(input.opportunity);
+  return {
+    opportunity_code: input.opportunityCode,
+    opportunity_title: asString(opportunity.title, input.opportunityCode),
+    opportunity_city: asString(opportunity.city),
+    opportunity_state: asString(opportunity.state),
+    opportunity_type: asString(opportunity.propertyType),
+    opportunity_url: opportunityAdminUrl(input.opportunityCode),
+    recipient_name: input.recipient.label,
+    recipient_email: input.recipient.email,
+    recipient_phone: input.recipient.phone,
+    recipient_plan: input.recipient.planKey,
+    recipient_lifecycle: input.recipient.lifecycleStage,
+    recipient_match_score: input.recipient.matchScore,
+    target_label: input.target.label,
+    target_rule: input.target.rule,
+    recipient_guardrail: input.recipient.guardrail,
+    detail_level: input.detailLevel,
+    channel: input.channel,
+    message_intent: input.messageIntent,
+    operator_label: input.operatorLabel,
+    source_run_code: input.sourceRunCode,
+  };
+}
+
+function actionButtonFromPayload(value: unknown) {
+  const button = asRecord(value);
+  const label = asString(button.label);
+  const url = asString(button.url);
+  if (!label || !url) return undefined;
+  return {
+    label,
+    url,
+    footerText: asString(button.footerText, "Betel Leiloes"),
+  };
+}
+
 
 export async function dispatchCommunicationRecord(
   input: DispatchCommunicationInput
@@ -1262,7 +1376,10 @@ export async function dispatchCommunicationRecord(
   }
 
   for (const [index, target] of targets.entries()) {
-    const recipients = buildCommunicationRecipientsForTarget(target, activeInvestors, opportunity, matchRows, channels);
+    const recipients = filterCommunicationRecipientsByInput(
+      buildCommunicationRecipientsForTarget(target, activeInvestors, opportunity, matchRows, channels),
+      input
+    );
     const runChannels = uniqueCommunicationChannels(recipients.flatMap((recipient) => recipient.channels));
 
     if (!recipients.length || !runChannels.length) {
@@ -1322,11 +1439,29 @@ export async function dispatchCommunicationRecord(
       recipientCount: recipients.length,
     });
 
-    const outboxRows = recipients.flatMap((recipient, recipientIndex) =>
-      recipient.channels.map((channel, channelIndex) => {
+    const outboxRowsNested = await Promise.all(
+      recipients.map(async (recipient, recipientIndex) =>
+        Promise.all(recipient.channels.map(async (channel, channelIndex) => {
         const channelKey = normalizeCommunicationChannelKey(channel);
         const detailLevel = recipient.detailLevel;
         const cadence = buildCommunicationSchedule(target, recipient, channel, recipientIndex, channelIndex);
+        const templateKey = communicationTemplateKeyFor(target, channel, detailLevel, input.templateKey);
+        const rendered = await renderMessageTemplate({
+          templateKey,
+          channel: channelKey,
+          audienceKey: target.key,
+          variables: communicationTemplateVariables({
+            target,
+            recipient,
+            opportunity,
+            opportunityCode,
+            channel,
+            detailLevel,
+            messageIntent,
+            operatorLabel,
+            sourceRunCode: input.sourceRunCode,
+          }),
+        });
 
         return {
           message_code: makeCommunicationMessageCode(createdRunCode, recipient.recipientKey, channel),
@@ -1341,9 +1476,9 @@ export async function dispatchCommunicationRecord(
           status: "draft",
           scheduled_for: cadence.scheduledFor,
           recipient_label: recipient.label,
-          subject: `Oportunidade ${opportunityCode} - ${recipient.label}`,
-          message_preview: messagePreviewForDetail(detailLevel),
-        guardrail_summary: `${target.rule} ${recipient.guardrail}`.trim(),
+          subject: rendered.subject || `Oportunidade ${opportunityCode} - ${recipient.label}`,
+          message_preview: rendered.body || messagePreviewForDetail(detailLevel),
+        guardrail_summary: rendered.guardrailSummary || `${target.rule} ${recipient.guardrail}`.trim(),
         payload: {
           sourceRunCode: input.sourceRunCode,
           sourceAgentKey,
@@ -1356,6 +1491,11 @@ export async function dispatchCommunicationRecord(
           detailLevel,
           channel,
           channelKey,
+          templateKey: rendered.template.templateKey,
+          templateVersion: rendered.template.version,
+          templateAudienceKey: rendered.template.audienceKey,
+          missingTemplateVariables: rendered.missingVariables,
+          actionButton: rendered.actionButton,
           opportunityCode,
           recipient: {
             investorId: recipient.investorId,
@@ -1373,8 +1513,10 @@ export async function dispatchCommunicationRecord(
           guardrails: [target.rule, recipient.guardrail],
         },
       };
-      })
+        }))
+      )
     );
+    const outboxRows = outboxRowsNested.flat();
 
     const { error: outboxError } = await supabase
       .from("communication_outbox")
@@ -2124,6 +2266,7 @@ export async function processCommunicationOutboxRecord(
     subject: asString(outbox.subject, `Oportunidade ${asString(outbox.opportunity_code, "Betel")}`),
     messagePreview: asString(outbox.message_preview),
     guardrailSummary: asString(outbox.guardrail_summary),
+    actionButton: actionButtonFromPayload(payload.actionButton),
     payload,
     adapterMode: input.adapterMode || "mock",
     provider: input.provider,
