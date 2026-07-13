@@ -82,6 +82,8 @@ type AdminUserDbRow = {
 };
 
 const defaultOrganizationName = "Betel Leiloes";
+const adminPasswordPath = "/definir-senha";
+const adminDefaultNextPath = "/admin";
 const validRoles: AdminUserRole[] = ["owner", "admin", "manager", "analyst", "viewer"];
 const validStatuses: AdminUserStatus[] = ["active", "invited", "suspended", "disabled"];
 const validInviteStatuses: AdminUserInviteStatus[] = ["not_sent", "sent", "failed", "linked_existing"];
@@ -108,24 +110,62 @@ function permissionsForRole(role: AdminUserRole) {
   return { read: true };
 }
 
-function getAdminInviteRedirectUrl() {
-  const explicit = process.env.BETEL_ADMIN_INVITE_REDIRECT_URL?.trim();
-  if (explicit) return explicit;
-
-  const appUrl =
+function publicAppUrl() {
+  return (
     process.env.NEXT_PUBLIC_APP_URL?.trim() ||
     process.env.BETEL_PUBLIC_APP_URL?.trim() ||
-    process.env.NEXT_PUBLIC_SITE_URL?.trim();
+    process.env.NEXT_PUBLIC_SITE_URL?.trim() ||
+    ""
+  );
+}
 
-  if (!appUrl) return undefined;
+function buildAdminPasswordUrl(rawUrl: string, baseUrl = "") {
+  if (!rawUrl) return undefined;
 
   try {
-    const url = new URL("/definir-senha", appUrl);
-    url.searchParams.set("next", "/admin");
+    const url = baseUrl ? new URL(rawUrl, baseUrl) : new URL(rawUrl);
+    url.pathname = adminPasswordPath;
+    url.search = "";
+    url.hash = "";
+    url.searchParams.set("next", adminDefaultNextPath);
     return url.toString();
   } catch {
     return undefined;
   }
+}
+
+function getAdminInviteRedirectUrl() {
+  const appUrl = publicAppUrl();
+  const explicit = process.env.BETEL_ADMIN_INVITE_REDIRECT_URL?.trim();
+  const candidates = explicit ? [explicit, appUrl] : [appUrl];
+
+  for (const candidate of candidates) {
+    const normalized = buildAdminPasswordUrl(candidate, appUrl);
+    if (normalized) return normalized;
+  }
+
+  return undefined;
+}
+
+function normalizePasswordLinkType(value: string | undefined, fallback: AdminInviteLinkKind): AdminInviteLinkKind {
+  return value === "invite" || value === "recovery" ? value : fallback;
+}
+
+function buildAdminPasswordPageLink(
+  properties: { action_link?: string; hashed_token?: string; verification_type?: string } | null | undefined,
+  fallbackKind: AdminInviteLinkKind
+) {
+  const tokenHash = properties?.hashed_token?.trim();
+  const redirectTo = getAdminInviteRedirectUrl();
+
+  if (tokenHash && redirectTo) {
+    const url = new URL(redirectTo);
+    url.searchParams.set("token_hash", tokenHash);
+    url.searchParams.set("type", normalizePasswordLinkType(properties?.verification_type, fallbackKind));
+    return url.toString();
+  }
+
+  return properties?.action_link?.trim() || "";
 }
 
 function makeAdminInviteMessageCode(email: string) {
@@ -172,8 +212,10 @@ async function sendAdminInviteWhatsApp(input: {
       action_link: input.actionLink,
       link_purpose: linkPurpose,
       button_label: buttonLabel,
+      button_url: input.actionLink,
     },
   });
+  const renderedButton = rendered.actionButton;
 
   const delivery = await sendGlobalWhatsAppText({
     messageCode,
@@ -187,10 +229,10 @@ async function sendAdminInviteWhatsApp(input: {
         "Esse link e pessoal. Se expirar, peca para o admin reenviar outro convite.",
       ].join("\n"),
     guardrailSummary: rendered.guardrailSummary,
-    actionButton: rendered.actionButton || {
-      label: buttonLabel,
+    actionButton: {
+      label: renderedButton?.label || buttonLabel,
       url: input.actionLink,
-      footerText: "Acesso seguro Betel Leiloes",
+      footerText: renderedButton?.footerText || "Acesso seguro Betel Leiloes",
     },
     payload: {
       eventType: "admin_user_password_link",
@@ -207,6 +249,7 @@ async function sendAdminInviteWhatsApp(input: {
       auth: {
         role: input.role,
         linkKind: input.linkKind,
+        passwordUrl: adminPasswordPath,
       },
     },
   });
@@ -303,7 +346,7 @@ async function deliverAdminPasswordInvite(
       linkKind,
     });
 
-    const actionLink = linkData?.properties?.action_link;
+    const actionLink = buildAdminPasswordPageLink(linkData?.properties, linkKind);
     authUserId = linkData?.user?.id || authUserId;
 
     if (linkError || !actionLink || !authUserId) {

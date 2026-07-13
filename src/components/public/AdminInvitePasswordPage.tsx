@@ -10,12 +10,64 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 const logoUrl = "https://pub-3b8a3e7613ad4776be18e72d6d78207f.r2.dev/logo-betel.png";
 
 type InviteState = "checking" | "ready" | "error";
+type PasswordOtpType = "invite" | "recovery" | "email" | "magiclink" | "signup";
+
+const authParamNames = [
+  "access_token",
+  "code",
+  "error",
+  "error_code",
+  "error_description",
+  "expires_at",
+  "expires_in",
+  "refresh_token",
+  "token_hash",
+  "token_type",
+  "type",
+];
+
+function safeNextPath(value: string | null) {
+  if (!value || !value.startsWith("/") || value.startsWith("//")) return "/admin";
+  return value;
+}
+
+function passwordOtpType(value: string | null): PasswordOtpType {
+  if (value === "invite" || value === "recovery" || value === "email" || value === "magiclink" || value === "signup") {
+    return value;
+  }
+  return "recovery";
+}
+
+function currentAuthParams() {
+  const params = new URLSearchParams(window.location.search);
+  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+
+  hashParams.forEach((value, key) => {
+    if (!params.has(key)) params.set(key, value);
+  });
+
+  return params;
+}
+
+function cleanAuthParamsFromUrl() {
+  const cleanUrl = new URL(window.location.href);
+  const hashParams = new URLSearchParams(cleanUrl.hash.replace(/^#/, ""));
+
+  for (const name of authParamNames) {
+    cleanUrl.searchParams.delete(name);
+    hashParams.delete(name);
+  }
+
+  const nextHash = hashParams.toString();
+  cleanUrl.hash = nextHash ? `#${nextHash}` : "";
+  window.history.replaceState({}, "", cleanUrl.toString());
+}
 
 export function AdminInvitePasswordPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
-  const nextPath = searchParams.get("next") || "/admin";
+  const nextPath = safeNextPath(searchParams.get("next"));
   const [state, setState] = useState<InviteState>("checking");
   const [email, setEmail] = useState("");
   const [error, setError] = useState("");
@@ -31,15 +83,36 @@ export function AdminInvitePasswordPage() {
       setState("checking");
 
       try {
-        const code = searchParams.get("code");
+        const authParams = currentAuthParams();
+        const authError = authParams.get("error_description") || authParams.get("error_code") || authParams.get("error");
+        if (authError) throw new Error(authError);
+
+        const code = authParams.get("code");
+        const tokenHash = authParams.get("token_hash");
+        const accessToken = authParams.get("access_token");
+        const refreshToken = authParams.get("refresh_token");
 
         if (code) {
           const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
           if (exchangeError) throw exchangeError;
 
-          const cleanUrl = new URL(window.location.href);
-          cleanUrl.searchParams.delete("code");
-          window.history.replaceState({}, "", cleanUrl.toString());
+          cleanAuthParamsFromUrl();
+        } else if (tokenHash) {
+          const { error: verifyError } = await supabase.auth.verifyOtp({
+            token_hash: tokenHash,
+            type: passwordOtpType(authParams.get("type")),
+          });
+          if (verifyError) throw verifyError;
+
+          cleanAuthParamsFromUrl();
+        } else if (accessToken && refreshToken) {
+          const { error: setSessionError } = await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          });
+          if (setSessionError) throw setSessionError;
+
+          cleanAuthParamsFromUrl();
         }
 
         const {
@@ -51,7 +124,7 @@ export function AdminInvitePasswordPage() {
         if (!session?.user) {
           if (!isMounted) return;
           setState("error");
-          setError("Convite expirado ou invalido. Solicite um novo convite ao administrador.");
+          setError("Link expirado ou invalido. Solicite um novo acesso ao administrador.");
           return;
         }
 
@@ -61,7 +134,7 @@ export function AdminInvitePasswordPage() {
       } catch (sessionError) {
         if (!isMounted) return;
         setState("error");
-        setError(sessionError instanceof Error ? sessionError.message : "Nao foi possivel validar o convite.");
+        setError(sessionError instanceof Error ? sessionError.message : "Nao foi possivel validar o link de senha.");
       }
     }
 
@@ -231,4 +304,3 @@ export function AdminInvitePasswordPage() {
     </main>
   );
 }
-
