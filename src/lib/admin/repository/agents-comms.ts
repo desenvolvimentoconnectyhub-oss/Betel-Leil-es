@@ -69,6 +69,7 @@ import {
 import { getWillianInstanceState } from "@/lib/communication/connectyhub-client";
 import { getWillianAgentConfig } from "@/lib/communication/willian-agent-config";
 import { renderMessageTemplate } from "@/lib/communication/message-templates";
+import { getAnalysisDeliveryPauseState } from "@/lib/maintenance/operational-pauses";
 
 export async function getAgentOfficeData(): Promise<DataResult<AgentOfficeData>> {
   const fallback = staticAgentOfficeData();
@@ -1254,6 +1255,11 @@ function actionButtonFromPayload(value: unknown) {
 export async function dispatchCommunicationRecord(
   input: DispatchCommunicationInput
 ): Promise<MutationResult<DispatchCommunicationOutput>> {
+  const pause = getAnalysisDeliveryPauseState();
+  if (pause.paused) {
+    return { ok: false, error: pause.reason };
+  }
+
   const supabase = getSupabaseAdminClient();
 
   if (!supabase) {
@@ -1990,6 +1996,27 @@ export async function runCommunicationSchedulerRecord(
     };
   }
 
+  const pause = getAnalysisDeliveryPauseState();
+  if (pause.paused) {
+    return {
+      ok: true,
+      data: {
+        dryRun: false,
+        triggerSource: normalized.triggerSource,
+        requested: normalized.batchSize,
+        eligibleCount: 0,
+        pendingBefore: 0,
+        pendingAfter: 0,
+        adapterMode: normalized.adapterMode,
+        provider: normalized.provider,
+        allowExternal: normalized.allowExternal,
+        providerReleaseConfirmed: normalized.providerReleaseConfirmed,
+        eligible: [],
+        skippedReason: pause.reason,
+      },
+    };
+  }
+
   const supabase = getSupabaseAdminClient();
 
   if (!supabase) {
@@ -2060,6 +2087,11 @@ export async function runCommunicationSchedulerRecord(
 export async function processCommunicationOutboxRecord(
   input: ProcessCommunicationOutboxInput
 ): Promise<MutationResult<ProcessCommunicationOutboxOutput>> {
+  const pause = getAnalysisDeliveryPauseState();
+  if (pause.paused) {
+    return { ok: false, error: pause.reason };
+  }
+
   const supabase = getSupabaseAdminClient();
 
   if (!supabase) {
@@ -2389,6 +2421,11 @@ export async function processCommunicationOutboxRecord(
 export async function processCommunicationOutboxBatchRecord(
   input: ProcessCommunicationOutboxBatchInput
 ): Promise<MutationResult<ProcessCommunicationOutboxBatchOutput>> {
+  const pause = getAnalysisDeliveryPauseState();
+  if (pause.paused) {
+    return { ok: false, error: pause.reason };
+  }
+
   const supabase = getSupabaseAdminClient();
 
   if (!supabase) {

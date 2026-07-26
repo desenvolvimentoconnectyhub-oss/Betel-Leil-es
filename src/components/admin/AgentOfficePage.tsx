@@ -82,19 +82,25 @@ const WHATSAPP_AGENT_PUBLIC_ROLE = "Atende e distribui oportunidades por WhatsAp
 type AgentType = "coletor" | "consumidor" | "hibrido";
 
 function getPublicAgentName(agent: AgentDirectoryEntry) {
-  return agent.key === WHATSAPP_AGENT_KEY ? WHATSAPP_AGENT_PUBLIC_NAME : agent.name;
+  if (agent.key === WHATSAPP_AGENT_KEY) return WHATSAPP_AGENT_PUBLIC_NAME;
+  if (agent.isWhatsappAgent) return agent.name || WHATSAPP_AGENT_PUBLIC_NAME;
+  return agent.name;
 }
 
 function getPublicAgentRole(agent: AgentDirectoryEntry) {
-  return agent.key === WHATSAPP_AGENT_KEY ? WHATSAPP_AGENT_PUBLIC_ROLE : agent.jobTitle;
+  if (agent.isWhatsappAgent) return agent.functionSummary || WHATSAPP_AGENT_PUBLIC_ROLE;
+  return agent.jobTitle;
 }
 
 function getCarouselAgentName(agent: AgentDirectoryEntry) {
   const name = getPublicAgentName(agent);
-  return agent.key === WHATSAPP_AGENT_KEY ? name : name.replace("Agente ", "");
+  return agent.isWhatsappAgent ? name : name.replace("Agente ", "");
 }
 
-function getAgentType(key: string): AgentType {
+function getAgentType(agent: AgentDirectoryEntry): AgentType {
+  if (agent.isWhatsappAgent) return "consumidor";
+
+  const key = agent.key;
   if (["source-scout", "source-watchdog"].includes(key)) return "coletor";
   if (
     [
@@ -174,6 +180,73 @@ function AgentAvatar({
   );
 }
 
+function AgentRail({
+  title,
+  agents,
+  effectiveSelectedKey,
+  avatars,
+  onSelect,
+}: {
+  title: string;
+  agents: AgentDirectoryEntry[];
+  effectiveSelectedKey: string | null;
+  avatars: Record<string, string>;
+  onSelect: (agentKey: string) => void;
+}) {
+  if (!agents.length) return null;
+
+  return (
+    <div className="mt-5">
+      <div className="mb-2 flex items-center gap-2">
+        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--admin-muted)]">
+          {title}
+        </p>
+        <span className="rounded border border-[var(--admin-border)] bg-[rgba(255,255,255,0.04)] px-1.5 py-0.5 text-[10px] font-semibold text-white">
+          {agents.length}
+        </span>
+      </div>
+      <div className="flex gap-3 overflow-x-auto pb-3 scrollbar-thin scrollbar-track-transparent scrollbar-thumb-[var(--admin-border)]">
+        {agents.map((agent) => {
+          const type = getAgentType(agent);
+          const isSelected = effectiveSelectedKey === agent.key;
+
+          return (
+            <button
+              key={agent.key}
+              type="button"
+              onClick={() => onSelect(agent.key)}
+              className={cn(
+                "flex shrink-0 items-center gap-3 rounded-lg border px-4 py-3 transition",
+                isSelected
+                  ? "border-[var(--admin-cyan)] bg-[rgba(0,243,255,0.06)]"
+                  : "border-[var(--admin-border)] bg-[rgba(255,255,255,0.02)] hover:border-[rgba(255,255,255,0.15)]"
+              )}
+              style={{ minWidth: 220 }}
+            >
+              <AgentAvatar agentKey={agent.key} avatarUrl={avatars[agent.key]} tone={agent.tone} size="sm" />
+              <div className="min-w-0 text-left">
+                <p className="truncate text-sm font-semibold text-white">{getCarouselAgentName(agent)}</p>
+                <p className="truncate text-[11px] text-[var(--admin-muted)]">
+                  {agent.jobTitle}
+                </p>
+                <div className="mt-1 flex items-center gap-1.5">
+                  <p className={cn("text-[10px] font-bold tracking-[0.12em]", typeColor[type])}>
+                    {typeLabel[type]}
+                  </p>
+                  <span className="rounded border border-[var(--admin-border)] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.1em] text-[var(--admin-muted)]">
+                    {agent.channelLabel}
+                  </span>
+                </div>
+              </div>
+              <ChevronRight size={14} className="shrink-0 text-[var(--admin-muted)]" />
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function getIntelligenceData(agent: AgentDirectoryEntry, groups: AgentGroup[], edges: AgentWorkflowEdge[]) {
   const group = groups.find((g) => g.agents.some((a) => a.key === agent.key));
   const agentDef = group?.agents.find((a) => a.key === agent.key);
@@ -200,7 +273,6 @@ function getIntelligenceData(agent: AgentDirectoryEntry, groups: AgentGroup[], e
 }
 
 export function AgentOfficePage({
-  module,
   officeData,
 }: {
   module: AdminModule;
@@ -212,9 +284,8 @@ export function AgentOfficePage({
   const [activeTab, setActiveTab] = useState<"todos" | AgentType>("todos");
   const [activeGroup, setActiveGroup] = useState<string | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(
-    () => data.directory.find((agent) => agent.key === "multichannel-dispatch")?.key || data.directory[0]?.key || null
+    () => data.directory.find((agent) => agent.isWhatsappAgent)?.key || data.directory[0]?.key || null
   );
-  const scrollRef = useRef<HTMLDivElement>(null);
 
   const [avatars, setAvatars] = useState<Record<string, string>>(() => {
     const initial: Record<string, string> = {};
@@ -256,12 +327,14 @@ export function AgentOfficePage({
         (a) =>
           a.name.toLowerCase().includes(q) ||
           a.department.toLowerCase().includes(q) ||
-          a.jobTitle.toLowerCase().includes(q)
+          a.jobTitle.toLowerCase().includes(q) ||
+          a.channelLabel.toLowerCase().includes(q) ||
+          a.agentKind.toLowerCase().includes(q)
       );
     }
 
     if (activeTab !== "todos") {
-      agents = agents.filter((a) => getAgentType(a.key) === activeTab);
+      agents = agents.filter((a) => getAgentType(a) === activeTab);
     }
 
     if (activeGroup) {
@@ -295,10 +368,19 @@ export function AgentOfficePage({
   const typeCounts = useMemo(() => {
     const counts: Record<AgentType, number> = { coletor: 0, consumidor: 0, hibrido: 0 };
     for (const agent of data.directory) {
-      counts[getAgentType(agent.key)]++;
+      counts[getAgentType(agent)]++;
     }
     return counts;
   }, [data]);
+
+  const whatsappFiltered = useMemo(
+    () => filtered.filter((agent) => agent.isWhatsappAgent),
+    [filtered]
+  );
+  const backofficeFiltered = useMemo(
+    () => filtered.filter((agent) => !agent.isWhatsappAgent),
+    [filtered]
+  );
 
   return (
     <div className="min-h-screen">
@@ -423,45 +505,28 @@ export function AgentOfficePage({
           ))}
         </div>
 
-        {/* Agent carousel */}
-        <div className="relative mt-5">
-          <div
-            ref={scrollRef}
-            className="flex gap-3 overflow-x-auto pb-3 scrollbar-thin scrollbar-track-transparent scrollbar-thumb-[var(--admin-border)]"
-          >
-            {filtered.map((agent) => {
-              const type = getAgentType(agent.key);
-              const isSelected = effectiveSelectedKey === agent.key;
-
-              return (
-                <button
-                  key={agent.key}
-                  type="button"
-                  onClick={() => setSelectedKey(agent.key)}
-                  className={cn(
-                    "flex shrink-0 items-center gap-3 rounded-xl border px-4 py-3 transition",
-                    isSelected
-                      ? "border-[var(--admin-cyan)] bg-[rgba(0,243,255,0.06)]"
-                      : "border-[var(--admin-border)] bg-[rgba(255,255,255,0.02)] hover:border-[rgba(255,255,255,0.15)]"
-                  )}
-                  style={{ minWidth: 200 }}
-                >
-                  <AgentAvatar agentKey={agent.key} avatarUrl={avatars[agent.key]} tone={agent.tone} size="sm" />
-                  <div className="min-w-0 text-left">
-                    <p className="truncate text-sm font-semibold text-white">{getCarouselAgentName(agent)}</p>
-                    <p className="truncate text-[11px] text-[var(--admin-muted)]">
-                      {agent.jobTitle}
-                    </p>
-                    <p className={cn("mt-0.5 text-[10px] font-bold tracking-[0.12em]", typeColor[type])}>
-                      {typeLabel[type]}
-                    </p>
-                  </div>
-                  <ChevronRight size={14} className="shrink-0 text-[var(--admin-muted)]" />
-                </button>
-              );
-            })}
+        {filtered.length === 0 ? (
+          <div className="mt-5 rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.02)] px-4 py-6 text-sm text-[var(--admin-muted)]">
+            Nenhum agente encontrado para os filtros atuais.
           </div>
-        </div>
+        ) : (
+          <>
+            <AgentRail
+              title="Atendentes WhatsApp"
+              agents={whatsappFiltered}
+              effectiveSelectedKey={effectiveSelectedKey}
+              avatars={avatars}
+              onSelect={setSelectedKey}
+            />
+            <AgentRail
+              title="Agentes Backoffice"
+              agents={backofficeFiltered}
+              effectiveSelectedKey={effectiveSelectedKey}
+              avatars={avatars}
+              onSelect={setSelectedKey}
+            />
+          </>
+        )}
       </section>
 
       {/* Selected agent detail */}
@@ -502,12 +567,12 @@ function AgentDetailPanel({
 }) {
   const group = groups.find((g) => g.agents.some((a) => a.key === agent.key));
   const intel = getIntelligenceData(agent, groups, edges);
-  const type = getAgentType(agent.key);
+  const type = getAgentType(agent);
   const agentDef = intel.agentDef;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isUploading = uploadingKey === agent.key;
 
-  if (agent.key === WHATSAPP_AGENT_KEY) {
+  if (agent.isWhatsappAgent) {
     const publicAgentName = getPublicAgentName(agent);
     const publicAgentRole = getPublicAgentRole(agent);
 
@@ -534,7 +599,12 @@ function AgentDetailPanel({
           </div>
         </div>
 
-        <WillianAgentPanel initialState={willianInstance} initialConfig={willianAgentConfig} />
+        <WillianAgentPanel
+          key={agent.key}
+          initialState={willianInstance}
+          initialConfig={willianAgentConfig}
+          initialAgentKey={agent.key}
+        />
       </div>
     );
   }

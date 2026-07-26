@@ -2485,3 +2485,42 @@ export async function sendWillianWhatsAppMedia(input: {
 
   return { payload: sanitizePayload(payload), externalDeliveryId: extractDeliveryId(payload) };
 }
+
+export async function sendWhatsAppAgentMediaReply(input: {
+  agentKey: string;
+  instanceId?: string;
+  number: string;
+  type: "image" | "video" | "videoplay" | "document" | "audio" | "myaudio" | "ptt" | "ptv" | "sticker";
+  file: string;
+  text?: string;
+  docName?: string;
+  trackId: string;
+}) {
+  if (!input.agentKey || input.agentKey === WILLIAN_AGENT_KEY) {
+    return sendWillianWhatsAppMedia(input);
+  }
+
+  const config = await getWillianConfig();
+  const persisted = input.instanceId ? null : await findPersistedWhatsappInstance(input.agentKey);
+  const instanceId = cleanString(input.instanceId || persisted?.provider_instance_id);
+  const number = normalizeWhatsAppNumber(input.number);
+  if (!config.apiToken || !instanceId || !number || !input.file) {
+    throw new Error("Envio de midia WhatsApp incompleto.");
+  }
+
+  const { payload } = await connectyhubRequestWithIdempotencyFallback("/messages/media", {
+    body: {
+      instanceId,
+      number,
+      type: input.type,
+      file: input.file,
+      text: input.text,
+      docName: input.docName,
+      trackId: input.trackId,
+    },
+    idempotencyKey: input.trackId,
+    timeoutMs: 20000,
+  });
+
+  return { payload: sanitizePayload(payload), externalDeliveryId: extractDeliveryId(payload) };
+}

@@ -28,7 +28,7 @@ import {
   Wrench,
 } from "lucide-react";
 import type { AdminModule } from "@/lib/admin/modules";
-import type { AgentStatus, AgentWorkflowStage } from "@/lib/admin/agent-workforce";
+import type { AgentStatus } from "@/lib/admin/agent-workforce";
 import { agentWorkflowStages } from "@/lib/admin/agent-workforce";
 import type { AgentOfficeData, DataResult } from "@/lib/admin/repository";
 import type { ResourceTone } from "@/lib/admin/resources";
@@ -1605,10 +1605,10 @@ export function AgentWorkforcePage({
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                   <div>
                     <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--admin-green)]">
-                      scheduler / cron
+                      scheduler / Inngest
                     </p>
                     <p className="mt-1 text-xs leading-5 text-[var(--admin-soft)]">
-                      Execucao automatizada usa token dedicado, mock/sandbox por padrao e dry-run em GET sem run=true.
+                      Execucao automatizada fica na Inngest; esta rota permanece para dry-run e acionamento manual controlado.
                     </p>
                   </div>
                   <Clock3 size={17} className="shrink-0 text-[var(--admin-green)]" />
@@ -1618,10 +1618,10 @@ export function AgentWorkforcePage({
                     GET /api/admin/agentes-ia/communication/scheduler?dryRun=true
                   </div>
                   <div className="rounded-md border border-[var(--admin-border)] bg-[#050505] px-3 py-2">
-                    CRON /api/admin/agentes-ia/communication/scheduler/cron
+                    INNGEST communication-scheduler
                   </div>
                   <div className="rounded-md border border-[var(--admin-border)] bg-[#050505] px-3 py-2">
-                    TOKEN CRON_SECRET ou BETEL_COMMUNICATION_SCHEDULER_TOKEN
+                    Endpoint Inngest: /api/inngest
                   </div>
                   <div className="rounded-md border border-[var(--admin-border)] bg-[#050505] px-3 py-2">
                     0 11 * * * UTC / mock / sandbox / allowExternal=false

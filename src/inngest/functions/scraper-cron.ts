@@ -1,5 +1,6 @@
 import { inngest } from "../client";
 import { runScraperCron } from "@/lib/scraper";
+import { getScraperPauseState } from "@/lib/maintenance/operational-pauses";
 import { getScraperScheduleConfig, getScraperScheduleDecision } from "@/lib/scraper/schedule";
 
 export const scraperCronFunction = inngest.createFunction(
@@ -9,6 +10,17 @@ export const scraperCronFunction = inngest.createFunction(
     triggers: [{ cron: "* * * * *" }],
   },
   async () => {
+    const pause = getScraperPauseState();
+    if (pause.paused) {
+      return {
+        ok: true,
+        skipped: true,
+        paused: true,
+        reason: pause.reason,
+        timestamp: new Date().toISOString(),
+      };
+    }
+
     const schedule = await getScraperScheduleConfig();
     const decision = getScraperScheduleDecision(schedule);
 

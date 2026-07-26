@@ -578,7 +578,7 @@ export const adminModules: AdminModule[] = [
     metrics: [
       { label: "Alvos", value: "14", detail: "cadastrados" },
       { label: "Ativos", value: "14", detail: "habilitados" },
-      { label: "Coletas", value: "0", detail: "aguardando cron" },
+      { label: "Coletas", value: "0", detail: "aguardando Inngest" },
     ],
     workflow: ["Cadastrar alvo", "Configurar seletores", "Executar coleta", "Ingerir oportunidades"],
     focus: ["URL", "Estrategia", "Rate limit", "Seletores CSS"],

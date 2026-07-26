@@ -17,6 +17,7 @@ import {
   type MessageTemplate,
 } from "@/lib/communication/message-templates";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
+import { getAnalysisDeliveryPauseState } from "@/lib/maintenance/operational-pauses";
 import type { CommunicationOutboxItem } from "../agent-workforce";
 import type { MutationResult } from "./shared";
 import { normalizeCommunicationOutbox } from "./shared";
@@ -248,6 +249,11 @@ export async function saveMessageRouteRecord(input: SaveMessageRouteInput): Prom
 export async function queueDirectMessageRecord(
   input: QueueDirectMessageInput
 ): Promise<MutationResult<QueueDirectMessageOutput>> {
+  const pause = getAnalysisDeliveryPauseState();
+  if (pause.paused) {
+    return { ok: false, error: pause.reason };
+  }
+
   const supabase = getSupabaseAdminClient();
   if (!supabase) {
     return { ok: false, error: "Supabase admin nao configurado. Outbox exige service role." };

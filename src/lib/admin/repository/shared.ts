@@ -37,10 +37,10 @@ import {
   agentRuntimeEvents,
   agentWorkflowEdges,
   agentWorkflowStages,
-  agentWorkforceMetrics,
   communicationOutbox,
   communicationSegments,
   type AgentDirectoryEntry,
+  type AgentChannelFamily,
   type AgentGroup,
   type AgentMaintenanceItem,
   type AgentOfficeRoom,
@@ -92,6 +92,7 @@ export type { CommercialPack } from "../commercial";
 export type { AdvisoryContractGate, AdvisoryContractSnapshot } from "../contracts";
 export type {
   AgentDirectoryEntry,
+  AgentChannelFamily,
   AgentGroup,
   AgentMaintenanceItem,
   AgentOfficeRoom,
@@ -932,10 +933,57 @@ export function toneForRunStatus(status: string): ResourceTone {
   return "purple";
 }
 
+const whatsappAgentKeys = new Set(["multichannel-dispatch", "willian", "willian-whatsapp"]);
+
+function hasObjectValues(value: unknown) {
+  return Object.keys(asRecord(value)).length > 0;
+}
+
+function normalizeAgentChannel(
+  row: AgentDbRow,
+  key: string,
+  fallback?: AgentDirectoryEntry
+): Pick<AgentDirectoryEntry, "agentKind" | "channelFamily" | "channelLabel" | "isWhatsappAgent"> {
+  const metadata = asRecord(row.metadata);
+  const rawKind = asString(row.agent_kind, asString(metadata.agent_kind, asString(metadata.agentKind, fallback?.agentKind || "")));
+  const rawChannel = asString(row.channel, asString(metadata.channel, asString(metadata.channelFamily, "")));
+  const rawProvider = asString(row.provider, asString(metadata.provider, ""));
+  const rawScope = asString(row.scope, asString(metadata.scope, ""));
+  const joinedHints = [key, rawKind, rawChannel, rawProvider, rawScope].join(" ").toLowerCase();
+  const hasWhatsappConfig =
+    hasObjectValues(row.whatsapp_behavior_config) ||
+    hasObjectValues(metadata.whatsappBehaviorConfig) ||
+    hasObjectValues(metadata.whatsapp_agent_config) ||
+    hasObjectValues(metadata.whatsappAgentConfig);
+  const isWhatsappAgent =
+    Boolean(fallback?.isWhatsappAgent) ||
+    whatsappAgentKeys.has(key) ||
+    hasWhatsappConfig ||
+    joinedHints.includes("whatsapp") ||
+    joinedHints.includes("wpp");
+  const channelFamily: AgentChannelFamily = isWhatsappAgent ? "whatsapp" : "backoffice";
+  const agentKind = isWhatsappAgent ? "whatsapp" : asString(rawKind, fallback?.agentKind || "backoffice");
+
+  return {
+    agentKind,
+    channelFamily,
+    channelLabel: channelFamily === "whatsapp" ? "WhatsApp" : "Backoffice",
+    isWhatsappAgent,
+  };
+}
+
 export function makeAgentOfficeMetrics(data: Pick<AgentOfficeData, "officeRooms" | "directory" | "promptRegistry" | "maintenanceQueue">) {
+  const whatsappCount = data.directory.filter((agent) => agent.isWhatsappAgent).length;
+  const backofficeCount = Math.max(data.directory.length - whatsappCount, 0);
+
   return [
     { label: "Setores", value: String(data.officeRooms.length), detail: "empresa virtual", tone: "cyan" as ResourceTone },
-    { label: "Agentes", value: String(data.directory.length), detail: "prompts especializados", tone: "purple" as ResourceTone },
+    {
+      label: "Agentes",
+      value: String(data.directory.length),
+      detail: `${whatsappCount} WhatsApp / ${backofficeCount} internos`,
+      tone: "purple" as ResourceTone,
+    },
     { label: "Prompts", value: String(data.promptRegistry.length), detail: "registro operacional", tone: "yellow" as ResourceTone },
     { label: "Manutencao", value: String(data.maintenanceQueue.length), detail: "checks criticos", tone: "green" as ResourceTone },
   ];
@@ -943,7 +991,12 @@ export function makeAgentOfficeMetrics(data: Pick<AgentOfficeData, "officeRooms"
 
 export function staticAgentOfficeData(): AgentOfficeData {
   return {
-    metrics: agentWorkforceMetrics,
+    metrics: makeAgentOfficeMetrics({
+      officeRooms: agentOfficeRooms,
+      directory: agentDirectory,
+      promptRegistry: agentPromptRegistry,
+      maintenanceQueue: agentMaintenanceQueue,
+    }),
     officeRooms: agentOfficeRooms,
     directory: agentDirectory,
     promptRegistry: agentPromptRegistry,
@@ -1010,16 +1063,29 @@ export function normalizeOfficeRoom(row: AgentOfficeRoomDbRow): AgentOfficeRoom 
 export function normalizeAgentDirectoryEntry(row: AgentDbRow): AgentDirectoryEntry {
   const key = asString(row.agent_key, asString(row.key));
   const staticMatch = findStaticAgent(key);
+  const staticEntry = agentDirectory.find((agent) => agent.key === key);
   const groupRow = (row.agent_groups || row.group) as Record<string, unknown> | null;
   const groupKey = asString(groupRow?.group_key, staticMatch?.group.key || "");
   const status = normalizeAgentStatus(row.status || staticMatch?.agent.status);
   const tone = toneForAgentStatus(status);
-  const department = agentOfficeRooms.find((room) => room.agents.includes(asString(row.name)))?.name;
-  const isWhatsappAgent = key === "multichannel-dispatch";
-  const name = isWhatsappAgent ? "Agente de WhatsApp" : asString(row.name, staticMatch?.agent.name || "Agente IA");
-  const role = isWhatsappAgent
-    ? "Atende e distribui oportunidades por WhatsApp com opt-in, frequencia, plano e auditoria por usuario."
-    : asString(row.role, staticMatch?.agent.role || "Agente especializado");
+  const department = asString(
+    row.sector,
+    agentOfficeRooms.find((room) => room.agents.includes(asString(row.name)))?.name || ""
+  );
+  const channel = normalizeAgentChannel(row, key, staticEntry);
+  const name = channel.isWhatsappAgent
+    ? asString(row.persona_name, asString(row.name, staticMatch?.agent.name || "Atendente WhatsApp"))
+    : asString(row.name, staticMatch?.agent.name || "Agente IA");
+  const role = channel.isWhatsappAgent
+    ? asString(
+        row.function_summary,
+        asString(
+          row.role,
+          staticMatch?.agent.role ||
+            "Atende leads no WhatsApp com texto, voz, qualificacao, follow-up, memoria e handoff humano."
+        )
+      )
+    : asString(row.function_summary, asString(row.role, staticMatch?.agent.role || "Agente especializado"));
 
   return {
     key,
@@ -1055,6 +1121,7 @@ export function normalizeAgentDirectoryEntry(row: AgentDbRow): AgentDirectoryEnt
             ? "Pausado para ajuste"
             : "Contratacao planejada",
     avatarIcon: asString(row.avatar_icon, ""),
+    ...channel,
   };
 }
 

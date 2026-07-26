@@ -13,8 +13,10 @@ export const runtime = "nodejs";
 function revalidateWillianConfig() {
   revalidatePath("/admin");
   revalidatePath("/admin/agentes-ia");
+  revalidatePath("/admin/whatsapp");
   revalidatePath("/api/admin/agentes-ia");
   revalidatePath("/api/admin/agentes-ia/communication/willian-config");
+  revalidatePath("/api/admin/whatsapp/crm");
 }
 
 function cleanString(value: unknown, fallback = "") {

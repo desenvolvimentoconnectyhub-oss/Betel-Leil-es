@@ -58,6 +58,10 @@ import {
   dispatchCommunicationRecord,
   createAgentRunRecord,
 } from "./agents-comms";
+import {
+  getAnalysisDeliveryPauseState,
+  getScraperPauseState,
+} from "@/lib/maintenance/operational-pauses";
 
 export async function processSourceSnapshotRecord(
   input: ProcessSourceSnapshotInput
@@ -1284,6 +1288,11 @@ export async function processComplianceFromSnapshotRecord(
 export async function releaseCommunicationFromSnapshotRecord(
   input: ReleaseCommunicationFromSnapshotInput
 ): Promise<MutationResult<ReleaseCommunicationFromSnapshotOutput>> {
+  const pause = getAnalysisDeliveryPauseState();
+  if (pause.paused) {
+    return { ok: false, error: pause.reason };
+  }
+
   const supabase = getSupabaseAdminClient();
 
   if (!supabase) {
@@ -1761,6 +1770,15 @@ export async function ingestAuctionOpportunityRecord(
 export async function pullSourceProviderOpportunitiesRecord(
   input: PullSourceProviderOpportunitiesInput
 ): Promise<MutationResult<PullSourceProviderOpportunitiesOutput>> {
+  const pause = getScraperPauseState();
+  const usesOperationalPull = Boolean(input.ingest) ||
+    Boolean(input.allowExternal) ||
+    asString(input.runtimeMode, "mock").toLowerCase() !== "mock";
+
+  if (pause.paused && usesOperationalPull) {
+    return { ok: false, error: pause.reason };
+  }
+
   const providerResult = await executeSourceProviderPull(input);
 
   if (!providerResult.ok || !providerResult.data) {

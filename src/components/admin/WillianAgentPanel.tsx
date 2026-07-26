@@ -355,9 +355,11 @@ const timingFields: BehaviorNumberSpec[] = [
 export function WillianAgentPanel({
   initialState,
   initialConfig,
+  initialAgentKey,
 }: {
   initialState?: WillianInstanceState;
   initialConfig?: WillianAgentConfig;
+  initialAgentKey?: string;
 }) {
   const [state, setState] = useState<WillianInstanceState>(initialState || defaultWillianState);
   const [config, setConfig] = useState<WillianAgentConfig>(initialConfig || DEFAULT_WILLIAN_AGENT_CONFIG);
@@ -367,7 +369,9 @@ export function WillianAgentPanel({
   const [feedback, setFeedback] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
   const [connection, setConnection] = useState<WillianConnectionInfo | null>(null);
   const [agentInstances, setAgentInstances] = useState<WhatsAppAgentInstanceSummary[]>(initialState?.agentInstances || []);
-  const [selectedAgentKey, setSelectedAgentKey] = useState<string>(initialState?.agentKey || defaultWillianState.agentKey);
+  const [selectedAgentKey, setSelectedAgentKey] = useState<string>(
+    initialAgentKey || initialState?.agentKey || defaultWillianState.agentKey
+  );
   const [newAgentFormOpen, setNewAgentFormOpen] = useState(false);
   const [newAgentName, setNewAgentName] = useState("");
   const [newAgentSector, setNewAgentSector] = useState("Atendimento WhatsApp");
@@ -2044,8 +2048,33 @@ function FilesTab({
   setFiles: (patch: Partial<WillianFilesConfig>) => void;
   setMemory: (patch: Partial<WillianMemoryConfig>) => void;
 }) {
+  const knowledgeSignals = [
+    { label: "Notas", value: config.knowledgeNotes.trim() ? "ativa" : "vazia", ok: Boolean(config.knowledgeNotes.trim()) },
+    { label: "Arquivos", value: String(config.companyFiles.length), ok: config.companyFiles.length > 0 },
+    { label: "Eventos", value: String(memory.importantEvents.length), ok: memory.importantEvents.length > 0 },
+    { label: "Handoff", value: String(memory.handoffRules.length), ok: memory.handoffRules.length > 0 },
+  ];
+
   return (
     <div className="space-y-5">
+      <div className="grid gap-3 md:grid-cols-4">
+        {knowledgeSignals.map((signal) => (
+          <div
+            key={signal.label}
+            className={cn(
+              "rounded-lg border px-4 py-3",
+              signal.ok
+                ? "border-[rgba(34,197,94,0.24)] bg-[rgba(34,197,94,0.08)]"
+                : "border-[var(--admin-border)] bg-[rgba(255,255,255,0.02)]"
+            )}
+          >
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">{signal.label}</p>
+            <p className={cn("mt-2 font-mono text-xl font-bold", signal.ok ? "text-[var(--admin-green)]" : "text-[var(--admin-muted)]")}>
+              {signal.value}
+            </p>
+          </div>
+        ))}
+      </div>
       <div className="grid gap-5 xl:grid-cols-[0.8fr_1.2fr]">
         <Panel title="Arquivos da empresa" eyebrow="Base de conhecimento" action={<StatusPill ok={config.uploadEnabled} label={`${config.companyFiles.length} arquivos`} />}>
           <ToggleTile title="Upload habilitado" detail="Pode anexar documentos quando storage for ligado." checked={config.uploadEnabled} onChange={(uploadEnabled) => setFiles({ uploadEnabled })} />

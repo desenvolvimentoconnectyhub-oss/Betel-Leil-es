@@ -146,6 +146,8 @@ export type AgentOfficeRoom = {
   maintenanceFocus: string;
 };
 
+export type AgentChannelFamily = "whatsapp" | "backoffice";
+
 export type AgentDirectoryEntry = {
   key: string;
   name: string;
@@ -161,6 +163,10 @@ export type AgentDirectoryEntry = {
   currentDesk: string;
   currentShift: string;
   avatarIcon: string;
+  agentKind: string;
+  channelFamily: AgentChannelFamily;
+  channelLabel: string;
+  isWhatsappAgent: boolean;
 };
 
 export type AgentPromptRegistryItem = {
@@ -1015,23 +1021,40 @@ const shiftByStatus: Record<AgentStatus, string> = {
   planned: "Contratacao planejada",
 };
 
+const whatsappAgentKeys = new Set(["multichannel-dispatch"]);
+
+function getStaticAgentChannel(agentKey: string) {
+  const isWhatsappAgent = whatsappAgentKeys.has(agentKey);
+  return {
+    agentKind: isWhatsappAgent ? "whatsapp" : "backoffice",
+    channelFamily: isWhatsappAgent ? "whatsapp" : "backoffice",
+    channelLabel: isWhatsappAgent ? "WhatsApp" : "Backoffice",
+    isWhatsappAgent,
+  } satisfies Pick<AgentDirectoryEntry, "agentKind" | "channelFamily" | "channelLabel" | "isWhatsappAgent">;
+}
+
 export const agentDirectory: AgentDirectoryEntry[] = agentGroups.flatMap((group) =>
-  group.agents.map((agent) => ({
-    key: agent.key,
-    name: agent.name,
-    department: departmentByGroupKey[group.key] || group.name,
-    group: group.name,
-    jobTitle: agent.role.split(".")[0],
-    functionSummary: agent.role,
-    promptName: agent.promptName,
-    promptVersion: agent.promptVersion,
-    status: agent.status,
-    tone: agent.tone,
-    reportsTo: reportsToByGroupKey[group.key] || "Admin Betel",
-    currentDesk: group.eyebrow,
-    currentShift: shiftByStatus[agent.status],
-    avatarIcon: "",
-  }))
+  group.agents.map((agent) => {
+    const channel = getStaticAgentChannel(agent.key);
+
+    return {
+      key: agent.key,
+      name: agent.name,
+      department: departmentByGroupKey[group.key] || group.name,
+      group: group.name,
+      jobTitle: agent.role.split(".")[0],
+      functionSummary: agent.role,
+      promptName: agent.promptName,
+      promptVersion: agent.promptVersion,
+      status: agent.status,
+      tone: agent.tone,
+      reportsTo: reportsToByGroupKey[group.key] || "Admin Betel",
+      currentDesk: group.eyebrow,
+      currentShift: shiftByStatus[agent.status],
+      avatarIcon: "",
+      ...channel,
+    };
+  })
 );
 
 export const agentPromptRegistry: AgentPromptRegistryItem[] = agentDirectory.map((agent) => ({

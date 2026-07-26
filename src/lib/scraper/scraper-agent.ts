@@ -13,6 +13,7 @@ import { isGeminiQuotaError } from "./scraper-llm";
 import { screenScraperCandidatesByWillianPattern } from "./scraper-criteria";
 import { mirrorRemoteImagesToR2 } from "@/lib/storage/r2";
 import { assessRealEstateAsset, isLikelyExactPropertySourceUrl, isLikelyPropertyImageUrl } from "./quality";
+import { getScraperPauseState } from "@/lib/maintenance/operational-pauses";
 import type { ScraperCandidate, ScraperResult, ScraperTarget } from "./types";
 import {
   sendScraperWhatsAppReport,
@@ -134,6 +135,17 @@ export async function backfillOpportunityImages(options: {
   skipped: number;
   failed: Array<{ code: string; title: string; error: string }>;
 }> {
+  const pause = getScraperPauseState();
+  if (pause.paused) {
+    return {
+      ok: false,
+      scanned: 0,
+      updated: 0,
+      skipped: 0,
+      failed: [{ code: "", title: "", error: pause.reason }],
+    };
+  }
+
   const supabase = getSupabaseAdminClient();
   if (!supabase) {
     return {
@@ -389,6 +401,17 @@ export async function runScraperForTarget(
   itemsSkipped?: number;
   rateLimited?: boolean;
 }> {
+  const pause = getScraperPauseState();
+  if (pause.paused) {
+    return {
+      ok: false,
+      error: pause.reason,
+      itemsFound: 0,
+      itemsIngested: 0,
+      itemsSkipped: 0,
+    };
+  }
+
   const targetResult = await getScraperTargetByCode(targetCode);
 
   if (!targetResult.data) {
@@ -490,6 +513,34 @@ function makeSkippedTargetReport(target: ScraperTarget, skipReason: string): Scr
 export async function runScraperCron(
   options: { maxTargets?: number; notify?: boolean; notificationDryRun?: boolean } = {}
 ): Promise<ScraperCronRunSummary> {
+  const pause = getScraperPauseState();
+  if (pause.paused) {
+    const now = new Date().toISOString();
+    return {
+      processed: [],
+      failed: [],
+      skipped: [],
+      targets: [],
+      startedAt: now,
+      finishedAt: now,
+      quotaBlocked: false,
+      notification: options.notify === false
+        ? undefined
+        : {
+            enabled: false,
+            skipped: true,
+            reason: pause.reason,
+            messageCode: `SCR-RPT-PAUSED-${Date.now().toString(36).toUpperCase()}`,
+            recipients: [],
+            attempted: 0,
+            sent: 0,
+            failed: 0,
+            messagePreview: "",
+            providerStatuses: [],
+          },
+    };
+  }
+
   const { listScraperTargets } = await import("./scraper-repository");
   const targetsResult = await listScraperTargets();
 
