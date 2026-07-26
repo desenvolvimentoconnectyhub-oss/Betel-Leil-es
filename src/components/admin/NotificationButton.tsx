@@ -18,7 +18,7 @@ export function NotificationButton() {
         <Button
           variant="outline"
           size="icon-lg"
-          className="relative border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] text-[var(--admin-soft)] hover:text-white"
+          className="relative border-[var(--admin-border)] bg-white text-[var(--admin-soft)] shadow-sm hover:text-[var(--admin-foreground)]"
         >
           <Bell size={16} />
           <span className="absolute -right-1 -top-1 grid size-4 place-items-center rounded-full bg-[var(--admin-red)] font-mono text-[9px] font-bold text-white">
@@ -27,7 +27,7 @@ export function NotificationButton() {
           <span className="sr-only">Notificacoes</span>
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-72 border-[var(--admin-border)] bg-[#0b0b0b] text-white">
+      <DropdownMenuContent align="end" className="w-72 border-[var(--admin-border)] bg-white text-[var(--admin-foreground)] shadow-xl shadow-[rgba(81,60,36,0.12)]">
         <DropdownMenuLabel>Alertas recentes</DropdownMenuLabel>
         <DropdownMenuSeparator />
         {[

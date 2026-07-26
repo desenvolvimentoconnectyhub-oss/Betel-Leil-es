@@ -36,7 +36,7 @@ export function UserMenu({ admin }: { admin: AdminSessionUser }) {
       <DropdownMenuTrigger asChild>
         <Button
           variant="outline"
-          className="h-9 gap-2 border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] px-2 text-white hover:text-white"
+          className="h-9 gap-2 border-[var(--admin-border)] bg-white px-2 text-[var(--admin-foreground)] shadow-sm hover:text-[var(--admin-foreground)]"
         >
           <span className="grid size-6 place-items-center rounded-md bg-[var(--admin-cyan)] font-mono text-[10px] font-bold text-black">
             {initials(admin.name)}
@@ -44,7 +44,7 @@ export function UserMenu({ admin }: { admin: AdminSessionUser }) {
           <span className="hidden max-w-28 truncate text-xs font-semibold md:inline">{admin.name}</span>
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56 border-[var(--admin-border)] bg-[#0b0b0b] text-white">
+      <DropdownMenuContent align="end" className="w-56 border-[var(--admin-border)] bg-white text-[var(--admin-foreground)] shadow-xl shadow-[rgba(81,60,36,0.12)]">
         <DropdownMenuLabel>
           <div className="text-sm">{admin.name}</div>
           <div className="mt-0.5 text-xs font-normal text-[var(--admin-muted)]">{admin.email}</div>

@@ -22,8 +22,8 @@ export function AdminNavItem({
       className={cn(
         "group relative flex min-h-9 items-center gap-2 rounded-md px-2.5 py-2 text-[13px] transition",
         active
-          ? "bg-[rgba(255,255,255,0.08)] text-white"
-          : "text-[var(--admin-soft)] hover:bg-[rgba(255,255,255,0.04)] hover:text-white"
+          ? "bg-[rgba(200,90,31,0.12)] text-[var(--admin-foreground)] ring-1 ring-[rgba(200,90,31,0.18)]"
+          : "text-[var(--admin-soft)] hover:bg-[rgba(184,122,22,0.08)] hover:text-[var(--admin-foreground)]"
       )}
     >
       <AdminIcon

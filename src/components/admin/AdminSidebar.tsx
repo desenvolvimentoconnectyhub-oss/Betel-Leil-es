@@ -11,16 +11,16 @@ const logoUrl = "https://pub-3b8a3e7613ad4776be18e72d6d78207f.r2.dev/logo-betel.
 
 export function AdminSidebarContent({ activeHref }: { activeHref: string }) {
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[var(--admin-sidebar)]">
+    <div className="flex h-full min-h-0 flex-col bg-[var(--admin-sidebar)] text-[var(--admin-foreground)]">
       <div className="flex min-h-16 items-center gap-3 border-b border-[var(--admin-border)] px-4">
         <Link
           href="/admin"
-          className="grid size-10 shrink-0 place-items-center rounded-lg border border-[var(--admin-border)] bg-[#050505]"
+          className="grid size-10 shrink-0 place-items-center rounded-lg border border-[var(--admin-border)] bg-white shadow-sm"
         >
           <Image src={logoUrl} alt="Betel AI" width={32} height={32} className="object-contain" />
         </Link>
         <div className="min-w-0">
-          <div className="truncate text-sm font-semibold text-white">Betel AI</div>
+          <div className="truncate text-sm font-semibold text-[var(--admin-foreground)]">Betel AI</div>
           <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-[var(--admin-muted)]">
             <Activity size={12} className="text-[var(--admin-cyan)]" />
             Dashboard
@@ -35,7 +35,7 @@ export function AdminSidebarContent({ activeHref }: { activeHref: string }) {
         <div className="mt-3 border-t border-[var(--admin-border)] pt-3">
           <Link
             href="/admin/maintenance"
-            className="flex min-h-9 items-center gap-2 rounded-md px-2.5 py-2 text-[13px] text-[var(--admin-soft)] transition hover:bg-white/[0.04] hover:text-white"
+            className="flex min-h-9 items-center gap-2 rounded-md px-2.5 py-2 text-[13px] text-[var(--admin-soft)] transition hover:bg-[rgba(184,122,22,0.08)] hover:text-[var(--admin-foreground)]"
           >
             <HeartPulse size={16} className="text-[var(--admin-yellow)]" />
             <span className="min-w-0 flex-1 truncate">Manutencao</span>
@@ -45,12 +45,12 @@ export function AdminSidebarContent({ activeHref }: { activeHref: string }) {
       </nav>
 
       <div className="border-t border-[var(--admin-border)] p-3">
-        <div className="flex items-center gap-2 rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] p-2">
+        <div className="flex items-center gap-2 rounded-lg border border-[var(--admin-border)] bg-white p-2 shadow-sm">
           <span className="grid size-8 shrink-0 place-items-center rounded-md bg-[var(--admin-cyan)] font-mono text-xs font-bold text-black">
             BA
           </span>
           <div className="min-w-0 flex-1">
-            <div className="truncate text-xs font-semibold text-white">Betel Admin</div>
+            <div className="truncate text-xs font-semibold text-[var(--admin-foreground)]">Betel Admin</div>
             <div className="truncate text-[10px] text-[var(--admin-muted)]">IA, compliance e leiloes</div>
           </div>
           <ChevronDown size={14} className="text-[var(--admin-muted)]" />

@@ -4,7 +4,7 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 
   --radius: 0.65rem;
   --radius-sm: calc(var(--radius) - 0.25rem);
@@ -12,37 +12,37 @@
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 0.25rem);
 
-  --betel-black: #08090b;
-  --betel-ink: #101114;
-  --betel-panel: #15171b;
-  --betel-panel-soft: #1d2026;
-  --betel-line: rgba(226, 214, 185, 0.16);
-  --betel-muted: #b8ad98;
-  --betel-gold: #d8ad58;
-  --betel-gold-soft: #f1d28a;
-  --betel-green: #51c878;
-  --betel-red: #ef6b5e;
-  --betel-cyan: #6ec7d6;
+  --betel-black: #f7f4ee;
+  --betel-ink: #1c1814;
+  --betel-panel: #ffffff;
+  --betel-panel-soft: #f1ece4;
+  --betel-line: rgba(70, 54, 36, 0.16);
+  --betel-muted: #74685b;
+  --betel-gold: #b87a16;
+  --betel-gold-soft: #d89a34;
+  --betel-green: #16834a;
+  --betel-red: #c2412f;
+  --betel-cyan: #0f7c90;
 
   --background: var(--betel-black);
-  --foreground: #f8f1df;
-  --card: #121419;
-  --card-foreground: #f8f1df;
-  --popover: #15171b;
-  --popover-foreground: #f8f1df;
+  --foreground: var(--betel-ink);
+  --card: #ffffff;
+  --card-foreground: var(--betel-ink);
+  --popover: #ffffff;
+  --popover-foreground: var(--betel-ink);
   --primary: var(--betel-gold);
-  --primary-foreground: #161007;
-  --secondary: #1d2026;
-  --secondary-foreground: #f8f1df;
+  --primary-foreground: #fffaf0;
+  --secondary: #efe8dd;
+  --secondary-foreground: #2f271f;
   --muted: var(--betel-muted);
-  --muted-bg: #1a1c21;
+  --muted-bg: #eee8de;
   --muted-foreground: var(--betel-muted);
-  --accent: rgba(216, 173, 88, 0.14);
-  --accent-foreground: #fff3cf;
+  --accent: rgba(184, 122, 22, 0.12);
+  --accent-foreground: #5e3d09;
   --destructive: var(--betel-red);
   --border: var(--betel-line);
-  --input: rgba(226, 214, 185, 0.18);
-  --ring: rgba(216, 173, 88, 0.5);
+  --input: rgba(70, 54, 36, 0.18);
+  --ring: rgba(184, 122, 22, 0.32);
 
   --chart-1: #d8ad58;
   --chart-2: #51c878;
@@ -50,14 +50,14 @@
   --chart-4: #f1d28a;
   --chart-5: #ef6b5e;
 
-  --sidebar: #101114;
-  --sidebar-foreground: #f8f1df;
+  --sidebar: #fffaf2;
+  --sidebar-foreground: #2a2118;
   --sidebar-primary: var(--betel-gold);
-  --sidebar-primary-foreground: #161007;
-  --sidebar-accent: rgba(216, 173, 88, 0.13);
-  --sidebar-accent-foreground: #fff3cf;
-  --sidebar-border: rgba(226, 214, 185, 0.14);
-  --sidebar-ring: rgba(216, 173, 88, 0.5);
+  --sidebar-primary-foreground: #fffaf0;
+  --sidebar-accent: rgba(184, 122, 22, 0.12);
+  --sidebar-accent-foreground: #5e3d09;
+  --sidebar-border: rgba(70, 54, 36, 0.14);
+  --sidebar-ring: rgba(184, 122, 22, 0.32);
 
   --panel: var(--betel-panel);
   --panel-soft: var(--betel-panel-soft);
@@ -67,33 +67,33 @@
   --red: var(--betel-red);
   --cyan: var(--betel-cyan);
 
-  --admin-bg: #050505;
-  --admin-sidebar: #080808;
-  --admin-card: #0d0d0d;
-  --admin-card-2: #14110f;
-  --admin-border: #24201d;
-  --admin-foreground: #f7f2ec;
-  --admin-soft: #d8d0c7;
-  --admin-muted: #8d8580;
-  --admin-cyan: #ff5a1f;
-  --admin-green: #20c878;
-  --admin-yellow: #ffb020;
-  --admin-red: #ff4d38;
-  --admin-purple: #c47a2c;
+  --admin-bg: #f6f3ee;
+  --admin-sidebar: #fffaf2;
+  --admin-card: #ffffff;
+  --admin-card-2: #f4eee5;
+  --admin-border: #ded4c5;
+  --admin-foreground: #241d16;
+  --admin-soft: #4f453b;
+  --admin-muted: #817568;
+  --admin-cyan: #c85a1f;
+  --admin-green: #137a45;
+  --admin-yellow: #b77911;
+  --admin-red: #c43d2d;
+  --admin-purple: #8a5a2d;
 
-  --ch-bg: var(--betel-black);
-  --ch-surface: rgba(18, 20, 25, 0.88);
-  --ch-surface-2: rgba(29, 32, 38, 0.88);
-  --ch-surface-3: #23262d;
+  --ch-bg: #f7f4ee;
+  --ch-surface: rgba(255, 255, 255, 0.9);
+  --ch-surface-2: rgba(244, 238, 229, 0.9);
+  --ch-surface-3: #eee6da;
   --ch-border: var(--betel-line);
   --ch-accent: var(--betel-gold);
-  --ch-accent-rgb: 216, 173, 88;
-  --ch-text: #fff7e4;
-  --ch-text-rgb: 255, 247, 228;
+  --ch-accent-rgb: 184, 122, 22;
+  --ch-text: #241d16;
+  --ch-text-rgb: 36, 29, 22;
   --ch-muted: var(--betel-muted);
-  --ch-subtle: #8f826c;
-  --ch-hover: rgba(216, 173, 88, 0.12);
-  --ch-dropdown-bg: #15171b;
+  --ch-subtle: #8b7d6d;
+  --ch-hover: rgba(184, 122, 22, 0.12);
+  --ch-dropdown-bg: #ffffff;
 }
 
 @theme inline {
@@ -158,13 +158,13 @@ a {
 }
 
 ::selection {
-  background: rgba(216, 173, 88, 0.35);
+  background: rgba(184, 122, 22, 0.24);
 }
 
 .betel-panel {
-  background: linear-gradient(180deg, rgba(21, 23, 27, 0.96), rgba(14, 15, 18, 0.96));
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 244, 237, 0.98));
   border: 1px solid var(--line);
-  box-shadow: 0 20px 80px rgba(0, 0, 0, 0.22);
+  box-shadow: 0 18px 54px rgba(81, 60, 36, 0.12);
 }
 
 .betel-gold-text {
@@ -173,7 +173,88 @@ a {
 
 .betel-grid-bg {
   background-image:
-    linear-gradient(rgba(216, 173, 88, 0.07) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(216, 173, 88, 0.07) 1px, transparent 1px);
+    linear-gradient(rgba(184, 122, 22, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(184, 122, 22, 0.08) 1px, transparent 1px);
   background-size: 44px 44px;
+}
+
+.betel-admin-light {
+  color-scheme: light;
+}
+
+.betel-admin-light .text-white {
+  color: var(--admin-foreground) !important;
+}
+
+.betel-admin-light .border-white {
+  border-color: rgba(200, 90, 31, 0.36) !important;
+}
+
+.betel-admin-light .hover\:text-white:hover {
+  color: var(--admin-foreground) !important;
+}
+
+.betel-admin-light .bg-\[\#050505\],
+.betel-admin-light .bg-\[\#070707\],
+.betel-admin-light .bg-\[\#08090b\],
+.betel-admin-light .bg-\[\#0b0b0b\],
+.betel-admin-light .bg-\[\#0d0d0d\],
+.betel-admin-light .bg-\[\#090a0c\],
+.betel-admin-light .bg-\[\#080808\] {
+  background-color: var(--admin-card) !important;
+}
+
+.betel-admin-light .bg-black\/20,
+.betel-admin-light .bg-black\/30,
+.betel-admin-light .bg-black\/40,
+.betel-admin-light .bg-black\/50 {
+  background-color: rgba(36, 29, 22, 0.04) !important;
+}
+
+.betel-admin-light [class*="rgba(13,13,13"],
+.betel-admin-light [class*="rgba(5,5,5"],
+.betel-admin-light [class*="rgba(0,0,0"] {
+  background-color: rgba(255, 255, 255, 0.74) !important;
+  background-image: none !important;
+}
+
+.betel-admin-light .bg-white\/\[0\.02\],
+.betel-admin-light .bg-white\/\[0\.03\],
+.betel-admin-light .bg-white\/\[0\.04\],
+.betel-admin-light .bg-white\/\[0\.05\],
+.betel-admin-light .bg-white\/\[0\.06\],
+.betel-admin-light .bg-\[rgba\(255\,255\,255\,0\.018\)\],
+.betel-admin-light .bg-\[rgba\(255\,255\,255\,0\.02\)\],
+.betel-admin-light .bg-\[rgba\(255\,255\,255\,0\.025\)\],
+.betel-admin-light .bg-\[rgba\(255\,255\,255\,0\.03\)\],
+.betel-admin-light .bg-\[rgba\(255\,255\,255\,0\.035\)\],
+.betel-admin-light .bg-\[rgba\(255\,255\,255\,0\.04\)\],
+.betel-admin-light .bg-\[rgba\(255\,255\,255\,0\.05\)\],
+.betel-admin-light .bg-\[rgba\(255\,255\,255\,0\.06\)\] {
+  background-color: rgba(255, 255, 255, 0.72) !important;
+}
+
+.betel-admin-light input:not([type="checkbox"]):not([type="radio"]),
+.betel-admin-light select,
+.betel-admin-light textarea {
+  background-color: #ffffff !important;
+  color: var(--admin-foreground) !important;
+  border-color: var(--admin-border) !important;
+}
+
+.betel-admin-light input::placeholder,
+.betel-admin-light textarea::placeholder {
+  color: var(--admin-muted) !important;
+}
+
+.betel-admin-light .bg-\[var\(--admin-red\)\].text-white,
+.betel-admin-light .bg-\[var\(--admin-cyan\)\].text-white,
+.betel-admin-light .bg-\[var\(--admin-purple\)\].text-white {
+  color: #fffaf0 !important;
+}
+
+.betel-admin-light .shadow-2xl,
+.betel-admin-light .shadow-xl {
+  --tw-shadow-color: rgba(81, 60, 36, 0.12) !important;
+  --tw-shadow: 0 18px 48px var(--tw-shadow-color) !important;
 }

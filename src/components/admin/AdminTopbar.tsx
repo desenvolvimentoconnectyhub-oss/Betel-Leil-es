@@ -35,14 +35,14 @@ export function AdminTopbar({ admin }: { admin: AdminSessionUser }) {
   const title = getTitle(pathname);
 
   return (
-    <header className="sticky top-0 z-20 border-b border-[var(--admin-border)] bg-[rgba(5,5,5,0.88)] backdrop-blur-xl">
+    <header className="sticky top-0 z-20 border-b border-[var(--admin-border)] bg-[rgba(255,250,242,0.90)] shadow-sm shadow-[rgba(81,60,36,0.06)] backdrop-blur-xl">
       <div className="flex min-h-16 items-center gap-3 px-4 lg:px-5">
         <Sheet>
           <SheetTrigger asChild>
             <Button
               variant="outline"
               size="icon-lg"
-              className="border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] text-white lg:hidden"
+              className="border-[var(--admin-border)] bg-white text-[var(--admin-foreground)] lg:hidden"
             >
               <Menu size={17} />
               <span className="sr-only">Abrir menu</span>
@@ -67,13 +67,13 @@ export function AdminTopbar({ admin }: { admin: AdminSessionUser }) {
 
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-xs text-[var(--admin-muted)]">
-            <Link href="/admin" className="hover:text-white">
+            <Link href="/admin" className="hover:text-[var(--admin-cyan)]">
               Betel AI
             </Link>
             <span>/</span>
             <span className="truncate text-[var(--admin-soft)]">{title}</span>
           </div>
-          <h1 className="truncate text-base font-semibold text-white">{title}</h1>
+          <h1 className="truncate text-base font-semibold text-[var(--admin-foreground)]">{title}</h1>
         </div>
 
         <div className="ml-auto flex min-w-0 items-center gap-2">

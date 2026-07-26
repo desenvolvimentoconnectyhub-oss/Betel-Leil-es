@@ -21,7 +21,7 @@ export function DashboardCard({
   return (
     <section
       className={cn(
-        "min-w-0 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] text-[var(--admin-foreground)] shadow-[0_1px_0_rgba(255,255,255,0.03)]",
+        "min-w-0 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] text-[var(--admin-foreground)] shadow-sm shadow-[rgba(81,60,36,0.06)]",
         className
       )}
     >
@@ -33,7 +33,7 @@ export function DashboardCard({
                 {eyebrow}
               </p>
             )}
-            {title && <h2 className="truncate text-sm font-semibold text-white">{title}</h2>}
+            {title && <h2 className="truncate text-sm font-semibold text-[var(--admin-foreground)]">{title}</h2>}
           </div>
           {action}
         </div>

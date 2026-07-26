@@ -42,7 +42,7 @@ export function CommandSearch() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="flex h-9 w-full items-center gap-2 rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] px-3 text-left text-xs text-[var(--admin-muted)] transition hover:border-[rgba(255,255,255,0.2)]"
+        className="flex h-9 w-full items-center gap-2 rounded-lg border border-[var(--admin-border)] bg-white px-3 text-left text-xs text-[var(--admin-muted)] shadow-sm transition hover:border-[rgba(200,90,31,0.32)]"
       >
         <Search size={15} />
         Buscar oportunidade, fonte, agente, usuario ou conteudo
@@ -52,7 +52,7 @@ export function CommandSearch() {
       </button>
 
       {open && (
-        <div className="absolute left-0 right-0 top-11 z-50 rounded-lg border border-[var(--admin-border)] bg-[#0b0b0b] p-2 shadow-2xl">
+        <div className="absolute left-0 right-0 top-11 z-50 rounded-lg border border-[var(--admin-border)] bg-white p-2 shadow-2xl shadow-[rgba(81,60,36,0.16)]">
           <div className="flex h-10 items-center gap-2 border-b border-[var(--admin-border)] px-2">
             <Search size={15} className="text-[var(--admin-muted)]" />
             <input
@@ -60,12 +60,12 @@ export function CommandSearch() {
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Digite para buscar"
-              className="h-full min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-[var(--admin-muted)]"
+              className="h-full min-w-0 flex-1 bg-transparent text-sm text-[var(--admin-foreground)] outline-none placeholder:text-[var(--admin-muted)]"
             />
             <button
               type="button"
               onClick={() => setOpen(false)}
-              className="grid size-7 place-items-center rounded-md text-[var(--admin-muted)] hover:bg-white/[0.06] hover:text-white"
+              className="grid size-7 place-items-center rounded-md text-[var(--admin-muted)] hover:bg-[rgba(184,122,22,0.08)] hover:text-[var(--admin-foreground)]"
             >
               <X size={14} />
               <span className="sr-only">Fechar busca</span>
@@ -78,7 +78,7 @@ export function CommandSearch() {
                 href={item.href}
                 onClick={() => setOpen(false)}
                 className={cn(
-                  "flex items-center justify-between rounded-md px-2 py-2 text-sm text-[var(--admin-soft)] hover:bg-white/[0.06] hover:text-white"
+                  "flex items-center justify-between rounded-md px-2 py-2 text-sm text-[var(--admin-soft)] hover:bg-[rgba(184,122,22,0.08)] hover:text-[var(--admin-foreground)]"
                 )}
               >
                 <span>{item.label}</span>
