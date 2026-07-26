@@ -1,10 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  ArrowUpRight,
   Bot,
   CalendarClock,
   CheckCircle2,
@@ -24,7 +22,6 @@ import {
   Save,
   Search,
   Send,
-  Settings2,
   ShieldAlert,
   StickyNote,
   Tags,
@@ -819,7 +816,7 @@ export function WhatsAppCrmPage({
 }) {
   const router = useRouter();
   const data = crmData.data;
-  const [panelTab, setPanelTab] = useState<PanelTabKey>("inbox");
+  const [panelTab, setPanelTab] = useState<PanelTabKey>("agents");
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<FilterKey>("todos");
   const [selectedId, setSelectedId] = useState<string | null>(data.leads[0]?.id || null);
@@ -1116,9 +1113,9 @@ export function WhatsAppCrmPage({
               <MessageCircle size={15} />
               Central WhatsApp
             </div>
-            <h1 className="text-2xl font-semibold tracking-tight text-white">Atendimento WhatsApp</h1>
+            <h1 className="text-2xl font-semibold tracking-tight text-white">Agentes WhatsApp</h1>
             <p className="mt-2 max-w-4xl text-sm leading-6 text-[var(--admin-muted)]">
-              Fila operacional dos atendentes: leads, conversas, score, SLA, handoff e follow-up.
+              Painel dos atendentes: conexao, voz, prompt, CRM, inbox, SLA, handoff e follow-up.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -1146,14 +1143,6 @@ export function WhatsAppCrmPage({
             >
               Auditar IA
             </ActionButton>
-            <Link
-              href="/admin/agentes-ia"
-              className="inline-flex h-9 items-center gap-2 rounded-md border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] px-3 text-xs font-semibold text-white transition hover:border-[var(--admin-cyan)] hover:text-[var(--admin-cyan)]"
-            >
-              <Settings2 size={15} />
-              Agentes
-              <ArrowUpRight size={14} />
-            </Link>
           </div>
         </div>
         {crmData.reason && (

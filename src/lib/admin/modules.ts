@@ -285,6 +285,40 @@ export const adminModules: AdminModule[] = [
     ],
   }),
   createAdminModule({
+    slug: "whatsapp",
+    group: "Inteligencia",
+    label: "Agentes WhatsApp",
+    title: "Agentes WhatsApp",
+    eyebrow: "Atendimento multicanal",
+    description:
+      "Painel dos atendentes de WhatsApp com conexao, voz, prompt, CRM, inbox, follow-up e auditoria operacional.",
+    icon: "MessageCircle",
+    accent: "green",
+    status: "build",
+    statusLabel: "Central WhatsApp",
+    metrics: [
+      { label: "Atendentes", value: "1+", detail: "ConnectyHub" },
+      { label: "Canais", value: "voz/texto", detail: "WhatsApp" },
+      { label: "CRM", value: "ativo", detail: "leads e follow-up" },
+    ],
+    workflow: ["Conectar numero", "Configurar prompt", "Atender lead", "Agendar follow-up", "Auditar qualidade"],
+    focus: ["Voz", "Texto", "CRM", "Handoff humano", "Aprendizado"],
+    records: [
+      {
+        title: "Atendente principal",
+        meta: "Conexao, prompt, voz e comportamento do agente WhatsApp",
+        status: "Configuravel",
+        owner: "Comercial",
+      },
+      {
+        title: "CRM WhatsApp",
+        meta: "Leads, SLA, historico, follow-up e auditoria",
+        status: "Operacional",
+        owner: "Atendimento",
+      },
+    ],
+  }),
+  createAdminModule({
     slug: "mensagens",
     legacySlugs: ["messages", "comunicacoes", "templates"],
     group: "Inteligencia",
@@ -529,7 +563,6 @@ export const adminModules: AdminModule[] = [
   }),
   createAdminModule({
     slug: "alertas",
-    legacySlugs: ["whatsapp"],
     group: "Operacao",
     label: "Alertas",
     title: "Alertas Inteligentes",
@@ -890,6 +923,7 @@ export const adminNavGroups: AdminNavGroup[] = [
     label: "Inteligencia",
     items: [
       { href: "/admin/agentes-ia", label: "Escritorio de Agentes IA", icon: "GitCompareArrows" },
+      { href: "/admin/whatsapp", label: "Agentes WhatsApp", icon: "MessageCircle" },
       { href: "/admin/central-inteligencia", label: "Central de Inteligencia", icon: "BrainCircuit" },
     ],
   },

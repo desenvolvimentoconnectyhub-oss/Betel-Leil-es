@@ -26,7 +26,6 @@ import {
   XCircle,
 } from "lucide-react";
 import Image from "next/image";
-import Link from "next/link";
 import type { AdminModule } from "@/lib/admin/modules";
 import type { AgentOfficeData, DataResult } from "@/lib/admin/repository";
 import type {
@@ -499,21 +498,6 @@ export function AgentOfficePage({
           </div>
         ) : (
           <>
-            <div className="mt-5 flex flex-col gap-3 rounded-lg border border-[rgba(34,197,94,0.24)] bg-[rgba(34,197,94,0.06)] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="min-w-0">
-                <p className="text-xs font-semibold text-white">Agentes de WhatsApp ficam em um painel separado.</p>
-                <p className="mt-1 text-xs leading-5 text-[var(--admin-muted)]">
-                  Conexao, voz, CRM, follow-up, inbox e auditoria agora vivem na Central WhatsApp.
-                </p>
-              </div>
-              <Link
-                href="/admin/whatsapp"
-                className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-md border border-[rgba(34,197,94,0.30)] bg-[rgba(34,197,94,0.10)] px-3 text-xs font-semibold text-[var(--admin-green)] transition hover:border-[var(--admin-green)] hover:text-white"
-              >
-                Abrir WhatsApp
-                <ChevronRight size={14} />
-              </Link>
-            </div>
             <AgentRail
               title="Agentes Backoffice"
               agents={filtered}
