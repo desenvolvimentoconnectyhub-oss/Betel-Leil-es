@@ -26,10 +26,9 @@ import {
   XCircle,
 } from "lucide-react";
 import Image from "next/image";
-import { WillianAgentPanel } from "@/components/admin/WillianAgentPanel";
+import Link from "next/link";
 import type { AdminModule } from "@/lib/admin/modules";
 import type { AgentOfficeData, DataResult } from "@/lib/admin/repository";
-import type { WillianAgentConfig, WillianInstanceState } from "@/lib/communication/willian-types";
 import type {
   AgentGroup,
   AgentDirectoryEntry,
@@ -75,26 +74,10 @@ const iconMap: Record<string, typeof Bot> = {
   "admin-alert": AlertTriangle,
 };
 
-const WHATSAPP_AGENT_KEY = "multichannel-dispatch";
-const WHATSAPP_AGENT_PUBLIC_NAME = "Agente de WhatsApp";
-const WHATSAPP_AGENT_PUBLIC_ROLE = "Atende e distribui oportunidades por WhatsApp com opt-in, frequencia, plano e auditoria por usuario.";
-
 type AgentType = "coletor" | "consumidor" | "hibrido";
 
-function getPublicAgentName(agent: AgentDirectoryEntry) {
-  if (agent.key === WHATSAPP_AGENT_KEY) return WHATSAPP_AGENT_PUBLIC_NAME;
-  if (agent.isWhatsappAgent) return agent.name || WHATSAPP_AGENT_PUBLIC_NAME;
-  return agent.name;
-}
-
-function getPublicAgentRole(agent: AgentDirectoryEntry) {
-  if (agent.isWhatsappAgent) return agent.functionSummary || WHATSAPP_AGENT_PUBLIC_ROLE;
-  return agent.jobTitle;
-}
-
 function getCarouselAgentName(agent: AgentDirectoryEntry) {
-  const name = getPublicAgentName(agent);
-  return agent.isWhatsappAgent ? name : name.replace("Agente ", "");
+  return agent.name.replace("Agente ", "");
 }
 
 function getAgentType(agent: AgentDirectoryEntry): AgentType {
@@ -280,11 +263,25 @@ export function AgentOfficePage({
   searchParams?: Record<string, string | string[] | undefined>;
 }) {
   const data = officeData.data;
+  const backofficeDirectory = useMemo(
+    () => data.directory.filter((agent) => !agent.isWhatsappAgent),
+    [data.directory]
+  );
+  const backofficeGroups = useMemo(
+    () =>
+      data.groups
+        .map((group) => ({
+          ...group,
+          agents: group.agents.filter((agent) => backofficeDirectory.some((entry) => entry.key === agent.key)),
+        }))
+        .filter((group) => group.agents.length > 0),
+    [backofficeDirectory, data.groups]
+  );
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState<"todos" | AgentType>("todos");
   const [activeGroup, setActiveGroup] = useState<string | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(
-    () => data.directory.find((agent) => agent.isWhatsappAgent)?.key || data.directory[0]?.key || null
+    () => backofficeDirectory[0]?.key || null
   );
 
   const [avatars, setAvatars] = useState<Record<string, string>>(() => {
@@ -319,7 +316,7 @@ export function AgentOfficePage({
   }, []);
 
   const filtered = useMemo(() => {
-    let agents = data.directory;
+    let agents = backofficeDirectory;
 
     if (search) {
       const q = search.toLowerCase();
@@ -339,13 +336,13 @@ export function AgentOfficePage({
 
     if (activeGroup) {
       agents = agents.filter((a) => {
-        const group = data.groups.find((g) => g.agents.some((ag) => ag.key === a.key));
+        const group = backofficeGroups.find((g) => g.agents.some((ag) => ag.key === a.key));
         return group?.key === activeGroup;
       });
     }
 
     return agents;
-  }, [data, search, activeTab, activeGroup]);
+  }, [activeGroup, activeTab, backofficeDirectory, backofficeGroups, search]);
 
   const effectiveSelectedKey =
     selectedKey && filtered.some((agent) => agent.key === selectedKey)
@@ -353,34 +350,25 @@ export function AgentOfficePage({
       : filtered[0]?.key || null;
 
   const selected = effectiveSelectedKey
-    ? data.directory.find((a) => a.key === effectiveSelectedKey) || null
+    ? backofficeDirectory.find((a) => a.key === effectiveSelectedKey) || null
     : null;
 
   const groupCounts = useMemo(() => {
     const counts: Record<string, number> = {};
-    for (const agent of data.directory) {
-      const group = data.groups.find((g) => g.agents.some((a) => a.key === agent.key));
+    for (const agent of backofficeDirectory) {
+      const group = backofficeGroups.find((g) => g.agents.some((a) => a.key === agent.key));
       if (group) counts[group.key] = (counts[group.key] || 0) + 1;
     }
     return counts;
-  }, [data]);
+  }, [backofficeDirectory, backofficeGroups]);
 
   const typeCounts = useMemo(() => {
     const counts: Record<AgentType, number> = { coletor: 0, consumidor: 0, hibrido: 0 };
-    for (const agent of data.directory) {
+    for (const agent of backofficeDirectory) {
       counts[getAgentType(agent)]++;
     }
     return counts;
-  }, [data]);
-
-  const whatsappFiltered = useMemo(
-    () => filtered.filter((agent) => agent.isWhatsappAgent),
-    [filtered]
-  );
-  const backofficeFiltered = useMemo(
-    () => filtered.filter((agent) => !agent.isWhatsappAgent),
-    [filtered]
-  );
+  }, [backofficeDirectory]);
 
   return (
     <div className="min-h-screen">
@@ -425,7 +413,7 @@ export function AgentOfficePage({
           </div>
           <span className="text-sm font-semibold text-white">
             {filtered.length}{" "}
-            <span className="font-normal text-[var(--admin-muted)]">AGENTES NA VISAO</span>
+            <span className="font-normal text-[var(--admin-muted)]">AGENTES INTERNOS NA VISAO</span>
           </span>
         </div>
 
@@ -433,7 +421,7 @@ export function AgentOfficePage({
         <div className="mt-4 flex gap-0 border-b border-[var(--admin-border)]">
           {(
             [
-              { key: "todos" as const, label: "TODOS", count: data.directory.length },
+              { key: "todos" as const, label: "TODOS", count: backofficeDirectory.length },
               { key: "coletor" as const, label: "COLETORES", count: typeCounts.coletor },
               { key: "consumidor" as const, label: "CONSUMIDORES", count: typeCounts.consumidor },
               { key: "hibrido" as const, label: "HIBRIDOS", count: typeCounts.hibrido },
@@ -483,9 +471,9 @@ export function AgentOfficePage({
                 : "bg-[rgba(255,255,255,0.06)] text-[var(--admin-muted)] hover:text-white"
             )}
           >
-            Todos {data.directory.length}
+            Todos {backofficeDirectory.length}
           </button>
-          {data.groups.map((group) => (
+          {backofficeGroups.map((group) => (
             <button
               key={group.key}
               type="button"
@@ -511,16 +499,24 @@ export function AgentOfficePage({
           </div>
         ) : (
           <>
-            <AgentRail
-              title="Atendentes WhatsApp"
-              agents={whatsappFiltered}
-              effectiveSelectedKey={effectiveSelectedKey}
-              avatars={avatars}
-              onSelect={setSelectedKey}
-            />
+            <div className="mt-5 flex flex-col gap-3 rounded-lg border border-[rgba(34,197,94,0.24)] bg-[rgba(34,197,94,0.06)] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-white">Agentes de WhatsApp ficam em um painel separado.</p>
+                <p className="mt-1 text-xs leading-5 text-[var(--admin-muted)]">
+                  Conexao, voz, CRM, follow-up, inbox e auditoria agora vivem na Central WhatsApp.
+                </p>
+              </div>
+              <Link
+                href="/admin/whatsapp"
+                className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-md border border-[rgba(34,197,94,0.30)] bg-[rgba(34,197,94,0.10)] px-3 text-xs font-semibold text-[var(--admin-green)] transition hover:border-[var(--admin-green)] hover:text-white"
+              >
+                Abrir WhatsApp
+                <ChevronRight size={14} />
+              </Link>
+            </div>
             <AgentRail
               title="Agentes Backoffice"
-              agents={backofficeFiltered}
+              agents={filtered}
               effectiveSelectedKey={effectiveSelectedKey}
               avatars={avatars}
               onSelect={setSelectedKey}
@@ -538,8 +534,6 @@ export function AgentOfficePage({
           avatarUrl={avatars[selected.key]}
           uploadingKey={uploadingKey}
           onAvatarUpload={handleAvatarUpload}
-          willianInstance={data.willianInstance}
-          willianAgentConfig={data.willianAgentConfig}
         />
       )}
     </div>
@@ -553,8 +547,6 @@ function AgentDetailPanel({
   avatarUrl,
   uploadingKey,
   onAvatarUpload,
-  willianInstance,
-  willianAgentConfig,
 }: {
   agent: AgentDirectoryEntry;
   groups: AgentGroup[];
@@ -562,8 +554,6 @@ function AgentDetailPanel({
   avatarUrl?: string | null;
   uploadingKey: string | null;
   onAvatarUpload: (agentKey: string, file: File) => void;
-  willianInstance?: WillianInstanceState;
-  willianAgentConfig?: WillianAgentConfig;
 }) {
   const group = groups.find((g) => g.agents.some((a) => a.key === agent.key));
   const intel = getIntelligenceData(agent, groups, edges);
@@ -571,43 +561,6 @@ function AgentDetailPanel({
   const agentDef = intel.agentDef;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isUploading = uploadingKey === agent.key;
-
-  if (agent.isWhatsappAgent) {
-    const publicAgentName = getPublicAgentName(agent);
-    const publicAgentRole = getPublicAgentRole(agent);
-
-    return (
-      <div className="px-5 py-5 lg:px-8">
-        <div className="mb-5 rounded-xl border border-[var(--admin-border)] bg-[linear-gradient(180deg,rgba(255,90,31,0.06),rgba(13,13,13,0.96))] px-4 py-4 sm:px-5">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex items-center gap-4">
-              <AgentAvatar agentKey={agent.key} avatarUrl={avatarUrl} tone={agent.tone} size="lg" />
-              <div className="min-w-0">
-                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--admin-yellow)]">
-                  {group ? group.name.replace("Grupo ", "").toUpperCase() : agent.department.toUpperCase()} - BETEL AI
-                </p>
-                <h2 className="mt-1 text-xl font-bold text-white">{publicAgentName}</h2>
-                <p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--admin-muted)]">
-                  {publicAgentRole}
-                </p>
-              </div>
-            </div>
-            <div className="flex shrink-0 items-center gap-1.5 rounded-full border border-[rgba(234,179,8,0.32)] bg-[rgba(234,179,8,0.08)] px-3 py-1 text-[10px] font-bold tracking-[0.08em] text-[var(--admin-yellow)]">
-              <CheckCircle2 size={12} />
-              {statusLabel[agent.status] ? statusLabel[agent.status].toUpperCase() : "CONFIGURADO"}
-            </div>
-          </div>
-        </div>
-
-        <WillianAgentPanel
-          key={agent.key}
-          initialState={willianInstance}
-          initialConfig={willianAgentConfig}
-          initialAgentKey={agent.key}
-        />
-      </div>
-    );
-  }
 
   return (
     <div className="px-5 py-6 lg:px-8">

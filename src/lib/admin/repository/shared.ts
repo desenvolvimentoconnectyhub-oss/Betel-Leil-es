@@ -19,7 +19,6 @@ import {
   getCommunicationProviderHealth,
   type CommunicationProviderHealth,
 } from "@/lib/communication/delivery-adapters";
-import { DEFAULT_WILLIAN_AGENT_CONFIG, type WillianAgentConfig, type WillianInstanceState } from "@/lib/communication/willian-types";
 import {
   executeSourceProviderPull,
   type SourceProviderCandidate,
@@ -442,8 +441,6 @@ export type AgentOfficeData = {
   communicationSegments: typeof communicationSegments;
   communicationOutbox: CommunicationOutboxItem[];
   providerHealth: CommunicationProviderHealth[];
-  willianInstance?: WillianInstanceState;
-  willianAgentConfig?: WillianAgentConfig;
   recentRuns: AgentRunSample[];
   runtimeEvents: AgentRuntimeEvent[];
 };
@@ -975,13 +972,14 @@ function normalizeAgentChannel(
 export function makeAgentOfficeMetrics(data: Pick<AgentOfficeData, "officeRooms" | "directory" | "promptRegistry" | "maintenanceQueue">) {
   const whatsappCount = data.directory.filter((agent) => agent.isWhatsappAgent).length;
   const backofficeCount = Math.max(data.directory.length - whatsappCount, 0);
+  const agentsDetail = whatsappCount ? `${whatsappCount} WhatsApp / ${backofficeCount} internos` : "agentes internos";
 
   return [
     { label: "Setores", value: String(data.officeRooms.length), detail: "empresa virtual", tone: "cyan" as ResourceTone },
     {
       label: "Agentes",
       value: String(data.directory.length),
-      detail: `${whatsappCount} WhatsApp / ${backofficeCount} internos`,
+      detail: agentsDetail,
       tone: "purple" as ResourceTone,
     },
     { label: "Prompts", value: String(data.promptRegistry.length), detail: "registro operacional", tone: "yellow" as ResourceTone },
@@ -1007,9 +1005,43 @@ export function staticAgentOfficeData(): AgentOfficeData {
     communicationSegments,
     communicationOutbox,
     providerHealth: getCommunicationProviderHealth(),
-    willianAgentConfig: DEFAULT_WILLIAN_AGENT_CONFIG,
     recentRuns: agentRunSamples,
     runtimeEvents: agentRuntimeEvents,
+  };
+}
+
+export function backofficeAgentOfficeData(data: AgentOfficeData): AgentOfficeData {
+  const whatsappKeys = new Set([
+    ...data.directory.filter((agent) => agent.isWhatsappAgent).map((agent) => agent.key),
+    ...whatsappAgentKeys,
+  ]);
+  const directory = data.directory.filter((agent) => !whatsappKeys.has(agent.key) && !agent.isWhatsappAgent);
+  const groups = data.groups
+    .map((group) => ({
+      ...group,
+      agents: group.agents.filter((agent) => !whatsappKeys.has(agent.key)),
+    }))
+    .filter((group) => group.agents.length > 0);
+  const workflowEdges = data.workflowEdges.filter(
+    (edge) => !whatsappKeys.has(edge.fromAgentKey) && !whatsappKeys.has(edge.toAgentKey)
+  );
+  const recentRuns = data.recentRuns.filter((run) => !run.agentKey || !whatsappKeys.has(run.agentKey));
+  const runtimeEvents = data.runtimeEvents.filter((event) => !whatsappKeys.has(event.agentKey));
+  const communicationOutbox = data.communicationOutbox.filter((item) => !whatsappKeys.has(item.agentKey));
+
+  const filtered = {
+    ...data,
+    directory,
+    groups,
+    workflowEdges,
+    recentRuns,
+    runtimeEvents,
+    communicationOutbox,
+  };
+
+  return {
+    ...filtered,
+    metrics: makeAgentOfficeMetrics(filtered),
   };
 }
 
@@ -1703,7 +1735,7 @@ export function fallbackInvestors(reason = mockReason, limit = 50): DataResult<I
 
 export function fallbackAgentOffice(reason = mockReason): DataResult<AgentOfficeData> {
   return {
-    data: staticAgentOfficeData(),
+    data: backofficeAgentOfficeData(staticAgentOfficeData()),
     source: "mock",
     reason,
   };

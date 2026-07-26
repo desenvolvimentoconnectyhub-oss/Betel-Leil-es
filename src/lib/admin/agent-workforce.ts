@@ -1021,7 +1021,7 @@ const shiftByStatus: Record<AgentStatus, string> = {
   planned: "Contratacao planejada",
 };
 
-const whatsappAgentKeys = new Set(["multichannel-dispatch"]);
+export const whatsappAgentKeys = new Set(["multichannel-dispatch"]);
 
 function getStaticAgentChannel(agentKey: string) {
   const isWhatsappAgent = whatsappAgentKeys.has(agentKey);

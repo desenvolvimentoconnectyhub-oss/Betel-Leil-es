@@ -25,9 +25,8 @@ function asBoolean(value: unknown) {
 
 function revalidateWhatsAppPaths() {
   revalidatePath("/admin");
-  revalidatePath("/admin/agentes-ia");
   revalidatePath("/admin/whatsapp");
-  revalidatePath("/api/admin/agentes-ia/communication/willian-config");
+  revalidatePath("/api/admin/whatsapp/agent-config");
   revalidatePath("/api/admin/whatsapp/crm");
   revalidatePath("/api/admin/whatsapp/reviews");
 }

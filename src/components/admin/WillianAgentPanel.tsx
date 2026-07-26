@@ -88,7 +88,9 @@ type ElevenLabsVoice = {
   labels: Record<string, string>;
 };
 
-const WILLIAN_VOICE_ENDPOINT = "/api/admin/agentes-ia/communication/willian-voice";
+const WHATSAPP_AGENT_VOICE_ENDPOINT = "/api/admin/whatsapp/agent-voice";
+const WHATSAPP_AGENT_INSTANCE_ENDPOINT = "/api/admin/whatsapp/agent-instance";
+const WHATSAPP_AGENT_CONFIG_ENDPOINT = "/api/admin/whatsapp/agent-config";
 const PRIMARY_WHATSAPP_AGENT_KEY = "multichannel-dispatch";
 const PRIMARY_WHATSAPP_AGENT_LABEL = "Agente de WhatsApp";
 const PASSKEY_BLOCKED_STATUS = "passkey_blocked";
@@ -407,7 +409,7 @@ export function WillianAgentPanel({
 
     async function refreshRemoteState() {
       try {
-        const res = await fetch("/api/admin/agentes-ia/communication/willian-instance?remote=true", {
+        const res = await fetch(`${WHATSAPP_AGENT_INSTANCE_ENDPOINT}?remote=true`, {
           cache: "no-store",
           method: "GET",
         });
@@ -442,7 +444,7 @@ export function WillianAgentPanel({
     async function pollStatus() {
       attempts += 1;
       try {
-        const res = await fetch("/api/admin/agentes-ia/communication/willian-instance", {
+        const res = await fetch(WHATSAPP_AGENT_INSTANCE_ENDPOINT, {
           body: JSON.stringify({
             action: "status",
             agentKey: pairingTarget?.agentKey || state.agentKey,
@@ -553,7 +555,7 @@ export function WillianAgentPanel({
     async function loadSelectedAgentConfig() {
       try {
         const res = await fetch(
-          `/api/admin/agentes-ia/communication/willian-config?agentKey=${encodeURIComponent(selectedConfigAgentKey)}`,
+          `${WHATSAPP_AGENT_CONFIG_ENDPOINT}?agentKey=${encodeURIComponent(selectedConfigAgentKey)}`,
           { cache: "no-store", method: "GET" }
         );
         const result = await res.json();
@@ -614,7 +616,7 @@ export function WillianAgentPanel({
     setSavingConfig(true);
     setFeedback(null);
     try {
-      const res = await fetch("/api/admin/agentes-ia/communication/willian-config", {
+      const res = await fetch(WHATSAPP_AGENT_CONFIG_ENDPOINT, {
         body: JSON.stringify({
           ...config,
           agentKey: selectedConfigAgentKey,
@@ -666,7 +668,7 @@ export function WillianAgentPanel({
       lastConnectionPayloadRef.current = payload;
     }
     try {
-      const res = await fetch("/api/admin/agentes-ia/communication/willian-instance", {
+      const res = await fetch(WHATSAPP_AGENT_INSTANCE_ENDPOINT, {
         body: JSON.stringify({
           action,
           browser: "auto",
@@ -1476,7 +1478,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
     setVoiceLoading(true);
     setVoiceError("");
     try {
-      const res = await fetch(WILLIAN_VOICE_ENDPOINT, { cache: "no-store" });
+      const res = await fetch(WHATSAPP_AGENT_VOICE_ENDPOINT, { cache: "no-store" });
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.message || "Falha ao buscar vozes ElevenLabs.");
 
@@ -1525,7 +1527,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
         audioVoiceSource: "elevenlabs",
         voiceCloneStatus: "active",
       });
-      const res = await fetch(WILLIAN_VOICE_ENDPOINT, {
+      const res = await fetch(WHATSAPP_AGENT_VOICE_ENDPOINT, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ action: "select_willian_voice", voiceId: voice.voiceId }),
@@ -1544,7 +1546,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
     setVoiceError("");
     setVoicePreviewUrl("");
     try {
-      const res = await fetch(WILLIAN_VOICE_ENDPOINT, {
+      const res = await fetch(WHATSAPP_AGENT_VOICE_ENDPOINT, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -1577,7 +1579,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
       form.set("authorized", String(config.voiceCloneConsent));
       cloneFiles.forEach((file) => form.append("files[]", file, file.name));
 
-      const res = await fetch(WILLIAN_VOICE_ENDPOINT, {
+      const res = await fetch(WHATSAPP_AGENT_VOICE_ENDPOINT, {
         method: "POST",
         body: form,
       });

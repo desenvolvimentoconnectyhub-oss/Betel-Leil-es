@@ -37,7 +37,7 @@ import {
   normalizeCommunicationOutbox, normalizeInvestorCommunicationEvent,
   normalizeOfficeRoom, normalizeOpportunity, normalizeInvestor,
   normalizeCommunicationAuditFilter,
-  makeAgentOfficeMetrics, staticAgentOfficeData,
+  backofficeAgentOfficeData, staticAgentOfficeData,
   mergeByKey, findStaticAgent, findStaticWorkflowEdge,
   fallbackAgentOffice,
   ensureAgentGroupRecord, ensureOfficeRoomRecord, ensureAgentRecord,
@@ -66,29 +66,15 @@ import {
   executeAgentRuntime,
   executeCommunicationDeliveryAdapter,
 } from "./shared";
-import { getWillianInstanceState } from "@/lib/communication/connectyhub-client";
-import { getWillianAgentConfig } from "@/lib/communication/willian-agent-config";
 import { renderMessageTemplate } from "@/lib/communication/message-templates";
 import { getAnalysisDeliveryPauseState } from "@/lib/maintenance/operational-pauses";
 
 export async function getAgentOfficeData(): Promise<DataResult<AgentOfficeData>> {
-  const fallback = staticAgentOfficeData();
+  const fallback = backofficeAgentOfficeData(staticAgentOfficeData());
   const supabase = getSupabaseAdminClient();
 
   if (!supabase) {
-    const [willianInstance, willianAgentConfig] = await Promise.all([
-      getWillianInstanceState({ checkRemote: true }),
-      getWillianAgentConfig(),
-    ]);
-    const fallbackData = fallbackAgentOffice("Supabase admin nao configurado.");
-    return {
-      ...fallbackData,
-      data: {
-        ...fallbackData.data,
-        willianInstance,
-        willianAgentConfig,
-      },
-    };
+    return fallbackAgentOffice("Supabase admin nao configurado.");
   }
 
   const [
@@ -133,19 +119,7 @@ export async function getAgentOfficeData(): Promise<DataResult<AgentOfficeData>>
     .filter(Boolean);
 
   if (errors.length === 8) {
-    const [willianInstance, willianAgentConfig] = await Promise.all([
-      getWillianInstanceState({ checkRemote: true }),
-      getWillianAgentConfig(),
-    ]);
-    const fallbackData = fallbackAgentOffice(errors.join(" | "));
-    return {
-      ...fallbackData,
-      data: {
-        ...fallbackData.data,
-        willianInstance,
-        willianAgentConfig,
-      },
-    };
+    return fallbackAgentOffice(errors.join(" | "));
   }
 
   const agentRows = (agentsResult.data || []) as AgentDbRow[];
@@ -219,11 +193,6 @@ export async function getAgentOfficeData(): Promise<DataResult<AgentOfficeData>>
       ? fallback.communicationOutbox
       : ((outboxResult.data || []) as CommunicationOutboxDbRow[]).map(normalizeCommunicationOutbox);
 
-  const [willianInstance, willianAgentConfig] = await Promise.all([
-    getWillianInstanceState({ checkRemote: true }),
-    getWillianAgentConfig(),
-  ]);
-
   const data = {
     ...fallback,
     officeRooms,
@@ -234,15 +203,10 @@ export async function getAgentOfficeData(): Promise<DataResult<AgentOfficeData>>
     workflowEdges,
     runtimeEvents,
     communicationOutbox: outbox,
-    willianInstance,
-    willianAgentConfig,
   };
 
   return {
-    data: {
-      ...data,
-      metrics: makeAgentOfficeMetrics(data),
-    },
+    data: backofficeAgentOfficeData(data),
     source: "supabase",
     reason: errors.length ? errors.join(" | ") : undefined,
   };
