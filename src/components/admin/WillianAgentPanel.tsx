@@ -515,6 +515,7 @@ export function WillianAgentPanel({
   }, [applyInstanceState, connection, openPasskeyBlockedDialog, pairingTarget, state.agentKey]);
 
   const whatsappAgents = useMemo<WhatsAppAgentInstanceSummary[]>(() => {
+    if (state.primaryAgentArchived) return agentInstances;
     if (agentInstances.length) return agentInstances;
     return [
       {
@@ -541,12 +542,13 @@ export function WillianAgentPanel({
     state.phoneNumber,
     state.profileImageSyncedAt,
     state.profileImageUrl,
+    state.primaryAgentArchived,
     state.status?.state,
   ]);
   const selectedWhatsappAgent =
     whatsappAgents.find((item) => item.agentKey === selectedAgentKey) ||
     whatsappAgents[0];
-  const selectedConfigAgentKey = selectedWhatsappAgent?.agentKey || state.agentKey;
+  const selectedConfigAgentKey = selectedWhatsappAgent?.agentKey || (state.primaryAgentArchived ? "" : state.agentKey);
 
   useEffect(() => {
     if (!selectedConfigAgentKey) return;
@@ -678,7 +680,7 @@ export function WillianAgentPanel({
         method: "POST",
       });
       const result = await res.json();
-      const nextState = result?.data?.state || result?.data?.data?.state;
+      const nextState = (result?.data?.state || result?.data?.data?.state) as WillianInstanceState | undefined;
       if (nextState) applyInstanceState(nextState);
       const createdAgent = result?.data?.result?.createdAgent as
         | { agentKey?: string; agentName?: string }
@@ -743,7 +745,10 @@ export function WillianAgentPanel({
         }
         if (action === "deleteWhatsappAgent") {
           const deletedAgentKey = cleanFormValue(payload.agentKey);
-          if (deletedAgentKey && deletedAgentKey === selectedAgentKey) setSelectedAgentKey(state.agentKey);
+          if (deletedAgentKey && deletedAgentKey === selectedAgentKey) {
+            const nextAgent = (nextState?.agentInstances || []).find((agent) => agent.agentKey !== deletedAgentKey);
+            setSelectedAgentKey(nextAgent?.agentKey || "");
+          }
           setConnection(null);
           setPairingTarget(null);
         }
@@ -784,11 +789,23 @@ export function WillianAgentPanel({
   function deleteWhatsappAgent(agent: WhatsAppAgentInstanceSummary) {
     const label = displayWhatsappAgentName(agent);
     const message = agent.agentKey === state.agentKey
-      ? `Excluir o vinculo atual de ${label}? O agente principal continua na lista, mas a conexao sera limpa.`
+      ? `Excluir ${label} da Central WhatsApp? A conexao sera limpa e ele nao aparecera mais na lista.`
       : `Excluir ${label}? A instancia sera arquivada e nao aparecera mais na lista.`;
     if (!window.confirm(message)) return;
     void runInstanceAction("deleteWhatsappAgent", { agentKey: agent.agentKey });
   }
+
+  const feedbackNode = feedback ? (
+    <p
+      className={cn(
+        "mt-5 flex items-center gap-2 text-xs font-semibold",
+        feedback.type === "ok" ? "text-[var(--admin-green)]" : "text-[var(--admin-red)]"
+      )}
+    >
+      {feedback.type === "ok" ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
+      {feedback.msg}
+    </p>
+  ) : null;
 
   return (
     <section className="mt-6">
@@ -815,111 +832,114 @@ export function WillianAgentPanel({
         setNewAgentSector={setNewAgentSector}
       />
 
-      <div className="mb-4 rounded-xl border border-[var(--admin-border)] bg-[linear-gradient(180deg,rgba(255,255,255,0.035),rgba(13,13,13,0.96))] p-3 shadow-2xl shadow-black/20">
-        <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-            <InfoBox label="Agente" value={displayWhatsappAgentName(selectedWhatsappAgent)} />
-            <InfoBox label="Empresa" value={selectedWhatsappAgent?.companyName || config.companyName} />
-            <InfoBox label="WhatsApp" value={selectedAgentConnected ? "conectado" : "pendente"} tone={selectedAgentConnected ? "green" : "yellow"} />
-            <InfoBox label="Conversa" value={conversationModeLabels[config.behavior.conversationMode]} />
-            <InfoBox label="Alteracoes" value={changeLabel} tone={config.status === "saved" ? "green" : "yellow"} />
-          </div>
-          <div className="grid gap-2 sm:grid-cols-3 xl:w-[360px]">
-            <MiniKpi label="Pronto" value={`${readyScore}%`} tone={readyScore >= 70 ? "green" : "yellow"} />
-            <MiniKpi label="VIP" value={`${config.qualification.vipScore}+`} tone="cyan" />
-            <MiniKpi label="Perguntas" value={String(config.qualification.questionsLimit)} tone="purple" />
-            <div className="sm:col-span-3">
-              <ActionButton
-                icon={<Save size={14} />}
-                label="Salvar tudo"
-                loading={savingConfig}
-                onClick={saveConfig}
-              />
+      {selectedWhatsappAgent ? (
+        <>
+          <div className="mb-4 rounded-xl border border-[var(--admin-border)] bg-[linear-gradient(180deg,rgba(255,255,255,0.035),rgba(13,13,13,0.96))] p-3 shadow-2xl shadow-black/20">
+            <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+                <InfoBox label="Agente" value={displayWhatsappAgentName(selectedWhatsappAgent)} />
+                <InfoBox label="Empresa" value={selectedWhatsappAgent?.companyName || config.companyName} />
+                <InfoBox label="WhatsApp" value={selectedAgentConnected ? "conectado" : "pendente"} tone={selectedAgentConnected ? "green" : "yellow"} />
+                <InfoBox label="Conversa" value={conversationModeLabels[config.behavior.conversationMode]} />
+                <InfoBox label="Alteracoes" value={changeLabel} tone={config.status === "saved" ? "green" : "yellow"} />
+              </div>
+              <div className="grid gap-2 sm:grid-cols-3 xl:w-[360px]">
+                <MiniKpi label="Pronto" value={`${readyScore}%`} tone={readyScore >= 70 ? "green" : "yellow"} />
+                <MiniKpi label="VIP" value={`${config.qualification.vipScore}+`} tone="cyan" />
+                <MiniKpi label="Perguntas" value={String(config.qualification.questionsLimit)} tone="purple" />
+                <div className="sm:col-span-3">
+                  <ActionButton
+                    icon={<Save size={14} />}
+                    label="Salvar tudo"
+                    loading={savingConfig}
+                    onClick={saveConfig}
+                  />
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-      </div>
 
-      <div
-        className="mb-4 overflow-hidden rounded-xl border border-[var(--admin-border)] bg-[rgba(255,255,255,0.025)] p-1"
-        role="tablist"
-        aria-label="Secoes do agente WhatsApp"
-      >
-        <div className="grid min-w-0 grid-cols-2 gap-1 md:grid-cols-3 xl:grid-cols-6">
-          {tabs.map((tab) => {
-            const Icon = tab.icon;
-            const active = activeTab === tab.key;
-            return (
-              <button
-                key={tab.key}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                onClick={() => setActiveTab(tab.key)}
-                className={cn(
-                  "grid min-h-[58px] grid-cols-[18px_minmax(0,1fr)] items-center gap-2 rounded-lg px-3 text-left transition",
-                  active
-                    ? "bg-[linear-gradient(135deg,var(--admin-cyan),var(--admin-yellow))] text-black shadow-[0_0_24px_rgba(255,90,31,0.16)]"
-                    : "text-[var(--admin-muted)] hover:bg-[rgba(255,255,255,0.05)] hover:text-white"
-                )}
-              >
-                <Icon size={17} className={active ? "text-black" : "text-[var(--admin-muted)]"} />
-                <span className="min-w-0">
-                  <span className="block truncate text-sm font-semibold">{tab.label}</span>
-                  <span className={cn("mt-0.5 hidden truncate text-[9px] font-bold uppercase tracking-[0.12em] sm:block", active ? "text-black/70" : "text-[var(--admin-muted)]")}>
-                    {tab.subtitle}
-                  </span>
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      <div>
-        {activeTab === "connection" && (
-          <ConnectionTab
-            connection={connection}
-            loading={loading}
-            pairingTarget={pairingTarget}
-            runInstanceAction={runInstanceAction}
-            selectedAgent={selectedWhatsappAgent}
-            state={state}
-          />
-        )}
-        {activeTab === "prompt" && (
-          <PromptTab
-            agentName={displayWhatsappAgentName(selectedWhatsappAgent)}
-            companyName={selectedWhatsappAgent?.companyName || config.companyName}
-            config={config.prompt}
-            setPrompt={setPrompt}
-            status={config.status}
-            updatedAt={config.updatedAt}
-          />
-        )}
-        {activeTab === "qualification" && (
-          <QualificationTab config={config.qualification} setQualification={setQualification} />
-        )}
-        {activeTab === "behavior" && <BehaviorTab config={config.behavior} setBehavior={setBehavior} />}
-        {activeTab === "multichannel" && (
-          <MultichannelTab config={config.multichannel} setMultichannel={setMultichannel} />
-        )}
-        {activeTab === "files" && (
-          <FilesTab config={config.files} memory={config.memory} setFiles={setFiles} setMemory={setMemory} />
-        )}
-
-        {feedback && (
-          <p
-            className={cn(
-              "mt-5 flex items-center gap-2 text-xs font-semibold",
-              feedback.type === "ok" ? "text-[var(--admin-green)]" : "text-[var(--admin-red)]"
-            )}
+          <div
+            className="mb-4 overflow-hidden rounded-xl border border-[var(--admin-border)] bg-[rgba(255,255,255,0.025)] p-1"
+            role="tablist"
+            aria-label="Secoes do agente WhatsApp"
           >
-            {feedback.type === "ok" ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
-            {feedback.msg}
+            <div className="grid min-w-0 grid-cols-2 gap-1 md:grid-cols-3 xl:grid-cols-6">
+              {tabs.map((tab) => {
+                const Icon = tab.icon;
+                const active = activeTab === tab.key;
+                return (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => setActiveTab(tab.key)}
+                    className={cn(
+                      "grid min-h-[58px] grid-cols-[18px_minmax(0,1fr)] items-center gap-2 rounded-lg px-3 text-left transition",
+                      active
+                        ? "bg-[linear-gradient(135deg,var(--admin-cyan),var(--admin-yellow))] text-black shadow-[0_0_24px_rgba(255,90,31,0.16)]"
+                        : "text-[var(--admin-muted)] hover:bg-[rgba(255,255,255,0.05)] hover:text-white"
+                    )}
+                  >
+                    <Icon size={17} className={active ? "text-black" : "text-[var(--admin-muted)]"} />
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-semibold">{tab.label}</span>
+                      <span className={cn("mt-0.5 hidden truncate text-[9px] font-bold uppercase tracking-[0.12em] sm:block", active ? "text-black/70" : "text-[var(--admin-muted)]")}>
+                        {tab.subtitle}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div>
+            {activeTab === "connection" && (
+              <ConnectionTab
+                connection={connection}
+                loading={loading}
+                pairingTarget={pairingTarget}
+                runInstanceAction={runInstanceAction}
+                selectedAgent={selectedWhatsappAgent}
+                state={state}
+              />
+            )}
+            {activeTab === "prompt" && (
+              <PromptTab
+                agentName={displayWhatsappAgentName(selectedWhatsappAgent)}
+                companyName={selectedWhatsappAgent?.companyName || config.companyName}
+                config={config.prompt}
+                setPrompt={setPrompt}
+                status={config.status}
+                updatedAt={config.updatedAt}
+              />
+            )}
+            {activeTab === "qualification" && (
+              <QualificationTab config={config.qualification} setQualification={setQualification} />
+            )}
+            {activeTab === "behavior" && <BehaviorTab config={config.behavior} setBehavior={setBehavior} />}
+            {activeTab === "multichannel" && (
+              <MultichannelTab config={config.multichannel} setMultichannel={setMultichannel} />
+            )}
+            {activeTab === "files" && (
+              <FilesTab config={config.files} memory={config.memory} setFiles={setFiles} setMemory={setMemory} />
+            )}
+
+            {feedbackNode}
+          </div>
+        </>
+      ) : (
+        <div className="mb-4 rounded-xl border border-[var(--admin-border)] bg-[rgba(255,255,255,0.025)] p-5">
+          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--admin-muted)]">Central WhatsApp</p>
+          <h3 className="mt-1 text-base font-bold text-white">Nenhum agente WhatsApp ativo</h3>
+          <p className="mt-2 text-sm text-[var(--admin-muted)]">
+            Crie um novo agente para configurar conexao, prompt, voz, CRM e follow-up.
           </p>
-        )}
-      </div>
+          {feedbackNode}
+        </div>
+      )}
 
       {passkeyDialogOpen && (
         <div

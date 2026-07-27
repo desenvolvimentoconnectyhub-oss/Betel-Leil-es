@@ -62,6 +62,7 @@ export type WillianInstanceState = {
   lastDisconnectReason?: string;
   webhookCount?: number;
   agentInstances?: WhatsAppAgentInstanceSummary[];
+  primaryAgentArchived?: boolean;
   missing: string[];
   lastError?: string;
 };

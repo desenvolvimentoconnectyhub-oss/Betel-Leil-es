@@ -233,6 +233,10 @@ const globalWhatsappProfileSyncedAtKeys = [
   "BETEL_GLOBAL_WHATSAPP_PROFILE_SYNCED_AT",
   "BETEL_WILLIAN_WHATSAPP_PROFILE_SYNCED_AT",
 ];
+const primaryWhatsappAgentArchivedKeys = [
+  "BETEL_WHATSAPP_PRIMARY_AGENT_ARCHIVED",
+  "BETEL_WILLIAN_WHATSAPP_AGENT_ARCHIVED",
+];
 
 const willianConfigKeys = [
   "CONNECTYHUB_API_URL",
@@ -258,6 +262,26 @@ const willianConfigKeys = [
   "BETEL_EMAIL_PROVIDER",
   "BETEL_EMAIL_FROM",
 ];
+
+async function isPrimaryWhatsappAgentArchived() {
+  const appConfig = await readAppConfig(primaryWhatsappAgentArchivedKeys);
+  return configAliases(primaryWhatsappAgentArchivedKeys).some((key) => readBoolean(appConfig.get(key)));
+}
+
+async function setPrimaryWhatsappAgentArchived(archived: boolean) {
+  if (!archived) {
+    await deleteAppConfig(primaryWhatsappAgentArchivedKeys);
+    return;
+  }
+
+  await upsertAppConfig([
+    {
+      key: "BETEL_WHATSAPP_PRIMARY_AGENT_ARCHIVED",
+      value: "true",
+      description: "Oculta o agente principal da Central WhatsApp sem arquivar o agente interno multichannel-dispatch.",
+    },
+  ]);
+}
 
 async function getWillianConfig() {
   const appConfig = await readAppConfig(willianConfigKeys);
@@ -999,6 +1023,12 @@ async function resolveConnectyHubInstanceId(config?: Awaited<ReturnType<typeof g
   return instanceId;
 }
 
+async function findConfiguredWillianInstanceId(config: Awaited<ReturnType<typeof getWillianConfig>>) {
+  if (config.instanceId) return config.instanceId;
+  const matched = await findConnectyHubInstanceByName(config.instanceName).catch(() => null);
+  return extractInstanceId(matched);
+}
+
 async function persistConnectyHubInstance(input: {
   instanceId: string;
   instanceName: string;
@@ -1347,7 +1377,15 @@ function mergeWhatsappAgentSummaries(
   });
 }
 
-function ensureWillianSummary(state: WillianInstanceState, summaries: WhatsAppAgentInstanceSummary[]) {
+function ensureWillianSummary(
+  state: WillianInstanceState,
+  summaries: WhatsAppAgentInstanceSummary[],
+  options: { includePrimary?: boolean } = {}
+) {
+  if (options.includePrimary === false) {
+    return summaries.filter((summary) => summary.agentKey !== WILLIAN_AGENT_KEY);
+  }
+
   const hasWillian = summaries.some(
     (summary) => summary.agentKey === WILLIAN_AGENT_KEY || summary.instanceName === state.instanceName
   );
@@ -1375,7 +1413,7 @@ function ensureWillianSummary(state: WillianInstanceState, summaries: WhatsAppAg
   ];
 }
 
-async function clearPersistedConnectyHubInstance() {
+async function clearPersistedConnectyHubInstance(options: { archivePrimaryAgent?: boolean } = {}) {
   await deleteAppConfig([
     "BETEL_GLOBAL_WHATSAPP_INSTANCE_NAME",
     "BETEL_GLOBAL_WHATSAPP_INSTANCE_ID",
@@ -1392,6 +1430,10 @@ async function clearPersistedConnectyHubInstance() {
     "BETEL_WILLIAN_WHATSAPP_PROFILE_IMAGE_URL",
     "BETEL_WILLIAN_WHATSAPP_PROFILE_SYNCED_AT",
   ]);
+
+  if (options.archivePrimaryAgent) {
+    await setPrimaryWhatsappAgentArchived(true);
+  }
 
   const supabase = getSupabaseAdminClient();
   if (!supabase) return;
@@ -1497,6 +1539,7 @@ export async function syncWillianWhatsappProfileFromConnectyHub(input: { connect
 
 export async function getWillianInstanceState(options: { checkRemote?: boolean } = {}): Promise<WillianInstanceState> {
   const config = await getWillianConfig();
+  const primaryAgentArchived = await isPrimaryWhatsappAgentArchived();
   const missing = [
     !config.apiToken ? "CONNECTYHUB_API_TOKEN" : "",
     config.apiToken && !config.apiTokenLooksValid ? "CONNECTYHUB_API_TOKEN parece incompleto" : "",
@@ -1532,12 +1575,14 @@ export async function getWillianInstanceState(options: { checkRemote?: boolean }
     emailTokenConfigured: Boolean(config.resendKey),
     emailFromConfigured: Boolean(config.emailFrom),
     emailReady: Boolean(config.resendKey && config.emailFrom && config.emailProviderReleased),
+    primaryAgentArchived,
     missing,
   };
 
   state.agentInstances = ensureWillianSummary(
     state,
-    await listWhatsappAgentInstances({ checkRemote: false }).catch(() => [])
+    await listWhatsappAgentInstances({ checkRemote: false }).catch(() => []),
+    { includePrimary: !primaryAgentArchived }
   );
 
   if (!options.checkRemote || !config.apiToken) return state;
@@ -1570,7 +1615,8 @@ export async function getWillianInstanceState(options: { checkRemote?: boolean }
     }
     state.agentInstances = ensureWillianSummary(
       state,
-      await listWhatsappAgentInstances({ checkRemote: true }).catch(() => state.agentInstances || [])
+      await listWhatsappAgentInstances({ checkRemote: true }).catch(() => state.agentInstances || []),
+      { includePrimary: !primaryAgentArchived }
     );
   } catch (error) {
     state.lastError = error instanceof Error ? error.message : "Falha ao consultar ConnectyHub.";
@@ -1594,6 +1640,7 @@ export async function createWillianConnectyHubInstance(input: { instanceName?: s
       webhookUrl: config.webhookUrl,
       statusPayload: existing,
     });
+    await setPrimaryWhatsappAgentArchived(false);
 
     return {
       payload: sanitizePayload(existing),
@@ -1624,6 +1671,7 @@ export async function createWillianConnectyHubInstance(input: { instanceName?: s
       webhookUrl: config.webhookUrl,
       statusPayload: payload,
     });
+    await setPrimaryWhatsappAgentArchived(false);
   }
 
   return {
@@ -1831,7 +1879,12 @@ export async function fetchWhatsappAgentRemoteStatus(input: { agentKey: string }
 export async function deleteConnectyHubWhatsappAgent(input: { agentKey: string }) {
   const agentKey = cleanString(input.agentKey);
   if (!agentKey) throw new Error("Agente WhatsApp nao informado para exclusao.");
-  if (agentKey === WILLIAN_AGENT_KEY) return deleteWillianConnectyHubInstance();
+  if (agentKey === WILLIAN_AGENT_KEY) {
+    return deleteWillianConnectyHubInstance({
+      allowMissingInstance: true,
+      archivePrimaryAgent: true,
+    });
+  }
 
   const supabase = getSupabaseAdminClient();
   if (!supabase) throw new Error("Supabase admin nao configurado. Exclusao de agente WhatsApp exige service role.");
@@ -2151,18 +2204,36 @@ export async function resetConnectyHubWhatsappAgent(input: { agentKey: string; p
   };
 }
 
-export async function deleteWillianConnectyHubInstance() {
+export async function deleteWillianConnectyHubInstance(
+  options: { allowMissingInstance?: boolean; archivePrimaryAgent?: boolean } = {}
+) {
   const config = await getWillianConfig();
-  const instanceId = await resolveConnectyHubInstanceId(config);
-  if (!instanceId) throw new Error("Instancia ConnectyHub nao localizada para excluir.");
+  const instanceId = options.allowMissingInstance
+    ? await findConfiguredWillianInstanceId(config)
+    : await resolveConnectyHubInstanceId(config);
+  if (!instanceId && !options.allowMissingInstance) throw new Error("Instancia ConnectyHub nao localizada para excluir.");
 
-  const payload = await connectyhubRequest(`/instances/${encodeURIComponent(instanceId)}`, {
-    method: "DELETE",
-    timeoutMs: 15000,
-  });
-  await clearPersistedConnectyHubInstance();
+  let payload: unknown = null;
+  let warning = "";
+  if (instanceId) {
+    try {
+      payload = await connectyhubRequest(`/instances/${encodeURIComponent(instanceId)}`, {
+        method: "DELETE",
+        timeoutMs: 15000,
+      });
+    } catch (error) {
+      if (!options.archivePrimaryAgent) throw error;
+      warning = error instanceof Error ? error.message : "Instancia remota nao apagada na ConnectyHub.";
+    }
+  }
+  await clearPersistedConnectyHubInstance({ archivePrimaryAgent: options.archivePrimaryAgent });
 
-  return { payload: sanitizePayload(payload), instanceDeleted: true };
+  return {
+    payload: payload ? sanitizePayload(payload) : null,
+    instanceDeleted: Boolean(instanceId),
+    agentArchived: Boolean(options.archivePrimaryAgent),
+    warning,
+  };
 }
 
 export async function testWillianWebhookDelivery() {
