@@ -2,7 +2,11 @@ import "server-only";
 
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { getGeminiApiKey, getGeminiModel } from "@/lib/ai/config";
-import { sendWhatsAppAgentMediaReply, sendWhatsAppAgentReply } from "@/lib/communication/connectyhub-client";
+import {
+  getConnectyHubWhatsappAgentControlStatus,
+  sendWhatsAppAgentMediaReply,
+  sendWhatsAppAgentReply,
+} from "@/lib/communication/connectyhub-client";
 import { getWhatsAppAgentConfig } from "@/lib/communication/willian-agent-config";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { synthesizeElevenLabsPreview } from "@/lib/voice/elevenlabs";
@@ -411,6 +415,13 @@ export async function processWhatsAppFollowUps(input: {
     if (asBoolean(lead.opt_out) || asBoolean(lead.human_intervention_active) || asBoolean(conversation.human_intervention_active)) {
       await supabase.from("whatsapp_follow_ups").update({ status: "skipped", error_message: "lead_paused_or_handoff" }).eq("id", followUpId);
       skipped.push(skippedItem(followUp, "lead_paused_or_handoff"));
+      continue;
+    }
+
+    const controlStatus = await getConnectyHubWhatsappAgentControlStatus({ agentKey });
+    if (controlStatus === "paused") {
+      await supabase.from("whatsapp_follow_ups").update({ status: "skipped", error_message: "agent_paused" }).eq("id", followUpId);
+      skipped.push(skippedItem(followUp, "agent_paused"));
       continue;
     }
 

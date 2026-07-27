@@ -237,6 +237,10 @@ const primaryWhatsappAgentArchivedKeys = [
   "BETEL_WHATSAPP_PRIMARY_AGENT_ARCHIVED",
   "BETEL_WILLIAN_WHATSAPP_AGENT_ARCHIVED",
 ];
+const primaryWhatsappAgentPausedKeys = [
+  "BETEL_WHATSAPP_PRIMARY_AGENT_PAUSED",
+  "BETEL_WILLIAN_WHATSAPP_AGENT_PAUSED",
+];
 
 const willianConfigKeys = [
   "CONNECTYHUB_API_URL",
@@ -279,6 +283,26 @@ async function setPrimaryWhatsappAgentArchived(archived: boolean) {
       key: "BETEL_WHATSAPP_PRIMARY_AGENT_ARCHIVED",
       value: "true",
       description: "Oculta o agente principal da Central WhatsApp sem arquivar o agente interno multichannel-dispatch.",
+    },
+  ]);
+}
+
+async function isPrimaryWhatsappAgentPaused() {
+  const appConfig = await readAppConfig(primaryWhatsappAgentPausedKeys);
+  return configAliases(primaryWhatsappAgentPausedKeys).some((key) => readBoolean(appConfig.get(key)));
+}
+
+async function setPrimaryWhatsappAgentPaused(paused: boolean) {
+  if (!paused) {
+    await deleteAppConfig(primaryWhatsappAgentPausedKeys);
+    return;
+  }
+
+  await upsertAppConfig([
+    {
+      key: "BETEL_WHATSAPP_PRIMARY_AGENT_PAUSED",
+      value: "true",
+      description: "Pausa operacionalmente o agente principal da Central WhatsApp sem desconectar o numero.",
     },
   ]);
 }
@@ -1221,6 +1245,7 @@ function whatsappInstanceSummaryFromRow(row: Record<string, unknown>): WhatsAppA
   const whatsappProfile = asRecord(metadata.whatsappProfile);
   const agentKey = cleanString(row.agent_key || agentRow.agent_key, WILLIAN_AGENT_KEY);
   const status = normalizeConnectionState(row.status, Boolean(row.connected_at));
+  const runtimeStatus = cleanString(agentRow.status, "draft");
 
   return {
     agentKey,
@@ -1234,6 +1259,7 @@ function whatsappInstanceSummaryFromRow(row: Record<string, unknown>): WhatsAppA
     profileImageUrl: normalizeProfileImageUrl(whatsappProfile.profileImageUrl) || undefined,
     profileImageSyncedAt: cleanString(whatsappProfile.syncedAt) || undefined,
     status,
+    runtimeStatus,
     connected: status === "connected" || Boolean(row.connected_at),
     connectedAt: cleanString(row.connected_at) || undefined,
     updatedAt: cleanString(row.updated_at) || undefined,
@@ -1246,7 +1272,7 @@ async function listWhatsappAgentInstances(options: { checkRemote?: boolean } = {
 
   const { data, error } = await supabase
     .from("whatsapp_instances")
-    .select("agent_key, instance_name, provider_instance_id, phone, status, connected_at, updated_at, ai_agents(agent_key, name, metadata)")
+    .select("agent_key, instance_name, provider_instance_id, phone, status, connected_at, updated_at, ai_agents(agent_key, name, status, metadata)")
     .eq("provider", CONNECTYHUB_PROVIDER)
     .neq("status", "deleted")
     .order("updated_at", { ascending: false })
@@ -1340,13 +1366,15 @@ async function listLocalWhatsappAgents(supabase: NonNullable<ReturnType<typeof g
     .map((row) => {
       const metadata = asRecord(row.metadata);
       const agentKey = cleanString(row.agent_key, WILLIAN_AGENT_KEY);
+      const runtimeStatus = cleanString(row.status, "draft");
       return {
         agentKey,
         agentName: cleanString(row.name, agentKey === WILLIAN_AGENT_KEY ? WILLIAN_AGENT_NAME : "Agente de WhatsApp"),
         companyName: cleanString(metadata.companyName, "Betel Leiloes"),
         sector: cleanString(metadata.sector, "Atendimento WhatsApp"),
         instanceName: "",
-        status: cleanString(row.status, "draft"),
+        status: runtimeStatus,
+        runtimeStatus,
         connected: false,
         updatedAt: cleanString(row.updated_at) || undefined,
       };
@@ -1366,6 +1394,7 @@ function mergeWhatsappAgentSummaries(
       ...summary,
       agentName: summary.agentName || byAgentKey.get(summary.agentKey)?.agentName || summary.agentKey,
       companyName: summary.companyName || byAgentKey.get(summary.agentKey)?.companyName,
+      runtimeStatus: summary.runtimeStatus || byAgentKey.get(summary.agentKey)?.runtimeStatus,
       sector: summary.sector || byAgentKey.get(summary.agentKey)?.sector,
     });
   }
@@ -1380,10 +1409,18 @@ function mergeWhatsappAgentSummaries(
 function ensureWillianSummary(
   state: WillianInstanceState,
   summaries: WhatsAppAgentInstanceSummary[],
-  options: { includePrimary?: boolean } = {}
+  options: { includePrimary?: boolean; primaryRuntimeStatus?: string } = {}
 ) {
   if (options.includePrimary === false) {
     return summaries.filter((summary) => summary.agentKey !== WILLIAN_AGENT_KEY);
+  }
+
+  if (options.primaryRuntimeStatus) {
+    summaries = summaries.map((summary) =>
+      summary.agentKey === WILLIAN_AGENT_KEY
+        ? { ...summary, runtimeStatus: options.primaryRuntimeStatus }
+        : summary
+    );
   }
 
   const hasWillian = summaries.some(
@@ -1405,6 +1442,7 @@ function ensureWillianSummary(
       profileImageUrl: state.profileImageUrl,
       profileImageSyncedAt: state.profileImageSyncedAt,
       status: connected ? "connected" : state.status?.state || "draft",
+      runtimeStatus: options.primaryRuntimeStatus || "active",
       connected,
       connectedAt: connected ? state.profileImageSyncedAt : undefined,
       updatedAt: state.profileImageSyncedAt,
@@ -1540,6 +1578,8 @@ export async function syncWillianWhatsappProfileFromConnectyHub(input: { connect
 export async function getWillianInstanceState(options: { checkRemote?: boolean } = {}): Promise<WillianInstanceState> {
   const config = await getWillianConfig();
   const primaryAgentArchived = await isPrimaryWhatsappAgentArchived();
+  const primaryAgentPaused = await isPrimaryWhatsappAgentPaused();
+  const primaryRuntimeStatus = primaryAgentPaused ? "paused" : "active";
   const missing = [
     !config.apiToken ? "CONNECTYHUB_API_TOKEN" : "",
     config.apiToken && !config.apiTokenLooksValid ? "CONNECTYHUB_API_TOKEN parece incompleto" : "",
@@ -1576,13 +1616,14 @@ export async function getWillianInstanceState(options: { checkRemote?: boolean }
     emailFromConfigured: Boolean(config.emailFrom),
     emailReady: Boolean(config.resendKey && config.emailFrom && config.emailProviderReleased),
     primaryAgentArchived,
+    primaryAgentPaused,
     missing,
   };
 
   state.agentInstances = ensureWillianSummary(
     state,
     await listWhatsappAgentInstances({ checkRemote: false }).catch(() => []),
-    { includePrimary: !primaryAgentArchived }
+    { includePrimary: !primaryAgentArchived, primaryRuntimeStatus }
   );
 
   if (!options.checkRemote || !config.apiToken) return state;
@@ -1616,7 +1657,7 @@ export async function getWillianInstanceState(options: { checkRemote?: boolean }
     state.agentInstances = ensureWillianSummary(
       state,
       await listWhatsappAgentInstances({ checkRemote: true }).catch(() => state.agentInstances || []),
-      { includePrimary: !primaryAgentArchived }
+      { includePrimary: !primaryAgentArchived, primaryRuntimeStatus }
     );
   } catch (error) {
     state.lastError = error instanceof Error ? error.message : "Falha ao consultar ConnectyHub.";
@@ -1641,6 +1682,7 @@ export async function createWillianConnectyHubInstance(input: { instanceName?: s
       statusPayload: existing,
     });
     await setPrimaryWhatsappAgentArchived(false);
+    await setPrimaryWhatsappAgentPaused(false);
 
     return {
       payload: sanitizePayload(existing),
@@ -1672,6 +1714,7 @@ export async function createWillianConnectyHubInstance(input: { instanceName?: s
       statusPayload: payload,
     });
     await setPrimaryWhatsappAgentArchived(false);
+    await setPrimaryWhatsappAgentPaused(false);
   }
 
   return {
@@ -1929,6 +1972,55 @@ export async function deleteConnectyHubWhatsappAgent(input: { agentKey: string }
     .eq("agent_key", agentKey);
 
   return { agentDeleted: true, agentKey };
+}
+
+export async function setConnectyHubWhatsappAgentControlStatus(input: { agentKey: string; status: string }) {
+  const agentKey = cleanString(input.agentKey);
+  if (!agentKey) throw new Error("Agente WhatsApp nao informado para controle.");
+
+  const requestedStatus = cleanString(input.status).toLowerCase();
+  const nextStatus = requestedStatus === "paused" || requestedStatus === "pausado" ? "paused" : "active";
+
+  if (agentKey === WILLIAN_AGENT_KEY) {
+    await setPrimaryWhatsappAgentArchived(false);
+    await setPrimaryWhatsappAgentPaused(nextStatus === "paused");
+    return { agentKey, runtimeStatus: nextStatus };
+  }
+
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) throw new Error("Supabase admin nao configurado. Controle de agente WhatsApp exige service role.");
+
+  const { error } = await supabase
+    .from("ai_agents")
+    .update({
+      status: nextStatus,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("agent_key", agentKey);
+
+  if (error) throw new Error(error.message);
+  return { agentKey, runtimeStatus: nextStatus };
+}
+
+export async function getConnectyHubWhatsappAgentControlStatus(input: { agentKey: string }) {
+  const agentKey = cleanString(input.agentKey);
+  if (!agentKey) return "active";
+
+  if (agentKey === WILLIAN_AGENT_KEY) {
+    return await isPrimaryWhatsappAgentPaused() ? "paused" : "active";
+  }
+
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return "active";
+
+  const { data, error } = await supabase
+    .from("ai_agents")
+    .select("status")
+    .eq("agent_key", agentKey)
+    .maybeSingle();
+
+  if (error) return "active";
+  return cleanString((data as Record<string, unknown> | null)?.status, "active");
 }
 
 export async function disconnectConnectyHubWhatsappAgent(input: { agentKey: string }) {

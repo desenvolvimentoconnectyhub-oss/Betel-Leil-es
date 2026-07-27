@@ -4,6 +4,7 @@ import { getGeminiApiKey, getGeminiModel } from "@/lib/ai/config";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   CONNECTYHUB_PROVIDER,
+  getConnectyHubWhatsappAgentControlStatus,
   normalizeWhatsAppNumber,
   sendWhatsAppAgentReply,
   sendWhatsAppAgentMediaReply,
@@ -1356,6 +1357,17 @@ async function processWhatsappAgentRuntime(
   }
 
   const config = await getWhatsAppAgentConfig(agentKey);
+  const controlStatus = await getConnectyHubWhatsappAgentControlStatus({ agentKey });
+  if (controlStatus === "paused") {
+    await insertRuntimeEvent(supabase, {
+      agentKey,
+      eventType: "whatsapp_agent_runtime_skipped",
+      status: "agent_paused",
+      message: "Agente recebeu mensagem, mas esta pausado no painel de controle WhatsApp.",
+      payload: { eventId, leadId, conversationId },
+    });
+    return { ok: true, skipped: true, reason: "agent_paused" };
+  }
   if (!config.behavior.active || !config.behavior.aiWindowActive) {
     await insertRuntimeEvent(supabase, {
       agentKey,

@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
+import { getConnectyHubWhatsappAgentControlStatus } from "@/lib/communication/connectyhub-client";
 import { getWhatsAppAgentConfig } from "@/lib/communication/willian-agent-config";
 
 type DbRow = Record<string, unknown>;
@@ -184,6 +185,7 @@ export async function planWhatsAppFollowUps(input: {
   }
 
   const configByAgent = new Map<string, Awaited<ReturnType<typeof getWhatsAppAgentConfig>>>();
+  const controlStatusByAgent = new Map<string, string>();
   const candidates: WhatsAppFollowUpCandidate[] = [];
   let skippedCount = 0;
 
@@ -202,6 +204,14 @@ export async function planWhatsAppFollowUps(input: {
     }
 
     if (asBoolean(lead.opt_out) || asBoolean(lead.human_intervention_active) || asBoolean(conversation.human_intervention_active)) {
+      skippedCount += 1;
+      continue;
+    }
+
+    if (!controlStatusByAgent.has(agentKey)) {
+      controlStatusByAgent.set(agentKey, await getConnectyHubWhatsappAgentControlStatus({ agentKey }));
+    }
+    if (controlStatusByAgent.get(agentKey) === "paused") {
       skippedCount += 1;
       continue;
     }

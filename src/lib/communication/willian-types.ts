@@ -21,6 +21,7 @@ export type WhatsAppAgentInstanceSummary = {
   profileImageUrl?: string;
   profileImageSyncedAt?: string;
   status: string;
+  runtimeStatus?: string;
   connected: boolean;
   connectedAt?: string;
   updatedAt?: string;
@@ -63,6 +64,7 @@ export type WillianInstanceState = {
   webhookCount?: number;
   agentInstances?: WhatsAppAgentInstanceSummary[];
   primaryAgentArchived?: boolean;
+  primaryAgentPaused?: boolean;
   missing: string[];
   lastError?: string;
 };

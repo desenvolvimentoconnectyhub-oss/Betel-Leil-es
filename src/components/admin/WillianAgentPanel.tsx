@@ -21,6 +21,7 @@ import {
   Radio,
   RefreshCw,
   Save,
+  Search,
   Send,
   ShieldCheck,
   SlidersHorizontal,
@@ -173,6 +174,23 @@ function displayWhatsappAgentName(agent?: Pick<WhatsAppAgentInstanceSummary, "ag
     return PRIMARY_WHATSAPP_AGENT_LABEL;
   }
   return name;
+}
+
+function whatsappAgentRuntimeStatus(agent?: Pick<WhatsAppAgentInstanceSummary, "runtimeStatus" | "status"> | null) {
+  return cleanFormValue(agent?.runtimeStatus || agent?.status).toLowerCase();
+}
+
+function isWhatsappAgentPaused(agent?: Pick<WhatsAppAgentInstanceSummary, "runtimeStatus" | "status"> | null) {
+  const status = whatsappAgentRuntimeStatus(agent);
+  return status === "paused" || status === "pausado" || status === "inactive" || status === "disabled";
+}
+
+function whatsappAgentOperationalLabel(agent?: Pick<WhatsAppAgentInstanceSummary, "runtimeStatus" | "status"> | null) {
+  if (isWhatsappAgentPaused(agent)) return "Pausado";
+  const status = whatsappAgentRuntimeStatus(agent);
+  if (status === "active") return "Ativo";
+  if (status === "draft") return "Rascunho";
+  return status || "Ativo";
 }
 
 function displayWhatsappProfileName(value: unknown, fallback: string) {
@@ -737,6 +755,7 @@ export function WillianAgentPanel({
           reset: "Reset aplicado. A ConnectyHub iniciou uma nova conexao.",
           deleteInstance: "Instancia excluida e vinculo local limpo.",
           deleteWhatsappAgent: "Agente de WhatsApp excluido.",
+          controlWhatsappAgent: "Controle operacional do agente atualizado.",
         };
         setFeedback({ type: "ok", msg: labels[action] || "Acao concluida." });
         if (action === "disconnectWhatsappAgent") {
@@ -774,9 +793,10 @@ export function WillianAgentPanel({
   }
 
   const changeLabel = config.status === "saved" ? "Salvo" : "Revisar";
-  const selectedAgentConnected = selectedWhatsappAgent?.agentKey === state.agentKey
+  const selectedAgentPaused = isWhatsappAgentPaused(selectedWhatsappAgent);
+  const selectedAgentConnected = !selectedAgentPaused && selectedWhatsappAgent?.agentKey === state.agentKey
     ? connected
-    : Boolean(selectedWhatsappAgent?.connected);
+    : !selectedAgentPaused && Boolean(selectedWhatsappAgent?.connected);
 
   function cloneWhatsappAgent(agent: WhatsAppAgentInstanceSummary) {
     const baseName = displayWhatsappAgentName(agent);
@@ -793,6 +813,14 @@ export function WillianAgentPanel({
       : `Excluir ${label}? A instancia sera arquivada e nao aparecera mais na lista.`;
     if (!window.confirm(message)) return;
     void runInstanceAction("deleteWhatsappAgent", { agentKey: agent.agentKey });
+  }
+
+  function toggleWhatsappAgentControl(agent: WhatsAppAgentInstanceSummary) {
+    const paused = isWhatsappAgentPaused(agent);
+    void runInstanceAction("controlWhatsappAgent", {
+      agentKey: agent.agentKey,
+      controlStatus: paused ? "active" : "paused",
+    });
   }
 
   const feedbackNode = feedback ? (
@@ -824,6 +852,7 @@ export function WillianAgentPanel({
           })
         }
         onClone={cloneWhatsappAgent}
+        onControl={toggleWhatsappAgentControl}
         onDelete={deleteWhatsappAgent}
         onSelect={setSelectedAgentKey}
         selectedAgentKey={selectedWhatsappAgent?.agentKey || state.agentKey}
@@ -839,7 +868,11 @@ export function WillianAgentPanel({
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
                 <InfoBox label="Agente" value={displayWhatsappAgentName(selectedWhatsappAgent)} />
                 <InfoBox label="Empresa" value={selectedWhatsappAgent?.companyName || config.companyName} />
-                <InfoBox label="WhatsApp" value={selectedAgentConnected ? "conectado" : "pendente"} tone={selectedAgentConnected ? "green" : "yellow"} />
+                <InfoBox
+                  label="WhatsApp"
+                  value={selectedAgentPaused ? "pausado" : selectedAgentConnected ? "conectado" : "pendente"}
+                  tone={selectedAgentPaused ? "yellow" : selectedAgentConnected ? "green" : "yellow"}
+                />
                 <InfoBox label="Conversa" value={conversationModeLabels[config.behavior.conversationMode]} />
                 <InfoBox label="Alteracoes" value={changeLabel} tone={config.status === "saved" ? "green" : "yellow"} />
               </div>
@@ -1000,6 +1033,7 @@ function WhatsAppAgentManager({
   newAgentName,
   newAgentSector,
   onClone,
+  onControl,
   onCreate,
   onDelete,
   onSelect,
@@ -1015,6 +1049,7 @@ function WhatsAppAgentManager({
   newAgentName: string;
   newAgentSector: string;
   onClone: (agent: WhatsAppAgentInstanceSummary) => void;
+  onControl: (agent: WhatsAppAgentInstanceSummary) => void;
   onCreate: () => void;
   onDelete: (agent: WhatsAppAgentInstanceSummary) => void;
   onSelect: (agentKey: string) => void;
@@ -1023,7 +1058,37 @@ function WhatsAppAgentManager({
   setNewAgentName: (value: string) => void;
   setNewAgentSector: (value: string) => void;
 }) {
+  const [agentQuery, setAgentQuery] = useState("");
+  const [agentFilter, setAgentFilter] = useState<"all" | "online" | "paused" | "pending">("all");
   const agentCount = agents.length;
+  const onlineCount = agents.filter((agent) => agent.connected && !isWhatsappAgentPaused(agent)).length;
+  const pausedCount = agents.filter(isWhatsappAgentPaused).length;
+  const pendingCount = agents.filter((agent) => !agent.connected && !isWhatsappAgentPaused(agent)).length;
+  const normalizedQuery = agentQuery.trim().toLowerCase();
+  const filteredAgents = agents.filter((agent) => {
+    const paused = isWhatsappAgentPaused(agent);
+    const searchable = [
+      agent.agentKey,
+      displayWhatsappAgentName(agent),
+      agent.companyName || companyName,
+      agent.sector,
+      agent.instanceName,
+      agent.phoneNumber,
+      whatsappAgentOperationalLabel(agent),
+    ].join(" ").toLowerCase();
+
+    if (normalizedQuery && !searchable.includes(normalizedQuery)) return false;
+    if (agentFilter === "online") return agent.connected && !paused;
+    if (agentFilter === "paused") return paused;
+    if (agentFilter === "pending") return !agent.connected && !paused;
+    return true;
+  });
+  const filters: Array<{ key: typeof agentFilter; label: string; count: number }> = [
+    { key: "all", label: "Todos", count: agentCount },
+    { key: "online", label: "Online", count: onlineCount },
+    { key: "paused", label: "Pausados", count: pausedCount },
+    { key: "pending", label: "Pendentes", count: pendingCount },
+  ];
 
   return (
     <div className="mb-4 rounded-xl border border-[var(--admin-border)] bg-[linear-gradient(180deg,rgba(255,90,31,0.08),rgba(13,13,13,0.98))]">
@@ -1035,10 +1100,56 @@ function WhatsAppAgentManager({
         <StatusPill ok label={`${agentCount} ${agentCount === 1 ? "agente" : "agentes"}`} />
       </div>
 
-      <div className="grid gap-4 p-4 sm:p-5 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
+      <div className="grid gap-4 p-4 sm:p-5">
+        <div className="grid gap-3 xl:grid-cols-[minmax(260px,420px)_minmax(0,1fr)_auto] xl:items-center">
+          <label className="grid h-10 grid-cols-[18px_minmax(0,1fr)] items-center gap-2 rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.035)] px-3 text-[var(--admin-muted)]">
+            <Search size={15} />
+            <input
+              className="min-w-0 bg-transparent text-sm font-semibold text-white outline-none placeholder:text-[var(--admin-muted)]"
+              onChange={(event) => setAgentQuery(event.target.value)}
+              placeholder="Buscar agente, setor ou numero"
+              value={agentQuery}
+            />
+          </label>
+          <div className="flex min-w-0 flex-wrap gap-2">
+            {filters.map((filter) => {
+              const active = agentFilter === filter.key;
+              return (
+                <button
+                  key={filter.key}
+                  className={cn(
+                    "inline-flex h-9 items-center gap-2 rounded-md border px-3 text-xs font-bold transition",
+                    active
+                      ? "border-[var(--admin-cyan)] bg-[rgba(20,184,166,0.12)] text-[var(--admin-cyan)]"
+                      : "border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] text-[var(--admin-muted)] hover:text-white"
+                  )}
+                  onClick={() => setAgentFilter(filter.key)}
+                  type="button"
+                >
+                  {filter.label}
+                  <span className="rounded-full border border-current/25 px-1.5 py-0.5 text-[10px]">{filter.count}</span>
+                </button>
+              );
+            })}
+          </div>
+          <ActionButton
+            icon={formOpen ? <X size={14} /> : <Plus size={14} />}
+            label={formOpen ? "Formulario aberto" : "Novo agente"}
+            onClick={() => setFormOpen(!formOpen)}
+          />
+        </div>
+
         <div className="grid gap-3 md:grid-cols-2">
-          {agents.map((agent) => {
+          {filteredAgents.map((agent) => {
             const selected = agent.agentKey === selectedAgentKey;
+            const paused = isWhatsappAgentPaused(agent);
+            const statusLabel = paused
+              ? "Pausado"
+              : selected
+                ? "Aberto"
+                : agent.connected
+                  ? "Online"
+                  : "Pendente";
             return (
               <div
                 key={agent.agentKey}
@@ -1055,8 +1166,11 @@ function WhatsAppAgentManager({
                     <p className="mt-2 truncate text-xs font-semibold text-[var(--admin-muted)]">
                       {agent.companyName || companyName} / {agent.sector || "Atendimento WhatsApp"}
                     </p>
+                    <p className="mt-2 truncate text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--admin-muted)]">
+                      {whatsappAgentOperationalLabel(agent)} {agent.instanceName ? `/ ${agent.instanceName}` : ""}
+                    </p>
                   </button>
-                  <StatusPill ok={agent.connected} label={selected ? "Aberto" : agent.connected ? "Online" : "Pendente"} />
+                  <StatusPill ok={!paused && agent.connected} label={statusLabel} />
                 </div>
                 <div className="mt-4 flex flex-wrap gap-2">
                   <ActionButton
@@ -1070,6 +1184,12 @@ function WhatsAppAgentManager({
                     onClick={() => onClone(agent)}
                   />
                   <ActionButton
+                    icon={<Power size={14} />}
+                    label={paused ? "Reativar" : "Pausar"}
+                    loading={loading === "controlWhatsappAgent" && selected}
+                    onClick={() => onControl(agent)}
+                  />
+                  <ActionButton
                     icon={<Trash2 size={14} />}
                     label="Excluir"
                     loading={loading === "deleteWhatsappAgent" && selected}
@@ -1080,14 +1200,11 @@ function WhatsAppAgentManager({
               </div>
             );
           })}
-        </div>
-
-        <div className="xl:min-w-[180px]">
-          <ActionButton
-            icon={formOpen ? <X size={14} /> : <Plus size={14} />}
-            label={formOpen ? "Formulario aberto" : "Novo agente"}
-            onClick={() => setFormOpen(!formOpen)}
-          />
+          {!filteredAgents.length && (
+            <div className="rounded-xl border border-dashed border-[var(--admin-border)] p-5 text-sm font-semibold text-[var(--admin-muted)]">
+              Nenhum agente encontrado neste filtro.
+            </div>
+          )}
         </div>
       </div>
 
@@ -1142,9 +1259,10 @@ function ConnectionTab({
   const [connectMode, setConnectMode] = useState<"qr" | "phone">("qr");
   const [pairingPhone, setPairingPhone] = useState("");
   const selectedIsPrimary = !selectedAgent || selectedAgent.agentKey === state.agentKey;
-  const connected = selectedIsPrimary
+  const paused = isWhatsappAgentPaused(selectedAgent);
+  const connected = !paused && selectedIsPrimary
     ? Boolean(state.status?.connected || state.status?.loggedIn)
-    : Boolean(selectedAgent?.connected);
+    : !paused && Boolean(selectedAgent?.connected);
   const connectyHubKeyReady = state.adminTokenConfigured && state.adminTokenLooksValid;
   const canGenerateQr = connectyHubKeyReady && Boolean(state.webhookUrl) && state.whatsappProviderReleased;
   const agentLabel = displayWhatsappAgentName(selectedAgent || { agentKey: state.agentKey, agentName: state.agentName });
@@ -1154,7 +1272,7 @@ function ConnectionTab({
     displayName ||
     state.phoneNumber ||
     agentLabel;
-  const statusLabel = connected ? "Online" : "Aguardando leitura";
+  const statusLabel = paused ? "Pausado" : connected ? "Online" : "Aguardando leitura";
   const pairingConnection = connection;
   const pairingLabel = pairingTarget?.agentName || "WhatsApp";
   const profileImageUrl = selectedAgent?.profileImageUrl || state.profileImageUrl;
@@ -1186,7 +1304,7 @@ function ConnectionTab({
   const passkeyBlocked = connectionHasPasskeyBlock(pairingConnection, rawDisconnectReason);
 
   return (
-    <Panel title={`Conexao de ${agentLabel}`} eyebrow="Numero / agente / status" action={<StatusPill ok={connected} label={connected ? "Online" : "Pendente"} />}>
+    <Panel title={`Conexao de ${agentLabel}`} eyebrow="Numero / agente / status" action={<StatusPill ok={connected} label={paused ? "Pausado" : connected ? "Online" : "Pendente"} />}>
       <div className="rounded-xl border border-[var(--admin-border)] bg-[rgba(255,255,255,0.02)] p-4 sm:p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex min-w-0 items-center gap-3">

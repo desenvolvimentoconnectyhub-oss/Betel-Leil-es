@@ -17,6 +17,7 @@ import {
   getWillianInstanceState,
   resetConnectyHubWhatsappAgent,
   resetWillianConnectyHubInstance,
+  setConnectyHubWhatsappAgentControlStatus,
   testWillianWebhookDelivery,
   WILLIAN_AGENT_KEY,
 } from "@/lib/communication/connectyhub-client";
@@ -223,6 +224,11 @@ export async function POST(request: Request) {
     } else if (action === "deleteWhatsappAgent") {
       result = await deleteConnectyHubWhatsappAgent({
         agentKey: cleanString(body.agentKey),
+      });
+    } else if (action === "controlWhatsappAgent") {
+      result = await setConnectyHubWhatsappAgentControlStatus({
+        agentKey: cleanString(body.agentKey),
+        status: cleanString(body.controlStatus),
       });
     } else {
       return NextResponse.json({ success: false, error: "Acao desconhecida para instancia do agente WhatsApp." }, { status: 400 });
