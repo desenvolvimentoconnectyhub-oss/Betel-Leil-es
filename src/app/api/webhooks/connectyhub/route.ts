@@ -7,12 +7,15 @@ import {
   getConnectyHubWhatsappAgentControlStatus,
   normalizeWhatsAppNumber,
   sendWhatsAppAgentReply,
-  sendWhatsAppAgentMediaReply,
 } from "@/lib/communication/connectyhub-client";
 import { getWhatsAppAgentConfig } from "@/lib/communication/willian-agent-config";
 import type { WillianAgentConfig } from "@/lib/communication/willian-types";
-import { synthesizeElevenLabsPreview } from "@/lib/voice/elevenlabs";
 import { buildWhatsAppAgentKnowledgeContext } from "@/lib/whatsapp/agent-knowledge";
+import {
+  isWhatsAppAudioMessage,
+  resolveWhatsAppVoiceResponse,
+  sendWhatsAppAgentVoiceReply,
+} from "@/lib/whatsapp/voice-response";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -133,61 +136,6 @@ function splitWhatsAppReply(text: string) {
 
   if (current) parts.push(current);
   return parts.slice(0, 6);
-}
-
-function shouldReplyWithAudio(config: WillianAgentConfig, inboundMessageType: string, inboundMimeType = "") {
-  if (!config.behavior.voiceCloneEnabled || !config.behavior.voiceCloneConsent || !config.behavior.selectedVoiceId) {
-    return false;
-  }
-
-  if (config.behavior.conversationMode === "always_audio") return true;
-  if (config.behavior.conversationMode === "mirror" && isAudioMessage(inboundMessageType, inboundMimeType)) return true;
-  return false;
-}
-
-async function maybeSendAudioReply(input: {
-  config: WillianAgentConfig;
-  agentKey: string;
-  providerInstanceId: string;
-  phone: string;
-  text: string;
-  trackId: string;
-}) {
-  try {
-    const audio = await synthesizeElevenLabsPreview({
-      voiceId: input.config.behavior.selectedVoiceId,
-      modelId: input.config.behavior.audioModelId,
-      text: input.text,
-    });
-    const file = `data:${audio.contentType || "audio/mpeg"};base64,${audio.audioBase64}`;
-    const delivery = await sendWhatsAppAgentMediaReply({
-      agentKey: input.agentKey,
-      instanceId: input.providerInstanceId,
-      number: input.phone,
-      type: "myaudio",
-      file,
-      trackId: input.trackId,
-    });
-
-    return {
-      ok: true,
-      providerStatus: "connectyhub_audio_accepted",
-      endpointConfigured: true,
-      latencyMs: 1,
-      processedAt: new Date().toISOString(),
-      externalDeliveryId: delivery.externalDeliveryId,
-      responsePreview: JSON.stringify(delivery.payload).slice(0, 500),
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      providerStatus: "audio_delivery_failed",
-      endpointConfigured: true,
-      latencyMs: 1,
-      processedAt: new Date().toISOString(),
-      errorMessage: error instanceof Error ? error.message : "Falha ao gerar ou enviar audio.",
-    };
-  }
 }
 
 function formatList(items: string[]) {
@@ -573,8 +521,7 @@ function extractWebhookMessage(payload: Record<string, unknown>) {
 }
 
 function isAudioMessage(messageType: string, mimeType: string) {
-  const type = `${messageType} ${mimeType}`.toLowerCase();
-  return type.includes("audio") || type.includes("voice") || type.includes("ptt") || type.includes("ogg");
+  return isWhatsAppAudioMessage(messageType, mimeType);
 }
 
 function fallbackMimeType(messageType: string, mimeType: string) {
@@ -1130,6 +1077,7 @@ async function insertOutboundMessages(
     texts: string[];
     deliveries: Record<string, unknown>[];
     messageType?: string;
+    metadata?: Record<string, unknown>;
   }
 ) {
   if (!input.texts.length) return;
@@ -1153,6 +1101,7 @@ async function insertOutboundMessages(
         delivery_mode: input.messageType || "text",
         part: index + 1,
         total_parts: input.texts.length,
+        ...input.metadata,
       },
     }))
   );
@@ -1497,15 +1446,22 @@ async function processWhatsappAgentRuntime(
     return { ok: false, skipped: true, reason: generated.reason };
   }
 
-  const audioRequested = shouldReplyWithAudio(config, inboundMessageType, inboundMimeType);
-  const audioDelivery = audioRequested
-    ? await maybeSendAudioReply({
-        config,
+  const voiceDecision = await resolveWhatsAppVoiceResponse({
+    config,
+    generatedText: generated.text,
+    inboundMessageType,
+    inboundMimeType,
+    seed: `${agentKey}:${conversationId}:${eventId}:${phone}:${generated.text}`,
+    source: "runtime",
+  });
+  const audioDelivery = voiceDecision.mode === "audio"
+    ? await sendWhatsAppAgentVoiceReply({
         agentKey,
-        providerInstanceId,
-        phone,
+        instanceId: providerInstanceId,
+        number: phone,
         text: generated.text,
         trackId: `${trackId}-audio`,
+        decision: voiceDecision,
       })
     : null;
   const replyParts = audioDelivery?.ok
@@ -1538,6 +1494,15 @@ async function processWhatsappAgentRuntime(
     texts: replyParts,
     deliveries: deliveries as unknown as Record<string, unknown>[],
     messageType: audioDelivery?.ok ? "audio" : "text",
+    metadata: {
+      voice_decision: voiceDecision,
+      audio_requested: voiceDecision.audioRequested,
+      audio_delivered: Boolean(audioDelivery?.ok),
+      audio_fallback_reason:
+        audioDelivery && !audioDelivery.ok
+          ? audioDelivery.errorMessage || audioDelivery.providerStatus
+          : voiceDecision.fallbackReason || null,
+    },
   });
 
   if (audioDelivery?.ok) {
@@ -1553,6 +1518,7 @@ async function processWhatsappAgentRuntime(
         eventId,
         trackId: `${trackId}-audio`,
         delivery: audioDelivery,
+        voiceDecision,
       },
     });
   }
@@ -1582,9 +1548,14 @@ async function processWhatsappAgentRuntime(
       deliveries,
       replyParts,
       promptInjection,
-      audioRequested,
+      voiceDecision,
+      audioRequested: voiceDecision.audioRequested,
       audioDelivered: Boolean(audioDelivery?.ok),
-      audioFallbackReason: audioDelivery && !audioDelivery.ok ? audioDelivery.errorMessage || audioDelivery.providerStatus : null,
+      audioDecisionReason: voiceDecision.reason,
+      audioFallbackReason:
+        audioDelivery && !audioDelivery.ok
+          ? audioDelivery.errorMessage || audioDelivery.providerStatus
+          : voiceDecision.fallbackReason || null,
       promptPayload: {
         agentActive: config.behavior.active,
         qualificationEnabled: config.qualification.enabled,

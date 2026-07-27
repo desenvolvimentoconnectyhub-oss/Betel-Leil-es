@@ -4,13 +4,15 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { getGeminiApiKey, getGeminiModel } from "@/lib/ai/config";
 import {
   getConnectyHubWhatsappAgentControlStatus,
-  sendWhatsAppAgentMediaReply,
   sendWhatsAppAgentReply,
 } from "@/lib/communication/connectyhub-client";
 import { getWhatsAppAgentConfig } from "@/lib/communication/willian-agent-config";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
-import { synthesizeElevenLabsPreview } from "@/lib/voice/elevenlabs";
 import { buildWhatsAppAgentKnowledgeContext } from "@/lib/whatsapp/agent-knowledge";
+import {
+  resolveWhatsAppVoiceResponse,
+  sendWhatsAppAgentVoiceReply,
+} from "@/lib/whatsapp/voice-response";
 
 type DbRow = Record<string, unknown>;
 
@@ -198,55 +200,6 @@ async function generateFollowUpText(input: {
   } catch {
     return { text: fallback, model: "fallback-template", fallback: true };
   }
-}
-
-async function maybeSendFollowUpAudio(input: {
-  agentKey: string;
-  instanceId: string;
-  phone: string;
-  text: string;
-  trackId: string;
-}) {
-  try {
-    const config = await getWhatsAppAgentConfig(input.agentKey);
-    if (!config.behavior.voiceCloneEnabled || !config.behavior.voiceCloneConsent || !config.behavior.selectedVoiceId) {
-      return { ok: false, providerStatus: "audio_not_configured", errorMessage: "Voz do agente nao configurada." };
-    }
-
-    const audio = await synthesizeElevenLabsPreview({
-      voiceId: config.behavior.selectedVoiceId,
-      modelId: config.behavior.audioModelId,
-      text: input.text,
-    });
-    const delivery = await sendWhatsAppAgentMediaReply({
-      agentKey: input.agentKey,
-      instanceId: input.instanceId,
-      number: input.phone,
-      type: "myaudio",
-      file: `data:${audio.contentType || "audio/mpeg"};base64,${audio.audioBase64}`,
-      trackId: input.trackId,
-    });
-
-    return {
-      ok: true,
-      providerStatus: "connectyhub_audio_accepted",
-      externalDeliveryId: delivery.externalDeliveryId,
-      payload: delivery.payload,
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      providerStatus: "audio_delivery_failed",
-      errorMessage: error instanceof Error ? error.message : "Falha ao gerar ou enviar audio.",
-    };
-  }
-}
-
-async function shouldSendFollowUpAudio(agentKey: string, followUp: DbRow) {
-  const responseMode = cleanString(followUp.response_mode, "text");
-  if (responseMode === "audio") return true;
-  const config = await getWhatsAppAgentConfig(agentKey);
-  return config.behavior.conversationMode === "always_audio";
 }
 
 function isQuietHoursBlocked(now = new Date()) {
@@ -461,14 +414,23 @@ export async function processWhatsAppFollowUps(input: {
       .eq("id", followUpId);
 
     const trackId = `wa-fup-${followUpId}`;
-    const audioRequested = await shouldSendFollowUpAudio(agentKey, followUp);
-    const audioDelivery = audioRequested
-      ? await maybeSendFollowUpAudio({
+    const config = await getWhatsAppAgentConfig(agentKey);
+    const responseMode = cleanString(followUp.response_mode, "text");
+    const voiceDecision = await resolveWhatsAppVoiceResponse({
+      config,
+      generatedText: generated.text,
+      forceAudio: responseMode === "audio",
+      seed: `${agentKey}:${followUpId}:${conversationId}:${leadId}:${generated.text}`,
+      source: "followup",
+    });
+    const audioDelivery = voiceDecision.mode === "audio"
+      ? await sendWhatsAppAgentVoiceReply({
           agentKey,
           instanceId: providerInstanceId,
-          phone: cleanString(lead.phone),
+          number: cleanString(lead.phone),
           text: generated.text,
           trackId: `${trackId}-audio`,
+          decision: voiceDecision,
         })
       : null;
     const delivery = audioDelivery?.ok
@@ -507,8 +469,13 @@ export async function processWhatsAppFollowUps(input: {
         generatedBy: generated.model,
         fallback: generated.fallback,
         deliveryMode,
-        audioRequested,
-        audioFallbackReason: audioDelivery && !audioDelivery.ok ? audioDelivery.errorMessage || audioDelivery.providerStatus : null,
+        voiceDecision,
+        audioRequested: voiceDecision.audioRequested,
+        audioFallbackReason:
+          audioDelivery && !audioDelivery.ok
+            ? audioDelivery.errorMessage || audioDelivery.providerStatus
+            : voiceDecision.fallbackReason || null,
+        audioDelivery,
         delivery,
       },
     });
@@ -525,7 +492,8 @@ export async function processWhatsAppFollowUps(input: {
           source: "whatsapp_follow_up_worker",
           followUpId,
           trackId: `${trackId}-audio`,
-          delivery,
+          delivery: audioDelivery || delivery,
+          voiceDecision,
         },
       });
     }
@@ -559,7 +527,7 @@ export async function processWhatsAppFollowUps(input: {
         status: delivery.providerStatus,
         message: "Follow-up enviado pelo atendente WhatsApp.",
         model: generated.model,
-        payload: { followUpId, conversationId, leadId, delivery, fallback: generated.fallback },
+        payload: { followUpId, conversationId, leadId, delivery, audioDelivery, fallback: generated.fallback, voiceDecision },
       });
 
       processed.push({
@@ -588,7 +556,7 @@ export async function processWhatsAppFollowUps(input: {
         status: delivery.providerStatus,
         message: "Falha ao enviar follow-up pelo WhatsApp.",
         model: generated.model,
-        payload: { followUpId, conversationId, leadId, delivery },
+        payload: { followUpId, conversationId, leadId, delivery, audioDelivery, voiceDecision },
       });
 
       failed.push({
