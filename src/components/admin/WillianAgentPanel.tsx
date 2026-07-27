@@ -858,7 +858,7 @@ export function WillianAgentPanel({
   ) : null;
 
   return (
-    <section className="mt-6">
+    <section className="grid gap-4">
       <WhatsAppAgentManager
         agents={whatsappAgents}
         companyName={config.companyName}
@@ -885,7 +885,7 @@ export function WillianAgentPanel({
 
       {selectedWhatsappAgent ? (
         <>
-          <div className="mb-4 rounded-xl border border-[var(--admin-border)] bg-[linear-gradient(180deg,rgba(255,255,255,0.035),rgba(13,13,13,0.96))] p-3 shadow-2xl shadow-black/20">
+          <div className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-3 shadow-sm shadow-[rgba(81,60,36,0.06)]">
             <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
                 <InfoBox label="Agente" value={displayWhatsappAgentName(selectedWhatsappAgent)} />
@@ -915,7 +915,7 @@ export function WillianAgentPanel({
           </div>
 
           <div
-            className="mb-4 overflow-hidden rounded-xl border border-[var(--admin-border)] bg-[rgba(255,255,255,0.025)] p-1"
+            className="overflow-hidden rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-1 shadow-sm shadow-[rgba(81,60,36,0.04)]"
             role="tablist"
             aria-label="Secoes do agente WhatsApp"
           >
@@ -933,14 +933,14 @@ export function WillianAgentPanel({
                     className={cn(
                       "grid min-h-[58px] grid-cols-[18px_minmax(0,1fr)] items-center gap-2 rounded-lg px-3 text-left transition",
                       active
-                        ? "bg-[linear-gradient(135deg,var(--admin-cyan),var(--admin-yellow))] text-black shadow-[0_0_24px_rgba(255,90,31,0.16)]"
-                        : "text-[var(--admin-muted)] hover:bg-[rgba(255,255,255,0.05)] hover:text-white"
+                        ? "bg-[rgba(200,90,31,0.1)] text-[var(--admin-foreground)] shadow-[inset_0_0_0_1px_rgba(200,90,31,0.18)]"
+                        : "text-[var(--admin-muted)] hover:bg-[rgba(184,122,22,0.07)] hover:text-[var(--admin-foreground)]"
                     )}
                   >
-                    <Icon size={17} className={active ? "text-black" : "text-[var(--admin-muted)]"} />
+                    <Icon size={17} className={active ? "text-[var(--admin-cyan)]" : "text-[var(--admin-muted)]"} />
                     <span className="min-w-0">
                       <span className="block truncate text-sm font-semibold">{tab.label}</span>
-                      <span className={cn("mt-0.5 hidden truncate text-[9px] font-bold uppercase tracking-[0.12em] sm:block", active ? "text-black/70" : "text-[var(--admin-muted)]")}>
+                      <span className="mt-0.5 hidden truncate text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--admin-muted)] sm:block">
                         {tab.subtitle}
                       </span>
                     </span>
@@ -987,9 +987,9 @@ export function WillianAgentPanel({
           </div>
         </>
       ) : (
-        <div className="mb-4 rounded-xl border border-[var(--admin-border)] bg-[rgba(255,255,255,0.025)] p-5">
+        <div className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-5 shadow-sm shadow-[rgba(81,60,36,0.05)]">
           <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--admin-muted)]">Central WhatsApp</p>
-          <h3 className="mt-1 text-base font-bold text-white">Nenhum agente WhatsApp ativo</h3>
+          <h3 className="mt-1 text-base font-bold text-[var(--admin-foreground)]">Nenhum agente WhatsApp ativo</h3>
           <p className="mt-2 text-sm text-[var(--admin-muted)]">
             Crie um novo agente para configurar conexao, prompt, voz, CRM e follow-up.
           </p>
@@ -1012,24 +1012,24 @@ export function WillianAgentPanel({
           className="fixed inset-0 z-[100] grid place-items-center bg-black/72 px-4 py-6 backdrop-blur-sm"
           role="dialog"
         >
-          <div className="w-full max-w-md rounded-xl border border-[rgba(255,255,255,0.14)] bg-[#0d0d0d] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.5)]">
+          <div className="w-full max-w-md rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-5 shadow-[0_24px_80px_rgba(81,60,36,0.22)]">
             <div className="flex items-start justify-between gap-4">
               <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-[rgba(234,179,8,0.35)] bg-[rgba(234,179,8,0.12)] text-[var(--admin-yellow)]">
                 <ShieldCheck size={18} />
               </div>
               <button
                 aria-label="Fechar aviso"
-                className="grid h-9 w-9 place-items-center rounded-lg border border-[var(--admin-border)] text-[var(--admin-muted)] transition hover:border-[rgba(255,255,255,0.28)] hover:text-white"
+                className="grid h-9 w-9 place-items-center rounded-md border border-[var(--admin-border)] text-[var(--admin-muted)] transition hover:border-[rgba(200,90,31,0.28)] hover:text-[var(--admin-foreground)]"
                 onClick={() => setPasskeyDialogOpen(false)}
                 type="button"
               >
                 <X size={16} />
               </button>
             </div>
-            <h3 id="passkey-dialog-title" className="mt-4 text-lg font-bold text-white">
+            <h3 id="passkey-dialog-title" className="mt-4 text-lg font-bold text-[var(--admin-foreground)]">
               Verificação extra solicitada
             </h3>
-            <p className="mt-3 text-sm leading-6 text-white/82">
+            <p className="mt-3 text-sm leading-6 text-[var(--admin-soft)]">
               Esta conta pediu uma verificação extra por chave de acesso. Esse tipo de verificação ainda não pode ser concluído diretamente pelo QR Code do painel.
             </p>
             <p className="mt-3 text-sm leading-6 text-[var(--admin-muted)]">
@@ -1122,21 +1122,21 @@ function WhatsAppAgentManager({
   ];
 
   return (
-    <div className="mb-4 rounded-xl border border-[var(--admin-border)] bg-[linear-gradient(180deg,rgba(255,90,31,0.08),rgba(13,13,13,0.98))]">
+    <div className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(81,60,36,0.05)]">
       <div className="flex items-center justify-between gap-3 border-b border-[var(--admin-border)] px-4 py-4 sm:px-5">
         <div>
           <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--admin-muted)]">Escolher / criar / clonar</p>
-          <h3 className="mt-1 text-base font-bold text-white">Agentes de WhatsApp</h3>
+          <h3 className="mt-1 text-base font-bold text-[var(--admin-foreground)]">Agentes de WhatsApp</h3>
         </div>
         <StatusPill ok label={`${agentCount} ${agentCount === 1 ? "agente" : "agentes"}`} />
       </div>
 
       <div className="grid gap-4 p-4 sm:p-5">
         <div className="grid gap-3 xl:grid-cols-[minmax(260px,420px)_minmax(0,1fr)_auto] xl:items-center">
-          <label className="grid h-10 grid-cols-[18px_minmax(0,1fr)] items-center gap-2 rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.035)] px-3 text-[var(--admin-muted)]">
+          <label className="grid h-10 grid-cols-[18px_minmax(0,1fr)] items-center gap-2 rounded-md border border-[var(--admin-border)] bg-white px-3 text-[var(--admin-muted)]">
             <Search size={15} />
             <input
-              className="min-w-0 bg-transparent text-sm font-semibold text-white outline-none placeholder:text-[var(--admin-muted)]"
+              className="min-w-0 bg-transparent text-sm font-semibold text-[var(--admin-foreground)] outline-none placeholder:text-[var(--admin-muted)]"
               onChange={(event) => setAgentQuery(event.target.value)}
               placeholder="Buscar agente, setor ou numero"
               value={agentQuery}
@@ -1151,8 +1151,8 @@ function WhatsAppAgentManager({
                   className={cn(
                     "inline-flex h-9 items-center gap-2 rounded-md border px-3 text-xs font-bold transition",
                     active
-                      ? "border-[var(--admin-cyan)] bg-[rgba(20,184,166,0.12)] text-[var(--admin-cyan)]"
-                      : "border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] text-[var(--admin-muted)] hover:text-white"
+                      ? "border-[rgba(200,90,31,0.28)] bg-[rgba(200,90,31,0.1)] text-[var(--admin-cyan)]"
+                      : "border-[var(--admin-border)] bg-white text-[var(--admin-muted)] hover:text-[var(--admin-foreground)]"
                   )}
                   onClick={() => setAgentFilter(filter.key)}
                   type="button"
@@ -1187,13 +1187,13 @@ function WhatsAppAgentManager({
                 className={cn(
                   "rounded-xl border p-4 transition",
                   selected
-                    ? "border-[rgba(255,90,31,0.45)] bg-[rgba(255,90,31,0.08)]"
-                    : "border-[var(--admin-border)] bg-[rgba(255,255,255,0.018)]"
+                    ? "border-[rgba(200,90,31,0.35)] bg-[rgba(200,90,31,0.08)]"
+                    : "border-[var(--admin-border)] bg-white"
                 )}
               >
                 <div className="flex items-start justify-between gap-3">
                   <button type="button" onClick={() => onSelect(agent.agentKey)} className="min-w-0 text-left">
-                    <p className="truncate text-sm font-bold text-white">{displayWhatsappAgentName(agent)}</p>
+                    <p className="truncate text-sm font-bold text-[var(--admin-foreground)]">{displayWhatsappAgentName(agent)}</p>
                     <p className="mt-2 truncate text-xs font-semibold text-[var(--admin-muted)]">
                       {agent.companyName || companyName} / {agent.sector || "Atendimento WhatsApp"}
                     </p>
@@ -1241,7 +1241,7 @@ function WhatsAppAgentManager({
 
       {formOpen && (
         <div className="border-t border-[var(--admin-border)] p-4 sm:p-5">
-          <div className="rounded-xl border border-[var(--admin-border)] bg-[rgba(255,255,255,0.025)] p-4">
+          <div className="rounded-lg border border-[var(--admin-border)] bg-white p-4">
             <div className="grid gap-3 lg:grid-cols-2">
               <Field
                 label="Nome do agente"
@@ -1290,7 +1290,7 @@ function PairingDialog({
       className="fixed inset-0 z-[90] grid place-items-center bg-black/70 px-4 py-6 backdrop-blur-sm"
       role="dialog"
     >
-      <div className="w-full max-w-2xl rounded-xl border border-[var(--admin-border)] bg-[var(--admin-card)] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.26)]">
+      <div className="w-full max-w-2xl rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-5 shadow-[0_24px_80px_rgba(81,60,36,0.22)]">
         <div className="flex items-start justify-between gap-4">
           <div className="flex min-w-0 items-center gap-3">
             <div className="grid h-11 w-11 shrink-0 place-items-center rounded-lg border border-[rgba(20,184,166,0.28)] bg-[rgba(20,184,166,0.1)] text-[var(--admin-cyan)]">
@@ -1298,14 +1298,14 @@ function PairingDialog({
             </div>
             <div className="min-w-0">
               <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--admin-muted)]">Pareamento WhatsApp</p>
-              <h3 id="whatsapp-pairing-title" className="mt-1 truncate text-lg font-bold text-white">
+              <h3 id="whatsapp-pairing-title" className="mt-1 truncate text-lg font-bold text-[var(--admin-foreground)]">
                 {pairingLabel}
               </h3>
             </div>
           </div>
           <button
             aria-label="Fechar QR Code"
-            className="grid h-9 w-9 place-items-center rounded-lg border border-[var(--admin-border)] text-[var(--admin-muted)] transition hover:border-[rgba(255,255,255,0.28)] hover:text-white"
+            className="grid h-9 w-9 place-items-center rounded-md border border-[var(--admin-border)] text-[var(--admin-muted)] transition hover:border-[rgba(200,90,31,0.28)] hover:text-[var(--admin-foreground)]"
             onClick={onClose}
             type="button"
           >
@@ -1336,7 +1336,7 @@ function PairingDialog({
             )}
           </div>
 
-          <div className="rounded-xl border border-[var(--admin-border)] bg-[rgba(255,255,255,0.035)] p-4">
+          <div className="rounded-lg border border-[var(--admin-border)] bg-white p-4">
             <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.12em] text-[var(--admin-green)]">
               <Loader2 size={14} className="animate-spin" />
               Atualizando automatico
@@ -1347,7 +1347,7 @@ function PairingDialog({
               </p>
             )}
             {connection.status && (
-              <p className="mt-1 font-mono text-sm font-bold uppercase text-white">{connection.status}</p>
+              <p className="mt-1 font-mono text-sm font-bold uppercase text-[var(--admin-foreground)]">{connection.status}</p>
             )}
             {connection.pairingCode && (
               <p className="mt-4 text-xs leading-5 text-[var(--admin-muted)]">
@@ -1355,7 +1355,7 @@ function PairingDialog({
               </p>
             )}
             <button
-              className="mt-5 inline-flex h-9 items-center gap-2 rounded-md border border-[var(--admin-border)] px-3 text-xs font-semibold text-white transition hover:border-[var(--admin-cyan)]"
+              className="mt-5 inline-flex h-9 items-center gap-2 rounded-md border border-[var(--admin-border)] px-3 text-xs font-semibold text-[var(--admin-foreground)] transition hover:border-[var(--admin-cyan)]"
               onClick={onClose}
               type="button"
             >
@@ -1435,12 +1435,12 @@ function ConnectionTab({
 
   return (
     <Panel title={`Conexao de ${agentLabel}`} eyebrow="Numero / agente / status" action={<StatusPill ok={connected} label={paused ? "Pausado" : connected ? "Online" : "Pendente"} />}>
-      <div className="rounded-xl border border-[var(--admin-border)] bg-[rgba(255,255,255,0.02)] p-4 sm:p-5">
+      <div className="rounded-lg border border-[var(--admin-border)] bg-white p-4 sm:p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex min-w-0 items-center gap-3">
             <WhatsappProfileAvatar connected={connected} imageUrl={profileImageUrl} label={whatsappLabel} />
             <div className="min-w-0">
-              <p className="truncate text-lg font-bold text-white">{connected ? whatsappLabel : "Aguardando leitura"}</p>
+              <p className="truncate text-lg font-bold text-[var(--admin-foreground)]">{connected ? whatsappLabel : "Aguardando leitura"}</p>
               <p className={cn("mt-1 text-xs font-bold uppercase tracking-[0.12em]", connected ? "text-[var(--admin-green)]" : "text-[var(--admin-yellow)]")}>
                 {statusLabel}
               </p>
@@ -1451,17 +1451,17 @@ function ConnectionTab({
             <div className="grid gap-2 text-xs text-[var(--admin-muted)] sm:min-w-64">
               {phoneNumber && (
                 <p className="truncate">
-                  <span className="font-semibold text-white">Numero:</span> {phoneNumber}
+                  <span className="font-semibold text-[var(--admin-foreground)]">Numero:</span> {phoneNumber}
                 </p>
               )}
               {displayName && (
                 <p className="truncate">
-                  <span className="font-semibold text-white">Perfil:</span> {displayName}
+                  <span className="font-semibold text-[var(--admin-foreground)]">Perfil:</span> {displayName}
                 </p>
               )}
               {profileImageSyncedAt && (
                 <p className="truncate">
-                  <span className="font-semibold text-white">Foto:</span> {formatDateTime(profileImageSyncedAt)}
+                  <span className="font-semibold text-[var(--admin-foreground)]">Foto:</span> {formatDateTime(profileImageSyncedAt)}
                 </p>
               )}
             </div>
@@ -1493,7 +1493,7 @@ function ConnectionTab({
             <div className="grid gap-3 lg:grid-cols-[minmax(0,280px)_minmax(0,1fr)]">
               <div className="grid gap-1">
                 <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Modo de conexao</span>
-                <div className="grid grid-cols-2 gap-1 rounded-lg border border-[var(--admin-border)] bg-[#050505] p-1">
+                <div className="grid grid-cols-2 gap-1 rounded-md border border-[var(--admin-border)] bg-white p-1">
                   {([
                     ["qr", "QR Code"],
                     ["phone", "Numero"],
@@ -1505,8 +1505,8 @@ function ConnectionTab({
                       className={cn(
                         "min-h-9 rounded-md px-3 text-xs font-bold transition",
                         connectMode === mode
-                          ? "bg-[rgba(0,243,255,0.13)] text-[var(--admin-cyan)] shadow-[0_0_0_1px_rgba(0,243,255,0.2)]"
-                          : "text-[var(--admin-muted)] hover:bg-[rgba(255,255,255,0.04)] hover:text-white"
+                          ? "bg-[rgba(200,90,31,0.1)] text-[var(--admin-cyan)] shadow-[inset_0_0_0_1px_rgba(200,90,31,0.18)]"
+                          : "text-[var(--admin-muted)] hover:bg-[rgba(184,122,22,0.07)] hover:text-[var(--admin-foreground)]"
                       )}
                     >
                       {label}
@@ -1524,7 +1524,7 @@ function ConnectionTab({
                     onChange={(event) => setPairingPhone(normalizePairingPhone(event.target.value))}
                     placeholder="5511999999999"
                     value={pairingPhone}
-                    className="h-11 rounded-lg border border-[var(--admin-border)] bg-[#050505] px-3 font-mono text-sm text-white outline-none transition focus:border-[var(--admin-cyan)]"
+                    className="h-11 rounded-md border border-[var(--admin-border)] bg-white px-3 font-mono text-sm text-[var(--admin-foreground)] outline-none transition focus:border-[var(--admin-cyan)]"
                   />
                 </label>
               )}

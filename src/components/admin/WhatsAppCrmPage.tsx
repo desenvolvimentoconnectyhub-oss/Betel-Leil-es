@@ -3,9 +3,12 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  Activity,
+  AlertTriangle,
   Bot,
   CalendarClock,
   CheckCircle2,
+  ChevronRight,
   ClipboardCheck,
   Clock3,
   ExternalLink,
@@ -18,11 +21,13 @@ import {
   PauseCircle,
   Phone,
   Play,
+  Radio,
   RefreshCw,
   Save,
   Search,
   Send,
   ShieldAlert,
+  Sparkles,
   StickyNote,
   Tags,
   ThumbsDown,
@@ -30,6 +35,7 @@ import {
   UserCheck,
   UserMinus,
   UserRound,
+  Users,
   UserX,
   XCircle,
 } from "lucide-react";
@@ -83,12 +89,12 @@ const toneText: Record<ResourceTone, string> = {
 };
 
 const toneBg: Record<ResourceTone, string> = {
-  cyan: "border-[rgba(0,243,255,0.24)] bg-[rgba(0,243,255,0.08)]",
+  cyan: "border-[rgba(200,90,31,0.24)] bg-[rgba(200,90,31,0.08)]",
   green: "border-[rgba(34,197,94,0.24)] bg-[rgba(34,197,94,0.08)]",
   yellow: "border-[rgba(234,179,8,0.28)] bg-[rgba(234,179,8,0.08)]",
   red: "border-[rgba(239,68,68,0.30)] bg-[rgba(239,68,68,0.08)]",
   purple: "border-[rgba(139,92,246,0.25)] bg-[rgba(139,92,246,0.08)]",
-  muted: "border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)]",
+  muted: "border-[var(--admin-border)] bg-white/80",
 };
 
 const filterLabels: Record<FilterKey, string> = {
@@ -163,6 +169,16 @@ function formatPhone(phone: string) {
     return `+55 (${digits.slice(2, 4)}) ${digits.slice(4, 8)}-${digits.slice(8)}`;
   }
   return phone || "Sem telefone";
+}
+
+function getMetric(data: WhatsAppCrmData, label: string, fallback: Omit<WhatsAppCrmData["metrics"][number], "label">) {
+  const found = data.metrics.find((metric) => metric.label.toLowerCase() === label.toLowerCase());
+  return found || { label, ...fallback };
+}
+
+function hasActiveWhatsappAgent(agent: { connected?: boolean; runtimeStatus?: string; status?: string }) {
+  const status = `${agent.runtimeStatus || ""} ${agent.status || ""}`.toLowerCase();
+  return Boolean(agent.connected && !status.includes("paused") && !status.includes("pausado") && !status.includes("archived"));
 }
 
 function contextDraftFromLead(lead?: WhatsAppCrmLeadCard): ContextDraft {
@@ -1104,21 +1120,140 @@ export function WhatsAppCrmPage({
     }
   }
 
+  const openConversationsMetric = getMetric(data, "Conversas abertas", {
+    value: String(data.leads.filter((lead) => lead.conversationStatus !== "closed").length),
+    detail: "fila de atendimento",
+    tone: "cyan",
+  });
+  const handoffMetric = getMetric(data, "Handoff humano", {
+    value: String(counts.handoff),
+    detail: "pedem humano ou revisao",
+    tone: counts.handoff ? "yellow" : "green",
+  });
+  const hotLeadsMetric = getMetric(data, "Leads quentes", {
+    value: String(counts.quentes),
+    detail: "score 70+",
+    tone: "green",
+  });
+  const qualityMetric = getMetric(data, "Qualidade IA", {
+    value: data.reviews.length
+      ? String(Math.round(data.reviews.reduce((sum, review) => sum + Math.max(0, review.score), 0) / data.reviews.length))
+      : "-",
+    detail: "auditoria das conversas",
+    tone: data.reviews.length ? "green" : "muted",
+  });
+  const agentInstances = willianInstance?.agentInstances || [];
+  const configuredAgentCount = Math.max(data.agents.length, agentInstances.length, willianAgentConfig ? 1 : 0);
+  const connectedAgentCount =
+    agentInstances.length > 0
+      ? agentInstances.filter(hasActiveWhatsappAgent).length
+      : data.agents.filter((agent) => agent.connected).length;
+  const primaryConnected = Boolean(
+    willianInstance?.status?.connected ||
+      willianInstance?.status?.loggedIn ||
+      willianInstance?.whatsappReady ||
+      connectedAgentCount > 0
+  );
+  const criticalLeads = data.leads.filter(
+    (lead) => lead.humanInterventionActive || lead.slaStatus === "vencido" || lead.score >= 85
+  );
+  const pendingFollowUps = data.followUps.filter(
+    (followUp) => !["sent", "cancelled", "canceled", "failed"].includes(followUp.status.toLowerCase())
+  );
+  const reviewAlerts = data.reviews.filter((review) => review.score > 0 && review.score < 62).length;
+  const panelTitle = panelTab === "agents" ? "Configurar atendentes" : "Operar inbox";
+  const panelSubtitle =
+    panelTab === "agents"
+      ? "Conexao, QR Code, prompt, voz, comportamento, multicanal e conhecimento."
+      : "Fila, qualificacao, conversa, respostas humanas, SLA, follow-up e auditoria.";
+  const overviewCards: Array<{
+    label: string;
+    value: string;
+    detail: string;
+    icon: ActionIcon;
+    tone: ResourceTone;
+  }> = [
+    {
+      label: "Conexao WhatsApp",
+      value: primaryConnected ? `${connectedAgentCount}/${configuredAgentCount || 1}` : "pendente",
+      detail: primaryConnected ? "agentes online" : "aguardando leitura do QR",
+      icon: Radio,
+      tone: primaryConnected ? "green" : "yellow",
+    },
+    {
+      label: openConversationsMetric.label,
+      value: openConversationsMetric.value,
+      detail: openConversationsMetric.detail,
+      icon: MessageCircle,
+      tone: openConversationsMetric.tone,
+    },
+    {
+      label: handoffMetric.label,
+      value: handoffMetric.value,
+      detail: handoffMetric.detail,
+      icon: Users,
+      tone: handoffMetric.tone,
+    },
+    {
+      label: qualityMetric.label,
+      value: qualityMetric.value,
+      detail: reviewAlerts ? `${reviewAlerts} alertas de revisao` : qualityMetric.detail,
+      icon: Sparkles,
+      tone: reviewAlerts ? "yellow" : qualityMetric.tone,
+    },
+  ];
+  const cockpitCards: Array<{
+    label: string;
+    value: string;
+    detail: string;
+    icon: ActionIcon;
+    tone: ResourceTone;
+  }> = [
+    {
+      label: "Leads quentes",
+      value: hotLeadsMetric.value,
+      detail: hotLeadsMetric.detail,
+      icon: Flame,
+      tone: hotLeadsMetric.tone,
+    },
+    {
+      label: "Sem resposta",
+      value: String(counts.semresposta),
+      detail: "ultima mensagem foi do lead",
+      icon: AlertTriangle,
+      tone: counts.semresposta ? "red" : "green",
+    },
+    {
+      label: "Follow-ups",
+      value: String(pendingFollowUps.length),
+      detail: data.followUps.length ? "pendentes ou agendados" : "sem fila pendente",
+      icon: CalendarClock,
+      tone: pendingFollowUps.length ? "yellow" : "muted",
+    },
+    {
+      label: "Fila critica",
+      value: String(criticalLeads.length),
+      detail: "handoff, SLA ou score alto",
+      icon: ShieldAlert,
+      tone: criticalLeads.length ? "red" : "green",
+    },
+  ];
+
   return (
-    <div className="mx-auto min-h-screen max-w-[1700px] px-4 py-4 lg:px-5">
-      <section className="mb-4 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] px-4 py-5">
-        <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
+    <div className="mx-auto grid min-h-screen max-w-[1760px] gap-4 px-4 py-4 lg:px-5">
+      <section className="overflow-hidden rounded-lg border border-[var(--admin-border)] bg-[linear-gradient(180deg,#ffffff_0%,#fffaf3_100%)] shadow-sm shadow-[rgba(81,60,36,0.06)]">
+        <div className="grid gap-5 border-b border-[var(--admin-border)] px-4 py-5 lg:px-5 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
           <div className="min-w-0">
-            <div className="mb-3 inline-flex h-9 items-center gap-2 rounded-lg border border-[rgba(34,197,94,0.24)] bg-[rgba(34,197,94,0.08)] px-3 text-xs font-semibold text-[var(--admin-green)]">
-              <MessageCircle size={15} />
+            <div className="mb-3 inline-flex h-8 items-center gap-2 rounded-md border border-[rgba(19,122,69,0.2)] bg-[rgba(19,122,69,0.08)] px-3 text-xs font-semibold text-[var(--admin-green)]">
+              <Activity size={14} />
               Central WhatsApp
             </div>
-            <h1 className="text-2xl font-semibold tracking-tight text-white">Agentes WhatsApp</h1>
+            <h1 className="text-2xl font-semibold tracking-tight text-[var(--admin-foreground)]">Agentes WhatsApp</h1>
             <p className="mt-2 max-w-4xl text-sm leading-6 text-[var(--admin-muted)]">
-              Painel dos atendentes: conexao, voz, prompt, CRM, inbox, SLA, handoff e follow-up.
+              Controle operacional dos atendentes: conexao, voz, prompt, CRM, inbox, SLA, handoff e follow-up.
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 xl:justify-end">
             <StatusBadge tone={crmData.source === "supabase" ? "green" : "yellow"}>
               {crmData.source === "supabase" ? "dados reais" : "modo exemplo"}
             </StatusBadge>
@@ -1145,15 +1280,37 @@ export function WhatsAppCrmPage({
             </ActionButton>
           </div>
         </div>
+
+        <div className="grid gap-3 px-4 py-4 sm:grid-cols-2 xl:grid-cols-4">
+          {overviewCards.map((card) => {
+            const Icon = card.icon;
+            return (
+              <article key={card.label} className={cn("min-h-[116px] rounded-lg border px-4 py-4", toneBg[card.tone])}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-xs font-medium text-[var(--admin-muted)]">{card.label}</p>
+                    <p className={cn("mt-3 font-mono text-3xl font-bold tracking-tight", toneText[card.tone])}>
+                      {card.value}
+                    </p>
+                  </div>
+                  <span className={cn("grid size-9 shrink-0 place-items-center rounded-md border", toneBg[card.tone])}>
+                    <Icon size={17} className={toneText[card.tone]} />
+                  </span>
+                </div>
+                <p className="mt-2 text-xs leading-5 text-[var(--admin-muted)]">{card.detail}</p>
+              </article>
+            );
+          })}
+        </div>
         {crmData.reason && (
-          <div className="mt-4 rounded-md border border-[rgba(234,179,8,0.28)] bg-[rgba(234,179,8,0.08)] px-3 py-2 text-xs text-[var(--admin-yellow)]">
+          <div className="mx-4 mb-4 rounded-md border border-[rgba(234,179,8,0.28)] bg-[rgba(234,179,8,0.08)] px-3 py-2 text-xs text-[var(--admin-yellow)]">
             {crmData.reason}
           </div>
         )}
         {feedback && (
           <div
             className={cn(
-              "mt-4 rounded-md border px-3 py-2 text-xs",
+              "mx-4 mb-4 rounded-md border px-3 py-2 text-xs",
               feedback.type === "ok"
                 ? "border-[rgba(34,197,94,0.28)] bg-[rgba(34,197,94,0.08)] text-[var(--admin-green)]"
                 : "border-[rgba(239,68,68,0.32)] bg-[rgba(239,68,68,0.08)] text-[var(--admin-red)]"
@@ -1162,7 +1319,11 @@ export function WhatsAppCrmPage({
             {feedback.msg}
           </div>
         )}
-        <div className="mt-5 flex flex-wrap gap-2">
+      </section>
+
+      <section className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-2 shadow-sm shadow-[rgba(81,60,36,0.04)]">
+          <div className="grid gap-2 md:grid-cols-2">
           {panelTabs.map((tab) => {
             const Icon = tab.icon;
             const active = panelTab === tab.key;
@@ -1172,25 +1333,65 @@ export function WhatsAppCrmPage({
                 type="button"
                 onClick={() => setPanelTab(tab.key)}
                 className={cn(
-                  "flex min-h-12 items-center gap-3 rounded-lg border px-3 py-2 text-left transition",
+                  "grid min-h-16 grid-cols-[36px_minmax(0,1fr)_16px] items-center gap-3 rounded-md border px-3 py-2 text-left transition",
                   active
-                    ? "border-[var(--admin-cyan)] bg-[rgba(0,243,255,0.08)] text-white"
-                    : "border-[var(--admin-border)] bg-white/[0.03] text-[var(--admin-muted)] hover:text-white"
+                    ? "border-[rgba(200,90,31,0.28)] bg-[rgba(200,90,31,0.08)] text-[var(--admin-foreground)]"
+                    : "border-transparent bg-transparent text-[var(--admin-muted)] hover:bg-[rgba(184,122,22,0.07)] hover:text-[var(--admin-foreground)]"
                 )}
               >
-                <Icon size={16} className={active ? "text-[var(--admin-cyan)]" : "text-[var(--admin-muted)]"} />
-                <span>
-                  <span className="block text-xs font-semibold">{tab.label}</span>
-                  <span className="mt-0.5 block text-[10px] text-[var(--admin-muted)]">{tab.detail}</span>
+                <span
+                  className={cn(
+                    "grid size-9 place-items-center rounded-md border",
+                    active ? "border-[rgba(200,90,31,0.24)] bg-white text-[var(--admin-cyan)]" : "border-[var(--admin-border)] text-[var(--admin-muted)]"
+                  )}
+                >
+                  <Icon size={16} />
                 </span>
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-semibold">{tab.label}</span>
+                  <span className="mt-0.5 block truncate text-[11px] text-[var(--admin-muted)]">{tab.detail}</span>
+                </span>
+                <ChevronRight size={15} className={active ? "text-[var(--admin-cyan)]" : "text-[var(--admin-muted)]"} />
               </button>
             );
           })}
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-4 shadow-sm shadow-[rgba(81,60,36,0.04)]">
+          <div className="flex items-start gap-3">
+            <span className="grid size-10 shrink-0 place-items-center rounded-md border border-[rgba(200,90,31,0.2)] bg-[rgba(200,90,31,0.08)] text-[var(--admin-cyan)]">
+              {panelTab === "agents" ? <Bot size={18} /> : <MessageCircle size={18} />}
+            </span>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-[var(--admin-foreground)]">{panelTitle}</p>
+              <p className="mt-1 text-xs leading-5 text-[var(--admin-muted)]">{panelSubtitle}</p>
+              <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--admin-muted)]">
+                Atualizado {formatDateTime(data.generatedAt)}
+              </p>
+            </div>
+          </div>
         </div>
       </section>
 
       {panelTab === "agents" ? (
-        <section className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)]">
+        <section className="grid gap-4">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {cockpitCards.map((card) => {
+              const Icon = card.icon;
+              return (
+                <article key={card.label} className={cn("rounded-lg border px-4 py-4", toneBg[card.tone])}>
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs font-medium text-[var(--admin-muted)]">{card.label}</p>
+                    <Icon size={16} className={toneText[card.tone]} />
+                  </div>
+                  <p className={cn("mt-3 font-mono text-2xl font-bold", toneText[card.tone])}>{card.value}</p>
+                  <p className="mt-1 text-xs leading-5 text-[var(--admin-muted)]">{card.detail}</p>
+                </article>
+              );
+            })}
+          </div>
+
           <WillianAgentPanel
             initialAgentKey={willianAgentConfig?.agentKey || willianInstance?.agentKey}
             initialConfig={willianAgentConfig}
@@ -1199,18 +1400,6 @@ export function WhatsAppCrmPage({
         </section>
       ) : (
         <>
-      <section className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
-        {data.metrics.map((metric) => (
-          <article key={metric.label} className={cn("min-h-[126px] rounded-lg border px-4 py-4", toneBg[metric.tone])}>
-            <p className="text-xs font-medium text-[var(--admin-muted)]">{metric.label}</p>
-            <div className={cn("mt-5 font-mono text-3xl font-bold tracking-tight", toneText[metric.tone])}>
-              {metric.value}
-            </div>
-            <p className="mt-2 text-xs leading-5 text-[var(--admin-muted)]">{metric.detail}</p>
-          </article>
-        ))}
-      </section>
-
       <section className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(380px,0.75fr)]">
         <DashboardCard
           title="Fila de atendimento"
@@ -1226,7 +1415,7 @@ export function WhatsAppCrmPage({
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
                   placeholder="Buscar lead, telefone, agente ou mensagem"
-                  className="h-10 w-full rounded-lg border border-[var(--admin-border)] bg-black/20 pl-9 pr-3 text-sm text-white outline-none placeholder:text-[var(--admin-muted)] focus:border-[var(--admin-cyan)]"
+                  className="h-10 w-full rounded-lg border border-[var(--admin-border)] bg-white pl-9 pr-3 text-sm text-[var(--admin-foreground)] outline-none placeholder:text-[var(--admin-muted)] focus:border-[var(--admin-cyan)]"
                 />
               </div>
               <div className="flex flex-wrap gap-2">
@@ -1238,8 +1427,8 @@ export function WhatsAppCrmPage({
                     className={cn(
                       "h-9 rounded-md border px-3 text-xs font-semibold transition",
                       filter === key
-                        ? "border-white bg-white text-black"
-                        : "border-[var(--admin-border)] bg-white/[0.03] text-[var(--admin-muted)] hover:text-white"
+                        ? "border-[rgba(200,90,31,0.28)] bg-[rgba(200,90,31,0.1)] text-[var(--admin-cyan)]"
+                        : "border-[var(--admin-border)] bg-white text-[var(--admin-muted)] hover:text-[var(--admin-foreground)]"
                     )}
                   >
                     {filterLabels[key]} {counts[key]}
@@ -1272,6 +1461,26 @@ export function WhatsAppCrmPage({
         </DashboardCard>
 
         <div className="grid content-start gap-4">
+          <DashboardCard title="Cockpit do CRM" eyebrow="prioridade / automacao">
+            <div className="grid gap-2 sm:grid-cols-2">
+              {cockpitCards.map((card) => {
+                const Icon = card.icon;
+                return (
+                  <div key={card.label} className={cn("rounded-md border px-3 py-3", toneBg[card.tone])}>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="truncate text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--admin-muted)]">
+                        {card.label}
+                      </p>
+                      <Icon size={14} className={toneText[card.tone]} />
+                    </div>
+                    <p className={cn("mt-2 font-mono text-xl font-bold", toneText[card.tone])}>{card.value}</p>
+                    <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-[var(--admin-muted)]">{card.detail}</p>
+                  </div>
+                );
+              })}
+            </div>
+          </DashboardCard>
+
           <LeadDetail
             lead={selectedLead}
             busyAction={busyAction}
