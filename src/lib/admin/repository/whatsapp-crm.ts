@@ -144,6 +144,10 @@ function timestamp(value: unknown) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function isDbRow(value: unknown): value is DbRow {
+  return Object.keys(asRecord(value)).length > 0;
+}
+
 function addMinutes(iso: string, minutes: number) {
   const base = timestamp(iso) || Date.now();
   return new Date(base + minutes * 60_000).toISOString();
@@ -236,7 +240,8 @@ function extractQualification(lead: DbRow, conversation: DbRow, profile?: DbRow)
   };
 }
 
-function messageCreatedAt(message: DbRow) {
+function messageCreatedAt(message?: DbRow) {
+  if (!message) return "";
   return asString(message.occurred_at, asString(message.created_at));
 }
 
@@ -248,17 +253,18 @@ function messagePreview(message?: DbRow) {
   return `[${messageType}]`;
 }
 
-function messageBody(message: DbRow) {
+function messageBody(message?: DbRow) {
+  if (!message) return "[mensagem]";
   const text = asString(message.text, asString(message.transcript));
   if (text) return text.length > 1800 ? `${text.slice(0, 1797)}...` : text;
   const messageType = asString(message.message_type, "midia");
   return `[${messageType}]`;
 }
 
-function deliveryStatus(message: DbRow) {
-  const payload = asRecord(message.payload);
+function deliveryStatus(message?: DbRow) {
+  const payload = asRecord(message?.payload);
   const delivery = asRecord(payload.delivery);
-  return asString(message.delivery_status, asString(delivery.providerStatus, asString(delivery.status)));
+  return asString(message?.delivery_status, asString(delivery.providerStatus, asString(delivery.status)));
 }
 
 function timelineItem(message: DbRow): WhatsAppCrmTimelineItem {
@@ -307,7 +313,7 @@ function whatsappUrl(phone: string) {
 }
 
 function recentTimeline(messages: DbRow[]) {
-  return messages.slice(0, 40).map(timelineItem).reverse();
+  return messages.filter(isDbRow).slice(0, 40).map(timelineItem).reverse();
 }
 
 function computeSla(input: {
@@ -584,14 +590,16 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
     };
   }
 
-  const leadRows = ((leadsResult.data || []) as DbRow[]).filter((row) => asString(row.id));
-  const conversationRows = ((conversationsResult.data || []) as DbRow[]).filter((row) => asString(row.id));
-  const messageRows = ((messagesResult.data || []) as DbRow[]).filter((row) => asString(row.id));
-  const instanceRows = ((instancesResult.data || []) as DbRow[]).filter((row) => asString(row.id) || asString(row.agent_key));
-  const agentRows = ((agentsResult.data || []) as DbRow[]).filter(isWhatsappAgent);
-  const profileRows = profilesResult.error ? [] : ((profilesResult.data || []) as DbRow[]);
-  const followUpRows = followUpsResult.error ? [] : ((followUpsResult.data || []) as DbRow[]);
-  const reviewRows = reviewsResult.error ? [] : ((reviewsResult.data || []) as DbRow[]);
+  const leadRows = ((leadsResult.data || []) as unknown[]).filter(isDbRow).filter((row) => asString(row.id));
+  const conversationRows = ((conversationsResult.data || []) as unknown[]).filter(isDbRow).filter((row) => asString(row.id));
+  const messageRows = ((messagesResult.data || []) as unknown[]).filter(isDbRow).filter((row) => asString(row.id));
+  const instanceRows = ((instancesResult.data || []) as unknown[])
+    .filter(isDbRow)
+    .filter((row) => asString(row.id) || asString(row.agent_key));
+  const agentRows = ((agentsResult.data || []) as unknown[]).filter(isDbRow).filter(isWhatsappAgent);
+  const profileRows = profilesResult.error ? [] : ((profilesResult.data || []) as unknown[]).filter(isDbRow);
+  const followUpRows = followUpsResult.error ? [] : ((followUpsResult.data || []) as unknown[]).filter(isDbRow);
+  const reviewRows = reviewsResult.error ? [] : ((reviewsResult.data || []) as unknown[]).filter(isDbRow);
 
   const leadsById = new Map(leadRows.map((row) => [asString(row.id), row]));
   const profilesByLead = new Map(profileRows.map((row) => [asString(row.lead_id), row]));
