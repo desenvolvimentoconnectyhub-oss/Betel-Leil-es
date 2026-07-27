@@ -858,7 +858,7 @@ export function WillianAgentPanel({
   ) : null;
 
   return (
-    <section className="grid gap-4">
+    <section className="grid gap-2">
       <WhatsAppAgentManager
         agents={whatsappAgents}
         companyName={config.companyName}
@@ -885,9 +885,9 @@ export function WillianAgentPanel({
 
       {selectedWhatsappAgent ? (
         <>
-          <div className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-3 shadow-sm shadow-[rgba(81,60,36,0.06)]">
-            <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-2 shadow-sm shadow-[rgba(81,60,36,0.06)]">
+            <div className="grid gap-2 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
+              <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-5">
                 <InfoBox label="Agente" value={displayWhatsappAgentName(selectedWhatsappAgent)} />
                 <InfoBox label="Empresa" value={selectedWhatsappAgent?.companyName || config.companyName} />
                 <InfoBox
@@ -898,11 +898,11 @@ export function WillianAgentPanel({
                 <InfoBox label="Conversa" value={conversationModeLabels[config.behavior.conversationMode]} />
                 <InfoBox label="Alteracoes" value={changeLabel} tone={config.status === "saved" ? "green" : "yellow"} />
               </div>
-              <div className="grid gap-2 sm:grid-cols-3 xl:w-[360px]">
+              <div className="grid gap-1.5 sm:grid-cols-[80px_80px_80px_auto] xl:w-[360px]">
                 <MiniKpi label="Pronto" value={`${readyScore}%`} tone={readyScore >= 70 ? "green" : "yellow"} />
                 <MiniKpi label="VIP" value={`${config.qualification.vipScore}+`} tone="cyan" />
                 <MiniKpi label="Perguntas" value={String(config.qualification.questionsLimit)} tone="purple" />
-                <div className="sm:col-span-3">
+                <div className="sm:col-span-1">
                   <ActionButton
                     icon={<Save size={14} />}
                     label="Salvar tudo"
@@ -931,16 +931,16 @@ export function WillianAgentPanel({
                     aria-selected={active}
                     onClick={() => setActiveTab(tab.key)}
                     className={cn(
-                      "grid min-h-[58px] grid-cols-[18px_minmax(0,1fr)] items-center gap-2 rounded-lg px-3 text-left transition",
+                      "grid min-h-10 grid-cols-[16px_minmax(0,1fr)] items-center gap-1.5 rounded-md px-2 text-left transition",
                       active
                         ? "bg-[rgba(200,90,31,0.1)] text-[var(--admin-foreground)] shadow-[inset_0_0_0_1px_rgba(200,90,31,0.18)]"
                         : "text-[var(--admin-muted)] hover:bg-[rgba(184,122,22,0.07)] hover:text-[var(--admin-foreground)]"
                     )}
                   >
-                    <Icon size={17} className={active ? "text-[var(--admin-cyan)]" : "text-[var(--admin-muted)]"} />
+                    <Icon size={14} className={active ? "text-[var(--admin-cyan)]" : "text-[var(--admin-muted)]"} />
                     <span className="min-w-0">
-                      <span className="block truncate text-sm font-semibold">{tab.label}</span>
-                      <span className="mt-0.5 hidden truncate text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--admin-muted)] sm:block">
+                      <span className="block truncate text-xs font-semibold">{tab.label}</span>
+                      <span className="hidden truncate text-[8px] font-bold uppercase tracking-[0.1em] text-[var(--admin-muted)] xl:block">
                         {tab.subtitle}
                       </span>
                     </span>
@@ -1123,33 +1123,33 @@ function WhatsAppAgentManager({
 
   return (
     <div className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(81,60,36,0.05)]">
-      <div className="flex items-center justify-between gap-3 border-b border-[var(--admin-border)] px-4 py-4 sm:px-5">
+      <div className="flex items-center justify-between gap-3 border-b border-[var(--admin-border)] px-3 py-2">
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--admin-muted)]">Escolher / criar / clonar</p>
-          <h3 className="mt-1 text-base font-bold text-[var(--admin-foreground)]">Agentes de WhatsApp</h3>
+          <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-[var(--admin-muted)]">Escolher / criar / clonar</p>
+          <h3 className="text-sm font-bold text-[var(--admin-foreground)]">Agentes de WhatsApp</h3>
         </div>
         <StatusPill ok label={`${agentCount} ${agentCount === 1 ? "agente" : "agentes"}`} />
       </div>
 
-      <div className="grid gap-4 p-4 sm:p-5">
-        <div className="grid gap-3 xl:grid-cols-[minmax(260px,420px)_minmax(0,1fr)_auto] xl:items-center">
-          <label className="grid h-10 grid-cols-[18px_minmax(0,1fr)] items-center gap-2 rounded-md border border-[var(--admin-border)] bg-white px-3 text-[var(--admin-muted)]">
-            <Search size={15} />
+      <div className="grid gap-2 p-3">
+        <div className="grid gap-2 xl:grid-cols-[minmax(240px,380px)_minmax(0,1fr)_auto] xl:items-center">
+          <label className="grid h-8 grid-cols-[16px_minmax(0,1fr)] items-center gap-2 rounded-md border border-[var(--admin-border)] bg-white px-2.5 text-[var(--admin-muted)]">
+            <Search size={14} />
             <input
-              className="min-w-0 bg-transparent text-sm font-semibold text-[var(--admin-foreground)] outline-none placeholder:text-[var(--admin-muted)]"
+              className="min-w-0 bg-transparent text-xs font-semibold text-[var(--admin-foreground)] outline-none placeholder:text-[var(--admin-muted)]"
               onChange={(event) => setAgentQuery(event.target.value)}
               placeholder="Buscar agente, setor ou numero"
               value={agentQuery}
             />
           </label>
-          <div className="flex min-w-0 flex-wrap gap-2">
+          <div className="flex min-w-0 flex-wrap gap-1.5">
             {filters.map((filter) => {
               const active = agentFilter === filter.key;
               return (
                 <button
                   key={filter.key}
                   className={cn(
-                    "inline-flex h-9 items-center gap-2 rounded-md border px-3 text-xs font-bold transition",
+                    "inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-[11px] font-bold transition",
                     active
                       ? "border-[rgba(200,90,31,0.28)] bg-[rgba(200,90,31,0.1)] text-[var(--admin-cyan)]"
                       : "border-[var(--admin-border)] bg-white text-[var(--admin-muted)] hover:text-[var(--admin-foreground)]"
@@ -1170,7 +1170,7 @@ function WhatsAppAgentManager({
           />
         </div>
 
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className="grid gap-2 md:grid-cols-2">
           {filteredAgents.map((agent) => {
             const selected = agent.agentKey === selectedAgentKey;
             const paused = isWhatsappAgentPaused(agent);
@@ -1185,7 +1185,7 @@ function WhatsAppAgentManager({
               <div
                 key={agent.agentKey}
                 className={cn(
-                  "rounded-xl border p-4 transition",
+                  "rounded-lg border p-3 transition",
                   selected
                     ? "border-[rgba(200,90,31,0.35)] bg-[rgba(200,90,31,0.08)]"
                     : "border-[var(--admin-border)] bg-white"
@@ -1194,16 +1194,16 @@ function WhatsAppAgentManager({
                 <div className="flex items-start justify-between gap-3">
                   <button type="button" onClick={() => onSelect(agent.agentKey)} className="min-w-0 text-left">
                     <p className="truncate text-sm font-bold text-[var(--admin-foreground)]">{displayWhatsappAgentName(agent)}</p>
-                    <p className="mt-2 truncate text-xs font-semibold text-[var(--admin-muted)]">
+                    <p className="mt-1 truncate text-[11px] font-semibold text-[var(--admin-muted)]">
                       {agent.companyName || companyName} / {agent.sector || "Atendimento WhatsApp"}
                     </p>
-                    <p className="mt-2 truncate text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--admin-muted)]">
+                    <p className="mt-1 truncate text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--admin-muted)]">
                       {whatsappAgentOperationalLabel(agent)} {agent.instanceName ? `/ ${agent.instanceName}` : ""}
                     </p>
                   </button>
                   <StatusPill ok={!paused && agent.connected} label={statusLabel} />
                 </div>
-                <div className="mt-4 flex flex-wrap gap-2">
+                <div className="mt-2 flex flex-wrap gap-1.5">
                   <ActionButton
                     icon={<MessageCircle size={14} />}
                     label={selected ? "Aberto" : "Abrir"}
@@ -1435,20 +1435,20 @@ function ConnectionTab({
 
   return (
     <Panel title={`Conexao de ${agentLabel}`} eyebrow="Numero / agente / status" action={<StatusPill ok={connected} label={paused ? "Pausado" : connected ? "Online" : "Pendente"} />}>
-      <div className="rounded-lg border border-[var(--admin-border)] bg-white p-4 sm:p-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex min-w-0 items-center gap-3">
+      <div className="rounded-lg border border-[var(--admin-border)] bg-white p-2.5">
+        <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex min-w-0 items-center gap-2">
             <WhatsappProfileAvatar connected={connected} imageUrl={profileImageUrl} label={whatsappLabel} />
             <div className="min-w-0">
-              <p className="truncate text-lg font-bold text-[var(--admin-foreground)]">{connected ? whatsappLabel : "Aguardando leitura"}</p>
-              <p className={cn("mt-1 text-xs font-bold uppercase tracking-[0.12em]", connected ? "text-[var(--admin-green)]" : "text-[var(--admin-yellow)]")}>
+              <p className="truncate text-base font-bold text-[var(--admin-foreground)]">{connected ? whatsappLabel : "Aguardando leitura"}</p>
+              <p className={cn("text-[10px] font-bold uppercase tracking-[0.12em]", connected ? "text-[var(--admin-green)]" : "text-[var(--admin-yellow)]")}>
                 {statusLabel}
               </p>
             </div>
           </div>
 
           {hasProfileDetails && (
-            <div className="grid gap-2 text-xs text-[var(--admin-muted)] sm:min-w-64">
+            <div className="grid gap-1 text-[11px] text-[var(--admin-muted)] sm:min-w-64">
               {phoneNumber && (
                 <p className="truncate">
                   <span className="font-semibold text-[var(--admin-foreground)]">Numero:</span> {phoneNumber}
@@ -1469,7 +1469,7 @@ function ConnectionTab({
         </div>
 
         {connected ? (
-          <div className="mt-4 flex flex-wrap gap-2">
+          <div className="mt-2 flex flex-wrap gap-1.5">
             <ActionButton
               icon={<RefreshCw size={14} />}
               label="Atualizar status"
@@ -1489,10 +1489,10 @@ function ConnectionTab({
             />
           </div>
         ) : (
-          <div className="mt-4 grid gap-3">
-            <div className="grid gap-3 lg:grid-cols-[minmax(0,280px)_minmax(0,1fr)]">
+          <div className="mt-2 grid gap-2">
+            <div className="grid gap-2 lg:grid-cols-[minmax(0,240px)_minmax(0,1fr)]">
               <div className="grid gap-1">
-                <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Modo de conexao</span>
+                <span className="text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Modo de conexao</span>
                 <div className="grid grid-cols-2 gap-1 rounded-md border border-[var(--admin-border)] bg-white p-1">
                   {([
                     ["qr", "QR Code"],
@@ -1503,7 +1503,7 @@ function ConnectionTab({
                       type="button"
                       onClick={() => setConnectMode(mode)}
                       className={cn(
-                        "min-h-9 rounded-md px-3 text-xs font-bold transition",
+                        "min-h-8 rounded-md px-2.5 text-[11px] font-bold transition",
                         connectMode === mode
                           ? "bg-[rgba(200,90,31,0.1)] text-[var(--admin-cyan)] shadow-[inset_0_0_0_1px_rgba(200,90,31,0.18)]"
                           : "text-[var(--admin-muted)] hover:bg-[rgba(184,122,22,0.07)] hover:text-[var(--admin-foreground)]"
@@ -1517,20 +1517,20 @@ function ConnectionTab({
 
               {phoneMode && (
                 <label className="grid gap-1">
-                  <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Telefone com DDI</span>
+                  <span className="text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Telefone com DDI</span>
                   <input
                     inputMode="numeric"
                     maxLength={16}
                     onChange={(event) => setPairingPhone(normalizePairingPhone(event.target.value))}
                     placeholder="5511999999999"
                     value={pairingPhone}
-                    className="h-11 rounded-md border border-[var(--admin-border)] bg-white px-3 font-mono text-sm text-[var(--admin-foreground)] outline-none transition focus:border-[var(--admin-cyan)]"
+                    className="h-9 rounded-md border border-[var(--admin-border)] bg-white px-3 font-mono text-sm text-[var(--admin-foreground)] outline-none transition focus:border-[var(--admin-cyan)]"
                   />
                 </label>
               )}
             </div>
 
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-1.5">
               <ActionButton
                 disabled={!canStartConnection}
                 icon={phoneMode ? <Phone size={14} /> : <QrCode size={14} />}
@@ -1561,13 +1561,13 @@ function ConnectionTab({
         )}
 
         {setupPending && (
-          <div className="mt-4 rounded-lg border border-[rgba(234,179,8,0.28)] bg-[rgba(234,179,8,0.08)] px-3 py-2 text-xs font-semibold text-[var(--admin-yellow)]">
+          <div className="mt-2 rounded-md border border-[rgba(234,179,8,0.28)] bg-[rgba(234,179,8,0.08)] px-3 py-1.5 text-xs font-semibold text-[var(--admin-yellow)]">
             Chave ConnectyHub, webhook ou liberacao do provedor esta pendente na manutencao.
           </div>
         )}
 
         {pairingConnection && (
-          <div className="mt-4 rounded-lg border border-[rgba(0,243,255,0.22)] bg-[rgba(0,243,255,0.06)] p-4">
+          <div className="mt-2 rounded-md border border-[rgba(200,90,31,0.22)] bg-[rgba(200,90,31,0.06)] p-3">
             <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-cyan)]">Pareamento de {pairingLabel}</p>
             {pairingConnection.status && (
               <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--admin-muted)]">
@@ -2430,15 +2430,15 @@ function PromptDrawer({ children, title }: { children: ReactNode; title: string 
 
 function Panel({ action, children, eyebrow, title }: { action?: ReactNode; children: ReactNode; eyebrow: string; title: string }) {
   return (
-    <div className="rounded-xl border border-[var(--admin-border)] bg-[rgba(255,255,255,0.02)]">
-      <div className="flex items-center justify-between gap-3 border-b border-[var(--admin-border)] px-4 py-3">
+    <div className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)]">
+      <div className="flex items-center justify-between gap-3 border-b border-[var(--admin-border)] px-3 py-2">
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--admin-muted)]">{eyebrow}</p>
-          <h4 className="mt-1 font-semibold text-white">{title}</h4>
+          <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-[var(--admin-muted)]">{eyebrow}</p>
+          <h4 className="text-sm font-semibold text-[var(--admin-foreground)]">{title}</h4>
         </div>
         {action}
       </div>
-      <div className="p-4">{children}</div>
+      <div className="p-2.5">{children}</div>
     </div>
   );
 }
@@ -2451,7 +2451,7 @@ function Field({ label, onChange, placeholder, value }: { label: string; onChang
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
-        className="h-10 rounded-lg border border-[var(--admin-border)] bg-[#050505] px-3 text-sm text-white outline-none transition focus:border-[var(--admin-cyan)]"
+        className="h-9 rounded-md border border-[var(--admin-border)] bg-white px-3 text-sm text-[var(--admin-foreground)] outline-none transition focus:border-[var(--admin-cyan)]"
       />
     </label>
   );
@@ -2465,7 +2465,7 @@ function TextAreaField({ label, onChange, rows, value }: { label: string; onChan
         value={value}
         onChange={(event) => onChange(event.target.value)}
         rows={rows}
-        className="w-full rounded-lg border border-[var(--admin-border)] bg-[#050505] p-3 text-sm leading-6 text-white outline-none transition focus:border-[var(--admin-cyan)]"
+        className="w-full rounded-md border border-[var(--admin-border)] bg-white p-2.5 text-sm leading-5 text-[var(--admin-foreground)] outline-none transition focus:border-[var(--admin-cyan)]"
       />
     </label>
   );
@@ -2479,7 +2479,7 @@ function NumberField({ label, onChange, value }: { label: string; onChange: (val
         value={value}
         onChange={(event) => onChange(safeNumber(event.target.value, value))}
         inputMode="numeric"
-        className="h-10 rounded-lg border border-[var(--admin-border)] bg-[#050505] px-3 text-sm text-white outline-none transition focus:border-[var(--admin-cyan)]"
+        className="h-9 rounded-md border border-[var(--admin-border)] bg-white px-3 text-sm text-[var(--admin-foreground)] outline-none transition focus:border-[var(--admin-cyan)]"
       />
     </label>
   );
@@ -2492,7 +2492,7 @@ function SelectField({ label, onChange, options, value }: { label: string; onCha
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="h-10 rounded-lg border border-[var(--admin-border)] bg-[#050505] px-3 text-sm text-white outline-none transition focus:border-[var(--admin-cyan)]"
+        className="h-9 rounded-md border border-[var(--admin-border)] bg-white px-3 text-sm text-[var(--admin-foreground)] outline-none transition focus:border-[var(--admin-cyan)]"
       >
         {options.map(([optionValue, labelText]) => (
           <option key={optionValue} value={optionValue}>{labelText}</option>
@@ -2516,17 +2516,17 @@ function SegmentedField({
   return (
     <div className="grid gap-1">
       <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">{label}</span>
-      <div className="grid gap-2 rounded-lg border border-[var(--admin-border)] bg-[#050505] p-1 sm:grid-cols-3">
+      <div className="grid gap-1 rounded-md border border-[var(--admin-border)] bg-white p-1 sm:grid-cols-3">
         {options.map(([optionValue, labelText]) => (
           <button
             key={optionValue}
             type="button"
             onClick={() => onChange(optionValue)}
             className={cn(
-              "min-h-9 rounded-md px-3 text-xs font-bold text-[var(--admin-muted)] transition",
+              "min-h-8 rounded-md px-2.5 text-[11px] font-bold text-[var(--admin-muted)] transition",
               value === optionValue
-                ? "bg-[rgba(0,243,255,0.13)] text-[var(--admin-cyan)] shadow-[0_0_0_1px_rgba(0,243,255,0.2)]"
-                : "hover:bg-[rgba(255,255,255,0.04)] hover:text-white"
+                ? "bg-[rgba(200,90,31,0.1)] text-[var(--admin-cyan)] shadow-[inset_0_0_0_1px_rgba(200,90,31,0.18)]"
+                : "hover:bg-[rgba(184,122,22,0.07)] hover:text-[var(--admin-foreground)]"
             )}
           >
             {labelText}
@@ -2539,7 +2539,7 @@ function SegmentedField({
 
 function BehaviorIcon({ icon, label }: { icon: ReactNode; label: string }) {
   return (
-    <span className="inline-flex items-center gap-2 rounded-full border border-[var(--admin-border)] bg-[#050505] px-3 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--admin-cyan)]">
+    <span className="inline-flex items-center gap-2 rounded-full border border-[var(--admin-border)] bg-white px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.08em] text-[var(--admin-cyan)]">
       {icon}
       {label}
     </span>
@@ -2552,17 +2552,17 @@ function CompactToggle({ checked, detail, onChange, title }: { checked: boolean;
       type="button"
       onClick={() => onChange(!checked)}
       className={cn(
-        "flex min-h-16 items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left transition",
+        "flex min-h-12 items-center justify-between gap-2 rounded-md border px-2.5 py-2 text-left transition",
         checked
-          ? "border-[rgba(0,243,255,0.24)] bg-[rgba(0,243,255,0.075)]"
-          : "border-[var(--admin-border)] bg-[rgba(255,255,255,0.018)] hover:border-[rgba(255,255,255,0.18)]"
+          ? "border-[rgba(200,90,31,0.24)] bg-[rgba(200,90,31,0.075)]"
+          : "border-[var(--admin-border)] bg-white hover:border-[rgba(200,90,31,0.18)]"
       )}
     >
       <span className="min-w-0">
-        <span className="block truncate text-xs font-semibold text-white">{title}</span>
+        <span className="block truncate text-xs font-semibold text-[var(--admin-foreground)]">{title}</span>
         <span className="mt-0.5 line-clamp-2 block text-[11px] leading-4 text-[var(--admin-muted)]">{detail}</span>
       </span>
-      <span className={cn("h-5 w-9 shrink-0 rounded-full border p-0.5 transition", checked ? "border-[rgba(0,243,255,0.45)] bg-[rgba(0,243,255,0.25)]" : "border-[var(--admin-border)] bg-black")}>
+      <span className={cn("h-5 w-9 shrink-0 rounded-full border p-0.5 transition", checked ? "border-[rgba(200,90,31,0.45)] bg-[rgba(200,90,31,0.18)]" : "border-[var(--admin-border)] bg-white")}>
         <span className={cn("block size-3.5 rounded-full transition", checked ? "translate-x-4 bg-[var(--admin-cyan)]" : "bg-[var(--admin-muted)]")} />
       </span>
     </button>
@@ -2589,15 +2589,15 @@ function VoiceCard({
       type="button"
       onClick={onClick}
       className={cn(
-        "rounded-lg border p-3 text-left transition",
+        "rounded-md border p-2.5 text-left transition",
         active
-          ? "border-[rgba(0,243,255,0.3)] bg-[rgba(0,243,255,0.08)]"
-          : "border-[var(--admin-border)] bg-[rgba(255,255,255,0.02)] hover:border-[rgba(255,255,255,0.18)]"
+          ? "border-[rgba(200,90,31,0.3)] bg-[rgba(200,90,31,0.08)]"
+          : "border-[var(--admin-border)] bg-white hover:border-[rgba(200,90,31,0.18)]"
       )}
     >
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-sm font-semibold text-white">{label}</p>
+          <p className="text-sm font-semibold text-[var(--admin-foreground)]">{label}</p>
           <p className="mt-1 text-xs leading-5 text-[var(--admin-muted)]">{detail}</p>
         </div>
         <span className="rounded-full border border-[rgba(229,178,74,0.24)] bg-[rgba(229,178,74,0.08)] px-2 py-1 text-[10px] font-bold uppercase text-[var(--admin-yellow)]">
@@ -2614,17 +2614,17 @@ function ToggleTile({ checked, detail, onChange, title }: { checked: boolean; de
       type="button"
       onClick={() => onChange(!checked)}
       className={cn(
-        "flex min-h-20 items-start justify-between gap-3 rounded-lg border p-3 text-left transition",
+        "flex min-h-16 items-start justify-between gap-2 rounded-md border p-2.5 text-left transition",
         checked
-          ? "border-[rgba(0,243,255,0.25)] bg-[rgba(0,243,255,0.08)]"
-          : "border-[var(--admin-border)] bg-[rgba(255,255,255,0.02)] hover:border-[rgba(255,255,255,0.18)]"
+          ? "border-[rgba(200,90,31,0.25)] bg-[rgba(200,90,31,0.08)]"
+          : "border-[var(--admin-border)] bg-white hover:border-[rgba(200,90,31,0.18)]"
       )}
     >
       <span>
-        <span className="block text-sm font-semibold text-white">{title}</span>
+        <span className="block text-sm font-semibold text-[var(--admin-foreground)]">{title}</span>
         <span className="mt-1 block text-xs leading-5 text-[var(--admin-muted)]">{detail}</span>
       </span>
-      <span className={cn("mt-0.5 h-5 w-9 rounded-full border p-0.5 transition", checked ? "border-[rgba(0,243,255,0.45)] bg-[rgba(0,243,255,0.25)]" : "border-[var(--admin-border)] bg-black")}>
+      <span className={cn("mt-0.5 h-5 w-9 rounded-full border p-0.5 transition", checked ? "border-[rgba(200,90,31,0.45)] bg-[rgba(200,90,31,0.18)]" : "border-[var(--admin-border)] bg-white")}>
         <span className={cn("block size-3.5 rounded-full transition", checked ? "translate-x-4 bg-[var(--admin-cyan)]" : "bg-[var(--admin-muted)]")} />
       </span>
     </button>
@@ -2634,7 +2634,7 @@ function ToggleTile({ checked, detail, onChange, title }: { checked: boolean; de
 function WhatsappProfileAvatar({ connected, imageUrl, label }: { connected: boolean; imageUrl?: string; label: string }) {
   if (imageUrl) {
     return (
-      <div className="relative size-14 overflow-hidden rounded-xl border border-[rgba(0,243,255,0.28)] bg-[#050505]">
+      <div className="relative size-11 overflow-hidden rounded-lg border border-[rgba(200,90,31,0.24)] bg-white">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img alt={`Foto do WhatsApp ${label}`} src={imageUrl} className="size-full object-cover" />
         <span
@@ -2650,23 +2650,23 @@ function WhatsappProfileAvatar({ connected, imageUrl, label }: { connected: bool
   return (
     <div
       className={cn(
-        "flex size-14 items-center justify-center rounded-xl border",
+        "flex size-11 items-center justify-center rounded-lg border",
         connected
           ? "border-[rgba(34,197,94,0.35)] bg-[rgba(34,197,94,0.1)] text-[var(--admin-green)]"
           : "border-[rgba(234,179,8,0.35)] bg-[rgba(234,179,8,0.09)] text-[var(--admin-yellow)]"
       )}
     >
-      <Phone size={22} />
+      <Phone size={18} />
     </div>
   );
 }
 
 function InfoBox({ label, tone = "muted", value }: { label: string; tone?: "green" | "yellow" | "muted"; value: string }) {
-  const toneClass = tone === "green" ? "text-[var(--admin-green)]" : tone === "yellow" ? "text-[var(--admin-yellow)]" : "text-white";
+  const toneClass = tone === "green" ? "text-[var(--admin-green)]" : tone === "yellow" ? "text-[var(--admin-yellow)]" : "text-[var(--admin-foreground)]";
   return (
-    <div className="rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.025)] px-3 py-2">
-      <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">{label}</p>
-      <p className={cn("mt-1 truncate text-sm font-semibold", toneClass)}>{value}</p>
+    <div className="rounded-md border border-[var(--admin-border)] bg-white px-2.5 py-1.5">
+      <p className="text-[8px] font-bold uppercase tracking-[0.12em] text-[var(--admin-muted)]">{label}</p>
+      <p className={cn("mt-0.5 truncate text-xs font-semibold", toneClass)}>{value}</p>
     </div>
   );
 }
@@ -2679,16 +2679,16 @@ function MiniKpi({ label, tone, value }: { label: string; tone: "cyan" | "green"
     yellow: "text-[var(--admin-yellow)]",
   };
   return (
-    <div className="rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.025)] p-3">
-      <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">{label}</p>
-      <p className={cn("mt-2 text-2xl font-bold", toneClass[tone])}>{value}</p>
+    <div className="rounded-md border border-[var(--admin-border)] bg-white px-2 py-1.5">
+      <p className="text-[8px] font-bold uppercase tracking-[0.12em] text-[var(--admin-muted)]">{label}</p>
+      <p className={cn("mt-0.5 text-lg font-bold leading-none", toneClass[tone])}>{value}</p>
     </div>
   );
 }
 
 function StatusPill({ ok, label }: { ok: boolean; label: string }) {
   return (
-    <span className={cn("inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[10px] font-bold uppercase tracking-[0.08em]", ok ? "border-[rgba(34,197,94,0.3)] bg-[rgba(34,197,94,0.08)] text-[var(--admin-green)]" : "border-[rgba(234,179,8,0.28)] bg-[rgba(234,179,8,0.08)] text-[var(--admin-yellow)]")}>
+    <span className={cn("inline-flex h-6 items-center gap-1.5 rounded-full border px-2.5 text-[9px] font-bold uppercase tracking-[0.08em]", ok ? "border-[rgba(34,197,94,0.3)] bg-[rgba(34,197,94,0.08)] text-[var(--admin-green)]" : "border-[rgba(234,179,8,0.28)] bg-[rgba(234,179,8,0.08)] text-[var(--admin-yellow)]")}>
       <span className={cn("size-1.5 rounded-full", ok ? "bg-[var(--admin-green)]" : "bg-[var(--admin-yellow)]")} />
       {label}
     </span>
@@ -2716,7 +2716,7 @@ function ActionButton({
       disabled={disabled || loading}
       onClick={onClick}
       className={cn(
-        "inline-flex h-9 items-center gap-2 rounded-md border px-3 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-45",
+        "inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-[11px] font-semibold text-[var(--admin-foreground)] transition disabled:cursor-not-allowed disabled:opacity-45",
         tone === "danger"
           ? "border-[rgba(239,68,68,0.32)] bg-[rgba(239,68,68,0.08)] hover:border-[var(--admin-red)]"
           : "border-[var(--admin-border)] bg-[rgba(255,255,255,0.04)] hover:border-[var(--admin-cyan)]"
