@@ -8,6 +8,10 @@ import {
 } from "@/lib/communication/connectyhub-client";
 import { getWhatsAppAgentConfig } from "@/lib/communication/willian-agent-config";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
+import {
+  buildBetelAuctionAdvisoryContext,
+  loadWhatsAppOpportunityContext,
+} from "@/lib/whatsapp/betel-advisory-context";
 import { buildWhatsAppAgentKnowledgeContext } from "@/lib/whatsapp/agent-knowledge";
 import {
   resolveWhatsAppVoiceResponse,
@@ -163,6 +167,14 @@ async function generateFollowUpText(input: {
   try {
     const config = await getWhatsAppAgentConfig(input.agentKey);
     const agentKnowledge = buildWhatsAppAgentKnowledgeContext(config);
+    const supabase = getSupabaseAdminClient();
+    const opportunitiesContext = supabase
+      ? await loadWhatsAppOpportunityContext(supabase, {
+          profile: input.profile,
+          inboundText: historyForPrompt(input.messages),
+          limit: 5,
+        })
+      : "Supabase admin nao configurado; nao carregue oportunidades especificas.";
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ model: modelName });
     const prompt = [
@@ -181,6 +193,12 @@ async function generateFollowUpText(input: {
       "",
       "Base de conhecimento do agente:",
       agentKnowledge.knowledge,
+      "",
+      "Metodo Betel:",
+      buildBetelAuctionAdvisoryContext(),
+      "",
+      "Imoveis reais captados:",
+      opportunitiesContext,
       "",
       `Lead: ${cleanString(input.lead.name, "Lead WhatsApp")}`,
       `Telefone: ${cleanString(input.lead.phone)}`,

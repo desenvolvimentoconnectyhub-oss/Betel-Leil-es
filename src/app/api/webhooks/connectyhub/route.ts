@@ -10,6 +10,10 @@ import {
 } from "@/lib/communication/connectyhub-client";
 import { getWhatsAppAgentConfig } from "@/lib/communication/willian-agent-config";
 import type { WillianAgentConfig } from "@/lib/communication/willian-types";
+import {
+  buildBetelAuctionAdvisoryContext,
+  loadWhatsAppOpportunityContext,
+} from "@/lib/whatsapp/betel-advisory-context";
 import { buildWhatsAppAgentKnowledgeContext } from "@/lib/whatsapp/agent-knowledge";
 import {
   isWhatsAppAudioMessage,
@@ -239,9 +243,19 @@ function budgetFromText(text: string) {
   }
   const currencyMatch = lower.match(/r\$\s*([\d.\s]+)(?:,\d{2})?/);
   if (currencyMatch) {
-    return asNumber(currencyMatch[1]);
+    return parseCurrencyAmount(currencyMatch[1]);
   }
   return 0;
+}
+
+function parseCurrencyAmount(value: string) {
+  const clean = value.replace(/[^\d,.-]/g, "").trim();
+  if (!clean) return 0;
+  if (/^\d{1,3}(?:\.\d{3})+$/.test(clean)) return Number(clean.replace(/\./g, ""));
+  if (/^\d{1,3}(?:,\d{3})+$/.test(clean)) return Number(clean.replace(/,/g, ""));
+  if (clean.includes(".") && clean.includes(",")) return Number(clean.replace(/\./g, "").replace(",", "."));
+  const parsed = Number(clean.replace(",", "."));
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function extractLeadCrmSignals(text: string) {
@@ -964,7 +978,7 @@ async function loadRuntimePromptContext(
   conversationId: string,
   leadId: string
 ) {
-  const [messagesResult, leadResult] = await Promise.all([
+  const [messagesResult, leadResult, profileResult] = await Promise.all([
     supabase
       .from("whatsapp_conversation_messages")
       .select("direction,author_type,author_label,message_type,text,created_at")
@@ -975,6 +989,11 @@ async function loadRuntimePromptContext(
       .from("whatsapp_leads")
       .select("name,status,temperature,qualification_score,metadata")
       .eq("id", leadId)
+      .maybeSingle(),
+    supabase
+      .from("whatsapp_lead_profiles")
+      .select("*")
+      .eq("lead_id", leadId)
       .maybeSingle(),
   ]);
 
@@ -989,9 +1008,11 @@ async function loadRuntimePromptContext(
       createdAt: cleanString(message.created_at),
     }));
   const lead = asRecord(leadResult.data);
+  const profile = asRecord(profileResult.data);
 
   return {
     messages,
+    profile,
     lead: {
       name: cleanString(lead.name),
       status: cleanString(lead.status, "new"),
@@ -1160,6 +1181,7 @@ async function generateWhatsappAgentReply(
     lead: RuntimeLeadContext;
     history: RuntimeMessageContext[];
     promptInjection: boolean;
+    opportunitiesContext: string;
   }
 ) {
   const apiKey = await getGeminiApiKey();
@@ -1237,11 +1259,17 @@ async function generateWhatsappAgentReply(
           ].join("\n")
         : "Qualificacao pausada.",
       "",
+      "Metodo Betel:",
+      buildBetelAuctionAdvisoryContext(),
+      "",
       "Memoria/CRM:",
       agentKnowledge.memory,
       "",
       "Conhecimento e arquivos:",
       agentKnowledge.knowledge,
+      "",
+      "Imoveis reais captados:",
+      input.opportunitiesContext,
       "",
       "Lead no CRM:",
       `Nome: ${input.lead.name || input.name || "nao confirmado"}`,
@@ -1426,6 +1454,10 @@ async function processWhatsappAgentRuntime(
   }
 
   const promptInjection = config.behavior.promptInjectionProtection && looksLikePromptInjection(text);
+  const opportunitiesContext = await loadWhatsAppOpportunityContext(supabase, {
+    profile: runtimeContext.profile,
+    inboundText: `${text}\n${formatConversationHistory(runtimeContext.messages)}`,
+  });
   const generated = await generateWhatsappAgentReply(config, {
     name,
     phone,
@@ -1433,6 +1465,7 @@ async function processWhatsappAgentRuntime(
     lead: runtimeContext.lead,
     history: runtimeContext.messages,
     promptInjection,
+    opportunitiesContext,
   });
   if (!generated.ok || !generated.text) {
     await insertRuntimeEvent(supabase, {
