@@ -3,12 +3,10 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  Activity,
   AlertTriangle,
   Bot,
   CalendarClock,
   CheckCircle2,
-  ChevronRight,
   ClipboardCheck,
   Clock3,
   ExternalLink,
@@ -27,6 +25,7 @@ import {
   Search,
   Send,
   ShieldAlert,
+  SlidersHorizontal,
   Sparkles,
   StickyNote,
   Tags,
@@ -54,7 +53,7 @@ import type { ResourceTone } from "@/lib/admin/resources";
 import type { WillianAgentConfig, WillianInstanceState } from "@/lib/communication/willian-types";
 import { cn } from "@/lib/utils";
 
-type PanelTabKey = "inbox" | "agents";
+type PanelTabKey = "inbox" | "agents" | "settings";
 type FilterKey = "todos" | "semresposta" | "handoff" | "quentes" | "sla" | "followup";
 type LeadActionKey =
   | "pause_ai"
@@ -108,7 +107,8 @@ const filterLabels: Record<FilterKey, string> = {
 
 const panelTabs: Array<{ key: PanelTabKey; label: string; detail: string; icon: ActionIcon }> = [
   { key: "inbox", label: "Inbox", detail: "fila, CRM e conversa", icon: MessageCircle },
-  { key: "agents", label: "Agentes WhatsApp", detail: "prompt, voz e conexao", icon: Bot },
+  { key: "agents", label: "Agentes", detail: "prompt, voz e conexao", icon: Bot },
+  { key: "settings", label: "Configuracoes", detail: "atendentes e operacao", icon: SlidersHorizontal },
 ];
 
 const crmStages: Array<{ key: WhatsAppCrmStage; label: string; tone: ResourceTone }> = [
@@ -296,7 +296,7 @@ function ActionButton({
       disabled={disabled || busy}
       title={title || children}
       className={cn(
-        "inline-flex h-9 items-center justify-center gap-2 rounded-md border px-3 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-55",
+        "inline-flex h-9 items-center justify-center gap-2 rounded-md border px-3 text-xs font-semibold text-[var(--admin-foreground)] transition disabled:cursor-not-allowed disabled:opacity-55",
         toneBg[tone],
         !disabled && !busy ? "hover:border-white/50 hover:bg-white/[0.06]" : ""
       )}
@@ -1161,11 +1161,6 @@ export function WhatsAppCrmPage({
     (followUp) => !["sent", "cancelled", "canceled", "failed"].includes(followUp.status.toLowerCase())
   );
   const reviewAlerts = data.reviews.filter((review) => review.score > 0 && review.score < 62).length;
-  const panelTitle = panelTab === "agents" ? "Configurar atendentes" : "Operar inbox";
-  const panelSubtitle =
-    panelTab === "agents"
-      ? "Conexao, QR Code, prompt, voz, comportamento, multicanal e conhecimento."
-      : "Fila, qualificacao, conversa, respostas humanas, SLA, follow-up e auditoria.";
   const overviewCards: Array<{
     label: string;
     value: string;
@@ -1240,20 +1235,17 @@ export function WhatsAppCrmPage({
   ];
 
   return (
-    <div className="mx-auto grid min-h-screen max-w-[1760px] gap-2 px-2.5 py-2.5 lg:px-3">
-      <section className="overflow-hidden rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(81,60,36,0.05)]">
-        <div className="grid gap-2 border-b border-[var(--admin-border)] px-2.5 py-2 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
-          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
-            <div className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-[rgba(19,122,69,0.2)] bg-[rgba(19,122,69,0.08)] px-2 text-[10px] font-semibold text-[var(--admin-green)]">
-              <Activity size={14} />
-              Central WhatsApp
-            </div>
-            <h1 className="text-lg font-semibold tracking-tight text-[var(--admin-foreground)]">Agentes WhatsApp</h1>
-            <p className="min-w-[260px] flex-1 truncate text-xs text-[var(--admin-muted)]">
-              Controle operacional dos atendentes: conexao, voz, prompt, CRM, inbox, SLA, handoff e follow-up.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+    <div className="mx-auto grid min-h-screen max-w-[1760px] gap-4 px-4 py-4 lg:px-6">
+      <header className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-[var(--admin-muted)]">Betel AI / Agentes WhatsApp</p>
+          <h1 className="mt-2 text-2xl font-semibold tracking-tight text-[var(--admin-foreground)]">Agentes WhatsApp</h1>
+          <p className="mt-1 text-sm text-[var(--admin-muted)]">
+            Gerencie conexao, comportamento e operacao dos atendentes.
+          </p>
+        </div>
+        <div className="flex flex-col gap-1.5 lg:items-end">
+          <div className="flex flex-wrap items-center gap-2 lg:justify-end">
             <StatusBadge tone={crmData.source === "supabase" ? "green" : "yellow"}>
               {crmData.source === "supabase" ? "dados reais" : "modo exemplo"}
             </StatusBadge>
@@ -1279,49 +1271,12 @@ export function WhatsAppCrmPage({
               Auditar IA
             </ActionButton>
           </div>
+          <p className="text-xs text-[var(--admin-muted)]">Ultima atualizacao: {formatDateTime(data.generatedAt)}</p>
         </div>
+      </header>
 
-        <div className="grid gap-1.5 px-2 py-2 sm:grid-cols-2 xl:grid-cols-4">
-          {overviewCards.map((card) => {
-            const Icon = card.icon;
-            return (
-              <article key={card.label} className={cn("grid min-h-[50px] grid-cols-[minmax(0,1fr)_28px] items-center gap-2 rounded-md border px-2.5 py-1.5", toneBg[card.tone])}>
-                <div className="min-w-0">
-                  <div className="flex min-w-0 items-baseline gap-2">
-                    <p className="truncate text-[10px] font-semibold text-[var(--admin-muted)]">{card.label}</p>
-                    <p className={cn("shrink-0 font-mono text-xl font-bold leading-none tracking-tight", toneText[card.tone])}>{card.value}</p>
-                  </div>
-                  <p className="mt-0.5 truncate text-[10px] leading-4 text-[var(--admin-muted)]">{card.detail}</p>
-                </div>
-                <span className={cn("grid size-7 shrink-0 place-items-center rounded-md border bg-white/60", toneBg[card.tone])}>
-                  <Icon size={14} className={toneText[card.tone]} />
-                </span>
-              </article>
-            );
-          })}
-        </div>
-        {crmData.reason && (
-          <div className="mx-3 mb-2 rounded-md border border-[rgba(234,179,8,0.28)] bg-[rgba(234,179,8,0.08)] px-3 py-1.5 text-xs text-[var(--admin-yellow)]">
-            {crmData.reason}
-          </div>
-        )}
-        {feedback && (
-          <div
-            className={cn(
-              "mx-3 mb-2 rounded-md border px-3 py-1.5 text-xs",
-              feedback.type === "ok"
-                ? "border-[rgba(34,197,94,0.28)] bg-[rgba(34,197,94,0.08)] text-[var(--admin-green)]"
-                : "border-[rgba(239,68,68,0.32)] bg-[rgba(239,68,68,0.08)] text-[var(--admin-red)]"
-            )}
-          >
-            {feedback.msg}
-          </div>
-        )}
-      </section>
-
-      <section className="grid gap-2 xl:grid-cols-[minmax(0,1fr)_280px]">
-        <div className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-1 shadow-sm shadow-[rgba(81,60,36,0.04)]">
-          <div className="grid gap-1 md:grid-cols-2">
+      <nav className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] px-3 shadow-sm shadow-[rgba(81,60,36,0.04)]">
+        <div className="flex min-w-0 gap-5 overflow-x-auto">
           {panelTabs.map((tab) => {
             const Icon = tab.icon;
             const active = panelTab === tab.key;
@@ -1331,48 +1286,65 @@ export function WhatsAppCrmPage({
                 type="button"
                 onClick={() => setPanelTab(tab.key)}
                 className={cn(
-                  "grid min-h-9 grid-cols-[24px_minmax(0,1fr)_12px] items-center gap-1.5 rounded-md border px-1.5 py-1 text-left transition",
+                  "relative inline-flex h-11 shrink-0 items-center gap-2 border-b-2 px-1 text-sm font-semibold transition",
                   active
-                    ? "border-[rgba(200,90,31,0.28)] bg-[rgba(200,90,31,0.08)] text-[var(--admin-foreground)]"
-                    : "border-transparent bg-transparent text-[var(--admin-muted)] hover:bg-[rgba(184,122,22,0.07)] hover:text-[var(--admin-foreground)]"
+                    ? "border-[var(--admin-cyan)] text-[var(--admin-cyan)]"
+                    : "border-transparent text-[var(--admin-muted)] hover:text-[var(--admin-foreground)]"
                 )}
               >
-                <span
-                  className={cn(
-                    "grid size-6 place-items-center rounded-md border",
-                    active ? "border-[rgba(200,90,31,0.24)] bg-white text-[var(--admin-cyan)]" : "border-[var(--admin-border)] text-[var(--admin-muted)]"
-                  )}
-                >
-                  <Icon size={13} />
-                </span>
-                <span className="min-w-0">
-                  <span className="block truncate text-xs font-semibold">{tab.label}</span>
-                  <span className="hidden truncate text-[9px] text-[var(--admin-muted)] sm:block">{tab.detail}</span>
-                </span>
-                <ChevronRight size={13} className={active ? "text-[var(--admin-cyan)]" : "text-[var(--admin-muted)]"} />
+                <Icon size={15} />
+                {tab.label}
               </button>
             );
           })}
-          </div>
         </div>
+      </nav>
 
-        <div className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-2 shadow-sm shadow-[rgba(81,60,36,0.04)]">
-          <div className="flex items-center gap-2">
-            <span className="grid size-7 shrink-0 place-items-center rounded-md border border-[rgba(200,90,31,0.2)] bg-[rgba(200,90,31,0.08)] text-[var(--admin-cyan)]">
-              {panelTab === "agents" ? <Bot size={14} /> : <MessageCircle size={14} />}
-            </span>
-            <div className="min-w-0">
-              <p className="truncate text-xs font-semibold text-[var(--admin-foreground)]">{panelTitle}</p>
-              <p className="truncate text-[10px] leading-4 text-[var(--admin-muted)]">{panelSubtitle}</p>
-              <p className="mt-0.5 font-mono text-[8px] uppercase tracking-[0.12em] text-[var(--admin-muted)]">
-                Atualizado {formatDateTime(data.generatedAt)}
-              </p>
-            </div>
-          </div>
-        </div>
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {overviewCards.map((card) => {
+          const Icon = card.icon;
+          const value = card.label === "Conexao WhatsApp" && card.value.includes("/")
+            ? card.value.replace("/", " de ")
+            : card.value;
+          return (
+            <article
+              key={card.label}
+              className="grid min-h-[108px] grid-cols-[44px_minmax(0,1fr)] items-start gap-3 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-4 shadow-sm shadow-[rgba(81,60,36,0.04)]"
+            >
+              <span className={cn("grid size-9 shrink-0 place-items-center rounded-md border", toneBg[card.tone])}>
+                <Icon size={17} className={toneText[card.tone]} />
+              </span>
+              <div className="min-w-0">
+                <p className="truncate text-xs font-semibold text-[var(--admin-muted)]">{card.label}</p>
+                <p className={cn("mt-2 truncate font-mono text-2xl font-bold leading-none tracking-tight", toneText[card.tone])}>
+                  {value}
+                </p>
+                <p className="mt-3 truncate text-xs leading-4 text-[var(--admin-muted)]">{card.detail}</p>
+              </div>
+            </article>
+          );
+        })}
       </section>
 
-      {panelTab === "agents" ? (
+      {crmData.reason && (
+        <div className="rounded-md border border-[rgba(234,179,8,0.28)] bg-[rgba(234,179,8,0.08)] px-3 py-2 text-xs text-[var(--admin-yellow)]">
+          {crmData.reason}
+        </div>
+      )}
+      {feedback && (
+        <div
+          className={cn(
+            "rounded-md border px-3 py-2 text-xs",
+            feedback.type === "ok"
+              ? "border-[rgba(34,197,94,0.28)] bg-[rgba(34,197,94,0.08)] text-[var(--admin-green)]"
+              : "border-[rgba(239,68,68,0.32)] bg-[rgba(239,68,68,0.08)] text-[var(--admin-red)]"
+          )}
+        >
+          {feedback.msg}
+        </div>
+      )}
+
+      {panelTab !== "inbox" ? (
         <section>
           <WillianAgentPanel
             initialAgentKey={willianAgentConfig?.agentKey || willianInstance?.agentKey}
