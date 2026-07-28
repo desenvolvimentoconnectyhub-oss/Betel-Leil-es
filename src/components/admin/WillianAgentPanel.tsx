@@ -202,7 +202,7 @@ function whatsappAgentRuntimeStatus(agent?: Pick<WhatsAppAgentInstanceSummary, "
 
 function isWhatsappAgentPaused(agent?: Pick<WhatsAppAgentInstanceSummary, "runtimeStatus" | "status"> | null) {
   const status = whatsappAgentRuntimeStatus(agent);
-  return status === "paused" || status === "pausado" || status === "inactive" || status === "disabled";
+  return status === "paused" || status === "pausado" || status === "inactive" || status === "disabled" || status === "archived" || status === "deleted";
 }
 
 function whatsappAgentOperationalLabel(agent?: Pick<WhatsAppAgentInstanceSummary, "runtimeStatus" | "status"> | null) {
@@ -211,6 +211,75 @@ function whatsappAgentOperationalLabel(agent?: Pick<WhatsAppAgentInstanceSummary
   if (status === "active") return "Ativo";
   if (status === "draft") return "Rascunho";
   return status || "Ativo";
+}
+
+function normalizedConnectionStatus(value: unknown) {
+  return cleanFormValue(value).toLowerCase().replace(/\s+/g, "_");
+}
+
+function statusLooksConnected(value: unknown) {
+  const status = normalizedConnectionStatus(value);
+  if (!status || statusLooksDisconnected(status)) return false;
+  return (
+    status.includes("connect") ||
+    ["open", "online", "ready", "logged", "loggedin", "logged_in", "authenticated"].includes(status)
+  );
+}
+
+function statusLooksDisconnected(value: unknown) {
+  const status = normalizedConnectionStatus(value);
+  return Boolean(
+      status.includes("disconnect") ||
+      status.includes("not_connected") ||
+      status.includes("notconnected") ||
+      status.includes("not_logged") ||
+      status.includes("notlogged") ||
+      status.includes("logout") ||
+      status.includes("qr") ||
+      status.includes("scan") ||
+      status.includes("pair") ||
+      status === "close" ||
+      status === "closed" ||
+      status === "offline" ||
+      status === "deleted" ||
+      status === "archived"
+  );
+}
+
+function whatsappAgentLooksConnected(agent?: WhatsAppAgentInstanceSummary | null) {
+  if (!agent || isWhatsappAgentPaused(agent)) return false;
+  const explicitStatus = agent.status;
+  const hasSyncedProfile = Boolean(
+    cleanFormValue(agent.phoneNumber) &&
+      (cleanFormValue(agent.profileImageSyncedAt) ||
+        cleanFormValue(agent.profileImageUrl) ||
+        cleanFormValue(agent.displayName))
+  );
+
+  return Boolean(
+    agent.connected ||
+      cleanFormValue(agent.connectedAt) ||
+      statusLooksConnected(explicitStatus) ||
+      (!statusLooksDisconnected(explicitStatus) && hasSyncedProfile)
+  );
+}
+
+function whatsappStateLooksConnected(state: WillianInstanceState) {
+  const explicitStatus = state.status?.state || state.finalStatus || state.connection?.finalStatus || state.connection?.status;
+  const hasSyncedProfile = Boolean(
+    cleanFormValue(state.phoneNumber) &&
+      (cleanFormValue(state.profileImageSyncedAt) ||
+        cleanFormValue(state.profileImageUrl) ||
+        cleanFormValue(state.displayName))
+  );
+
+  return Boolean(
+    state.status?.connected ||
+      state.status?.loggedIn ||
+      state.whatsappReady ||
+      statusLooksConnected(explicitStatus) ||
+      (!statusLooksDisconnected(explicitStatus) && hasSyncedProfile)
+  );
 }
 
 function displayWhatsappProfileName(value: unknown, fallback: string) {
@@ -422,7 +491,7 @@ export function WillianAgentPanel({
   const [discardingConfig, setDiscardingConfig] = useState(false);
   const lastConnectionPayloadRef = useRef<Record<string, unknown>>({});
 
-  const connected = Boolean(state.status?.connected || state.status?.loggedIn);
+  const connected = whatsappStateLooksConnected(state);
   const applyInstanceState = useCallback((nextState?: WillianInstanceState) => {
     if (!nextState) return;
     setState(nextState);
@@ -523,7 +592,7 @@ export function WillianAgentPanel({
           ? nextState.agentInstances?.find((item) => item.agentKey === pairingTarget.agentKey)
           : null;
         const targetConnected = targetInstance
-          ? targetInstance.connected || connectionLooksConnected(resultConnection)
+          ? whatsappAgentLooksConnected(targetInstance) || connectionLooksConnected(resultConnection)
           : Boolean(nextState.status?.connected || nextState.status?.loggedIn || connectionLooksConnected(resultConnection));
 
         if (targetConnected) {
@@ -850,7 +919,7 @@ export function WillianAgentPanel({
   const selectedAgentPaused = isWhatsappAgentPaused(selectedWhatsappAgent);
   const selectedAgentConnected = !selectedAgentPaused && selectedWhatsappAgent?.agentKey === state.agentKey
     ? connected
-    : !selectedAgentPaused && Boolean(selectedWhatsappAgent?.connected);
+    : !selectedAgentPaused && whatsappAgentLooksConnected(selectedWhatsappAgent);
 
   function cloneWhatsappAgent(agent: WhatsAppAgentInstanceSummary) {
     const baseName = displayWhatsappAgentName(agent);
@@ -1252,9 +1321,9 @@ function WhatsAppAgentManager({
   const [agentQuery, setAgentQuery] = useState("");
   const [agentFilter, setAgentFilter] = useState<"all" | "online" | "paused" | "pending">("all");
   const agentCount = agents.length;
-  const onlineCount = agents.filter((agent) => agent.connected && !isWhatsappAgentPaused(agent)).length;
+  const onlineCount = agents.filter((agent) => whatsappAgentLooksConnected(agent)).length;
   const pausedCount = agents.filter(isWhatsappAgentPaused).length;
-  const pendingCount = agents.filter((agent) => !agent.connected && !isWhatsappAgentPaused(agent)).length;
+  const pendingCount = agents.filter((agent) => !whatsappAgentLooksConnected(agent) && !isWhatsappAgentPaused(agent)).length;
   const normalizedQuery = agentQuery.trim().toLowerCase();
   const filteredAgents = agents.filter((agent) => {
     const paused = isWhatsappAgentPaused(agent);
@@ -1269,9 +1338,9 @@ function WhatsAppAgentManager({
     ].join(" ").toLowerCase();
 
     if (normalizedQuery && !searchable.includes(normalizedQuery)) return false;
-    if (agentFilter === "online") return agent.connected && !paused;
+    if (agentFilter === "online") return whatsappAgentLooksConnected(agent);
     if (agentFilter === "paused") return paused;
-    if (agentFilter === "pending") return !agent.connected && !paused;
+    if (agentFilter === "pending") return !whatsappAgentLooksConnected(agent) && !paused;
     return true;
   });
   const filters: Array<{ key: typeof agentFilter; label: string; count: number }> = [
@@ -1334,9 +1403,10 @@ function WhatsAppAgentManager({
           {filteredAgents.map((agent) => {
             const selected = agent.agentKey === selectedAgentKey;
             const paused = isWhatsappAgentPaused(agent);
+            const agentConnected = whatsappAgentLooksConnected(agent);
             const statusLabel = paused
               ? "Pausado"
-              : agent.connected
+              : agentConnected
                 ? "Online"
                 : "Pendente";
             return (
@@ -1351,7 +1421,7 @@ function WhatsAppAgentManager({
                     : "border-[var(--admin-border)] bg-white hover:border-[rgba(200,90,31,0.22)] hover:bg-[rgba(184,122,22,0.04)]"
                 )}
               >
-                <CompactAgentAvatar connected={agent.connected && !paused} label={displayWhatsappAgentName(agent)} />
+                <CompactAgentAvatar connected={agentConnected} label={displayWhatsappAgentName(agent)} />
                 <span className="min-w-0">
                   <span className="block truncate text-xs font-bold text-[var(--admin-foreground)]">
                     {displayWhatsappAgentName(agent)}
@@ -1364,7 +1434,7 @@ function WhatsAppAgentManager({
                   </span>
                 </span>
                 <div className="flex shrink-0 flex-col items-end gap-1">
-                  <StatusPill ok={!paused && agent.connected} label={statusLabel} />
+                  <StatusPill ok={agentConnected} label={statusLabel} />
                   <span className="max-w-[82px] truncate text-[9px] text-[var(--admin-muted)]">
                     {whatsappAgentOperationalLabel(agent)}
                   </span>
@@ -1536,8 +1606,8 @@ function ConnectionTab({
   const selectedIsPrimary = !selectedAgent || selectedAgent.agentKey === state.agentKey;
   const paused = isWhatsappAgentPaused(selectedAgent);
   const connected = !paused && selectedIsPrimary
-    ? Boolean(state.status?.connected || state.status?.loggedIn)
-    : !paused && Boolean(selectedAgent?.connected);
+    ? whatsappStateLooksConnected(state)
+    : !paused && whatsappAgentLooksConnected(selectedAgent);
   const connectyHubKeyReady = state.adminTokenConfigured && state.adminTokenLooksValid;
   const canGenerateQr = connectyHubKeyReady && Boolean(state.webhookUrl) && state.whatsappProviderReleased;
   const agentLabel = displayWhatsappAgentName(selectedAgent || { agentKey: state.agentKey, agentName: state.agentName });

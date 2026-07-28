@@ -387,6 +387,26 @@ function normalizeConnectionState(value: unknown, connected: boolean) {
   return clean;
 }
 
+function connectionStateIsExplicitlyDisconnected(value: unknown) {
+  const normalized = cleanString(value).toLowerCase().replace(/\s+/g, "_");
+  return Boolean(
+    normalized.includes("disconnect") ||
+      normalized.includes("not_connected") ||
+      normalized.includes("notconnected") ||
+      normalized.includes("not_logged") ||
+      normalized.includes("notlogged") ||
+      normalized.includes("logout") ||
+      normalized.includes("qr") ||
+      normalized.includes("scan") ||
+      normalized.includes("pair") ||
+      normalized === "close" ||
+      normalized === "closed" ||
+      normalized === "offline" ||
+      normalized === "deleted" ||
+      normalized === "archived"
+  );
+}
+
 const statusContainerKeys = new Set([
   "data",
   "result",
@@ -1246,6 +1266,17 @@ function whatsappInstanceSummaryFromRow(row: Record<string, unknown>): WhatsAppA
   const agentKey = cleanString(row.agent_key || agentRow.agent_key, WILLIAN_AGENT_KEY);
   const status = normalizeConnectionState(row.status, Boolean(row.connected_at));
   const runtimeStatus = cleanString(agentRow.status, "draft");
+  const phoneNumber = cleanString(row.phone);
+  const hasSyncedProfile = Boolean(
+    phoneNumber &&
+      (cleanString(whatsappProfile.syncedAt) ||
+        cleanString(whatsappProfile.profileImageUrl) ||
+        cleanString(whatsappProfile.displayName))
+  );
+  const connected =
+    status === "connected" ||
+    Boolean(row.connected_at) ||
+    (!connectionStateIsExplicitlyDisconnected(status) && hasSyncedProfile);
 
   return {
     agentKey,
@@ -1254,13 +1285,13 @@ function whatsappInstanceSummaryFromRow(row: Record<string, unknown>): WhatsAppA
     sector: cleanString(metadata.sector) || undefined,
     instanceName: cleanString(row.instance_name),
     providerInstanceId: cleanString(row.provider_instance_id) || undefined,
-    phoneNumber: cleanString(row.phone) || undefined,
+    phoneNumber: phoneNumber || undefined,
     displayName: cleanString(whatsappProfile.displayName) || undefined,
     profileImageUrl: normalizeProfileImageUrl(whatsappProfile.profileImageUrl) || undefined,
     profileImageSyncedAt: cleanString(whatsappProfile.syncedAt) || undefined,
     status,
     runtimeStatus,
-    connected: status === "connected" || Boolean(row.connected_at),
+    connected,
     connectedAt: cleanString(row.connected_at) || undefined,
     updatedAt: cleanString(row.updated_at) || undefined,
   };
@@ -1298,7 +1329,13 @@ async function listWhatsappAgentInstances(options: { checkRemote?: boolean } = {
         const phone = extractWhatsappPhoneNumber(payload, status.jid) || cleanString(row.phone);
         const profileImageUrl = extractProfileImageUrl(payload);
         const displayName = extractWhatsappProfileDisplayName(payload) || extractWhatsappDisplayName(payload);
-        const connectedAt = status.connected || status.loggedIn ? cleanString(row.connected_at) || new Date().toISOString() : null;
+        const remoteHasProfile = Boolean(phone && (profileImageUrl || displayName));
+        const connectedAt =
+          status.connected ||
+          status.loggedIn ||
+          (!connectionStateIsExplicitlyDisconnected(status.state) && remoteHasProfile)
+            ? cleanString(row.connected_at) || new Date().toISOString()
+            : null;
         const patch = {
           phone: phone || null,
           status: status.state || cleanString(row.status, "draft"),

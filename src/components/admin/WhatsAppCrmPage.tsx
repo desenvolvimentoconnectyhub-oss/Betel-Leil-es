@@ -176,9 +176,57 @@ function getMetric(data: WhatsAppCrmData, label: string, fallback: Omit<WhatsApp
   return found || { label, ...fallback };
 }
 
-function hasActiveWhatsappAgent(agent: { connected?: boolean; runtimeStatus?: string; status?: string }) {
-  const status = `${agent.runtimeStatus || ""} ${agent.status || ""}`.toLowerCase();
-  return Boolean(agent.connected && !status.includes("paused") && !status.includes("pausado") && !status.includes("archived"));
+function whatsappStatusLooksDisconnected(value: unknown) {
+  const status = String(value || "").trim().toLowerCase().replace(/\s+/g, "_");
+  return Boolean(
+    status.includes("disconnect") ||
+      status.includes("not_connected") ||
+      status.includes("notconnected") ||
+      status.includes("not_logged") ||
+      status.includes("notlogged") ||
+      status.includes("logout") ||
+      status.includes("qr") ||
+      status.includes("scan") ||
+      status.includes("pair") ||
+      ["close", "closed", "offline", "deleted", "archived"].includes(status)
+  );
+}
+
+function whatsappStatusLooksConnected(value: unknown) {
+  const status = String(value || "").trim().toLowerCase().replace(/\s+/g, "_");
+  if (!status || whatsappStatusLooksDisconnected(status)) return false;
+  return (
+    status.includes("connect") ||
+    ["open", "online", "ready", "logged", "loggedin", "logged_in", "authenticated"].includes(status)
+  );
+}
+
+function hasActiveWhatsappAgent(agent: {
+  connected?: boolean;
+  connectedAt?: string;
+  displayName?: string;
+  phoneNumber?: string;
+  profileImageSyncedAt?: string;
+  profileImageUrl?: string;
+  runtimeStatus?: string;
+  status?: string;
+}) {
+  const runtimeStatus = String(agent.runtimeStatus || "").toLowerCase();
+  if (["paused", "pausado", "inactive", "disabled", "archived", "deleted"].includes(runtimeStatus)) return false;
+
+  const hasSyncedProfile = Boolean(
+    agent.phoneNumber &&
+      (agent.profileImageSyncedAt ||
+        agent.profileImageUrl ||
+        agent.displayName)
+  );
+
+  return Boolean(
+    agent.connected ||
+      agent.connectedAt ||
+      whatsappStatusLooksConnected(agent.status) ||
+      (!whatsappStatusLooksDisconnected(agent.status) && hasSyncedProfile)
+  );
 }
 
 function contextDraftFromLead(lead?: WhatsAppCrmLeadCard): ContextDraft {
