@@ -1240,16 +1240,16 @@ export function WhatsAppCrmPage({
   ];
 
   return (
-    <div className="mx-auto grid min-h-screen max-w-[1760px] gap-2 px-3 py-3 lg:px-4">
-      <section className="overflow-hidden rounded-lg border border-[var(--admin-border)] bg-[linear-gradient(180deg,#ffffff_0%,#fffaf3_100%)] shadow-sm shadow-[rgba(81,60,36,0.06)]">
-        <div className="grid gap-3 border-b border-[var(--admin-border)] px-3 py-3 lg:px-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
-          <div className="min-w-0">
-            <div className="mb-2 inline-flex h-7 items-center gap-2 rounded-md border border-[rgba(19,122,69,0.2)] bg-[rgba(19,122,69,0.08)] px-2.5 text-[11px] font-semibold text-[var(--admin-green)]">
+    <div className="mx-auto grid min-h-screen max-w-[1760px] gap-2 px-2.5 py-2.5 lg:px-3">
+      <section className="overflow-hidden rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(81,60,36,0.05)]">
+        <div className="grid gap-2 border-b border-[var(--admin-border)] px-2.5 py-2 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
+            <div className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-[rgba(19,122,69,0.2)] bg-[rgba(19,122,69,0.08)] px-2 text-[10px] font-semibold text-[var(--admin-green)]">
               <Activity size={14} />
               Central WhatsApp
             </div>
-            <h1 className="text-xl font-semibold tracking-tight text-[var(--admin-foreground)]">Agentes WhatsApp</h1>
-            <p className="mt-1 max-w-4xl text-xs leading-5 text-[var(--admin-muted)]">
+            <h1 className="text-lg font-semibold tracking-tight text-[var(--admin-foreground)]">Agentes WhatsApp</h1>
+            <p className="min-w-[260px] flex-1 truncate text-xs text-[var(--admin-muted)]">
               Controle operacional dos atendentes: conexao, voz, prompt, CRM, inbox, SLA, handoff e follow-up.
             </p>
           </div>
@@ -1281,23 +1281,21 @@ export function WhatsAppCrmPage({
           </div>
         </div>
 
-        <div className="grid gap-2 px-3 py-2.5 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-1.5 px-2 py-2 sm:grid-cols-2 xl:grid-cols-4">
           {overviewCards.map((card) => {
             const Icon = card.icon;
             return (
-              <article key={card.label} className={cn("min-h-[76px] rounded-md border px-3 py-2.5", toneBg[card.tone])}>
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="truncate text-[11px] font-medium text-[var(--admin-muted)]">{card.label}</p>
-                    <p className={cn("mt-1 font-mono text-2xl font-bold leading-none tracking-tight", toneText[card.tone])}>
-                      {card.value}
-                    </p>
+              <article key={card.label} className={cn("grid min-h-[50px] grid-cols-[minmax(0,1fr)_28px] items-center gap-2 rounded-md border px-2.5 py-1.5", toneBg[card.tone])}>
+                <div className="min-w-0">
+                  <div className="flex min-w-0 items-baseline gap-2">
+                    <p className="truncate text-[10px] font-semibold text-[var(--admin-muted)]">{card.label}</p>
+                    <p className={cn("shrink-0 font-mono text-xl font-bold leading-none tracking-tight", toneText[card.tone])}>{card.value}</p>
                   </div>
-                  <span className={cn("grid size-8 shrink-0 place-items-center rounded-md border", toneBg[card.tone])}>
-                    <Icon size={15} className={toneText[card.tone]} />
-                  </span>
+                  <p className="mt-0.5 truncate text-[10px] leading-4 text-[var(--admin-muted)]">{card.detail}</p>
                 </div>
-                <p className="mt-1 line-clamp-1 text-[11px] leading-4 text-[var(--admin-muted)]">{card.detail}</p>
+                <span className={cn("grid size-7 shrink-0 place-items-center rounded-md border bg-white/60", toneBg[card.tone])}>
+                  <Icon size={14} className={toneText[card.tone]} />
+                </span>
               </article>
             );
           })}
@@ -1321,9 +1319,9 @@ export function WhatsAppCrmPage({
         )}
       </section>
 
-      <section className="grid gap-2 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-1.5 shadow-sm shadow-[rgba(81,60,36,0.04)]">
-          <div className="grid gap-1.5 md:grid-cols-2">
+      <section className="grid gap-2 xl:grid-cols-[minmax(0,1fr)_280px]">
+        <div className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-1 shadow-sm shadow-[rgba(81,60,36,0.04)]">
+          <div className="grid gap-1 md:grid-cols-2">
           {panelTabs.map((tab) => {
             const Icon = tab.icon;
             const active = panelTab === tab.key;
@@ -1333,7 +1331,7 @@ export function WhatsAppCrmPage({
                 type="button"
                 onClick={() => setPanelTab(tab.key)}
                 className={cn(
-                  "grid min-h-11 grid-cols-[30px_minmax(0,1fr)_14px] items-center gap-2 rounded-md border px-2 py-1.5 text-left transition",
+                  "grid min-h-9 grid-cols-[24px_minmax(0,1fr)_12px] items-center gap-1.5 rounded-md border px-1.5 py-1 text-left transition",
                   active
                     ? "border-[rgba(200,90,31,0.28)] bg-[rgba(200,90,31,0.08)] text-[var(--admin-foreground)]"
                     : "border-transparent bg-transparent text-[var(--admin-muted)] hover:bg-[rgba(184,122,22,0.07)] hover:text-[var(--admin-foreground)]"
@@ -1341,32 +1339,32 @@ export function WhatsAppCrmPage({
               >
                 <span
                   className={cn(
-                    "grid size-7 place-items-center rounded-md border",
+                    "grid size-6 place-items-center rounded-md border",
                     active ? "border-[rgba(200,90,31,0.24)] bg-white text-[var(--admin-cyan)]" : "border-[var(--admin-border)] text-[var(--admin-muted)]"
                   )}
                 >
-                  <Icon size={14} />
+                  <Icon size={13} />
                 </span>
                 <span className="min-w-0">
                   <span className="block truncate text-xs font-semibold">{tab.label}</span>
-                  <span className="block truncate text-[10px] text-[var(--admin-muted)]">{tab.detail}</span>
+                  <span className="hidden truncate text-[9px] text-[var(--admin-muted)] sm:block">{tab.detail}</span>
                 </span>
-                <ChevronRight size={15} className={active ? "text-[var(--admin-cyan)]" : "text-[var(--admin-muted)]"} />
+                <ChevronRight size={13} className={active ? "text-[var(--admin-cyan)]" : "text-[var(--admin-muted)]"} />
               </button>
             );
           })}
           </div>
         </div>
 
-        <div className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-2.5 shadow-sm shadow-[rgba(81,60,36,0.04)]">
+        <div className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-2 shadow-sm shadow-[rgba(81,60,36,0.04)]">
           <div className="flex items-center gap-2">
-            <span className="grid size-8 shrink-0 place-items-center rounded-md border border-[rgba(200,90,31,0.2)] bg-[rgba(200,90,31,0.08)] text-[var(--admin-cyan)]">
-              {panelTab === "agents" ? <Bot size={15} /> : <MessageCircle size={15} />}
+            <span className="grid size-7 shrink-0 place-items-center rounded-md border border-[rgba(200,90,31,0.2)] bg-[rgba(200,90,31,0.08)] text-[var(--admin-cyan)]">
+              {panelTab === "agents" ? <Bot size={14} /> : <MessageCircle size={14} />}
             </span>
             <div className="min-w-0">
               <p className="truncate text-xs font-semibold text-[var(--admin-foreground)]">{panelTitle}</p>
-              <p className="line-clamp-1 text-[11px] leading-4 text-[var(--admin-muted)]">{panelSubtitle}</p>
-              <p className="mt-1 font-mono text-[9px] uppercase tracking-[0.12em] text-[var(--admin-muted)]">
+              <p className="truncate text-[10px] leading-4 text-[var(--admin-muted)]">{panelSubtitle}</p>
+              <p className="mt-0.5 font-mono text-[8px] uppercase tracking-[0.12em] text-[var(--admin-muted)]">
                 Atualizado {formatDateTime(data.generatedAt)}
               </p>
             </div>

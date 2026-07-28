@@ -885,9 +885,9 @@ export function WillianAgentPanel({
 
       {selectedWhatsappAgent ? (
         <>
-          <div className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-2 shadow-sm shadow-[rgba(81,60,36,0.06)]">
+          <div className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-1.5 shadow-sm shadow-[rgba(81,60,36,0.05)]">
             <div className="grid gap-2 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
-              <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-5">
+              <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-5">
                 <InfoBox label="Agente" value={displayWhatsappAgentName(selectedWhatsappAgent)} />
                 <InfoBox label="Empresa" value={selectedWhatsappAgent?.companyName || config.companyName} />
                 <InfoBox
@@ -898,7 +898,7 @@ export function WillianAgentPanel({
                 <InfoBox label="Conversa" value={conversationModeLabels[config.behavior.conversationMode]} />
                 <InfoBox label="Alteracoes" value={changeLabel} tone={config.status === "saved" ? "green" : "yellow"} />
               </div>
-              <div className="grid gap-1.5 sm:grid-cols-[80px_80px_80px_auto] xl:w-[360px]">
+              <div className="grid gap-1 sm:grid-cols-[72px_72px_72px_auto] xl:w-[332px]">
                 <MiniKpi label="Pronto" value={`${readyScore}%`} tone={readyScore >= 70 ? "green" : "yellow"} />
                 <MiniKpi label="VIP" value={`${config.qualification.vipScore}+`} tone="cyan" />
                 <MiniKpi label="Perguntas" value={String(config.qualification.questionsLimit)} tone="purple" />
@@ -915,11 +915,11 @@ export function WillianAgentPanel({
           </div>
 
           <div
-            className="overflow-hidden rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-1 shadow-sm shadow-[rgba(81,60,36,0.04)]"
+            className="overflow-hidden rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-0.5 shadow-sm shadow-[rgba(81,60,36,0.04)]"
             role="tablist"
             aria-label="Secoes do agente WhatsApp"
           >
-            <div className="grid min-w-0 grid-cols-2 gap-1 md:grid-cols-3 xl:grid-cols-6">
+            <div className="grid min-w-0 grid-cols-2 gap-0.5 md:grid-cols-3 xl:grid-cols-6">
               {tabs.map((tab) => {
                 const Icon = tab.icon;
                 const active = activeTab === tab.key;
@@ -931,15 +931,15 @@ export function WillianAgentPanel({
                     aria-selected={active}
                     onClick={() => setActiveTab(tab.key)}
                     className={cn(
-                      "grid min-h-10 grid-cols-[16px_minmax(0,1fr)] items-center gap-1.5 rounded-md px-2 text-left transition",
+                      "grid min-h-8 grid-cols-[14px_minmax(0,1fr)] items-center gap-1 rounded-md px-1.5 text-left transition",
                       active
                         ? "bg-[rgba(200,90,31,0.1)] text-[var(--admin-foreground)] shadow-[inset_0_0_0_1px_rgba(200,90,31,0.18)]"
                         : "text-[var(--admin-muted)] hover:bg-[rgba(184,122,22,0.07)] hover:text-[var(--admin-foreground)]"
                     )}
                   >
-                    <Icon size={14} className={active ? "text-[var(--admin-cyan)]" : "text-[var(--admin-muted)]"} />
+                    <Icon size={13} className={active ? "text-[var(--admin-cyan)]" : "text-[var(--admin-muted)]"} />
                     <span className="min-w-0">
-                      <span className="block truncate text-xs font-semibold">{tab.label}</span>
+                      <span className="block truncate text-[11px] font-semibold">{tab.label}</span>
                       <span className="hidden truncate text-[8px] font-bold uppercase tracking-[0.1em] text-[var(--admin-muted)] xl:block">
                         {tab.subtitle}
                       </span>
@@ -1122,34 +1122,34 @@ function WhatsAppAgentManager({
   ];
 
   return (
-    <div className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(81,60,36,0.05)]">
-      <div className="flex items-center justify-between gap-3 border-b border-[var(--admin-border)] px-3 py-2">
+    <div className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(81,60,36,0.04)]">
+      <div className="flex items-center justify-between gap-3 border-b border-[var(--admin-border)] px-2.5 py-1.5">
         <div>
-          <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-[var(--admin-muted)]">Escolher / criar / clonar</p>
-          <h3 className="text-sm font-bold text-[var(--admin-foreground)]">Agentes de WhatsApp</h3>
+          <p className="text-[8px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Escolher / criar / clonar</p>
+          <h3 className="text-xs font-bold text-[var(--admin-foreground)]">Agentes de WhatsApp</h3>
         </div>
         <StatusPill ok label={`${agentCount} ${agentCount === 1 ? "agente" : "agentes"}`} />
       </div>
 
-      <div className="grid gap-2 p-3">
-        <div className="grid gap-2 xl:grid-cols-[minmax(240px,380px)_minmax(0,1fr)_auto] xl:items-center">
-          <label className="grid h-8 grid-cols-[16px_minmax(0,1fr)] items-center gap-2 rounded-md border border-[var(--admin-border)] bg-white px-2.5 text-[var(--admin-muted)]">
-            <Search size={14} />
+      <div className="grid gap-1.5 p-2">
+        <div className="grid gap-1.5 xl:grid-cols-[minmax(220px,340px)_minmax(0,1fr)_auto] xl:items-center">
+          <label className="grid h-7 grid-cols-[14px_minmax(0,1fr)] items-center gap-1.5 rounded-md border border-[var(--admin-border)] bg-white px-2 text-[var(--admin-muted)]">
+            <Search size={13} />
             <input
-              className="min-w-0 bg-transparent text-xs font-semibold text-[var(--admin-foreground)] outline-none placeholder:text-[var(--admin-muted)]"
+              className="min-w-0 bg-transparent text-[11px] font-semibold text-[var(--admin-foreground)] outline-none placeholder:text-[var(--admin-muted)]"
               onChange={(event) => setAgentQuery(event.target.value)}
               placeholder="Buscar agente, setor ou numero"
               value={agentQuery}
             />
           </label>
-          <div className="flex min-w-0 flex-wrap gap-1.5">
+          <div className="flex min-w-0 flex-wrap gap-1">
             {filters.map((filter) => {
               const active = agentFilter === filter.key;
               return (
                 <button
                   key={filter.key}
                   className={cn(
-                    "inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-[11px] font-bold transition",
+                    "inline-flex h-7 items-center gap-1 rounded-md border px-2 text-[10px] font-bold transition",
                     active
                       ? "border-[rgba(200,90,31,0.28)] bg-[rgba(200,90,31,0.1)] text-[var(--admin-cyan)]"
                       : "border-[var(--admin-border)] bg-white text-[var(--admin-muted)] hover:text-[var(--admin-foreground)]"
@@ -1170,7 +1170,7 @@ function WhatsAppAgentManager({
           />
         </div>
 
-        <div className="grid gap-2 md:grid-cols-2">
+        <div className="grid gap-1.5 md:grid-cols-2 2xl:grid-cols-3">
           {filteredAgents.map((agent) => {
             const selected = agent.agentKey === selectedAgentKey;
             const paused = isWhatsappAgentPaused(agent);
@@ -1185,25 +1185,25 @@ function WhatsAppAgentManager({
               <div
                 key={agent.agentKey}
                 className={cn(
-                  "rounded-lg border p-3 transition",
+                  "rounded-md border p-2 transition",
                   selected
                     ? "border-[rgba(200,90,31,0.35)] bg-[rgba(200,90,31,0.08)]"
                     : "border-[var(--admin-border)] bg-white"
                 )}
               >
-                <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start justify-between gap-2">
                   <button type="button" onClick={() => onSelect(agent.agentKey)} className="min-w-0 text-left">
-                    <p className="truncate text-sm font-bold text-[var(--admin-foreground)]">{displayWhatsappAgentName(agent)}</p>
-                    <p className="mt-1 truncate text-[11px] font-semibold text-[var(--admin-muted)]">
+                    <p className="truncate text-xs font-bold text-[var(--admin-foreground)]">{displayWhatsappAgentName(agent)}</p>
+                    <p className="mt-0.5 truncate text-[10px] font-semibold text-[var(--admin-muted)]">
                       {agent.companyName || companyName} / {agent.sector || "Atendimento WhatsApp"}
                     </p>
-                    <p className="mt-1 truncate text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--admin-muted)]">
+                    <p className="mt-0.5 truncate text-[8px] font-bold uppercase tracking-[0.12em] text-[var(--admin-muted)]">
                       {whatsappAgentOperationalLabel(agent)} {agent.instanceName ? `/ ${agent.instanceName}` : ""}
                     </p>
                   </button>
                   <StatusPill ok={!paused && agent.connected} label={statusLabel} />
                 </div>
-                <div className="mt-2 flex flex-wrap gap-1.5">
+                <div className="mt-1.5 flex flex-wrap gap-1">
                   <ActionButton
                     icon={<MessageCircle size={14} />}
                     label={selected ? "Aberto" : "Abrir"}
