@@ -1651,6 +1651,9 @@ function PromptTab({
           <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--admin-muted)]">
             {charCount.toLocaleString("pt-BR")} / 8.000 caracteres
           </p>
+          <p className="mt-2 text-xs leading-5 text-[var(--admin-muted)]">
+            O prompt acima fica salvo no agente. Imoveis reais captados pelo scraper entram automaticamente no runtime quando o atendimento ou follow-up roda.
+          </p>
         </div>
 
         <div className="mt-4 space-y-2">

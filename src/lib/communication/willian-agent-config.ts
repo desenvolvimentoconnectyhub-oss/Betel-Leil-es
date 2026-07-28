@@ -3,6 +3,7 @@ import "server-only";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   DEFAULT_WILLIAN_AGENT_CONFIG,
+  DEFAULT_WILLIAN_AGENT_PROMPT,
   type WillianAgentConfig,
 } from "./willian-types";
 
@@ -33,6 +34,30 @@ function clampNumber(value: unknown, fallback: number, min: number, max: number)
 
 function stringField(value: unknown, fallback: string) {
   return typeof value === "string" ? value : fallback;
+}
+
+function normalizeText(value: string) {
+  return value.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function isLegacyBaseAgentPrompt(value: string) {
+  const normalized = normalizeText(value);
+  if (!normalized) return true;
+  if (normalized.length > 700) return false;
+  return (
+    normalized.includes("voce e willian") &&
+    normalized.includes("betel leiloes") &&
+    normalized.includes("whatsapp") &&
+    (
+      normalized.includes("melhor oportunidade validada pela equipe") ||
+      (normalized.includes("explicar o metodo betel") && normalized.includes("oportunidade validada"))
+    )
+  );
+}
+
+function agentPromptField(value: unknown, fallback: string) {
+  const prompt = stringField(value, fallback);
+  return isLegacyBaseAgentPrompt(prompt) ? DEFAULT_WILLIAN_AGENT_PROMPT : prompt;
 }
 
 function boolField(value: unknown, fallback: boolean) {
@@ -309,7 +334,7 @@ export function normalizeWillianAgentConfig(input: unknown): WillianAgentConfig 
       nextStepRules: asStringArray(qualification.nextStepRules, defaults.qualification.nextStepRules),
     },
     prompt: {
-      agentPrompt: stringField(prompt.agentPrompt, defaults.prompt.agentPrompt),
+      agentPrompt: agentPromptField(prompt.agentPrompt, defaults.prompt.agentPrompt),
       dnaManual: stringField(prompt.dnaManual, defaults.prompt.dnaManual),
       cloneMemory: stringField(prompt.cloneMemory, defaults.prompt.cloneMemory),
       humanizationMetric: stringField(prompt.humanizationMetric, defaults.prompt.humanizationMetric),
@@ -431,7 +456,7 @@ export async function getWhatsAppAgentConfig(agentKey = WILLIAN_AGENT_KEY): Prom
       prompt: {
         ...fallback.prompt,
         ...asRecord(savedConfig.prompt),
-        agentPrompt: stringField(
+        agentPrompt: agentPromptField(
           asRecord(savedConfig.prompt).agentPrompt,
           stringField(row.system_prompt, fallback.prompt.agentPrompt)
         ),
