@@ -166,6 +166,27 @@ type RuntimeLeadContext = {
   metadata: Record<string, unknown>;
 };
 
+type BetelQualificationProfile = {
+  objective: string;
+  priority: string;
+  blocker: string;
+  capitalAmount: number;
+  meetingInterest: string;
+  answered: string[];
+  missing: string[];
+  readiness: string;
+  updatedAt: string;
+  lastSignalTextPreview: string;
+};
+
+const betelQualificationLabels: Record<keyof Pick<BetelQualificationProfile, "objective" | "priority" | "blocker" | "capitalAmount" | "meetingInterest">, string> = {
+  objective: "objetivo",
+  priority: "prioridade",
+  blocker: "receio",
+  capitalAmount: "capital liquido",
+  meetingInterest: "interesse em reuniao",
+};
+
 function formatConversationHistory(messages: RuntimeMessageContext[]) {
   if (!messages.length) return "Sem historico anterior relevante.";
   return messages
@@ -178,7 +199,7 @@ function formatConversationHistory(messages: RuntimeMessageContext[]) {
     .join("\n");
 }
 
-function scoreLeadFromText(text: string, previousScore = 0) {
+function scoreLeadFromText(text: string, previousScore = 0, qualificationProfile?: BetelQualificationProfile) {
   const lower = text.toLowerCase();
   let score = Math.max(0, Math.min(100, previousScore || 0));
   const signals: string[] = [];
@@ -207,10 +228,22 @@ function scoreLeadFromText(text: string, previousScore = 0) {
     score += 20;
     signals.push("buying_intent");
   }
+  if (qualificationProfile) {
+    const structuredScore = scoreBetelQualificationProfile(qualificationProfile);
+    if (structuredScore > score) {
+      score = structuredScore;
+      signals.push("structured_betel_qualification");
+    }
+    if (qualificationProfile.objective) signals.push(`objective:${qualificationProfile.objective}`);
+    if (qualificationProfile.priority) signals.push(`priority:${qualificationProfile.priority}`);
+    if (qualificationProfile.blocker) signals.push(`blocker:${qualificationProfile.blocker}`);
+    if (qualificationProfile.capitalAmount > 0) signals.push("capital_amount");
+    if (qualificationProfile.meetingInterest) signals.push(`meeting:${qualificationProfile.meetingInterest}`);
+  }
 
   return {
     score: Math.max(previousScore, Math.min(100, score)),
-    signals,
+    signals: uniqueStrings(signals),
   };
 }
 
@@ -232,6 +265,13 @@ function classificationFromScore(score: number, humanInterventionActive = false,
   if (score >= 70) return { stage: "quente", classification: "quente" };
   if (score >= 40) return { stage: "qualificando", classification: "morno" };
   return { stage: "entrada", classification: "novo" };
+}
+
+function leadStatusFromScore(score: number, config: WillianAgentConfig) {
+  if (score >= config.qualification.vipScore) return "vip";
+  if (score >= config.qualification.qualifiedScore) return "qualificado";
+  if (score >= 35) return "qualificando";
+  return "new";
 }
 
 function budgetFromText(text: string) {
@@ -259,6 +299,182 @@ function parseCurrencyAmount(value: string) {
   if (clean.includes(".") && clean.includes(",")) return Number(clean.replace(/\./g, "").replace(",", "."));
   const parsed = Number(clean.replace(",", "."));
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizeSearchText(text: string) {
+  return text
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function firstDefined(...values: unknown[]) {
+  return values.find((value) => value !== undefined && value !== null);
+}
+
+function extractNumberedQualificationAnswers(text: string) {
+  const answers: Record<number, string> = {};
+  const matches = text.matchAll(/(?:^|\n|\r)\s*(\d)[\).:-]?\s+([^\n\r]+)/g);
+  for (const match of matches) {
+    const index = Number(match[1]);
+    const value = cleanString(match[2]);
+    if (index >= 1 && index <= 5 && value) answers[index] = value;
+  }
+  return answers;
+}
+
+function objectiveFromText(text: string) {
+  const lower = normalizeSearchText(text);
+  if (/\b(morar|moradia|uso proprio|casa propria)\b/.test(lower)) return "moradia";
+  if (/\b(revenda|revender|vender)\b/.test(lower)) return "revenda";
+  if (/\b(aluguel|renda|locacao|locar)\b/.test(lower)) return "renda";
+  if (/\b(invest|escalar|capital|multiplicar|patrimonio)\b/.test(lower)) return "investimento";
+  return "";
+}
+
+function priorityFromText(text: string) {
+  const lower = normalizeSearchText(text);
+  if (/\b(boa oportunidade|mediante oportunidade|se aparecer|quando aparecer|oportunidade boa)\b/.test(lower)) {
+    return "agir mediante boa oportunidade";
+  }
+  if (/\b(agora|prioridade|urgente|essa semana|este mes|ja quero|quero comecar)\b/.test(lower)) return "prioridade agora";
+  if (/\b(futuro|pesquisando|estudando|entendendo|sem pressa|mais pra frente)\b/.test(lower)) return "pesquisa para futuro";
+  return "";
+}
+
+function blockerFromText(text: string) {
+  const lower = normalizeSearchText(text);
+  const blockers = [
+    [/\b(juridic|advogado|matricula|edital|processo|documentacao)\b/, "receio juridico"],
+    [/\b(ocupad|desocup|posse|morador|inquilino)\b/, "imovel ocupado ou posse"],
+    [/\b(medo|receio|insegur|risco|problema)\b/, "medo de risco"],
+    [/\b(nao sei|nao entendo|primeira vez|nunca participei)\b/, "falta de conhecimento"],
+    [/\b(capital|dinheiro|financiamento|parcelamento|entrada)\b/, "capital ou forma de pagamento"],
+  ] as const;
+  return blockers.find(([pattern]) => pattern.test(lower))?.[1] || "";
+}
+
+function meetingInterestFromText(text: string) {
+  const lower = normalizeSearchText(text);
+  if (/\b(nao|agora nao|sem interesse|nao quero|nao faz sentido)\b.*\b(reuniao|ligacao|diretor|comercial|atendimento)\b/.test(lower)) {
+    return "sem interesse agora";
+  }
+  if (/\b(reuniao|diretor comercial|comercial|me chama|pode chamar|tenho interesse|quero sim|faz sentido|vamos falar|pode marcar)\b/.test(lower)) {
+    return "interesse em reuniao";
+  }
+  return "";
+}
+
+function getStoredBetelQualification(metadata: Record<string, unknown>) {
+  return asRecord(firstDefined(metadata.betel_qualification, metadata.betelQualification, metadata.qualification));
+}
+
+function normalizeBetelQualificationProfile(value: Record<string, unknown>): BetelQualificationProfile {
+  const capitalAmount = asNumber(firstDefined(value.capitalAmount, value.capital_amount, value.capital), 0);
+  const answered = asStringList(value.answered);
+  const missing = asStringList(value.missing);
+  return {
+    objective: cleanString(value.objective),
+    priority: cleanString(value.priority),
+    blocker: cleanString(value.blocker),
+    capitalAmount: capitalAmount > 0 ? capitalAmount : 0,
+    meetingInterest: cleanString(value.meetingInterest || value.meeting_interest),
+    answered,
+    missing,
+    readiness: cleanString(value.readiness, "entrada"),
+    updatedAt: cleanString(value.updatedAt || value.updated_at),
+    lastSignalTextPreview: cleanString(value.lastSignalTextPreview || value.last_signal_text_preview),
+  };
+}
+
+function scoreBetelQualificationProfile(profile: BetelQualificationProfile) {
+  let score = 0;
+  if (profile.objective) score += profile.objective === "investimento" ? 18 : 15;
+  if (profile.priority) score += profile.priority.includes("futuro") ? 8 : 17;
+  if (profile.blocker) score += 12;
+  if (profile.capitalAmount >= 500_000) score += 32;
+  else if (profile.capitalAmount >= 200_000) score += 28;
+  else if (profile.capitalAmount >= 100_000) score += 22;
+  else if (profile.capitalAmount > 0) score += 10;
+  if (profile.meetingInterest.includes("interesse")) score += 25;
+  else if (profile.meetingInterest.includes("sem interesse")) score -= 10;
+  return Math.max(0, Math.min(100, score));
+}
+
+function readinessFromQualificationScore(score: number) {
+  if (score >= 85) return "pronto_para_diretor_comercial";
+  if (score >= 70) return "qualificado";
+  if (score >= 40) return "qualificando";
+  return "entrada";
+}
+
+function mergeBetelQualificationProfile(metadata: Record<string, unknown>, text: string) {
+  const current = normalizeBetelQualificationProfile(getStoredBetelQualification(metadata));
+  const numbered = extractNumberedQualificationAnswers(text);
+  const next = {
+    objective: objectiveFromText(numbered[1] || text),
+    priority: priorityFromText(numbered[2] || text),
+    blocker: blockerFromText(numbered[3] || text),
+    capitalAmount: budgetFromText(numbered[4] || text),
+    meetingInterest: meetingInterestFromText(numbered[5] || text),
+  };
+  const merged: BetelQualificationProfile = {
+    ...current,
+    objective: next.objective || current.objective,
+    priority: next.priority || current.priority,
+    blocker: next.blocker || current.blocker,
+    capitalAmount: next.capitalAmount || current.capitalAmount,
+    meetingInterest: next.meetingInterest || current.meetingInterest,
+    updatedAt: new Date().toISOString(),
+    lastSignalTextPreview: clampText(text, 220),
+  };
+  const answered = Object.entries(betelQualificationLabels)
+    .filter(([key]) => {
+      const value = merged[key as keyof typeof betelQualificationLabels];
+      return typeof value === "number" ? value > 0 : Boolean(value);
+    })
+    .map(([, label]) => label);
+  const missing = Object.entries(betelQualificationLabels)
+    .filter(([key]) => {
+      const value = merged[key as keyof typeof betelQualificationLabels];
+      return typeof value === "number" ? value <= 0 : !value;
+    })
+    .map(([, label]) => label);
+  const structuredScore = scoreBetelQualificationProfile(merged);
+  return {
+    ...merged,
+    answered,
+    missing,
+    readiness: readinessFromQualificationScore(structuredScore),
+  };
+}
+
+function buildBetelQualificationPromptContext(metadata: Record<string, unknown>) {
+  const profile = normalizeBetelQualificationProfile(getStoredBetelQualification(metadata));
+  const known = [
+    profile.objective ? `Objetivo: ${profile.objective}` : "",
+    profile.priority ? `Prioridade: ${profile.priority}` : "",
+    profile.blocker ? `Receio: ${profile.blocker}` : "",
+    profile.capitalAmount > 0 ? `Capital liquido: R$ ${profile.capitalAmount.toLocaleString("pt-BR")}` : "",
+    profile.meetingInterest ? `Reuniao: ${profile.meetingInterest}` : "",
+  ].filter(Boolean);
+  const missing = profile.missing.length
+    ? profile.missing
+    : Object.entries(betelQualificationLabels)
+        .filter(([key]) => {
+          const value = profile[key as keyof typeof betelQualificationLabels];
+          return typeof value === "number" ? value <= 0 : !value;
+        })
+        .map(([, label]) => label);
+
+  return [
+    "Qualifique o lead naturalmente no meio da conversa, sem parecer formulario.",
+    "Campos que o CRM precisa descobrir aos poucos: objetivo do lead, prioridade, receio principal, capital liquido e interesse em falar com o diretor comercial.",
+    "Use uma pergunta por vez e encaixe a pergunta depois de entregar valor.",
+    known.length ? `Ja conhecido no CRM: ${known.join("; ")}.` : "Ainda nao ha respostas suficientes no CRM.",
+    missing.length ? `Proxima pergunta sugerida: colete ${missing[0]} de forma natural.` : "Todos os campos principais estao preenchidos; conduza para proximo passo humano/comercial se houver fit.",
+    "A pergunta final so deve aparecer quando houver contexto: faz sentido nosso diretor comercial te mostrar como a Betel avalia oportunidades com desconto relevante, inclusive casos que podem chegar perto de 90% abaixo quando validados?",
+  ].join("\n");
 }
 
 function extractLeadCrmSignals(text: string) {
@@ -343,11 +559,20 @@ async function syncWhatsAppLeadProfile(
 
   const current = asRecord(existing);
   const currentMetadata = asRecord(current.metadata);
+  const inputMetadata = input.metadata || {};
+  const betelQualification = normalizeBetelQualificationProfile(
+    asRecord(firstDefined(inputMetadata.betel_qualification, inputMetadata.betelQualification, currentMetadata.betel_qualification))
+  );
   const signals = extractLeadCrmSignals(input.text);
   const classification = classificationFromScore(input.score, input.humanInterventionActive, input.optOut);
   const preferredRegions = uniqueStrings([...asStringList(current.preferred_regions), ...signals.regions]);
   const propertyTypes = uniqueStrings([...asStringList(current.property_types), ...signals.propertyTypes]);
-  const budgetMax = signals.budget || asNumber(current.budget_max, 0) || null;
+  const budgetMax = betelQualification.capitalAmount || signals.budget || asNumber(current.budget_max, 0) || null;
+  const investmentGoal = betelQualification.objective || signals.investmentGoal || cleanString(current.investment_goal) || null;
+  const urgency = betelQualification.priority || signals.urgency || cleanString(current.urgency) || null;
+  const qualificationNotes = betelQualification.blocker
+    ? `Receio principal: ${betelQualification.blocker}`
+    : cleanString(current.notes) || null;
 
   await supabase.from("whatsapp_lead_profiles").upsert(
     {
@@ -361,9 +586,10 @@ async function syncWhatsAppLeadProfile(
       property_types: propertyTypes,
       budget_min: asNumber(current.budget_min, 0) || null,
       budget_max: budgetMax,
-      investment_goal: signals.investmentGoal || cleanString(current.investment_goal) || null,
+      investment_goal: investmentGoal,
       experience_level: signals.experienceLevel || cleanString(current.experience_level) || null,
-      urgency: signals.urgency || cleanString(current.urgency) || null,
+      urgency,
+      notes: qualificationNotes,
       next_action:
         input.score >= 85
           ? "Priorizar atendimento humano e validar oportunidade aderente."
@@ -379,7 +605,9 @@ async function syncWhatsAppLeadProfile(
       last_contact_at: input.lastContactAt || new Date().toISOString(),
       metadata: {
         ...currentMetadata,
-        ...(input.metadata || {}),
+        ...inputMetadata,
+        betel_qualification: betelQualification,
+        betelQualification,
         lastSignalTextPreview: clampText(input.text, 220),
         lastSignalSyncedAt: new Date().toISOString(),
       },
@@ -1142,15 +1370,21 @@ async function updateLeadRuntimeMemory(
     eventId: string;
   }
 ) {
-  const signalResult = scoreLeadFromText(input.text, input.lead.qualificationScore);
+  const betelQualification = mergeBetelQualificationProfile(input.lead.metadata, input.text);
+  const signalResult = scoreLeadFromText(input.text, input.lead.qualificationScore, betelQualification);
   const now = new Date().toISOString();
+  const leadStatus = leadStatusFromScore(signalResult.score, input.config);
+  const leadTemperature = temperatureFromScore(signalResult.score, input.config);
   await supabase
     .from("whatsapp_leads")
     .update({
       qualification_score: signalResult.score,
-      temperature: temperatureFromScore(signalResult.score, input.config),
+      temperature: leadTemperature,
+      status: leadStatus,
       metadata: {
         ...input.lead.metadata,
+        betel_qualification: betelQualification,
+        betelQualification,
         last_ai_signal_event_id: input.eventId || null,
         last_ai_signal_at: now,
         last_ai_signal_score: signalResult.score,
@@ -1165,10 +1399,12 @@ async function updateLeadRuntimeMemory(
     agentKey: input.agentKey,
     text: input.text,
     score: signalResult.score,
-    status: temperatureFromScore(signalResult.score, input.config),
+    status: leadTemperature,
     source: "whatsapp_agent_runtime",
     lastContactAt: now,
     metadata: {
+      betel_qualification: betelQualification,
+      betelQualification,
       lastAiSignalEventId: input.eventId || null,
       lastAiSignalTags: signalResult.signals,
     },
@@ -1262,6 +1498,9 @@ async function generateWhatsappAgentReply(
             `Regras de proximo passo: ${config.qualification.nextStepRules.join("; ")}`,
           ].join("\n")
         : "Qualificacao pausada.",
+      "",
+      "Qualificacao natural Betel para CRM:",
+      buildBetelQualificationPromptContext(input.lead.metadata),
       "",
       "Memoria/CRM:",
       agentKnowledge.memory,
