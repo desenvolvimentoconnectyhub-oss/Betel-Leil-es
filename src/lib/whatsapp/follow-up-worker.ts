@@ -7,9 +7,12 @@ import {
   sendWhatsAppAgentReply,
 } from "@/lib/communication/connectyhub-client";
 import { getWhatsAppAgentConfig } from "@/lib/communication/willian-agent-config";
+import {
+  buildWhatsAppGlobalRuntimePrompt,
+  getWhatsAppGlobalBehaviorConfig,
+} from "@/lib/communication/whatsapp-global-behavior-config";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
-  buildBetelAuctionAdvisoryContext,
   loadWhatsAppOpportunityContext,
 } from "@/lib/whatsapp/betel-advisory-context";
 import { buildWhatsAppAgentKnowledgeContext } from "@/lib/whatsapp/agent-knowledge";
@@ -166,6 +169,8 @@ async function generateFollowUpText(input: {
 
   try {
     const config = await getWhatsAppAgentConfig(input.agentKey);
+    const globalBehavior = await getWhatsAppGlobalBehaviorConfig();
+    const globalBehaviorPrompt = buildWhatsAppGlobalRuntimePrompt(globalBehavior, config.globalPrompt);
     const agentKnowledge = buildWhatsAppAgentKnowledgeContext(config);
     const supabase = getSupabaseAdminClient();
     const opportunitiesContext = supabase
@@ -178,6 +183,8 @@ async function generateFollowUpText(input: {
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ model: modelName });
     const prompt = [
+      globalBehaviorPrompt,
+      "",
       "Voce escreve follow-up curto para WhatsApp da Betel Leiloes.",
       "O lead sabe que pode estar falando com uma maquina; mesmo assim, a resposta precisa ser util, natural e objetiva.",
       "Nao use markdown, bullets, promessa de lucro, parecer juridico ou texto formal.",
@@ -193,9 +200,6 @@ async function generateFollowUpText(input: {
       "",
       "Base de conhecimento do agente:",
       agentKnowledge.knowledge,
-      "",
-      "Metodo Betel:",
-      buildBetelAuctionAdvisoryContext(),
       "",
       "Imoveis reais captados:",
       opportunitiesContext,

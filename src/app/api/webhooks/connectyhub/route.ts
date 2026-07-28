@@ -11,9 +11,12 @@ import {
 import { getWhatsAppAgentConfig } from "@/lib/communication/willian-agent-config";
 import type { WillianAgentConfig } from "@/lib/communication/willian-types";
 import {
-  buildBetelAuctionAdvisoryContext,
   loadWhatsAppOpportunityContext,
 } from "@/lib/whatsapp/betel-advisory-context";
+import {
+  buildWhatsAppGlobalRuntimePrompt,
+  getWhatsAppGlobalBehaviorConfig,
+} from "@/lib/communication/whatsapp-global-behavior-config";
 import { buildWhatsAppAgentKnowledgeContext } from "@/lib/whatsapp/agent-knowledge";
 import {
   isWhatsAppAudioMessage,
@@ -1182,6 +1185,7 @@ async function generateWhatsappAgentReply(
     history: RuntimeMessageContext[];
     promptInjection: boolean;
     opportunitiesContext: string;
+    globalBehaviorPrompt: string;
   }
 ) {
   const apiKey = await getGeminiApiKey();
@@ -1219,7 +1223,7 @@ async function generateWhatsappAgentReply(
     ].filter(Boolean).join("\n\n") || "Sem memoria viva do clone cadastrada.";
     const agentKnowledge = buildWhatsAppAgentKnowledgeContext(config);
     const prompt = [
-      config.globalPrompt,
+      input.globalBehaviorPrompt,
       "",
       "DIRETRIZ DE SAIDA",
       "Responda somente com a mensagem final para o lead.",
@@ -1258,9 +1262,6 @@ async function generateWhatsappAgentReply(
             `Regras de proximo passo: ${config.qualification.nextStepRules.join("; ")}`,
           ].join("\n")
         : "Qualificacao pausada.",
-      "",
-      "Metodo Betel:",
-      buildBetelAuctionAdvisoryContext(),
       "",
       "Memoria/CRM:",
       agentKnowledge.memory,
@@ -1454,6 +1455,8 @@ async function processWhatsappAgentRuntime(
   }
 
   const promptInjection = config.behavior.promptInjectionProtection && looksLikePromptInjection(text);
+  const globalBehavior = await getWhatsAppGlobalBehaviorConfig();
+  const globalBehaviorPrompt = buildWhatsAppGlobalRuntimePrompt(globalBehavior, config.globalPrompt);
   const opportunitiesContext = await loadWhatsAppOpportunityContext(supabase, {
     profile: runtimeContext.profile,
     inboundText: `${text}\n${formatConversationHistory(runtimeContext.messages)}`,
@@ -1466,6 +1469,7 @@ async function processWhatsappAgentRuntime(
     history: runtimeContext.messages,
     promptInjection,
     opportunitiesContext,
+    globalBehaviorPrompt,
   });
   if (!generated.ok || !generated.text) {
     await insertRuntimeEvent(supabase, {
