@@ -46,10 +46,6 @@ import {
   type WillianPromptConfig,
   type WillianQualificationConfig,
 } from "@/lib/communication/willian-types";
-import {
-  DEFAULT_WHATSAPP_GLOBAL_BEHAVIOR_CONFIG,
-  type WhatsAppGlobalBehaviorConfig,
-} from "@/lib/communication/whatsapp-global-behavior-types";
 
 const defaultWillianState: WillianInstanceState = {
   agentKey: "multichannel-dispatch",
@@ -96,7 +92,6 @@ type ElevenLabsVoice = {
 const WHATSAPP_AGENT_VOICE_ENDPOINT = "/api/admin/whatsapp/agent-voice";
 const WHATSAPP_AGENT_INSTANCE_ENDPOINT = "/api/admin/whatsapp/agent-instance";
 const WHATSAPP_AGENT_CONFIG_ENDPOINT = "/api/admin/whatsapp/agent-config";
-const WHATSAPP_GLOBAL_BEHAVIOR_ENDPOINT = "/api/admin/whatsapp/global-behavior";
 const PRIMARY_WHATSAPP_AGENT_KEY = "multichannel-dispatch";
 const PRIMARY_WHATSAPP_AGENT_LABEL = "Agente de WhatsApp";
 const PASSKEY_BLOCKED_STATUS = "passkey_blocked";
@@ -405,11 +400,9 @@ export function WillianAgentPanel({
 }) {
   const [state, setState] = useState<WillianInstanceState>(initialState || defaultWillianState);
   const [config, setConfig] = useState<WillianAgentConfig>(initialConfig || DEFAULT_WILLIAN_AGENT_CONFIG);
-  const [globalBehavior, setGlobalBehavior] = useState<WhatsAppGlobalBehaviorConfig>(DEFAULT_WHATSAPP_GLOBAL_BEHAVIOR_CONFIG);
   const [activeTab, setActiveTab] = useState<WillianAgentConfigTab>("connection");
   const [loading, setLoading] = useState<string | null>(null);
   const [savingConfig, setSavingConfig] = useState(false);
-  const [savingGlobalBehavior, setSavingGlobalBehavior] = useState(false);
   const [feedback, setFeedback] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
   const [connection, setConnection] = useState<WillianConnectionInfo | null>(null);
   const [agentInstances, setAgentInstances] = useState<WhatsAppAgentInstanceSummary[]>(initialState?.agentInstances || []);
@@ -476,29 +469,6 @@ export function WillianAgentPanel({
       cancelled = true;
     };
   }, [applyInstanceState, openPasskeyBlockedDialog]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadGlobalBehavior() {
-      try {
-        const res = await fetch(WHATSAPP_GLOBAL_BEHAVIOR_ENDPOINT, { cache: "no-store", method: "GET" });
-        const result = await res.json();
-        const nextConfig = result?.data?.config as WhatsAppGlobalBehaviorConfig | undefined;
-        if (!cancelled && nextConfig) setGlobalBehavior(nextConfig);
-      } catch {
-        if (!cancelled) {
-          setFeedback({ type: "err", msg: "Nao foi possivel carregar o comportamento global WhatsApp." });
-        }
-      }
-    }
-
-    void loadGlobalBehavior();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const pairingPollActive = Boolean(connection && !connection.passkeyBlocked);
 
@@ -668,10 +638,6 @@ export function WillianAgentPanel({
     setConfig((prev) => ({ ...prev, status: "needs_review", prompt: { ...prev.prompt, ...patch } }));
   }
 
-  function setGlobalBehaviorPatch(patch: Partial<WhatsAppGlobalBehaviorConfig>) {
-    setGlobalBehavior((prev) => ({ ...prev, ...patch }));
-  }
-
   function setMultichannel(patch: Partial<WillianMultichannelConfig>) {
     setConfig((prev) => ({ ...prev, status: "needs_review", multichannel: { ...prev.multichannel, ...patch } }));
   }
@@ -710,29 +676,6 @@ export function WillianAgentPanel({
       setFeedback({ type: "err", msg: "Falha de rede ao salvar o agente." });
     } finally {
       setSavingConfig(false);
-    }
-  }
-
-  async function saveGlobalBehavior() {
-    setSavingGlobalBehavior(true);
-    setFeedback(null);
-    try {
-      const res = await fetch(WHATSAPP_GLOBAL_BEHAVIOR_ENDPOINT, {
-        body: JSON.stringify(globalBehavior),
-        headers: { "content-type": "application/json" },
-        method: "POST",
-      });
-      const result = await res.json();
-      if (!res.ok || !result.success) {
-        setFeedback({ type: "err", msg: result.error || "Nao foi possivel salvar o comportamento global." });
-      } else {
-        setGlobalBehavior(result.data.config);
-        setFeedback({ type: "ok", msg: "Comportamento global WhatsApp salvo." });
-      }
-    } catch {
-      setFeedback({ type: "err", msg: "Falha de rede ao salvar o comportamento global." });
-    } finally {
-      setSavingGlobalBehavior(false);
     }
   }
 
@@ -1024,10 +967,6 @@ export function WillianAgentPanel({
                 agentName={displayWhatsappAgentName(selectedWhatsappAgent)}
                 companyName={selectedWhatsappAgent?.companyName || config.companyName}
                 config={config.prompt}
-                globalBehavior={globalBehavior}
-                savingGlobalBehavior={savingGlobalBehavior}
-                saveGlobalBehavior={saveGlobalBehavior}
-                setGlobalBehavior={setGlobalBehaviorPatch}
                 setPrompt={setPrompt}
                 status={config.status}
                 updatedAt={config.updatedAt}
@@ -1684,10 +1623,6 @@ function PromptTab({
   agentName,
   companyName,
   config,
-  globalBehavior,
-  savingGlobalBehavior,
-  saveGlobalBehavior,
-  setGlobalBehavior,
   setPrompt,
   status,
   updatedAt,
@@ -1695,77 +1630,14 @@ function PromptTab({
   agentName: string;
   companyName: string;
   config: WillianPromptConfig;
-  globalBehavior: WhatsAppGlobalBehaviorConfig;
-  savingGlobalBehavior: boolean;
-  saveGlobalBehavior: () => void;
-  setGlobalBehavior: (patch: Partial<WhatsAppGlobalBehaviorConfig>) => void;
   setPrompt: (patch: Partial<WillianPromptConfig>) => void;
   status: WillianAgentConfig["status"];
   updatedAt: string;
 }) {
   const charCount = config.agentPrompt.length;
-  const globalCharCount =
-    globalBehavior.platformPrompt.length + globalBehavior.companyPrompt.length + globalBehavior.actionRules.length;
 
   return (
-    <div className="space-y-5">
-      <Panel
-        title="Prompt mae global WhatsApp"
-        eyebrow="Sistema / Betel / acoes"
-        action={
-          <ActionButton
-            icon={<ShieldCheck size={14} />}
-            label="Salvar global"
-            loading={savingGlobalBehavior}
-            onClick={saveGlobalBehavior}
-          />
-        }
-      >
-        <div className="grid gap-3 lg:grid-cols-4">
-          <InfoBox label="Status" value={globalBehavior.active ? "ativo" : "pausado"} tone={globalBehavior.active ? "green" : "yellow"} />
-          <InfoBox label="Versao" value={globalBehavior.version} />
-          <InfoBox label="Ultima edicao" value={formatDateTime(globalBehavior.updatedAt) || "Pendente"} />
-          <InfoBox label="Tamanho" value={`${globalCharCount.toLocaleString("pt-BR")} chars`} />
-        </div>
-
-        <div className="mt-4 grid gap-3 md:grid-cols-[1fr_220px]">
-          <ToggleTile
-            title="Camada global ativa"
-            detail="Quando ativa, todos os agentes WhatsApp obedecem esta regra antes do prompt individual."
-            checked={globalBehavior.active}
-            onChange={(active) => setGlobalBehavior({ active })}
-          />
-          <Field label="Versao global" value={globalBehavior.version} onChange={(version) => setGlobalBehavior({ version })} />
-        </div>
-
-        <div className="mt-4 grid gap-3 xl:grid-cols-[1fr_1fr]">
-          <TextAreaField
-            label="Regra mae WhatsApp"
-            rows={10}
-            value={globalBehavior.platformPrompt}
-            onChange={(platformPrompt) => setGlobalBehavior({ platformPrompt })}
-          />
-          <TextAreaField
-            label="Regra global Betel"
-            rows={10}
-            value={globalBehavior.companyPrompt}
-            onChange={(companyPrompt) => setGlobalBehavior({ companyPrompt })}
-          />
-        </div>
-        <div className="mt-3">
-          <TextAreaField
-            label="Governanca de acoes, botoes e automacoes"
-            rows={6}
-            value={globalBehavior.actionRules}
-            onChange={(actionRules) => setGlobalBehavior({ actionRules })}
-          />
-        </div>
-        <p className="mt-3 text-xs leading-5 text-[var(--admin-muted)]">
-          Esta camada entra antes de qualquer prompt de agente. O agente pode sugerir acoes; botoes, links, follow-ups, horarios, opt-out e handoff continuam sendo validados pelo sistema.
-        </p>
-      </Panel>
-
-      <div className="grid gap-5 xl:grid-cols-[1.35fr_0.65fr]">
+    <div className="grid gap-5 xl:grid-cols-[1.35fr_0.65fr]">
       <Panel title="Prompt do agente" eyebrow="Atendimento / vendas" action={<StatusPill ok={status === "saved"} label={status === "saved" ? "Salvo" : "Revisar"} />}>
         <div className="grid gap-3 lg:grid-cols-4">
           <InfoBox label="Agente" value={agentName} />
@@ -1820,7 +1692,6 @@ function PromptTab({
           <TextAreaField label="Notas do produto" rows={5} value={config.productNotes} onChange={(productNotes) => setPrompt({ productNotes })} />
         </div>
       </Panel>
-      </div>
     </div>
   );
 }
