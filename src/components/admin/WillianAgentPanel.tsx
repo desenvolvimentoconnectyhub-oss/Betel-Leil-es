@@ -858,38 +858,91 @@ export function WillianAgentPanel({
   ) : null;
 
   return (
-    <section className="grid gap-2">
-      <WhatsAppAgentManager
-        agents={whatsappAgents}
-        companyName={config.companyName}
-        formOpen={newAgentFormOpen}
-        loading={loading}
-        newAgentName={newAgentName}
-        newAgentSector={newAgentSector}
-        onCreate={() =>
-          runInstanceAction("createWhatsappAgent", {
-            agentName: newAgentName,
-            companyName: config.companyName,
-            sector: newAgentSector,
-          })
-        }
-        onClone={cloneWhatsappAgent}
-        onControl={toggleWhatsappAgentControl}
-        onDelete={deleteWhatsappAgent}
-        onSelect={setSelectedAgentKey}
-        selectedAgentKey={selectedWhatsappAgent?.agentKey || state.agentKey}
-        setFormOpen={setNewAgentFormOpen}
-        setNewAgentName={setNewAgentName}
-        setNewAgentSector={setNewAgentSector}
-      />
+    <section className="grid gap-2 xl:grid-cols-[320px_minmax(0,1fr)] xl:items-start">
+      <aside className="min-w-0 xl:sticky xl:top-3">
+        <WhatsAppAgentManager
+          agents={whatsappAgents}
+          companyName={config.companyName}
+          formOpen={newAgentFormOpen}
+          loading={loading}
+          newAgentName={newAgentName}
+          newAgentSector={newAgentSector}
+          onCreate={() =>
+            runInstanceAction("createWhatsappAgent", {
+              agentName: newAgentName,
+              companyName: config.companyName,
+              sector: newAgentSector,
+            })
+          }
+          onSelect={setSelectedAgentKey}
+          selectedAgentKey={selectedWhatsappAgent?.agentKey || state.agentKey}
+          setFormOpen={setNewAgentFormOpen}
+          setNewAgentName={setNewAgentName}
+          setNewAgentSector={setNewAgentSector}
+        />
+      </aside>
 
       {selectedWhatsappAgent ? (
-        <>
-          <div className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-1.5 shadow-sm shadow-[rgba(81,60,36,0.05)]">
-            <div className="grid gap-2 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
-              <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-5">
-                <InfoBox label="Agente" value={displayWhatsappAgentName(selectedWhatsappAgent)} />
-                <InfoBox label="Empresa" value={selectedWhatsappAgent?.companyName || config.companyName} />
+        <div className="min-w-0 space-y-2">
+          <div className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-2 shadow-sm shadow-[rgba(81,60,36,0.05)]">
+            <div className="grid gap-2 border-b border-[var(--admin-border)] pb-2 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+              <div className="flex min-w-0 items-center gap-2.5">
+                <WhatsappProfileAvatar
+                  connected={selectedAgentConnected}
+                  imageUrl={selectedWhatsappAgent.profileImageUrl || state.profileImageUrl}
+                  label={displayWhatsappAgentName(selectedWhatsappAgent)}
+                />
+                <div className="min-w-0">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <h2 className="truncate text-base font-bold text-[var(--admin-foreground)]">
+                      {displayWhatsappAgentName(selectedWhatsappAgent)}
+                    </h2>
+                    <StatusPill
+                      ok={!selectedAgentPaused && selectedAgentConnected}
+                      label={selectedAgentPaused ? "pausado" : selectedAgentConnected ? "online" : "pendente"}
+                    />
+                    {config.status !== "saved" && <StatusPill ok={false} label="alteracoes" />}
+                  </div>
+                  <p className="mt-0.5 truncate text-xs font-semibold text-[var(--admin-muted)]">
+                    {selectedWhatsappAgent?.companyName || config.companyName}
+                    {" / "}
+                    {selectedWhatsappAgent.phoneNumber || state.phoneNumber || "numero pendente"}
+                  </p>
+                  <p className="mt-0.5 truncate text-[11px] text-[var(--admin-muted)]">
+                    Atualizado {formatDateTime(selectedWhatsappAgent.updatedAt || config.updatedAt) || "pendente"}
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5 lg:justify-end">
+                <ActionButton
+                  icon={<Copy size={14} />}
+                  label="Clonar"
+                  onClick={() => cloneWhatsappAgent(selectedWhatsappAgent)}
+                />
+                <ActionButton
+                  icon={<Power size={14} />}
+                  label={selectedAgentPaused ? "Reativar" : "Pausar"}
+                  loading={loading === "controlWhatsappAgent"}
+                  onClick={() => toggleWhatsappAgentControl(selectedWhatsappAgent)}
+                />
+                <ActionButton
+                  icon={<Trash2 size={14} />}
+                  label="Excluir"
+                  loading={loading === "deleteWhatsappAgent"}
+                  onClick={() => deleteWhatsappAgent(selectedWhatsappAgent)}
+                  tone="danger"
+                />
+                <ActionButton
+                  disabled={config.status === "saved"}
+                  icon={<Save size={14} />}
+                  label={config.status === "saved" ? "Tudo salvo" : "Salvar alteracoes"}
+                  loading={savingConfig}
+                  onClick={saveConfig}
+                />
+              </div>
+            </div>
+            <div className="mt-2 grid gap-2 lg:grid-cols-[minmax(0,1fr)_260px]">
+              <div className="grid gap-1 sm:grid-cols-3">
                 <InfoBox
                   label="WhatsApp"
                   value={selectedAgentPaused ? "pausado" : selectedAgentConnected ? "conectado" : "pendente"}
@@ -898,17 +951,12 @@ export function WillianAgentPanel({
                 <InfoBox label="Conversa" value={conversationModeLabels[config.behavior.conversationMode]} />
                 <InfoBox label="Alteracoes" value={changeLabel} tone={config.status === "saved" ? "green" : "yellow"} />
               </div>
-              <div className="grid gap-1 sm:grid-cols-[72px_72px_72px_auto] xl:w-[332px]">
-                <MiniKpi label="Pronto" value={`${readyScore}%`} tone={readyScore >= 70 ? "green" : "yellow"} />
-                <MiniKpi label="VIP" value={`${config.qualification.vipScore}+`} tone="cyan" />
-                <MiniKpi label="Perguntas" value={String(config.qualification.questionsLimit)} tone="purple" />
-                <div className="sm:col-span-1">
-                  <ActionButton
-                    icon={<Save size={14} />}
-                    label="Salvar tudo"
-                    loading={savingConfig}
-                    onClick={saveConfig}
-                  />
+              <div className="rounded-md border border-[var(--admin-border)] bg-white px-2 py-1.5">
+                <p className="mb-1 text-[10px] font-semibold text-[var(--admin-muted)]">Saude do agente</p>
+                <div className="grid grid-cols-3 gap-1">
+                  <MiniKpi label="Pronto" value={`${readyScore}%`} tone={readyScore >= 70 ? "green" : "yellow"} />
+                  <MiniKpi label="VIP" value={`${config.qualification.vipScore}+`} tone="cyan" />
+                  <MiniKpi label="Perguntas" value={String(config.qualification.questionsLimit)} tone="purple" />
                 </div>
               </div>
             </div>
@@ -985,9 +1033,9 @@ export function WillianAgentPanel({
 
             {feedbackNode}
           </div>
-        </>
+        </div>
       ) : (
-        <div className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-5 shadow-sm shadow-[rgba(81,60,36,0.05)]">
+        <div className="min-w-0 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-5 shadow-sm shadow-[rgba(81,60,36,0.05)]">
           <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--admin-muted)]">Central WhatsApp</p>
           <h3 className="mt-1 text-base font-bold text-[var(--admin-foreground)]">Nenhum agente WhatsApp ativo</h3>
           <p className="mt-2 text-sm text-[var(--admin-muted)]">
@@ -1063,10 +1111,7 @@ function WhatsAppAgentManager({
   loading,
   newAgentName,
   newAgentSector,
-  onClone,
-  onControl,
   onCreate,
-  onDelete,
   onSelect,
   selectedAgentKey,
   setFormOpen,
@@ -1079,10 +1124,7 @@ function WhatsAppAgentManager({
   loading: string | null;
   newAgentName: string;
   newAgentSector: string;
-  onClone: (agent: WhatsAppAgentInstanceSummary) => void;
-  onControl: (agent: WhatsAppAgentInstanceSummary) => void;
   onCreate: () => void;
-  onDelete: (agent: WhatsAppAgentInstanceSummary) => void;
   onSelect: (agentKey: string) => void;
   selectedAgentKey: string;
   setFormOpen: (open: boolean) => void;
@@ -1170,65 +1212,57 @@ function WhatsAppAgentManager({
           />
         </div>
 
-        <div className="grid gap-1.5 md:grid-cols-2 2xl:grid-cols-3">
+        <div className="grid gap-1.5">
           {filteredAgents.map((agent) => {
             const selected = agent.agentKey === selectedAgentKey;
             const paused = isWhatsappAgentPaused(agent);
             const statusLabel = paused
               ? "Pausado"
-              : selected
-                ? "Aberto"
-                : agent.connected
-                  ? "Online"
-                  : "Pendente";
+              : agent.connected
+                ? "Online"
+                : "Pendente";
             return (
-              <div
+              <button
                 key={agent.agentKey}
+                type="button"
+                onClick={() => onSelect(agent.agentKey)}
                 className={cn(
-                  "rounded-md border p-2 transition",
+                  "grid w-full grid-cols-[34px_minmax(0,1fr)_auto] items-center gap-2 rounded-md border p-2 text-left transition",
                   selected
-                    ? "border-[rgba(200,90,31,0.35)] bg-[rgba(200,90,31,0.08)]"
-                    : "border-[var(--admin-border)] bg-white"
+                    ? "border-[rgba(200,90,31,0.35)] bg-[rgba(200,90,31,0.07)] shadow-[inset_3px_0_0_rgba(200,90,31,0.65)]"
+                    : "border-[var(--admin-border)] bg-white hover:border-[rgba(200,90,31,0.22)] hover:bg-[rgba(184,122,22,0.04)]"
                 )}
               >
-                <div className="flex items-start justify-between gap-2">
-                  <button type="button" onClick={() => onSelect(agent.agentKey)} className="min-w-0 text-left">
-                    <p className="truncate text-xs font-bold text-[var(--admin-foreground)]">{displayWhatsappAgentName(agent)}</p>
-                    <p className="mt-0.5 truncate text-[10px] font-semibold text-[var(--admin-muted)]">
-                      {agent.companyName || companyName} / {agent.sector || "Atendimento WhatsApp"}
-                    </p>
-                    <p className="mt-0.5 truncate text-[8px] font-bold uppercase tracking-[0.12em] text-[var(--admin-muted)]">
-                      {whatsappAgentOperationalLabel(agent)} {agent.instanceName ? `/ ${agent.instanceName}` : ""}
-                    </p>
-                  </button>
+                <span
+                  className={cn(
+                    "grid size-8 shrink-0 place-items-center rounded-md border",
+                    paused
+                      ? "border-[rgba(234,179,8,0.3)] bg-[rgba(234,179,8,0.08)] text-[var(--admin-yellow)]"
+                      : agent.connected
+                        ? "border-[rgba(34,197,94,0.3)] bg-[rgba(34,197,94,0.08)] text-[var(--admin-green)]"
+                        : "border-[var(--admin-border)] bg-white text-[var(--admin-muted)]"
+                  )}
+                >
+                  <MessageCircle size={14} />
+                </span>
+                <span className="min-w-0">
+                  <span className="block truncate text-xs font-bold text-[var(--admin-foreground)]">
+                    {displayWhatsappAgentName(agent)}
+                  </span>
+                  <span className="mt-0.5 block truncate text-[11px] font-semibold text-[var(--admin-muted)]">
+                    {agent.companyName || companyName}
+                  </span>
+                  <span className="mt-0.5 block truncate text-[10px] text-[var(--admin-muted)]">
+                    {agent.phoneNumber || agent.instanceName || agent.sector || "Atendimento WhatsApp"}
+                  </span>
+                </span>
+                <div className="flex shrink-0 flex-col items-end gap-1">
                   <StatusPill ok={!paused && agent.connected} label={statusLabel} />
+                  <span className="max-w-[82px] truncate text-[9px] text-[var(--admin-muted)]">
+                    {whatsappAgentOperationalLabel(agent)}
+                  </span>
                 </div>
-                <div className="mt-1.5 flex flex-wrap gap-1">
-                  <ActionButton
-                    icon={<MessageCircle size={14} />}
-                    label={selected ? "Aberto" : "Abrir"}
-                    onClick={() => onSelect(agent.agentKey)}
-                  />
-                  <ActionButton
-                    icon={<Copy size={14} />}
-                    label="Clonar"
-                    onClick={() => onClone(agent)}
-                  />
-                  <ActionButton
-                    icon={<Power size={14} />}
-                    label={paused ? "Reativar" : "Pausar"}
-                    loading={loading === "controlWhatsappAgent" && selected}
-                    onClick={() => onControl(agent)}
-                  />
-                  <ActionButton
-                    icon={<Trash2 size={14} />}
-                    label="Excluir"
-                    loading={loading === "deleteWhatsappAgent" && selected}
-                    onClick={() => onDelete(agent)}
-                    tone="danger"
-                  />
-                </div>
-              </div>
+              </button>
             );
           })}
           {!filteredAgents.length && (
@@ -2682,9 +2716,9 @@ function MiniKpi({ label, tone, value }: { label: string; tone: "cyan" | "green"
     yellow: "text-[var(--admin-yellow)]",
   };
   return (
-    <div className="rounded-md border border-[var(--admin-border)] bg-white px-2 py-1.5">
-      <p className="text-[8px] font-bold uppercase tracking-[0.12em] text-[var(--admin-muted)]">{label}</p>
-      <p className={cn("mt-0.5 text-lg font-bold leading-none", toneClass[tone])}>{value}</p>
+    <div className="min-w-0 px-1">
+      <p className="truncate text-[10px] font-semibold text-[var(--admin-muted)]">{label}</p>
+      <p className={cn("mt-0.5 truncate text-sm font-bold leading-none", toneClass[tone])}>{value}</p>
     </div>
   );
 }
