@@ -29,6 +29,10 @@ function isAudioFile(value: FormDataEntryValue): value is File {
   );
 }
 
+function formBoolean(form: FormData, key: string) {
+  return cleanString(form.get(key)).toLowerCase() === "true";
+}
+
 export async function GET() {
   try {
     const [config, voices] = await Promise.all([getElevenLabsConfig(), listElevenLabsVoices()]);
@@ -66,10 +70,31 @@ async function handleMultipart(request: NextRequest) {
     );
   }
 
-  const authorized = cleanString(form.get("authorized")).toLowerCase() === "true";
-  if (!authorized) {
+  const authorized = formBoolean(form, "authorized");
+  const consentOwnerName = cleanString(form.get("consentOwnerName"));
+  const consentEvidence = cleanString(form.get("consentEvidence"));
+  const consentType = cleanString(form.get("consentType"));
+  const consentRights = formBoolean(form, "consentRights");
+  const consentSamples = formBoolean(form, "consentSamples");
+  const consentBusinessUse = formBoolean(form, "consentBusinessUse");
+  const consentNoRestrictedVoice = formBoolean(form, "consentNoRestrictedVoice");
+  const allConsentChecks =
+    authorized &&
+    consentRights &&
+    consentSamples &&
+    consentBusinessUse &&
+    consentNoRestrictedVoice &&
+    consentOwnerName.length >= 3 &&
+    consentEvidence.length >= 3 &&
+    ["own_voice", "authorized_voice", "company_authorization"].includes(consentType);
+
+  if (!allConsentChecks) {
     return NextResponse.json(
-      { success: false, message: "Confirme a autorizacao do titular da voz antes de clonar." },
+      {
+        success: false,
+        message:
+          "Antes de clonar, confirme titular, evidencia de consentimento, direito de uso, amostras autorizadas e ausencia de voz restrita.",
+      },
       { status: 400 }
     );
   }
@@ -94,6 +119,7 @@ async function handleMultipart(request: NextRequest) {
   const result = await createElevenLabsVoiceClone({
     name: cleanString(form.get("name"), "Agente Betel"),
     description: cleanString(form.get("description")),
+    consentType,
     files,
   });
 

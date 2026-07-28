@@ -116,6 +116,10 @@ export type WillianBehaviorConfig = {
   voiceProvider: string;
   voiceCloneEnabled: boolean;
   voiceCloneConsent: boolean;
+  voiceCloneConsentType: "own_voice" | "authorized_voice" | "company_authorization";
+  voiceCloneConsentOwnerName: string;
+  voiceCloneConsentEvidence: string;
+  voiceCloneConsentAt: string | null;
   voiceCloneStatus: "inactive" | "testing" | "active";
   selectedVoiceId: string;
   selectedVoiceLabel: string;
@@ -428,8 +432,12 @@ export const DEFAULT_WILLIAN_AGENT_CONFIG: WillianAgentConfig = {
     rapport: "suave",
     availability: "business_hours",
     voiceProvider: "ElevenLabs",
-    voiceCloneEnabled: true,
-    voiceCloneConsent: true,
+    voiceCloneEnabled: false,
+    voiceCloneConsent: false,
+    voiceCloneConsentType: "authorized_voice",
+    voiceCloneConsentOwnerName: "",
+    voiceCloneConsentEvidence: "",
+    voiceCloneConsentAt: null,
     voiceCloneStatus: "testing",
     selectedVoiceId: "clone-willian",
     selectedVoiceLabel: "Clone do agente",

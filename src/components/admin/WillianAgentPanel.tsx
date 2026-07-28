@@ -1933,6 +1933,10 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
   const [cloneName, setCloneName] = useState(config.selectedVoiceLabel || "Agente Betel");
   const [cloneDescription, setCloneDescription] = useState("Voz autorizada do agente de WhatsApp para atendimento Betel.");
   const [cloneFiles, setCloneFiles] = useState<File[]>([]);
+  const [consentRights, setConsentRights] = useState(false);
+  const [consentSamples, setConsentSamples] = useState(false);
+  const [consentBusinessUse, setConsentBusinessUse] = useState(false);
+  const [consentNoRestrictedVoice, setConsentNoRestrictedVoice] = useState(false);
 
   const filteredVoices = useMemo(() => {
     const query = config.voiceSearch.trim().toLowerCase();
@@ -1948,6 +1952,13 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
     () => voices.find((voice) => voice.voiceId === config.selectedVoiceId),
     [config.selectedVoiceId, voices]
   );
+  const cloneConsentReady =
+    config.voiceCloneConsentOwnerName.trim().length >= 3 &&
+    config.voiceCloneConsentEvidence.trim().length >= 3 &&
+    consentRights &&
+    consentSamples &&
+    consentBusinessUse &&
+    consentNoRestrictedVoice;
 
   const loadVoices = useCallback(async (syncConfiguredVoice = false) => {
     setVoiceLoading(true);
@@ -2000,6 +2011,11 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
         selectedVoiceId: voice.voiceId,
         selectedVoiceLabel: voice.name,
         audioVoiceSource: "elevenlabs",
+        voiceCloneConsent: true,
+        voiceCloneConsentType: "company_authorization",
+        voiceCloneConsentOwnerName: voice.name,
+        voiceCloneConsentEvidence: "Voz disponivel na biblioteca ElevenLabs da conta configurada.",
+        voiceCloneConsentAt: new Date().toISOString(),
         voiceCloneStatus: "active",
       });
       const res = await fetch(WHATSAPP_AGENT_VOICE_ENDPOINT, {
@@ -2044,6 +2060,11 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
   }
 
   async function cloneVoice() {
+    if (!cloneConsentReady) {
+      setVoiceError("Complete e confirme o consentimento antes de clonar a voz.");
+      return;
+    }
+
     setVoiceAction("clone");
     setVoiceError("");
     try {
@@ -2051,7 +2072,14 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
       form.set("action", "clone_willian");
       form.set("name", cloneName);
       form.set("description", cloneDescription);
-      form.set("authorized", String(config.voiceCloneConsent));
+      form.set("authorized", String(cloneConsentReady));
+      form.set("consentType", config.voiceCloneConsentType);
+      form.set("consentOwnerName", config.voiceCloneConsentOwnerName);
+      form.set("consentEvidence", config.voiceCloneConsentEvidence);
+      form.set("consentRights", String(consentRights));
+      form.set("consentSamples", String(consentSamples));
+      form.set("consentBusinessUse", String(consentBusinessUse));
+      form.set("consentNoRestrictedVoice", String(consentNoRestrictedVoice));
       cloneFiles.forEach((file) => form.append("files[]", file, file.name));
 
       const res = await fetch(WHATSAPP_AGENT_VOICE_ENDPOINT, {
@@ -2065,6 +2093,8 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
         selectedVoiceId: String(data.voiceId || ""),
         selectedVoiceLabel: cloneName,
         voiceCloneEnabled: true,
+        voiceCloneConsent: true,
+        voiceCloneConsentAt: new Date().toISOString(),
         voiceCloneStatus: data.requiresVerification ? "testing" : "active",
         audioVoiceSource: "elevenlabs_clone",
         audioModelId: config.audioModelId || "eleven_multilingual_v2",
@@ -2156,9 +2186,8 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
           <Field label="Voz selecionada" value={config.selectedVoiceLabel} onChange={(selectedVoiceLabel) => setBehavior({ selectedVoiceLabel })} />
           <Field label="Buscar voz" value={config.voiceSearch} onChange={(voiceSearch) => setBehavior({ voiceSearch })} placeholder="Nome, categoria ou tipo" />
         </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-3">
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
           <ToggleTile title="Clone de voz" detail="Libera uso da voz clonada do agente." checked={config.voiceCloneEnabled} onChange={(voiceCloneEnabled) => setBehavior({ voiceCloneEnabled })} />
-          <ToggleTile title="Consentimento do clone" detail="Marca que a voz foi autorizada." checked={config.voiceCloneConsent} onChange={(voiceCloneConsent) => setBehavior({ voiceCloneConsent })} />
           <ToggleTile title="Preview de audio" detail="Mostra player de teste antes de salvar." checked={config.audioPreviewEnabled} onChange={(audioPreviewEnabled) => setBehavior({ audioPreviewEnabled })} />
         </div>
         <div className="mt-4 grid gap-3 xl:grid-cols-3">
@@ -2235,6 +2264,83 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
             <Field label="Nome do clone" value={cloneName} onChange={setCloneName} />
             <TextAreaField label="Descricao do clone" rows={2} value={cloneDescription} onChange={setCloneDescription} />
           </div>
+          <div className="mt-4 rounded-lg border border-[rgba(234,179,8,0.28)] bg-[rgba(234,179,8,0.08)] p-3">
+            <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <ShieldCheck size={15} className="text-[var(--admin-yellow)]" />
+                  <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--admin-yellow)]">Consentimento de voz obrigatorio</p>
+                </div>
+                <p className="mt-2 text-xs leading-5 text-[var(--admin-muted)]">
+                  Clone apenas voz propria, autorizada pelo titular ou coberta por autorizacao formal da empresa. Mantenha a evidencia arquivada.
+                </p>
+              </div>
+              <StatusPill
+                ok={Boolean(config.voiceCloneConsent && config.voiceCloneConsentAt)}
+                label={config.voiceCloneConsentAt ? `registrado ${formatDateTime(config.voiceCloneConsentAt || "")}` : "pendente"}
+              />
+            </div>
+            <div className="mt-3 grid gap-3 xl:grid-cols-[220px_minmax(0,1fr)_minmax(0,1fr)]">
+              <SelectField
+                label="Tipo de consentimento"
+                value={config.voiceCloneConsentType}
+                options={[
+                  ["own_voice", "Sou o titular"],
+                  ["authorized_voice", "Titular autorizou"],
+                  ["company_authorization", "Termo da empresa"],
+                ]}
+                onChange={(voiceCloneConsentType) =>
+                  setBehavior({
+                    voiceCloneConsent: false,
+                    voiceCloneConsentAt: null,
+                    voiceCloneConsentType: voiceCloneConsentType as WillianBehaviorConfig["voiceCloneConsentType"],
+                  })
+                }
+              />
+              <Field
+                label="Titular da voz"
+                value={config.voiceCloneConsentOwnerName}
+                onChange={(voiceCloneConsentOwnerName) =>
+                  setBehavior({ voiceCloneConsent: false, voiceCloneConsentAt: null, voiceCloneConsentOwnerName })
+                }
+                placeholder="Nome de quem autorizou"
+              />
+              <Field
+                label="Evidencia arquivada"
+                value={config.voiceCloneConsentEvidence}
+                onChange={(voiceCloneConsentEvidence) =>
+                  setBehavior({ voiceCloneConsent: false, voiceCloneConsentAt: null, voiceCloneConsentEvidence })
+                }
+                placeholder="Contrato, termo, e-mail ou autorizacao gravada"
+              />
+            </div>
+            <div className="mt-3 grid gap-2 md:grid-cols-2">
+              <ConsentCheck
+                checked={consentRights}
+                onChange={setConsentRights}
+                title="Tenho direito e consentimento"
+                detail="O titular permitiu criar e usar esta voz no atendimento Betel."
+              />
+              <ConsentCheck
+                checked={consentSamples}
+                onChange={setConsentSamples}
+                title="Amostras foram autorizadas"
+                detail="Os audios enviados sao do titular e foram fornecidos para este uso."
+              />
+              <ConsentCheck
+                checked={consentBusinessUse}
+                onChange={setConsentBusinessUse}
+                title="Uso comercial permitido"
+                detail="A autorizacao cobre mensagens de atendimento, follow-up e testes."
+              />
+              <ConsentCheck
+                checked={consentNoRestrictedVoice}
+                onChange={setConsentNoRestrictedVoice}
+                title="Nao e voz restrita"
+                detail="Nao e voz de menor, figura publica sensivel ou terceiro sem autorizacao."
+              />
+            </div>
+          </div>
           <div className="mt-3 grid gap-3 xl:grid-cols-[1fr_auto] xl:items-end">
             <label className="grid gap-1">
               <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Amostras de audio autorizadas</span>
@@ -2250,12 +2356,14 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
               icon={<Paperclip size={14} />}
               label="Clonar voz"
               loading={voiceAction === "clone"}
-              disabled={!config.voiceCloneConsent || cloneFiles.length === 0}
+              disabled={!cloneConsentReady || cloneFiles.length === 0}
               onClick={() => void cloneVoice()}
             />
           </div>
           <p className="mt-2 text-xs leading-5 text-[var(--admin-muted)]">
-            {cloneFiles.length ? cloneFiles.map((file) => file.name).join(", ") : "O clone exige confirmacao de consentimento e amostras autorizadas do titular da voz."}
+            {cloneFiles.length
+              ? cloneFiles.map((file) => file.name).join(", ")
+              : "O clone exige consentimento completo e amostras autorizadas do titular da voz."}
           </p>
         </div>
       </Panel>
@@ -2762,6 +2870,36 @@ function CompactToggle({ checked, detail, onChange, title }: { checked: boolean;
       </span>
       <span className={cn("h-5 w-9 shrink-0 rounded-full border p-0.5 transition", checked ? "border-[rgba(200,90,31,0.45)] bg-[rgba(200,90,31,0.18)]" : "border-[var(--admin-border)] bg-white")}>
         <span className={cn("block size-3.5 rounded-full transition", checked ? "translate-x-4 bg-[var(--admin-cyan)]" : "bg-[var(--admin-muted)]")} />
+      </span>
+    </button>
+  );
+}
+
+function ConsentCheck({ checked, detail, onChange, title }: { checked: boolean; detail: string; onChange: (checked: boolean) => void; title: string }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(!checked)}
+      className={cn(
+        "grid min-h-16 grid-cols-[18px_minmax(0,1fr)] gap-2 rounded-md border p-2.5 text-left transition",
+        checked
+          ? "border-[rgba(34,197,94,0.28)] bg-[rgba(34,197,94,0.08)]"
+          : "border-[var(--admin-border)] bg-white hover:border-[rgba(200,90,31,0.22)]"
+      )}
+    >
+      <span
+        className={cn(
+          "mt-0.5 grid size-4 place-items-center rounded border",
+          checked
+            ? "border-[var(--admin-green)] bg-[var(--admin-green)] text-white"
+            : "border-[var(--admin-border)] bg-white text-transparent"
+        )}
+      >
+        <CheckCircle2 size={11} />
+      </span>
+      <span className="min-w-0">
+        <span className="block text-xs font-semibold text-[var(--admin-foreground)]">{title}</span>
+        <span className="mt-1 block text-[11px] leading-4 text-[var(--admin-muted)]">{detail}</span>
       </span>
     </button>
   );

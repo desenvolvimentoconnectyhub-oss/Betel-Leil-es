@@ -250,6 +250,7 @@ export async function listElevenLabsVoices() {
 export async function createElevenLabsVoiceClone(input: {
   name: string;
   description?: string;
+  consentType?: string;
   files: File[];
 }) {
   const form = new FormData();
@@ -258,7 +259,16 @@ export async function createElevenLabsVoiceClone(input: {
   const description = cleanString(input.description);
   if (description) form.set("description", description);
 
-  form.set("labels", JSON.stringify({ project: "betel", agent: "willian", source: "agent" }));
+  form.set(
+    "labels",
+    JSON.stringify({
+      project: "betel",
+      agent: "willian",
+      source: "agent",
+      consent_attested: "true",
+      consent_type: cleanString(input.consentType, "authorized_voice"),
+    })
+  );
 
   for (const file of input.files) {
     form.append("files[]", file, file.name || "willian-sample.mp3");

@@ -36,6 +36,11 @@ function stringField(value: unknown, fallback: string) {
   return typeof value === "string" ? value : fallback;
 }
 
+function nullableStringField(value: unknown, fallback: string | null) {
+  if (value === null) return null;
+  return typeof value === "string" ? value : fallback;
+}
+
 function normalizeText(value: string) {
   return value.replace(/\s+/g, " ").trim().toLowerCase();
 }
@@ -129,6 +134,23 @@ export function normalizeWillianAgentConfig(input: unknown): WillianAgentConfig 
         defaults.behavior.voiceCloneEnabled
       ),
       voiceCloneConsent: boolField(firstDefined(behavior.voiceCloneConsent, behavior.voiceConsent), defaults.behavior.voiceCloneConsent),
+      voiceCloneConsentType: enumField(
+        behavior.voiceCloneConsentType,
+        defaults.behavior.voiceCloneConsentType,
+        ["own_voice", "authorized_voice", "company_authorization"]
+      ),
+      voiceCloneConsentOwnerName: stringField(
+        behavior.voiceCloneConsentOwnerName,
+        defaults.behavior.voiceCloneConsentOwnerName
+      ),
+      voiceCloneConsentEvidence: stringField(
+        behavior.voiceCloneConsentEvidence,
+        defaults.behavior.voiceCloneConsentEvidence
+      ),
+      voiceCloneConsentAt: nullableStringField(
+        behavior.voiceCloneConsentAt,
+        defaults.behavior.voiceCloneConsentAt
+      ),
       voiceCloneStatus: enumField(behavior.voiceCloneStatus, defaults.behavior.voiceCloneStatus, [
         "inactive",
         "testing",
