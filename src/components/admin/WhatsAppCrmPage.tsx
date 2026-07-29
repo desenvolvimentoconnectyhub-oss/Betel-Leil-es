@@ -171,6 +171,42 @@ function formatPhone(phone: string) {
   return phone || "Sem telefone";
 }
 
+function leadInitials(lead: Pick<WhatsAppCrmLeadCard, "name" | "phone">) {
+  const source = lead.name && lead.name !== "Lead WhatsApp" ? lead.name : lead.phone;
+  const words = source
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .split(/\s+/)
+    .map((word) => word.trim())
+    .filter(Boolean);
+  const initials = words.slice(0, 2).map((word) => word[0]?.toUpperCase()).join("");
+  return initials || "LW";
+}
+
+function LeadAvatar({
+  lead,
+  size = "md",
+}: {
+  lead: Pick<WhatsAppCrmLeadCard, "name" | "phone" | "profileImageUrl">;
+  size?: "sm" | "md" | "lg";
+}) {
+  const safeImageUrl = (lead.profileImageUrl || "").replace(/"/g, "%22");
+  const sizeClass = size === "lg" ? "h-14 w-14 text-sm" : size === "sm" ? "h-8 w-8 text-[10px]" : "h-11 w-11 text-xs";
+
+  return (
+    <div
+      className={cn(
+        "shrink-0 overflow-hidden rounded-full border border-[rgba(200,90,31,0.24)] bg-[rgba(200,90,31,0.10)] bg-cover bg-center font-bold text-[var(--admin-cyan)] shadow-sm",
+        "inline-flex items-center justify-center",
+        sizeClass
+      )}
+      style={safeImageUrl ? { backgroundImage: `url("${safeImageUrl}")` } : undefined}
+      title={safeImageUrl ? "Foto sincronizada do WhatsApp" : "Foto do WhatsApp ainda nao sincronizada"}
+    >
+      {!safeImageUrl && leadInitials(lead)}
+    </div>
+  );
+}
+
 function getMetric(data: WhatsAppCrmData, label: string, fallback: Omit<WhatsAppCrmData["metrics"][number], "label">) {
   const found = data.metrics.find((metric) => metric.label.toLowerCase() === label.toLowerCase());
   return found || { label, ...fallback };
@@ -386,30 +422,33 @@ function LeadQueueItem({
         selected ? "bg-[rgba(0,243,255,0.06)]" : "hover:bg-[rgba(255,255,255,0.03)]"
       )}
     >
-      <div className="min-w-0">
-        <div className="flex min-w-0 items-center gap-2">
-          <p className="truncate text-sm font-semibold text-white">{lead.name}</p>
-          <StatusBadge tone={crmStageTone[lead.crmStage]}>{crmStageLabels[lead.crmStage]}</StatusBadge>
-          {lead.waitingForReply && <StatusBadge tone="red">sem resposta</StatusBadge>}
-          {lead.humanInterventionActive && <StatusBadge tone="yellow">humano</StatusBadge>}
-          {lead.optOut && <StatusBadge tone="muted">opt-out</StatusBadge>}
-        </div>
-        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--admin-muted)]">
-          <span className="inline-flex items-center gap-1">
-            <Phone size={12} />
-            {formatPhone(lead.phone)}
-          </span>
-          <span>{lead.agentName}</span>
-          {lead.assignedToLabel && <span>resp. {lead.assignedToLabel}</span>}
-          <span>{lead.messageCount} msgs</span>
-        </div>
-        <p className="mt-3 line-clamp-2 text-xs leading-5 text-[var(--admin-soft)]">{lead.lastMessagePreview}</p>
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {lead.tags.map((tag) => (
-            <span key={tag} className="rounded border border-[var(--admin-border)] bg-white/[0.03] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--admin-muted)]">
-              {tag}
+      <div className="flex min-w-0 items-start gap-3">
+        <LeadAvatar lead={lead} />
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-2">
+            <p className="truncate text-sm font-semibold text-white">{lead.name}</p>
+            <StatusBadge tone={crmStageTone[lead.crmStage]}>{crmStageLabels[lead.crmStage]}</StatusBadge>
+            {lead.waitingForReply && <StatusBadge tone="red">sem resposta</StatusBadge>}
+            {lead.humanInterventionActive && <StatusBadge tone="yellow">humano</StatusBadge>}
+            {lead.optOut && <StatusBadge tone="muted">opt-out</StatusBadge>}
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--admin-muted)]">
+            <span className="inline-flex items-center gap-1">
+              <Phone size={12} />
+              {formatPhone(lead.phone)}
             </span>
-          ))}
+            <span>{lead.agentName}</span>
+            {lead.assignedToLabel && <span>resp. {lead.assignedToLabel}</span>}
+            <span>{lead.messageCount} msgs</span>
+          </div>
+          <p className="mt-3 line-clamp-2 text-xs leading-5 text-[var(--admin-soft)]">{lead.lastMessagePreview}</p>
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {lead.tags.map((tag) => (
+              <span key={tag} className="rounded border border-[var(--admin-border)] bg-white/[0.03] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--admin-muted)]">
+                {tag}
+              </span>
+            ))}
+          </div>
         </div>
       </div>
       <LeadScore score={lead.score} />
@@ -477,21 +516,24 @@ function LeadDetail({
       action={<StatusBadge tone={slaTone[lead.slaStatus]}>{slaLabel[lead.slaStatus]}</StatusBadge>}
     >
       <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <h2 className="truncate text-lg font-semibold text-white">{lead.name}</h2>
-          <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-[var(--admin-muted)]">
-            <span>{formatPhone(lead.phone)}</span>
-            {lead.whatsappUrl && (
-              <a
-                href={lead.whatsappUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1 text-xs font-semibold text-[var(--admin-cyan)] transition hover:text-white"
-              >
-                Abrir WhatsApp
-                <ExternalLink size={12} />
-              </a>
-            )}
+        <div className="flex min-w-0 items-start gap-3">
+          <LeadAvatar lead={lead} size="lg" />
+          <div className="min-w-0">
+            <h2 className="truncate text-lg font-semibold text-white">{lead.name}</h2>
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-[var(--admin-muted)]">
+              <span>{formatPhone(lead.phone)}</span>
+              {lead.whatsappUrl && (
+                <a
+                  href={lead.whatsappUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-[var(--admin-cyan)] transition hover:text-white"
+                >
+                  Abrir WhatsApp
+                  <ExternalLink size={12} />
+                </a>
+              )}
+            </div>
           </div>
         </div>
         <LeadScore score={lead.score} />

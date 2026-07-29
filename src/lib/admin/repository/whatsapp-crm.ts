@@ -64,6 +64,8 @@ export type WhatsAppCrmLeadCard = {
   name: string;
   phone: string;
   email: string;
+  profileImageUrl: string;
+  profileImageSyncedAt: string;
   status: string;
   crmStage: WhatsAppCrmStage;
   temperature: string;
@@ -209,13 +211,72 @@ function nestedRecords(...values: unknown[]) {
   for (const value of values) {
     const record = asRecord(value);
     if (Object.keys(record).length) records.push(record);
-    for (const nestedKey of ["crm", "profile", "qualification", "collectedData", "leadData", "siteActivity"]) {
+    for (const nestedKey of [
+      "crm",
+      "profile",
+      "qualification",
+      "collectedData",
+      "leadData",
+      "siteActivity",
+      "whatsapp_profile",
+      "whatsappProfile",
+      "contact",
+      "sender",
+      "participant",
+    ]) {
       const nested = asRecord(record[nestedKey]);
       if (Object.keys(nested).length) records.push(nested);
     }
   }
 
   return records;
+}
+
+function normalizeLeadProfileImageUrl(value: unknown) {
+  const clean = asString(value).trim().replace(/\s/g, "");
+  if (!clean) return "";
+  if (/^https?:\/\//i.test(clean)) return clean;
+  if (/^data:image\/[a-z0-9.+-]+;base64,/i.test(clean)) return clean;
+  if (clean.length > 120 && /^[A-Za-z0-9+/=]+$/.test(clean)) return `data:image/jpeg;base64,${clean}`;
+  return "";
+}
+
+function leadProfileImageContext(lead: DbRow, conversation: DbRow, profile?: DbRow) {
+  const records = nestedRecords(lead.metadata, profile?.metadata, conversation.metadata, lead, profile);
+  const profileImageUrl = normalizeLeadProfileImageUrl(
+    firstString(records, [
+      "profileImageUrl",
+      "profile_image_url",
+      "profilePictureUrl",
+      "profile_picture_url",
+      "profilePicUrl",
+      "profile_pic_url",
+      "pictureUrl",
+      "picture_url",
+      "photoUrl",
+      "photo_url",
+      "avatarUrl",
+      "avatar_url",
+      "profileImage",
+      "profilePicture",
+      "profilePic",
+      "picture",
+      "photo",
+      "avatar",
+    ])
+  );
+  const profileImageSyncedAt = firstString(records, [
+    "profileImageSyncedAt",
+    "profile_image_synced_at",
+    "profilePictureSyncedAt",
+    "profile_picture_synced_at",
+    "avatarSyncedAt",
+    "photoSyncedAt",
+    "syncedAt",
+    "updatedAt",
+  ]);
+
+  return { profileImageUrl, profileImageSyncedAt };
 }
 
 function extractQualification(lead: DbRow, conversation: DbRow, profile?: DbRow): WhatsAppCrmQualification {
@@ -482,6 +543,8 @@ function fallbackData(): WhatsAppCrmData {
         name: "Lead exemplo",
         phone: "5547999999999",
         email: "",
+        profileImageUrl: "",
+        profileImageSyncedAt: "",
         status: "qualificando",
         crmStage: "quente",
         temperature: "quente",
@@ -687,6 +750,7 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
       (left, right) => timestamp(right.created_at) - timestamp(left.created_at)
     )[0];
     const context = operatorContext(lead, conversation, profile);
+    const profileImage = leadProfileImageContext(lead, conversation, profile);
     const lastMessageDirection = asString(messages[0]?.direction);
     const waitingForReply = timestamp(lastInboundAt) > timestamp(lastOutboundAt) && !optOut;
     const phone = asString(lead.phone);
@@ -721,6 +785,8 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
       name: asString(lead.name, "Lead WhatsApp"),
       phone,
       email: asString(lead.email),
+      profileImageUrl: profileImage.profileImageUrl,
+      profileImageSyncedAt: profileImage.profileImageSyncedAt,
       status,
       crmStage,
       temperature: asString(lead.temperature, score >= 70 ? "quente" : score >= 40 ? "morno" : "unknown"),
@@ -794,6 +860,7 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
       humanInterventionActive,
     });
     const context = operatorContext(lead, {}, profile);
+    const profileImage = leadProfileImageContext(lead, {}, profile);
     const lastMessageDirection = asString(messages[0]?.direction);
     const waitingForReply = timestamp(lastInboundAt) > timestamp(lastOutboundAt) && !optOut;
     const phone = asString(lead.phone);
@@ -814,6 +881,8 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
       name: asString(lead.name, "Lead WhatsApp"),
       phone,
       email: asString(lead.email),
+      profileImageUrl: profileImage.profileImageUrl,
+      profileImageSyncedAt: profileImage.profileImageSyncedAt,
       status,
       crmStage,
       temperature: asString(lead.temperature, score >= 70 ? "quente" : score >= 40 ? "morno" : "unknown"),

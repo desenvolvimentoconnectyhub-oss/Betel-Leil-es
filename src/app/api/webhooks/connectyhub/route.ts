@@ -766,6 +766,82 @@ function findFirstBoolean(payload: unknown, keys: string[]) {
   return false;
 }
 
+const leadProfileImageKeys = [
+  "profileImageUrl",
+  "profile_image_url",
+  "profilePictureUrl",
+  "profile_picture_url",
+  "profilePicUrl",
+  "profile_pic_url",
+  "pictureUrl",
+  "picture_url",
+  "photoUrl",
+  "photo_url",
+  "avatarUrl",
+  "avatar_url",
+  "profileImage",
+  "profilePicture",
+  "profilePic",
+  "picture",
+  "photo",
+  "avatar",
+];
+
+function normalizeLeadProfileImageUrl(value: unknown) {
+  const clean = cleanString(value).replace(/\s/g, "");
+  if (!clean) return "";
+  if (/^https?:\/\//i.test(clean)) return clean;
+  if (/^data:image\/[a-z0-9.+-]+;base64,/i.test(clean)) return clean;
+  if (clean.length > 120 && /^[A-Za-z0-9+/=]+$/.test(clean)) return `data:image/jpeg;base64,${clean}`;
+  return "";
+}
+
+function isLeadProfileImageContainerKey(key: string) {
+  const normalized = key.toLowerCase();
+  if (/(qr|pair|message|media|caption|document|audio|video|file|instance|session|owner|device|account|self)/.test(normalized)) {
+    return false;
+  }
+  return /(profile|avatar|picture|photo|contact|sender|participant|user)/.test(normalized);
+}
+
+function findLeadProfileImageUrl(payload: unknown, depth = 0, insideProfileKey = false): string {
+  if (depth > 8) return "";
+  if (typeof payload === "string") return insideProfileKey ? normalizeLeadProfileImageUrl(payload) : "";
+  if (!payload || typeof payload !== "object") return "";
+
+  if (Array.isArray(payload)) {
+    for (const item of payload) {
+      const found = findLeadProfileImageUrl(item, depth + 1, insideProfileKey);
+      if (found) return found;
+    }
+    return "";
+  }
+
+  const record = asRecord(payload);
+  for (const key of leadProfileImageKeys) {
+    if (key in record) {
+      const found = findLeadProfileImageUrl(record[key], depth + 1, true);
+      if (found) return found;
+    }
+  }
+
+  for (const [key, value] of Object.entries(record)) {
+    if (/(instance|session|owner|device|account|self|me)$/i.test(key)) continue;
+    const found = findLeadProfileImageUrl(value, depth + 1, insideProfileKey || isLeadProfileImageContainerKey(key));
+    if (found) return found;
+  }
+
+  return "";
+}
+
+function extractLeadProfileImageUrl(...payloads: unknown[]) {
+  for (const payload of payloads) {
+    const found = findLeadProfileImageUrl(payload);
+    if (found) return found;
+  }
+  return "";
+}
+
 function extractInstanceIdentity(payload: Record<string, unknown>) {
   const data = eventPayload(payload);
   const rootInstance = payload.instance;
@@ -885,10 +961,11 @@ function extractWebhookMessage(payload: Record<string, unknown>) {
   ]);
   const mediaMimeType = findFirstString(data, ["mimeType", "mimetype", "mediaMimeType", "media_mime_type", "contentType", "content_type"]);
   const transcript = findFirstString(data, ["transcript", "transcription", "audioTranscript", "audio_transcript"]);
+  const profileImageUrl = extractLeadProfileImageUrl(data);
   const fromApi = findFirstBoolean(data, ["wasSentByApi", "fromMe", "isFromMe", "fromApi"]);
   const isGroup = findFirstBoolean(data, ["isGroup", "isGroupYes"]);
 
-  return { providerMessageId, phone, name, text, messageType, mediaUrl, mediaMimeType, transcript, fromApi, isGroup, chatId };
+  return { providerMessageId, phone, name, text, messageType, mediaUrl, mediaMimeType, transcript, profileImageUrl, fromApi, isGroup, chatId };
 }
 
 function isAudioMessage(messageType: string, mimeType: string) {
@@ -1328,11 +1405,44 @@ async function persistWebhookCrm(
     .maybeSingle();
   const existingLeadMetadata = asRecord((existingLead as Record<string, unknown> | null)?.metadata);
   const existingLeadRecord = asRecord(existingLead);
+  const existingWhatsappProfile = asRecord(existingLeadMetadata.whatsapp_profile || existingLeadMetadata.whatsappProfile);
+  const leadProfileImageUrl =
+    message.profileImageUrl ||
+    normalizeLeadProfileImageUrl(
+      existingWhatsappProfile.profileImageUrl ||
+        existingWhatsappProfile.profile_image_url ||
+        existingLeadMetadata.profileImageUrl ||
+        existingLeadMetadata.profile_image_url
+    );
+  const leadProfileImageSyncedAt = message.profileImageUrl
+    ? receivedAt
+    : cleanString(
+        existingWhatsappProfile.profileImageSyncedAt ||
+          existingWhatsappProfile.profile_image_synced_at ||
+          existingLeadMetadata.profileImageSyncedAt ||
+          existingLeadMetadata.profile_image_synced_at
+      );
+  const whatsappProfile = {
+    ...existingWhatsappProfile,
+    phone: message.phone,
+    displayName: message.name || cleanString(existingWhatsappProfile.displayName || existingWhatsappProfile.display_name) || null,
+    profileImageUrl: leadProfileImageUrl || null,
+    profile_image_url: leadProfileImageUrl || null,
+    profileImageSyncedAt: leadProfileImageSyncedAt || null,
+    profile_image_synced_at: leadProfileImageSyncedAt || null,
+    source: message.profileImageUrl ? "connectyhub_webhook" : cleanString(existingWhatsappProfile.source, "connectyhub_webhook"),
+  };
   const baseLeadMetadata = {
     ...existingLeadMetadata,
     last_event_type: eventType,
     connectyhub_instance_id: providerInstanceId || null,
     chat_id: message.chatId || null,
+    whatsapp_profile: whatsappProfile,
+    whatsappProfile,
+    profile_image_url: leadProfileImageUrl || null,
+    profileImageUrl: leadProfileImageUrl || null,
+    profile_image_synced_at: leadProfileImageSyncedAt || null,
+    profileImageSyncedAt: leadProfileImageSyncedAt || null,
     last_inbound_provider_message_id: message.providerMessageId || null,
     last_inbound_message_type: message.messageType || null,
     last_inbound_media_url: initialInboundMediaUrl || null,
@@ -1518,6 +1628,9 @@ async function persistWebhookCrm(
       lastProviderMessageId: message.providerMessageId || null,
       lastChatId: message.chatId || null,
       lastMessageType: message.messageType || null,
+      whatsappProfile,
+      profileImageUrl: leadProfileImageUrl || null,
+      profileImageSyncedAt: leadProfileImageSyncedAt || null,
       lastMediaUrl: inboundMediaUrl || null,
       lastMediaKind: mediaAnalysis?.kind || detectedMediaKind || null,
       mediaAnalysis: mediaMetadata,
