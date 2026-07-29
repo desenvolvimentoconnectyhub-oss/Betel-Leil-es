@@ -1,4 +1,5 @@
 import type { ResourceTone } from "../resources";
+import { fetchWhatsAppLeadProfileImage } from "@/lib/communication/connectyhub-client";
 import {
   asBoolean,
   asNumber,
@@ -277,6 +278,130 @@ function leadProfileImageContext(lead: DbRow, conversation: DbRow, profile?: DbR
   ]);
 
   return { profileImageUrl, profileImageSyncedAt };
+}
+
+const profileImageHydrationLimit = 8;
+const profileImageLookupCooldownMs = 6 * 60 * 60_000;
+
+function leadProfileImageLookupAttemptAt(lead: DbRow, conversation: DbRow, profile?: DbRow) {
+  return firstString(nestedRecords(lead.metadata, profile?.metadata, conversation.metadata, lead, profile), [
+    "profileImageLastAttemptAt",
+    "profile_image_last_attempt_at",
+    "profileImageSyncedAt",
+    "profile_image_synced_at",
+  ]);
+}
+
+function shouldHydrateLeadProfileImage(card: WhatsAppCrmLeadCard, lead: DbRow, conversation: DbRow, profile?: DbRow) {
+  if (card.profileImageUrl || !card.phone) return false;
+  const lastAttempt = leadProfileImageLookupAttemptAt(lead, conversation, profile);
+  const parsed = timestamp(lastAttempt);
+  return !parsed || Date.now() - parsed >= profileImageLookupCooldownMs;
+}
+
+function providerInstanceIdForLead(lead: DbRow, conversation: DbRow, profile?: DbRow) {
+  return firstString(nestedRecords(lead.metadata, profile?.metadata, conversation.metadata, lead, profile), [
+    "connectyhubInstanceId",
+    "connectyhub_instance_id",
+    "providerInstanceId",
+    "provider_instance_id",
+  ]);
+}
+
+async function hydrateMissingLeadProfileImages(
+  supabase: NonNullable<ReturnType<typeof getSupabaseAdminClient>>,
+  cards: WhatsAppCrmLeadCard[],
+  leadsById: Map<string, DbRow>,
+  conversationsById: Map<string, DbRow>,
+  profilesByLead: Map<string, DbRow>
+) {
+  const candidates = cards
+    .filter((card) => {
+      const lead = leadsById.get(card.leadId);
+      if (!lead) return false;
+      return shouldHydrateLeadProfileImage(card, lead, conversationsById.get(card.conversationId) || {}, profilesByLead.get(card.leadId));
+    })
+    .slice(0, profileImageHydrationLimit);
+
+  await Promise.allSettled(
+    candidates.map(async (card) => {
+      const lead = leadsById.get(card.leadId);
+      if (!lead) return;
+
+      const conversation = conversationsById.get(card.conversationId) || {};
+      const profile = profilesByLead.get(card.leadId);
+      const attemptedAt = new Date().toISOString();
+      const lookup = await fetchWhatsAppLeadProfileImage({
+        agentKey: card.agentKey,
+        instanceId: providerInstanceIdForLead(lead, conversation, profile),
+        phone: card.phone,
+      }).catch((error) => ({
+        ok: false,
+        profileImageUrl: "",
+        displayName: "",
+        source: "connectyhub_lookup_error",
+        attemptedAt,
+        payload: undefined,
+        error: error instanceof Error ? error.message : "Erro ao consultar foto do WhatsApp.",
+      }));
+
+      const profileImageUrl = normalizeLeadProfileImageUrl(lookup.profileImageUrl);
+      const currentMetadata = asRecord(lead.metadata);
+      const currentWhatsappProfile = asRecord(currentMetadata.whatsapp_profile || currentMetadata.whatsappProfile);
+      const displayName =
+        asString(lookup.displayName) ||
+        asString(currentWhatsappProfile.displayName, asString(currentWhatsappProfile.display_name, card.name));
+      const syncStatus = profileImageUrl ? "synced" : lookup.error ? "error" : "not_found";
+      const source = profileImageUrl
+        ? asString(lookup.source, "connectyhub_chat_details")
+        : asString(currentWhatsappProfile.source, asString(lookup.source));
+      const whatsappProfile = {
+        ...currentWhatsappProfile,
+        phone: card.phone,
+        displayName,
+        display_name: displayName,
+        profileImageUrl: profileImageUrl || null,
+        profile_image_url: profileImageUrl || null,
+        profileImageSyncedAt: profileImageUrl ? lookup.attemptedAt : asString(currentWhatsappProfile.profileImageSyncedAt) || null,
+        profile_image_synced_at: profileImageUrl ? lookup.attemptedAt : asString(currentWhatsappProfile.profile_image_synced_at) || null,
+        profileImageLastAttemptAt: lookup.attemptedAt,
+        profile_image_last_attempt_at: lookup.attemptedAt,
+        profileImageSyncStatus: syncStatus,
+        profile_image_sync_status: syncStatus,
+        profileImageLookupError: lookup.error || null,
+        profile_image_lookup_error: lookup.error || null,
+        source: source || null,
+      };
+      const nextMetadata = {
+        ...currentMetadata,
+        whatsapp_profile: whatsappProfile,
+        whatsappProfile,
+        profile_image_url: profileImageUrl || null,
+        profileImageUrl: profileImageUrl || null,
+        profile_image_synced_at: profileImageUrl ? lookup.attemptedAt : asString(currentMetadata.profile_image_synced_at) || null,
+        profileImageSyncedAt: profileImageUrl ? lookup.attemptedAt : asString(currentMetadata.profileImageSyncedAt) || null,
+        profile_image_source: source || null,
+        profileImageSource: source || null,
+        profile_image_sync_status: syncStatus,
+        profileImageSyncStatus: syncStatus,
+        profile_image_last_attempt_at: lookup.attemptedAt,
+        profileImageLastAttemptAt: lookup.attemptedAt,
+        profile_image_lookup_error: lookup.error || null,
+        profileImageLookupError: lookup.error || null,
+        last_profile_image_response: lookup.payload || null,
+      };
+
+      await supabase
+        .from("whatsapp_leads")
+        .update({ metadata: nextMetadata, updated_at: lookup.attemptedAt })
+        .eq("id", card.leadId);
+
+      if (profileImageUrl) {
+        card.profileImageUrl = profileImageUrl;
+        card.profileImageSyncedAt = lookup.attemptedAt;
+      }
+    })
+  );
 }
 
 function extractQualification(lead: DbRow, conversation: DbRow, profile?: DbRow): WhatsAppCrmQualification {
@@ -703,6 +828,7 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
   const reviewRows = reviewsResult.error ? [] : ((reviewsResult.data || []) as unknown[]).filter(isDbRow);
 
   const leadsById = new Map(leadRows.map((row) => [asString(row.id), row]));
+  const conversationsById = new Map(conversationRows.map((row) => [asString(row.id), row]));
   const profilesByLead = new Map(profileRows.map((row) => [asString(row.lead_id), row]));
   const messagesByConversation = new Map<string, DbRow[]>();
   const messagesByLead = new Map<string, DbRow[]>();
@@ -955,6 +1081,7 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
   }
 
   leadCards.sort(compareLeadQueuePriority);
+  await hydrateMissingLeadProfileImages(supabase, leadCards, leadsById, conversationsById, profilesByLead);
 
   const agentConversations = new Map<string, WhatsAppCrmLeadCard[]>();
   for (const card of leadCards) {

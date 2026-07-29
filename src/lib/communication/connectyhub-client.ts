@@ -1023,6 +1023,89 @@ async function sendConnectyHubWhatsAppMessage(input: {
   }
 }
 
+export type WhatsAppLeadProfileImageLookupResult = {
+  ok: boolean;
+  profileImageUrl: string;
+  displayName: string;
+  source: string;
+  attemptedAt: string;
+  payload?: unknown;
+  error?: string;
+};
+
+export async function fetchWhatsAppLeadProfileImage(input: {
+  agentKey?: string;
+  instanceId?: string;
+  phone: string;
+}): Promise<WhatsAppLeadProfileImageLookupResult> {
+  const attemptedAt = new Date().toISOString();
+  const phone = normalizeWhatsAppNumber(input.phone);
+  const { instanceId } = await resolveAgentProviderInstanceId(cleanString(input.agentKey, WILLIAN_AGENT_KEY), input.instanceId || "");
+
+  if (!phone || !instanceId) {
+    return {
+      ok: false,
+      profileImageUrl: "",
+      displayName: "",
+      source: !phone ? "missing_phone" : "missing_instance",
+      attemptedAt,
+      error: !phone ? "Telefone do lead ausente." : "Instancia ConnectyHub ausente.",
+    };
+  }
+
+  const attempts = [
+    { source: "chat_details_preview", preview: true },
+    { source: "chat_details_full", preview: false },
+  ];
+
+  for (const attempt of attempts) {
+    try {
+      const payload = await connectyhubRequest("/provider/chat/details", {
+        body: {
+          instanceId,
+          payload: {
+            number: phone,
+            preview: attempt.preview,
+          },
+        },
+        timeoutMs: 9000,
+      });
+      const profileImageUrl = extractProfileImageUrl(payload);
+      const displayName = extractWhatsappProfileDisplayName(payload) || extractWhatsappDisplayName(payload);
+
+      if (profileImageUrl) {
+        return {
+          ok: true,
+          profileImageUrl,
+          displayName,
+          source: attempt.source,
+          attemptedAt,
+          payload: sanitizePayload(payload),
+        };
+      }
+    } catch (error) {
+      if (attempt === attempts[attempts.length - 1]) {
+        return {
+          ok: false,
+          profileImageUrl: "",
+          displayName: "",
+          source: attempt.source,
+          attemptedAt,
+          error: error instanceof Error ? error.message : "Erro ao consultar foto do WhatsApp.",
+        };
+      }
+    }
+  }
+
+  return {
+    ok: false,
+    profileImageUrl: "",
+    displayName: "",
+    source: "not_found",
+    attemptedAt,
+  };
+}
+
 async function resolveAgentProviderInstanceId(agentKey: string, explicitInstanceId = "") {
   const config = await getWillianConfig();
   const cleanExplicit = cleanString(explicitInstanceId);

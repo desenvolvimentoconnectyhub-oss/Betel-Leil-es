@@ -5,6 +5,7 @@ import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   CONNECTYHUB_PROVIDER,
   downloadWhatsAppAgentMessageMedia,
+  fetchWhatsAppLeadProfileImage,
   getConnectyHubWhatsappAgentControlStatus,
   normalizeWhatsAppNumber,
   sendWhatsAppAgentChatPresence,
@@ -842,6 +843,29 @@ function extractLeadProfileImageUrl(...payloads: unknown[]) {
   return "";
 }
 
+const leadProfileImageLookupCooldownMs = 6 * 60 * 60_000;
+
+function firstProfileMetadataString(records: Record<string, unknown>[], keys: string[]) {
+  for (const record of records) {
+    for (const key of keys) {
+      const value = cleanString(record[key]);
+      if (value) return value;
+    }
+  }
+  return "";
+}
+
+function shouldLookupLeadProfileImage(records: Record<string, unknown>[]) {
+  const lastAttempt = firstProfileMetadataString(records, [
+    "profileImageLastAttemptAt",
+    "profile_image_last_attempt_at",
+    "profileImageSyncedAt",
+    "profile_image_synced_at",
+  ]);
+  const parsed = new Date(lastAttempt).getTime();
+  return !Number.isFinite(parsed) || Date.now() - parsed >= leadProfileImageLookupCooldownMs;
+}
+
 function extractInstanceIdentity(payload: Record<string, unknown>) {
   const data = eventPayload(payload);
   const rootInstance = payload.instance;
@@ -1406,31 +1430,95 @@ async function persistWebhookCrm(
   const existingLeadMetadata = asRecord((existingLead as Record<string, unknown> | null)?.metadata);
   const existingLeadRecord = asRecord(existingLead);
   const existingWhatsappProfile = asRecord(existingLeadMetadata.whatsapp_profile || existingLeadMetadata.whatsappProfile);
-  const leadProfileImageUrl =
-    message.profileImageUrl ||
-    normalizeLeadProfileImageUrl(
-      existingWhatsappProfile.profileImageUrl ||
-        existingWhatsappProfile.profile_image_url ||
-        existingLeadMetadata.profileImageUrl ||
-        existingLeadMetadata.profile_image_url
+  const existingLeadProfileImageUrl = normalizeLeadProfileImageUrl(
+    existingWhatsappProfile.profileImageUrl ||
+      existingWhatsappProfile.profile_image_url ||
+      existingLeadMetadata.profileImageUrl ||
+      existingLeadMetadata.profile_image_url
+  );
+  let profileImageLookup: Awaited<ReturnType<typeof fetchWhatsAppLeadProfileImage>> | null = null;
+  if (
+    !message.profileImageUrl &&
+    !existingLeadProfileImageUrl &&
+    providerInstanceId &&
+    shouldLookupLeadProfileImage([existingWhatsappProfile, existingLeadMetadata])
+  ) {
+    profileImageLookup = await fetchWhatsAppLeadProfileImage({
+      agentKey,
+      instanceId: providerInstanceId,
+      phone: message.phone,
+    }).catch((error) => ({
+      ok: false,
+      profileImageUrl: "",
+      displayName: "",
+      source: "connectyhub_lookup_error",
+      attemptedAt: receivedAt,
+      payload: undefined,
+      error: error instanceof Error ? error.message : "Erro ao consultar foto do WhatsApp.",
+    }));
+  }
+  const fetchedLeadProfileImageUrl = normalizeLeadProfileImageUrl(profileImageLookup?.profileImageUrl);
+  const leadProfileImageUrl = message.profileImageUrl || fetchedLeadProfileImageUrl || existingLeadProfileImageUrl;
+  const leadProfileImageSyncedAt =
+    message.profileImageUrl || fetchedLeadProfileImageUrl
+      ? profileImageLookup?.attemptedAt || receivedAt
+      : cleanString(
+          existingWhatsappProfile.profileImageSyncedAt ||
+            existingWhatsappProfile.profile_image_synced_at ||
+            existingLeadMetadata.profileImageSyncedAt ||
+            existingLeadMetadata.profile_image_synced_at
+        );
+  const profileImageLastAttemptAt =
+    profileImageLookup?.attemptedAt ||
+    cleanString(
+      existingWhatsappProfile.profileImageLastAttemptAt ||
+        existingWhatsappProfile.profile_image_last_attempt_at ||
+        existingLeadMetadata.profileImageLastAttemptAt ||
+        existingLeadMetadata.profile_image_last_attempt_at
     );
-  const leadProfileImageSyncedAt = message.profileImageUrl
-    ? receivedAt
-    : cleanString(
-        existingWhatsappProfile.profileImageSyncedAt ||
-          existingWhatsappProfile.profile_image_synced_at ||
-          existingLeadMetadata.profileImageSyncedAt ||
-          existingLeadMetadata.profile_image_synced_at
-      );
+  const profileImageSource = message.profileImageUrl
+    ? "connectyhub_webhook"
+    : fetchedLeadProfileImageUrl
+      ? cleanString(profileImageLookup?.source, "connectyhub_chat_details")
+      : cleanString(
+          existingWhatsappProfile.source ||
+            existingLeadMetadata.profileImageSource ||
+            existingLeadMetadata.profile_image_source ||
+            profileImageLookup?.source
+        );
+  const profileImageSyncStatus = leadProfileImageUrl
+    ? "synced"
+    : profileImageLookup?.error
+      ? "error"
+      : profileImageLookup
+        ? "not_found"
+        : cleanString(
+            existingWhatsappProfile.profileImageSyncStatus ||
+              existingWhatsappProfile.profile_image_sync_status ||
+              existingLeadMetadata.profileImageSyncStatus ||
+              existingLeadMetadata.profile_image_sync_status,
+            "pending"
+          );
+  const leadDisplayName =
+    message.name ||
+    cleanString(profileImageLookup?.displayName) ||
+    cleanString(existingWhatsappProfile.displayName || existingWhatsappProfile.display_name);
   const whatsappProfile = {
     ...existingWhatsappProfile,
     phone: message.phone,
-    displayName: message.name || cleanString(existingWhatsappProfile.displayName || existingWhatsappProfile.display_name) || null,
+    displayName: leadDisplayName || null,
+    display_name: leadDisplayName || null,
     profileImageUrl: leadProfileImageUrl || null,
     profile_image_url: leadProfileImageUrl || null,
     profileImageSyncedAt: leadProfileImageSyncedAt || null,
     profile_image_synced_at: leadProfileImageSyncedAt || null,
-    source: message.profileImageUrl ? "connectyhub_webhook" : cleanString(existingWhatsappProfile.source, "connectyhub_webhook"),
+    profileImageLastAttemptAt: profileImageLastAttemptAt || null,
+    profile_image_last_attempt_at: profileImageLastAttemptAt || null,
+    profileImageSyncStatus: profileImageSyncStatus || null,
+    profile_image_sync_status: profileImageSyncStatus || null,
+    profileImageLookupError: profileImageLookup?.error || null,
+    profile_image_lookup_error: profileImageLookup?.error || null,
+    source: profileImageSource || null,
   };
   const baseLeadMetadata = {
     ...existingLeadMetadata,
@@ -1443,6 +1531,15 @@ async function persistWebhookCrm(
     profileImageUrl: leadProfileImageUrl || null,
     profile_image_synced_at: leadProfileImageSyncedAt || null,
     profileImageSyncedAt: leadProfileImageSyncedAt || null,
+    profile_image_source: profileImageSource || null,
+    profileImageSource: profileImageSource || null,
+    profile_image_sync_status: profileImageSyncStatus || null,
+    profileImageSyncStatus: profileImageSyncStatus || null,
+    profile_image_last_attempt_at: profileImageLastAttemptAt || null,
+    profileImageLastAttemptAt: profileImageLastAttemptAt || null,
+    profile_image_lookup_error: profileImageLookup?.error || null,
+    profileImageLookupError: profileImageLookup?.error || null,
+    last_profile_image_response: profileImageLookup?.payload || null,
     last_inbound_provider_message_id: message.providerMessageId || null,
     last_inbound_message_type: message.messageType || null,
     last_inbound_media_url: initialInboundMediaUrl || null,
@@ -1458,7 +1555,7 @@ async function persistWebhookCrm(
     .upsert(
       {
         phone: message.phone,
-        name: message.name || cleanString((existingLead as Record<string, unknown> | null)?.name) || null,
+        name: leadDisplayName || cleanString((existingLead as Record<string, unknown> | null)?.name) || null,
         owner_agent_key: agentKey,
         last_message_at: receivedAt,
         metadata: baseLeadMetadata,
@@ -1631,6 +1728,10 @@ async function persistWebhookCrm(
       whatsappProfile,
       profileImageUrl: leadProfileImageUrl || null,
       profileImageSyncedAt: leadProfileImageSyncedAt || null,
+      profileImageSource,
+      profileImageSyncStatus,
+      profileImageLastAttemptAt,
+      profileImageLookupError: profileImageLookup?.error || null,
       lastMediaUrl: inboundMediaUrl || null,
       lastMediaKind: mediaAnalysis?.kind || detectedMediaKind || null,
       mediaAnalysis: mediaMetadata,
