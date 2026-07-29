@@ -10,8 +10,16 @@ import {
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+const MAX_VOICE_CLONE_UPLOAD_BYTES = 4 * 1024 * 1024;
+
 function cleanString(value: unknown, fallback = "") {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function formatFileSize(bytes: number) {
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)}KB`;
+  return `${bytes}B`;
 }
 
 function getErrorMessage(error: unknown) {
@@ -95,9 +103,12 @@ async function handleMultipart(request: NextRequest) {
     );
   }
 
-  if (totalBytes > 25 * 1024 * 1024) {
+  if (totalBytes > MAX_VOICE_CLONE_UPLOAD_BYTES) {
     return NextResponse.json(
-      { success: false, message: "Amostras acima de 25MB. Reduza os arquivos e tente novamente." },
+      {
+        success: false,
+        message: `Amostras acima de ${formatFileSize(MAX_VOICE_CLONE_UPLOAD_BYTES)}. Envie um audio menor ou compacte o arquivo.`,
+      },
       { status: 400 }
     );
   }

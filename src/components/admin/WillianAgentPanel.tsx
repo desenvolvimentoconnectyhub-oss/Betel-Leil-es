@@ -92,6 +92,43 @@ type ElevenLabsVoice = {
   labels: Record<string, string>;
 };
 
+async function readVoiceEndpointPayload(res: Response) {
+  const text = await res.text();
+  if (!text) return {};
+
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    const cleanText = text.trim();
+    if (res.status === 413 || /request entity too large|payload too large|body exceeded/i.test(cleanText)) {
+      throw new Error("Arquivo de audio grande demais para upload. Envie uma amostra menor ou comprima o audio antes de clonar.");
+    }
+    throw new Error(cleanText || `Resposta invalida do servidor (${res.status}).`);
+  }
+}
+
+function voicePayloadText(payload: Record<string, unknown>, key: string) {
+  const value = payload[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function voicePayloadRecord(payload: Record<string, unknown>, key: string) {
+  const value = payload[key];
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function voicePayloadMessage(payload: Record<string, unknown>, fallback: string) {
+  return voicePayloadText(payload, "message") || fallback;
+}
+
+const MAX_VOICE_CLONE_UPLOAD_BYTES = 4 * 1024 * 1024;
+
+function formatFileSize(bytes: number) {
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)}KB`;
+  return `${bytes}B`;
+}
+
 const WHATSAPP_AGENT_VOICE_ENDPOINT = "/api/admin/whatsapp/agent-voice";
 const WHATSAPP_AGENT_INSTANCE_ENDPOINT = "/api/admin/whatsapp/agent-instance";
 const WHATSAPP_AGENT_CONFIG_ENDPOINT = "/api/admin/whatsapp/agent-config";
@@ -2158,14 +2195,15 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
     setVoiceError("");
     try {
       const res = await fetch(WHATSAPP_AGENT_VOICE_ENDPOINT, { cache: "no-store" });
-      const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.message || "Falha ao buscar vozes ElevenLabs.");
+      const data = await readVoiceEndpointPayload(res);
+      if (!res.ok || !data.success) throw new Error(voicePayloadMessage(data, "Falha ao buscar vozes ElevenLabs."));
 
       const nextVoices = Array.isArray(data.voices) ? data.voices as ElevenLabsVoice[] : [];
       setVoices(nextVoices);
 
-      const configuredVoiceId = typeof data.config?.willianVoiceId === "string" ? data.config.willianVoiceId : "";
-      const defaultModelId = typeof data.config?.defaultModelId === "string" ? data.config.defaultModelId : "";
+      const voiceConfig = voicePayloadRecord(data, "config");
+      const configuredVoiceId = voicePayloadText(voiceConfig, "willianVoiceId");
+      const defaultModelId = voicePayloadText(voiceConfig, "defaultModelId");
       if (syncConfiguredVoice && configuredVoiceId && (!config.selectedVoiceId || config.selectedVoiceId === "clone-willian")) {
         const configuredVoice = nextVoices.find((voice) => voice.voiceId === configuredVoiceId);
         setBehavior({
@@ -2216,8 +2254,8 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ action: "select_willian_voice", voiceId: voice.voiceId }),
       });
-      const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.message || "Falha ao vincular voz.");
+      const data = await readVoiceEndpointPayload(res);
+      if (!res.ok || !data.success) throw new Error(voicePayloadMessage(data, "Falha ao vincular voz."));
     } catch (error) {
       setVoiceError(error instanceof Error ? error.message : "Falha ao vincular voz.");
     } finally {
@@ -2240,11 +2278,12 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
           text: "Ola, aqui e a Betel. Estou validando a voz de atendimento.",
         }),
       });
-      const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.message || "Falha ao gerar preview.");
-      const audio = data.audio || {};
-      if (!audio.audioBase64) throw new Error("Audio nao retornado pela ElevenLabs.");
-      setVoicePreviewUrl(`data:${audio.contentType || "audio/mpeg"};base64,${audio.audioBase64}`);
+      const data = await readVoiceEndpointPayload(res);
+      if (!res.ok || !data.success) throw new Error(voicePayloadMessage(data, "Falha ao gerar preview."));
+      const audio = voicePayloadRecord(data, "audio");
+      const audioBase64 = voicePayloadText(audio, "audioBase64");
+      if (!audioBase64) throw new Error("Audio nao retornado pela ElevenLabs.");
+      setVoicePreviewUrl(`data:${voicePayloadText(audio, "contentType") || "audio/mpeg"};base64,${audioBase64}`);
     } catch (error) {
       setVoiceError(error instanceof Error ? error.message : "Falha ao gerar preview.");
     } finally {
@@ -2255,6 +2294,18 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
   async function cloneVoice() {
     if (!cloneConsentReady) {
       setVoiceNotice({ type: "err", msg: "Confirme que voce tem direito e consentimento para clonar esta voz." });
+      return;
+    }
+    if (cloneFiles.length === 0) {
+      setVoiceNotice({ type: "err", msg: "Envie ao menos uma amostra de audio antes de clonar." });
+      return;
+    }
+    const totalUploadBytes = cloneFiles.reduce((total, file) => total + file.size, 0);
+    if (totalUploadBytes > MAX_VOICE_CLONE_UPLOAD_BYTES) {
+      setVoiceNotice({
+        type: "err",
+        msg: `O upload tem ${formatFileSize(totalUploadBytes)}. Para evitar erro na Vercel, envie uma amostra menor que ${formatFileSize(MAX_VOICE_CLONE_UPLOAD_BYTES)} ou compacte o audio.`,
+      });
       return;
     }
 
@@ -2274,10 +2325,10 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
         method: "POST",
         body: form,
       });
-      const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.message || "Falha ao clonar voz.");
+      const data = await readVoiceEndpointPayload(res);
+      if (!res.ok || !data.success) throw new Error(voicePayloadMessage(data, "Falha ao clonar voz."));
 
-      const nextVoiceId = String(data.voiceId || "");
+      const nextVoiceId = voicePayloadText(data, "voiceId");
       const requiresVerification = Boolean(data.requiresVerification);
       setBehavior({
         selectedVoiceId: nextVoiceId,
@@ -2294,7 +2345,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
       });
       setVoiceNotice({
         type: "ok",
-        msg: `${data.message || "Voz criada na ElevenLabs."} ${requiresVerification ? "Ela ficou em teste/verificacao." : "Ela ja ficou selecionada para o agente."}${nextVoiceId ? ` ID: ${nextVoiceId}` : ""}`,
+        msg: `${voicePayloadMessage(data, "Voz criada na ElevenLabs.")} ${requiresVerification ? "Ela ficou em teste/verificacao." : "Ela ja ficou selecionada para o agente."}${nextVoiceId ? ` ID: ${nextVoiceId}` : ""}`,
       });
       setCloneFiles([]);
       await loadVoices(false);

@@ -187,7 +187,13 @@ async function elevenLabsFetch(path: string, init: RequestInit = {}) {
   });
 
   if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
+    const rawText = await res.text().catch(() => "");
+    let data: Record<string, unknown> = {};
+    try {
+      data = rawText ? asRecord(JSON.parse(rawText)) : {};
+    } catch {
+      data = { message: rawText };
+    }
     const detail = cleanString(
       asRecord(asRecord(data).detail).message ||
         asRecord(data).message ||
@@ -200,9 +206,18 @@ async function elevenLabsFetch(path: string, init: RequestInit = {}) {
   return res;
 }
 
+async function readElevenLabsJson(res: Response) {
+  const rawText = await res.text();
+  try {
+    return asRecord(rawText ? JSON.parse(rawText) : {});
+  } catch {
+    throw new Error(`ElevenLabs retornou resposta invalida: ${rawText.slice(0, 180) || res.statusText}`);
+  }
+}
+
 export async function testElevenLabsConnection() {
   const res = await elevenLabsFetch("/v1/user/subscription");
-  const data = asRecord(await res.json());
+  const data = await readElevenLabsJson(res);
 
   return {
     tier: cleanString(data.tier, "plano ativo"),
@@ -239,7 +254,7 @@ function normalizeVoice(value: unknown): ElevenLabsVoice | null {
 
 export async function listElevenLabsVoices() {
   const res = await elevenLabsFetch("/v2/voices?page_size=100");
-  const data = asRecord(await res.json());
+  const data = await readElevenLabsJson(res);
   const voices = Array.isArray(data.voices) ? data.voices : [];
 
   return voices
@@ -279,7 +294,7 @@ export async function createElevenLabsVoiceClone(input: {
     body: form,
     signal: AbortSignal.timeout(60000),
   });
-  const data = asRecord(await res.json());
+  const data = await readElevenLabsJson(res);
   const voiceId = cleanString(data.voice_id || data.voiceId);
 
   if (!voiceId) throw new Error("ElevenLabs nao retornou voice_id.");
