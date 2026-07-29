@@ -294,13 +294,15 @@ function whatsappStateLooksConnected(state: WillianInstanceState) {
         cleanFormValue(state.profileImageUrl) ||
         cleanFormValue(state.displayName))
   );
+  const hasPhoneIdentity = Boolean(cleanFormValue(state.phoneNumber));
 
   return Boolean(
     state.status?.connected ||
       state.status?.loggedIn ||
       statusLooksConnected(explicitStatus) ||
       (!statusLooksTerminallyDisconnected(explicitStatus) && hasSyncedProfile) ||
-      (!hasActivePairingChallenge && hasSyncedProfile)
+      (!hasActivePairingChallenge && hasSyncedProfile) ||
+      (!hasActivePairingChallenge && hasPhoneIdentity && !statusLooksTerminallyDisconnected(explicitStatus))
   );
 }
 
@@ -962,9 +964,15 @@ export function WillianAgentPanel({
 
   const changeLabel = config.status === "saved" ? "Salvo" : "Revisar";
   const selectedAgentPaused = isWhatsappAgentPaused(selectedWhatsappAgent);
+  const selectedAgentVisibleConnection = Boolean(
+    (cleanFormValue(selectedWhatsappAgent?.phoneNumber) || cleanFormValue(state.phoneNumber)) &&
+      !statusLooksTerminallyDisconnected(
+        selectedWhatsappAgent?.status || state.status?.state || state.finalStatus || state.connection?.status
+      )
+  );
   const selectedAgentConnected = !selectedAgentPaused && selectedWhatsappAgent?.agentKey === state.agentKey
-    ? connected || whatsappAgentLooksConnected(selectedWhatsappAgent)
-    : !selectedAgentPaused && whatsappAgentLooksConnected(selectedWhatsappAgent);
+    ? connected || whatsappAgentLooksConnected(selectedWhatsappAgent) || selectedAgentVisibleConnection
+    : !selectedAgentPaused && (whatsappAgentLooksConnected(selectedWhatsappAgent) || selectedAgentVisibleConnection);
 
   function cloneWhatsappAgent(agent: WhatsAppAgentInstanceSummary) {
     const baseName = displayWhatsappAgentName(agent);
@@ -1650,22 +1658,28 @@ function ConnectionTab({
   const [pairingPhone, setPairingPhone] = useState("");
   const selectedIsPrimary = !selectedAgent || selectedAgent.agentKey === state.agentKey;
   const paused = isWhatsappAgentPaused(selectedAgent);
-  const connected = !paused && selectedIsPrimary
-    ? whatsappStateLooksConnected(state) || whatsappAgentLooksConnected(selectedAgent)
-    : !paused && whatsappAgentLooksConnected(selectedAgent);
   const connectyHubKeyReady = state.adminTokenConfigured && state.adminTokenLooksValid;
   const canGenerateQr = connectyHubKeyReady && Boolean(state.webhookUrl) && state.whatsappProviderReleased;
   const agentLabel = displayWhatsappAgentName(selectedAgent || { agentKey: state.agentKey, agentName: state.agentName });
   const phoneNumber = selectedAgent?.phoneNumber || state.phoneNumber;
+  const profileImageUrl = selectedAgent?.profileImageUrl || state.profileImageUrl;
   const displayName = displayWhatsappProfileName(selectedAgent?.displayName || state.displayName, agentLabel);
   const whatsappLabel =
     displayName ||
     state.phoneNumber ||
     agentLabel;
+  const visibleConnectionSignal = Boolean(
+    cleanFormValue(phoneNumber) &&
+      !statusLooksTerminallyDisconnected(
+        selectedAgent?.status || state.status?.state || state.finalStatus || state.connection?.status
+      )
+  );
+  const connected = !paused && selectedIsPrimary
+    ? whatsappStateLooksConnected(state) || whatsappAgentLooksConnected(selectedAgent) || visibleConnectionSignal
+    : !paused && (whatsappAgentLooksConnected(selectedAgent) || visibleConnectionSignal);
   const statusLabel = paused ? "Pausado" : connected ? "Online" : "Aguardando leitura";
   const pairingConnection = connection;
   const pairingLabel = pairingTarget?.agentName || "WhatsApp";
-  const profileImageUrl = selectedAgent?.profileImageUrl || state.profileImageUrl;
   const profileImageSyncedAt = selectedAgent?.profileImageSyncedAt || state.profileImageSyncedAt;
   const hasProfileDetails = Boolean(connected && (phoneNumber || displayName || profileImageUrl));
   const setupPending = !connected && (!connectyHubKeyReady || !state.webhookUrl || !state.whatsappProviderReleased);
