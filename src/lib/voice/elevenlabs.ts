@@ -75,6 +75,19 @@ function normalizeNumber(value: unknown) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function inferAudioContentType(file: File) {
+  const explicitType = cleanString(file.type);
+  if (explicitType) return explicitType;
+
+  const name = cleanString(file.name).toLowerCase();
+  if (name.endsWith(".mp3")) return "audio/mpeg";
+  if (name.endsWith(".wav")) return "audio/wav";
+  if (name.endsWith(".m4a")) return "audio/mp4";
+  if (name.endsWith(".ogg")) return "audio/ogg";
+  if (name.endsWith(".webm")) return "audio/webm";
+  return "application/octet-stream";
+}
+
 function configAliases(key: string) {
   const envKeys = ENV_FALLBACKS[key] || [key.toUpperCase()];
   return [...new Set([key, key.toLowerCase(), ...envKeys])];
@@ -286,7 +299,11 @@ export async function createElevenLabsVoiceClone(input: {
   );
 
   for (const file of input.files) {
-    form.append("files[]", file, file.name || "willian-sample.mp3");
+    const fileName = cleanString(file.name, "willian-sample.mp3");
+    const audioBlob = new Blob([await file.arrayBuffer()], {
+      type: inferAudioContentType(file),
+    });
+    form.append("files", audioBlob, fileName);
   }
 
   const res = await elevenLabsFetch("/v1/voices/add", {

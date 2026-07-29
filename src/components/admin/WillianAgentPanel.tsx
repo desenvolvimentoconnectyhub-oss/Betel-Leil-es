@@ -2319,7 +2319,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
       form.set("description", cloneDescription);
       form.set("authorized", String(cloneConsentReady));
       form.set("consentType", "authorized_voice");
-      cloneFiles.forEach((file) => form.append("files[]", file, file.name));
+      cloneFiles.forEach((file) => form.append("files", file, file.name));
 
       const res = await fetch(WHATSAPP_AGENT_VOICE_ENDPOINT, {
         method: "POST",

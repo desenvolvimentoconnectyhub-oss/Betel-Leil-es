@@ -114,12 +114,21 @@ async function handleMultipart(request: NextRequest) {
   }
 
   const voiceName = cleanString(form.get("name"), "Agente Betel");
-  const result = await createElevenLabsVoiceClone({
-    name: voiceName,
-    description: cleanString(form.get("description")),
-    consentType,
-    files,
-  });
+  const result = await (async () => {
+    try {
+      return await createElevenLabsVoiceClone({
+        name: voiceName,
+        description: cleanString(form.get("description")),
+        consentType,
+        files,
+      });
+    } catch (error: unknown) {
+      const samples = files
+        .map((file) => `${cleanString(file.name, "audio")} (${formatFileSize(file.size)})`)
+        .join(", ");
+      throw new Error(`${getErrorMessage(error)} Amostra recebida pelo servidor: ${samples}.`);
+    }
+  })();
 
   return NextResponse.json({
     success: true,
