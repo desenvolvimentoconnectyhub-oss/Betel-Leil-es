@@ -429,7 +429,12 @@ export function MetaWhatsAppCampaignsClient({
               {data.campaigns.map((item) => (
                 <div key={item.id} className="grid gap-3 px-4 py-3 xl:grid-cols-[1fr_auto]">
                   <div>
-                    <p className="text-sm font-semibold text-[var(--admin-foreground)]">{item.name}</p>
+                    <Link
+                      href={`/admin/meta-whatsapp/campaigns/${item.id}`}
+                      className="text-sm font-semibold text-[var(--admin-foreground)] hover:text-[var(--admin-cyan)]"
+                    >
+                      {item.name}
+                    </Link>
                     <p className="mt-1 text-xs text-[var(--admin-muted)]">
                       {item.campaignType} / {item.templateName || "template"} / {item.contactListName || "lista"}
                     </p>

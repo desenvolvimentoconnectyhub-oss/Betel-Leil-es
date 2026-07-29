@@ -125,6 +125,40 @@ export type MetaWhatsAppDashboardData = {
   }>;
 };
 
+export type MetaWhatsAppCampaignDetail = {
+  source: "supabase" | "migration_pending" | "mock";
+  reason?: string;
+  generatedAt: string;
+  campaign: MetaWhatsAppDashboardData["campaigns"][number] | null;
+  template: MetaWhatsAppDashboardData["templates"][number] | null;
+  sender: MetaWhatsAppDashboardData["senders"][number] | null;
+  contactList: MetaWhatsAppDashboardData["contactLists"][number] | null;
+  recipients: Array<{
+    id: string;
+    phone: string;
+    name: string;
+    status: string;
+    providerMessageId: string;
+    providerStatus: string;
+    errorCode: string;
+    errorMessage: string;
+    sentAt: string;
+    deliveredAt: string;
+    readAt: string;
+    failedAt: string;
+    attemptCount: number;
+    payload: DbRow;
+    responsePayload: DbRow;
+  }>;
+  events: Array<{
+    id: string;
+    eventType: string;
+    providerMessageId: string;
+    payload: DbRow;
+    createdAt: string;
+  }>;
+};
+
 const DEFAULT_API_VERSION = "v26.0";
 const DEFAULT_LANGUAGE = "pt_BR";
 
@@ -1128,6 +1162,199 @@ export async function processMetaWhatsAppCampaign(input: ProcessMetaWhatsAppCamp
   };
 }
 
+function mapCampaignRow(row: DbRow): MetaWhatsAppDashboardData["campaigns"][number] {
+  const totals = asObject(row.totals);
+  const metadata = asObject(row.metadata);
+  return {
+    id: cleanString(row.id),
+    name: cleanString(row.name, "Campanha Meta WhatsApp"),
+    campaignType: cleanString(row.campaign_type, "marketing"),
+    status: cleanString(row.status, "draft"),
+    approvalStatus: cleanString(row.approval_status, "draft"),
+    sent: asNumber(totals.sent),
+    delivered: asNumber(totals.delivered),
+    read: asNumber(totals.read),
+    failed: asNumber(totals.failed),
+    queued: asNumber(totals.queued),
+    skipped: asNumber(totals.skipped),
+    total: asNumber(totals.total),
+    scheduledFor: cleanString(row.scheduled_for),
+    templateName: cleanString(metadata.template_name),
+    contactListName: cleanString(metadata.contact_list_name),
+    createdAt: cleanString(row.created_at),
+  };
+}
+
+function mapTemplateRow(row: DbRow): MetaWhatsAppDashboardData["templates"][number] {
+  return {
+    id: cleanString(row.id),
+    metaTemplateId: cleanString(row.meta_template_id),
+    name: cleanString(row.name),
+    language: cleanString(row.language, DEFAULT_LANGUAGE),
+    status: cleanString(row.status, "draft"),
+    managedFromPanel: asBoolean(row.managed_from_panel),
+    category: cleanString(row.category, "MARKETING"),
+    headerType: cleanString(row.header_type, "none"),
+    headerText: cleanString(row.header_text),
+    bodyText: cleanString(row.body_text),
+    footerText: cleanString(row.footer_text),
+    buttons: asArray(row.buttons),
+    variables: asArray(row.variables),
+    rejectionReason: cleanString(row.rejection_reason),
+  };
+}
+
+function mapSenderRow(row: DbRow): MetaWhatsAppDashboardData["senders"][number] {
+  return {
+    id: cleanString(row.id),
+    label: cleanString(row.verified_name, cleanString(row.display_phone_number, "Numero oficial")),
+    phoneNumberId: cleanString(row.phone_number_id),
+    displayPhoneNumber: cleanString(row.display_phone_number),
+    status: cleanString(row.status, "active"),
+    qualityRating: cleanString(row.quality_rating, "desconhecido"),
+    isDefault: asBoolean(row.is_default),
+  };
+}
+
+function mapContactListRow(row: DbRow): MetaWhatsAppDashboardData["contactLists"][number] {
+  const metadata = asObject(row.metadata);
+  return {
+    id: cleanString(row.id),
+    name: cleanString(row.name, "Lista Meta WhatsApp"),
+    validCount: asNumber(row.valid_count),
+    duplicateCount: asNumber(row.duplicate_count),
+    invalidCount: asNumber(row.invalid_count),
+    optInCount: asNumber(metadata.opt_in_count),
+    sourceFilename: cleanString(row.source_filename),
+    sourceType: cleanString(row.source_type, "import"),
+    createdAt: cleanString(row.created_at),
+  };
+}
+
+export async function getMetaWhatsAppCampaignDetail(campaignId: string): Promise<MetaWhatsAppCampaignDetail> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) {
+    return {
+      source: "mock",
+      reason: "Supabase admin nao configurado.",
+      generatedAt: new Date().toISOString(),
+      campaign: null,
+      template: null,
+      sender: null,
+      contactList: null,
+      recipients: [],
+      events: [],
+    };
+  }
+
+  try {
+    const { data: campaignData, error: campaignError } = await supabase
+      .from("meta_whatsapp_campaigns")
+      .select("*")
+      .eq("id", campaignId)
+      .maybeSingle();
+    if (campaignError) throw campaignError;
+    const campaignRow = campaignData as DbRow | null;
+    if (!campaignRow) {
+      return {
+        source: "supabase",
+        reason: "Campanha nao encontrada.",
+        generatedAt: new Date().toISOString(),
+        campaign: null,
+        template: null,
+        sender: null,
+        contactList: null,
+        recipients: [],
+        events: [],
+      };
+    }
+
+    const [templateResult, senderResult, listResult, recipientsResult, eventsResult] = await Promise.all([
+      supabase.from("meta_whatsapp_templates").select("*").eq("id", cleanString(campaignRow.template_id)).maybeSingle(),
+      supabase.from("meta_whatsapp_senders").select("*").eq("id", cleanString(campaignRow.sender_id)).maybeSingle(),
+      supabase.from("meta_whatsapp_contact_lists").select("*").eq("id", cleanString(campaignRow.contact_list_id)).maybeSingle(),
+      supabase
+        .from("meta_whatsapp_campaign_recipients")
+        .select("*")
+        .eq("campaign_id", campaignId)
+        .order("updated_at", { ascending: false })
+        .limit(300),
+      supabase
+        .from("meta_whatsapp_webhook_events")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(80),
+    ]);
+
+    const firstError = [templateResult.error, senderResult.error, listResult.error, recipientsResult.error, eventsResult.error].find(Boolean);
+    if (firstError) throw firstError;
+
+    const messageIds = new Set(((recipientsResult.data || []) as DbRow[]).map((row) => cleanString(row.provider_message_id)).filter(Boolean));
+    return {
+      source: "supabase",
+      generatedAt: new Date().toISOString(),
+      campaign: mapCampaignRow(campaignRow),
+      template: templateResult.data ? mapTemplateRow(templateResult.data as DbRow) : null,
+      sender: senderResult.data ? mapSenderRow(senderResult.data as DbRow) : null,
+      contactList: listResult.data ? mapContactListRow(listResult.data as DbRow) : null,
+      recipients: ((recipientsResult.data || []) as DbRow[]).map((row) => ({
+        id: cleanString(row.id),
+        phone: cleanString(row.phone_e164),
+        name: cleanString(row.name),
+        status: cleanString(row.status),
+        providerMessageId: cleanString(row.provider_message_id),
+        providerStatus: cleanString(row.provider_status),
+        errorCode: cleanString(row.error_code),
+        errorMessage: cleanString(row.error_message),
+        sentAt: cleanString(row.sent_at),
+        deliveredAt: cleanString(row.delivered_at),
+        readAt: cleanString(row.read_at),
+        failedAt: cleanString(row.failed_at),
+        attemptCount: asNumber(row.attempt_count),
+        payload: asObject(row.payload),
+        responsePayload: asObject(row.response_payload),
+      })),
+      events: ((eventsResult.data || []) as DbRow[])
+        .filter((row) => {
+          const providerMessageId = cleanString(row.provider_message_id);
+          return Boolean(providerMessageId && messageIds.has(providerMessageId));
+        })
+        .map((row) => ({
+          id: cleanString(row.id),
+          eventType: cleanString(row.event_type),
+          providerMessageId: cleanString(row.provider_message_id),
+          payload: asObject(row.payload),
+          createdAt: cleanString(row.created_at),
+        })),
+    };
+  } catch (error) {
+    if (tableMissing(error)) {
+      return {
+        source: "migration_pending",
+        reason: "Migration Meta WhatsApp Oficial ainda nao aplicada no Supabase.",
+        generatedAt: new Date().toISOString(),
+        campaign: null,
+        template: null,
+        sender: null,
+        contactList: null,
+        recipients: [],
+        events: [],
+      };
+    }
+    return {
+      source: "mock",
+      reason: error instanceof Error ? error.message : "Falha ao carregar campanha Meta WhatsApp.",
+      generatedAt: new Date().toISOString(),
+      campaign: null,
+      template: null,
+      sender: null,
+      contactList: null,
+      recipients: [],
+      events: [],
+    };
+  }
+}
+
 function emptyDashboard(source: MetaWhatsAppDashboardData["source"], reason?: string): MetaWhatsAppDashboardData {
   return {
     source,
@@ -1195,67 +1422,10 @@ export async function getMetaWhatsAppDashboardData(): Promise<MetaWhatsAppDashbo
         { label: "Entregues", value: String(delivered), detail: `${sent} enviadas`, tone: "green" },
         { label: "Falhas", value: String(failed), detail: `${read} lidas`, tone: failed ? "red" : "muted" },
       ],
-      campaigns: ((campaignsResult.data || []) as DbRow[]).map((row) => {
-        const totals = asObject(row.totals);
-        const metadata = asObject(row.metadata);
-        return {
-          id: cleanString(row.id),
-          name: cleanString(row.name, "Campanha Meta WhatsApp"),
-          campaignType: cleanString(row.campaign_type, "marketing"),
-          status: cleanString(row.status, "draft"),
-          approvalStatus: cleanString(row.approval_status, "draft"),
-          sent: asNumber(totals.sent),
-          delivered: asNumber(totals.delivered),
-          read: asNumber(totals.read),
-          failed: asNumber(totals.failed),
-          queued: asNumber(totals.queued),
-          skipped: asNumber(totals.skipped),
-          total: asNumber(totals.total),
-          scheduledFor: cleanString(row.scheduled_for),
-          templateName: cleanString(metadata.template_name),
-          contactListName: cleanString(metadata.contact_list_name),
-          createdAt: cleanString(row.created_at),
-        };
-      }),
-      templates: ((templatesResult.data || []) as DbRow[]).map((row) => ({
-        id: cleanString(row.id),
-        metaTemplateId: cleanString(row.meta_template_id),
-        name: cleanString(row.name),
-        language: cleanString(row.language, DEFAULT_LANGUAGE),
-        status: cleanString(row.status, "draft"),
-        managedFromPanel: asBoolean(row.managed_from_panel),
-        category: cleanString(row.category, "MARKETING"),
-        headerType: cleanString(row.header_type, "none"),
-        headerText: cleanString(row.header_text),
-        bodyText: cleanString(row.body_text),
-        footerText: cleanString(row.footer_text),
-        buttons: asArray(row.buttons),
-        variables: asArray(row.variables),
-        rejectionReason: cleanString(row.rejection_reason),
-      })),
-      senders: ((sendersResult.data || []) as DbRow[]).map((row) => ({
-        id: cleanString(row.id),
-        label: cleanString(row.verified_name, cleanString(row.display_phone_number, "Numero oficial")),
-        phoneNumberId: cleanString(row.phone_number_id),
-        displayPhoneNumber: cleanString(row.display_phone_number),
-        status: cleanString(row.status, "active"),
-        qualityRating: cleanString(row.quality_rating, "desconhecido"),
-        isDefault: asBoolean(row.is_default),
-      })),
-      contactLists: ((listsResult.data || []) as DbRow[]).map((row) => {
-        const metadata = asObject(row.metadata);
-        return {
-          id: cleanString(row.id),
-          name: cleanString(row.name, "Lista Meta WhatsApp"),
-          validCount: asNumber(row.valid_count),
-          duplicateCount: asNumber(row.duplicate_count),
-          invalidCount: asNumber(row.invalid_count),
-          optInCount: asNumber(metadata.opt_in_count),
-          sourceFilename: cleanString(row.source_filename),
-          sourceType: cleanString(row.source_type, "import"),
-          createdAt: cleanString(row.created_at),
-        };
-      }),
+      campaigns: ((campaignsResult.data || []) as DbRow[]).map(mapCampaignRow),
+      templates: ((templatesResult.data || []) as DbRow[]).map(mapTemplateRow),
+      senders: ((sendersResult.data || []) as DbRow[]).map(mapSenderRow),
+      contactLists: ((listsResult.data || []) as DbRow[]).map(mapContactListRow),
     };
   } catch (error) {
     if (tableMissing(error)) {
