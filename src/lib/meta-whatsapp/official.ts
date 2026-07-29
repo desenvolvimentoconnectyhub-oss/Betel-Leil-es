@@ -4,6 +4,32 @@ import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 
 type DbRow = Record<string, unknown>;
 
+type MetaConfigInternal = MetaWhatsAppConfig & {
+  appSecret: string;
+  systemUserToken: string;
+  webhookVerifyToken: string;
+};
+
+export type MetaTemplateButtonInput = {
+  type: "URL" | "PHONE_NUMBER";
+  text: string;
+  url?: string;
+  phoneNumber?: string;
+};
+
+export type CreateMetaWhatsAppTemplateInput = {
+  name: string;
+  category: string;
+  language: string;
+  headerType: "none" | "text" | "image" | "video" | "document";
+  headerText?: string;
+  headerMediaHandle?: string;
+  bodyText: string;
+  footerText?: string;
+  buttons?: MetaTemplateButtonInput[];
+  variableExamples?: Record<string, string>;
+};
+
 export type MetaWhatsAppConfig = {
   appId: string;
   appSecretConfigured: boolean;
@@ -25,7 +51,22 @@ export type MetaWhatsAppDashboardData = {
   config: MetaWhatsAppConfig;
   metrics: Array<{ label: string; value: string; detail: string; tone: "green" | "yellow" | "red" | "purple" | "muted" }>;
   campaigns: Array<{ id: string; name: string; status: string; sent: number; delivered: number; read: number; failed: number; scheduledFor: string }>;
-  templates: Array<{ id: string; name: string; language: string; status: string; managedFromPanel: boolean; category: string }>;
+  templates: Array<{
+    id: string;
+    metaTemplateId: string;
+    name: string;
+    language: string;
+    status: string;
+    managedFromPanel: boolean;
+    category: string;
+    headerType: string;
+    headerText: string;
+    bodyText: string;
+    footerText: string;
+    buttons: unknown[];
+    variables: unknown[];
+    rejectionReason: string;
+  }>;
   senders: Array<{ id: string; label: string; phoneNumberId: string; status: string; qualityRating: string; isDefault: boolean }>;
   contactLists: Array<{ id: string; name: string; validCount: number; duplicateCount: number; invalidCount: number }>;
 };
@@ -44,6 +85,10 @@ function asNumber(value: unknown, fallback = 0) {
 
 function asBoolean(value: unknown) {
   return value === true || value === "true" || value === "1" || value === 1;
+}
+
+function asArray(value: unknown) {
+  return Array.isArray(value) ? value : [];
 }
 
 function tableMissing(error: unknown) {
@@ -69,7 +114,7 @@ function valueFor(config: Map<string, string>, key: string, envName: string, fal
   return config.get(key) || cleanString(process.env[envName]) || fallback;
 }
 
-export async function getMetaWhatsAppConfig(): Promise<MetaWhatsAppConfig> {
+async function getMetaWhatsAppConfigInternal(): Promise<MetaConfigInternal> {
   const config = await readAppConfig();
   const appId = valueFor(config, "meta_app_id", "META_APP_ID");
   const appSecret = valueFor(config, "meta_app_secret", "META_APP_SECRET");
@@ -84,10 +129,13 @@ export async function getMetaWhatsAppConfig(): Promise<MetaWhatsAppConfig> {
 
   return {
     appId,
+    appSecret,
     appSecretConfigured: Boolean(appSecret),
+    systemUserToken,
     systemUserTokenConfigured: Boolean(systemUserToken),
     wabaId,
     phoneNumberId,
+    webhookVerifyToken,
     webhookVerifyTokenConfigured: Boolean(webhookVerifyToken),
     apiVersion,
     defaultLanguage,
@@ -95,6 +143,18 @@ export async function getMetaWhatsAppConfig(): Promise<MetaWhatsAppConfig> {
     dailyLimitPerNumber,
     configured: Boolean(systemUserToken && wabaId && phoneNumberId && webhookVerifyToken),
   };
+}
+
+function publicConfig(config: MetaConfigInternal): MetaWhatsAppConfig {
+  const { appSecret, systemUserToken, webhookVerifyToken, ...publicValue } = config;
+  void appSecret;
+  void systemUserToken;
+  void webhookVerifyToken;
+  return publicValue;
+}
+
+export async function getMetaWhatsAppConfig(): Promise<MetaWhatsAppConfig> {
+  return publicConfig(await getMetaWhatsAppConfigInternal());
 }
 
 export async function getMetaWhatsAppWebhookSecrets() {
@@ -106,10 +166,10 @@ export async function getMetaWhatsAppWebhookSecrets() {
 }
 
 export async function testMetaWhatsAppConnection() {
-  const rawConfig = await readAppConfig();
-  const token = valueFor(rawConfig, "meta_system_user_token", "META_SYSTEM_USER_TOKEN");
-  const wabaId = valueFor(rawConfig, "meta_waba_id", "META_WABA_ID");
-  const apiVersion = valueFor(rawConfig, "meta_graph_api_version", "META_GRAPH_API_VERSION", DEFAULT_API_VERSION);
+  const config = await getMetaWhatsAppConfigInternal();
+  const token = config.systemUserToken;
+  const wabaId = config.wabaId;
+  const apiVersion = config.apiVersion;
   const start = Date.now();
 
   if (!token || !wabaId) {
@@ -151,6 +211,298 @@ export async function testMetaWhatsAppConnection() {
       latencyMs: Date.now() - start,
     };
   }
+}
+
+function metaGraphUrl(config: MetaConfigInternal, path: string) {
+  return new URL(`https://graph.facebook.com/${config.apiVersion}/${path.replace(/^\/+/, "")}`);
+}
+
+async function metaFetch(config: MetaConfigInternal, path: string, init: RequestInit = {}) {
+  if (!config.systemUserToken || !config.wabaId) {
+    throw new Error("Configure Business/System User Token e WABA ID na Sala de Manutencao.");
+  }
+
+  const headers = new Headers(init.headers);
+  headers.set("Authorization", `Bearer ${config.systemUserToken}`);
+  if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+
+  const response = await fetch(metaGraphUrl(config, path), {
+    ...init,
+    headers,
+    signal: AbortSignal.timeout(20000),
+  });
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const error = payload && typeof payload === "object" ? (payload as DbRow).error as DbRow | undefined : undefined;
+    throw new Error(cleanString(error?.message, `Meta retornou ${response.status}.`));
+  }
+
+  return payload as DbRow;
+}
+
+function mapTemplateStatus(value: unknown) {
+  const normalized = cleanString(value, "pending").toLowerCase();
+  if (["approved", "pending", "rejected", "paused", "disabled"].includes(normalized)) return normalized;
+  if (["in_appeal", "pending_deletion"].includes(normalized)) return "pending";
+  return "sync_only";
+}
+
+function mapHeaderType(components: unknown[]) {
+  const header = components.find((component) => cleanString((component as DbRow).type).toUpperCase() === "HEADER") as DbRow | undefined;
+  if (!header) return "none";
+  const format = cleanString(header.format, "text").toLowerCase();
+  if (["text", "image", "video", "document"].includes(format)) return format;
+  return "none";
+}
+
+function componentText(components: unknown[], type: string) {
+  const component = components.find((item) => cleanString((item as DbRow).type).toUpperCase() === type) as DbRow | undefined;
+  return cleanString(component?.text);
+}
+
+function componentButtons(components: unknown[]) {
+  const component = components.find((item) => cleanString((item as DbRow).type).toUpperCase() === "BUTTONS") as DbRow | undefined;
+  return asArray(component?.buttons);
+}
+
+function extractTemplateVariables(bodyText: string) {
+  const found = new Set<string>();
+  for (const match of bodyText.matchAll(/\{\{\s*(\d+)\s*\}\}/g)) {
+    found.add(match[1]);
+  }
+  return [...found].sort((left, right) => Number(left) - Number(right));
+}
+
+function normalizeTemplateName(name: string) {
+  return cleanString(name)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 512);
+}
+
+function buildTemplateComponents(input: CreateMetaWhatsAppTemplateInput) {
+  const components: DbRow[] = [];
+  const headerType = cleanString(input.headerType, "none") as CreateMetaWhatsAppTemplateInput["headerType"];
+  const headerText = cleanString(input.headerText);
+
+  if (headerType === "text" && headerText) {
+    components.push({ type: "HEADER", format: "TEXT", text: headerText });
+  }
+
+  if (["image", "video", "document"].includes(headerType)) {
+    const handle = cleanString(input.headerMediaHandle);
+    if (!handle) {
+      throw new Error("Header com midia exige um handle de exemplo da Meta. Use header texto por enquanto ou informe o media handle.");
+    }
+    components.push({
+      type: "HEADER",
+      format: headerType.toUpperCase(),
+      example: { header_handle: [handle] },
+    });
+  }
+
+  const bodyText = cleanString(input.bodyText);
+  if (!bodyText) throw new Error("Informe o corpo do template.");
+
+  const variables = extractTemplateVariables(bodyText);
+  const bodyComponent: DbRow = { type: "BODY", text: bodyText };
+  if (variables.length) {
+    bodyComponent.example = {
+      body_text: [
+        variables.map((variable) => cleanString(input.variableExamples?.[variable], `exemplo ${variable}`)),
+      ],
+    };
+  }
+  components.push(bodyComponent);
+
+  const footerText = cleanString(input.footerText);
+  if (footerText) components.push({ type: "FOOTER", text: footerText });
+
+  const buttons = (input.buttons || [])
+    .map((button) => ({
+      type: button.type,
+      text: cleanString(button.text),
+      url: cleanString(button.url),
+      phone_number: cleanString(button.phoneNumber),
+    }))
+    .filter((button) => button.text && ((button.type === "URL" && button.url) || (button.type === "PHONE_NUMBER" && button.phone_number)))
+    .map((button) => {
+      if (button.type === "URL") return { type: "URL", text: button.text, url: button.url };
+      return { type: "PHONE_NUMBER", text: button.text, phone_number: button.phone_number };
+    });
+
+  if (buttons.length) components.push({ type: "BUTTONS", buttons: buttons.slice(0, 3) });
+
+  return { components, variables };
+}
+
+async function upsertTemplateFromMeta(input: {
+  template: DbRow;
+  managedFromPanel?: boolean;
+  createdFromPanel?: boolean;
+}) {
+  const supabase = getSupabaseAdminClient();
+  const config = await getMetaWhatsAppConfigInternal();
+  if (!supabase) throw new Error("Supabase admin nao configurado.");
+
+  const components = asArray(input.template.components);
+  const name = normalizeTemplateName(cleanString(input.template.name));
+  const language = cleanString(input.template.language, config.defaultLanguage);
+  if (!name) throw new Error("Template Meta sem nome valido.");
+
+  const { data: existing } = await supabase
+    .from("meta_whatsapp_templates")
+    .select("id,managed_from_panel,created_from_panel")
+    .eq("waba_id", config.wabaId)
+    .eq("name", name)
+    .eq("language", language)
+    .maybeSingle();
+  const existingRow = existing as DbRow | null;
+  const managedFromPanel = input.managedFromPanel === true || asBoolean(existingRow?.managed_from_panel);
+  const createdFromPanel = input.createdFromPanel === true || asBoolean(existingRow?.created_from_panel);
+
+  const payload = {
+    waba_id: config.wabaId,
+    meta_template_id: cleanString(input.template.id) || null,
+    name,
+    language,
+    category: cleanString(input.template.category, "MARKETING").toUpperCase(),
+    status: managedFromPanel ? mapTemplateStatus(input.template.status) : "sync_only",
+    header_type: mapHeaderType(components),
+    header_text: componentText(components, "HEADER"),
+    body_text: componentText(components, "BODY"),
+    footer_text: componentText(components, "FOOTER"),
+    buttons: componentButtons(components),
+    components,
+    variables: extractTemplateVariables(componentText(components, "BODY")),
+    managed_from_panel: managedFromPanel,
+    created_from_panel: createdFromPanel,
+    last_synced_at: new Date().toISOString(),
+    raw_payload: input.template,
+    rejection_reason: cleanString(input.template.rejected_reason, cleanString(input.template.rejection_reason)),
+  };
+
+  const { data, error } = await supabase
+    .from("meta_whatsapp_templates")
+    .upsert(payload, { onConflict: "waba_id,name,language" })
+    .select("*")
+    .maybeSingle();
+  if (error) throw error;
+  return data as DbRow;
+}
+
+export async function syncMetaWhatsAppSenders() {
+  const supabase = getSupabaseAdminClient();
+  const config = await getMetaWhatsAppConfigInternal();
+  if (!supabase) throw new Error("Supabase admin nao configurado.");
+
+  const payload = await metaFetch(config, `${config.wabaId}/phone_numbers?fields=id,display_phone_number,verified_name,quality_rating,messaging_limit_tier,status`);
+  const rows = asArray(payload.data) as DbRow[];
+  const now = new Date().toISOString();
+
+  for (const row of rows) {
+    const phoneNumberId = cleanString(row.id);
+    if (!phoneNumberId) continue;
+    await supabase.from("meta_whatsapp_senders").upsert(
+      {
+        waba_id: config.wabaId,
+        phone_number_id: phoneNumberId,
+        display_phone_number: cleanString(row.display_phone_number),
+        verified_name: cleanString(row.verified_name),
+        quality_rating: cleanString(row.quality_rating),
+        messaging_limit_tier: cleanString(row.messaging_limit_tier),
+        status: "active",
+        is_default: phoneNumberId === config.phoneNumberId,
+        last_synced_at: now,
+        raw_payload: row,
+      },
+      { onConflict: "phone_number_id" }
+    );
+  }
+
+  return { ok: true, synced: rows.length };
+}
+
+export async function syncMetaWhatsAppTemplates() {
+  const config = await getMetaWhatsAppConfigInternal();
+  const payload = await metaFetch(
+    config,
+    `${config.wabaId}/message_templates?fields=id,name,language,status,category,components,rejected_reason`
+  );
+  const rows = asArray(payload.data) as DbRow[];
+  const synced: string[] = [];
+
+  for (const row of rows) {
+    const saved = await upsertTemplateFromMeta({ template: row });
+    synced.push(cleanString(saved.id));
+  }
+
+  await syncMetaWhatsAppSenders().catch(() => null);
+  return { ok: true, synced: synced.length, ids: synced };
+}
+
+export async function createMetaWhatsAppTemplate(input: CreateMetaWhatsAppTemplateInput) {
+  const config = await getMetaWhatsAppConfigInternal();
+  const name = normalizeTemplateName(input.name);
+  if (!name) throw new Error("Nome do template invalido.");
+  const language = cleanString(input.language, config.defaultLanguage);
+  const category = cleanString(input.category, "MARKETING").toUpperCase();
+  const { components, variables } = buildTemplateComponents(input);
+
+  const response = await metaFetch(config, `${config.wabaId}/message_templates`, {
+    method: "POST",
+    body: JSON.stringify({
+      name,
+      language,
+      category,
+      components,
+    }),
+  });
+
+  const template = {
+    ...response,
+    id: cleanString(response.id),
+    name,
+    language,
+    category,
+    status: cleanString(response.status, "pending"),
+    components,
+  };
+  const saved = await upsertTemplateFromMeta({ template, managedFromPanel: true, createdFromPanel: true });
+  return { ok: true, template: saved, variables };
+}
+
+export async function deleteMetaWhatsAppTemplate(input: { id: string }) {
+  const supabase = getSupabaseAdminClient();
+  const config = await getMetaWhatsAppConfigInternal();
+  if (!supabase) throw new Error("Supabase admin nao configurado.");
+
+  const { data, error } = await supabase
+    .from("meta_whatsapp_templates")
+    .select("*")
+    .eq("id", input.id)
+    .maybeSingle();
+  if (error) throw error;
+
+  const template = data as DbRow | null;
+  if (!template) throw new Error("Template nao encontrado.");
+
+  if (asBoolean(template.managed_from_panel)) {
+    const name = cleanString(template.name);
+    const metaTemplateId = cleanString(template.meta_template_id);
+    const query = new URLSearchParams();
+    if (name) query.set("name", name);
+    if (metaTemplateId) query.set("hsm_id", metaTemplateId);
+    await metaFetch(config, `${config.wabaId}/message_templates?${query.toString()}`, { method: "DELETE" });
+  }
+
+  const { error: deleteError } = await supabase.from("meta_whatsapp_templates").delete().eq("id", input.id);
+  if (deleteError) throw deleteError;
+  return { ok: true };
 }
 
 function emptyDashboard(source: MetaWhatsAppDashboardData["source"], reason?: string): MetaWhatsAppDashboardData {
@@ -235,11 +587,19 @@ export async function getMetaWhatsAppDashboardData(): Promise<MetaWhatsAppDashbo
       }),
       templates: ((templatesResult.data || []) as DbRow[]).map((row) => ({
         id: cleanString(row.id),
+        metaTemplateId: cleanString(row.meta_template_id),
         name: cleanString(row.name),
         language: cleanString(row.language, DEFAULT_LANGUAGE),
         status: cleanString(row.status, "draft"),
         managedFromPanel: asBoolean(row.managed_from_panel),
         category: cleanString(row.category, "MARKETING"),
+        headerType: cleanString(row.header_type, "none"),
+        headerText: cleanString(row.header_text),
+        bodyText: cleanString(row.body_text),
+        footerText: cleanString(row.footer_text),
+        buttons: asArray(row.buttons),
+        variables: asArray(row.variables),
+        rejectionReason: cleanString(row.rejection_reason),
       })),
       senders: ((sendersResult.data || []) as DbRow[]).map((row) => ({
         id: cleanString(row.id),
