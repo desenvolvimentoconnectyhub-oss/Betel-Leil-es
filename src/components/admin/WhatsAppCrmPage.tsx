@@ -192,6 +192,19 @@ function whatsappStatusLooksDisconnected(value: unknown) {
   );
 }
 
+function whatsappStatusLooksTerminallyDisconnected(value: unknown) {
+  const status = String(value || "").trim().toLowerCase().replace(/\s+/g, "_");
+  return Boolean(
+    status.includes("disconnect") ||
+      status.includes("not_connected") ||
+      status.includes("notconnected") ||
+      status.includes("not_logged") ||
+      status.includes("notlogged") ||
+      status.includes("logout") ||
+      ["close", "closed", "offline", "deleted", "archived"].includes(status)
+  );
+}
+
 function whatsappStatusLooksConnected(value: unknown) {
   const status = String(value || "").trim().toLowerCase().replace(/\s+/g, "_");
   if (!status || whatsappStatusLooksDisconnected(status)) return false;
@@ -225,7 +238,7 @@ function hasActiveWhatsappAgent(agent: {
     agent.connected ||
       agent.connectedAt ||
       whatsappStatusLooksConnected(agent.status) ||
-      (!whatsappStatusLooksDisconnected(agent.status) && hasSyncedProfile)
+      (!whatsappStatusLooksTerminallyDisconnected(agent.status) && hasSyncedProfile)
   );
 }
 
@@ -1192,16 +1205,24 @@ export function WhatsAppCrmPage({
   });
   const agentInstances = willianInstance?.agentInstances || [];
   const configuredAgentCount = Math.max(data.agents.length, agentInstances.length, willianAgentConfig ? 1 : 0);
+  const primaryAgentConnected = Boolean(
+    willianInstance &&
+      hasActiveWhatsappAgent({
+        connected: Boolean(willianInstance.status?.connected || willianInstance.status?.loggedIn),
+        connectedAt: willianInstance.profileImageSyncedAt,
+        displayName: willianInstance.displayName,
+        phoneNumber: willianInstance.phoneNumber,
+        profileImageSyncedAt: willianInstance.profileImageSyncedAt,
+        profileImageUrl: willianInstance.profileImageUrl,
+        runtimeStatus: willianInstance.primaryAgentPaused ? "paused" : "active",
+        status: willianInstance.status?.state || willianInstance.finalStatus || willianInstance.connection?.status,
+      })
+  );
   const connectedAgentCount =
     agentInstances.length > 0
-      ? agentInstances.filter(hasActiveWhatsappAgent).length
+      ? Math.max(agentInstances.filter(hasActiveWhatsappAgent).length, primaryAgentConnected ? 1 : 0)
       : data.agents.filter((agent) => agent.connected).length;
-  const primaryConnected = Boolean(
-    willianInstance?.status?.connected ||
-      willianInstance?.status?.loggedIn ||
-      willianInstance?.whatsappReady ||
-      connectedAgentCount > 0
-  );
+  const primaryConnected = connectedAgentCount > 0;
   const criticalLeads = data.leads.filter(
     (lead) => lead.humanInterventionActive || lead.slaStatus === "vencido" || lead.score >= 85
   );

@@ -246,6 +246,23 @@ function statusLooksDisconnected(value: unknown) {
   );
 }
 
+function statusLooksTerminallyDisconnected(value: unknown) {
+  const status = normalizedConnectionStatus(value);
+  return Boolean(
+    status.includes("disconnect") ||
+      status.includes("not_connected") ||
+      status.includes("notconnected") ||
+      status.includes("not_logged") ||
+      status.includes("notlogged") ||
+      status.includes("logout") ||
+      status === "close" ||
+      status === "closed" ||
+      status === "offline" ||
+      status === "deleted" ||
+      status === "archived"
+  );
+}
+
 function whatsappAgentLooksConnected(agent?: WhatsAppAgentInstanceSummary | null) {
   if (!agent || isWhatsappAgentPaused(agent)) return false;
   const explicitStatus = agent.status;
@@ -260,12 +277,17 @@ function whatsappAgentLooksConnected(agent?: WhatsAppAgentInstanceSummary | null
     agent.connected ||
       cleanFormValue(agent.connectedAt) ||
       statusLooksConnected(explicitStatus) ||
-      (!statusLooksDisconnected(explicitStatus) && hasSyncedProfile)
+      (!statusLooksTerminallyDisconnected(explicitStatus) && hasSyncedProfile)
   );
 }
 
 function whatsappStateLooksConnected(state: WillianInstanceState) {
   const explicitStatus = state.status?.state || state.finalStatus || state.connection?.finalStatus || state.connection?.status;
+  const hasActivePairingChallenge = Boolean(
+    cleanFormValue(state.connection?.qrCode) ||
+      cleanFormValue(state.connection?.qrCodeDataUrl) ||
+      cleanFormValue(state.connection?.pairingCode)
+  );
   const hasSyncedProfile = Boolean(
     cleanFormValue(state.phoneNumber) &&
       (cleanFormValue(state.profileImageSyncedAt) ||
@@ -276,9 +298,9 @@ function whatsappStateLooksConnected(state: WillianInstanceState) {
   return Boolean(
     state.status?.connected ||
       state.status?.loggedIn ||
-      state.whatsappReady ||
       statusLooksConnected(explicitStatus) ||
-      (!statusLooksDisconnected(explicitStatus) && hasSyncedProfile)
+      (!statusLooksTerminallyDisconnected(explicitStatus) && hasSyncedProfile) ||
+      (!hasActivePairingChallenge && hasSyncedProfile)
   );
 }
 
@@ -625,23 +647,46 @@ export function WillianAgentPanel({
   }, [applyInstanceState, openPasskeyBlockedDialog, pairingPollActive, pairingTarget?.agentKey, state.agentKey]);
 
   const whatsappAgents = useMemo<WhatsAppAgentInstanceSummary[]>(() => {
+    const primarySummary: WhatsAppAgentInstanceSummary = {
+      agentKey: state.agentKey,
+      agentName: PRIMARY_WHATSAPP_AGENT_LABEL,
+      companyName: config.companyName,
+      connected,
+      connectedAt: connected ? state.profileImageSyncedAt : undefined,
+      displayName: state.displayName,
+      instanceName: state.instanceName,
+      phoneNumber: state.phoneNumber,
+      profileImageSyncedAt: state.profileImageSyncedAt,
+      profileImageUrl: state.profileImageUrl,
+      sector: "Comercial Betel",
+      status: connected ? "connected" : state.status?.state || "draft",
+    };
+
     if (state.primaryAgentArchived) return agentInstances;
-    if (agentInstances.length) return agentInstances;
-    return [
-      {
-        agentKey: state.agentKey,
-        agentName: PRIMARY_WHATSAPP_AGENT_LABEL,
-        companyName: config.companyName,
-        connected,
-        displayName: state.displayName,
-        instanceName: state.instanceName,
-        phoneNumber: state.phoneNumber,
-        profileImageSyncedAt: state.profileImageSyncedAt,
-        profileImageUrl: state.profileImageUrl,
-        sector: "Comercial Betel",
-        status: connected ? "connected" : state.status?.state || "draft",
-      },
-    ];
+    if (!agentInstances.length) return [primarySummary];
+
+    const enrichedAgents = agentInstances.map((agent) => {
+      if (agent.agentKey !== state.agentKey && agent.agentKey !== PRIMARY_WHATSAPP_AGENT_KEY) return agent;
+      const agentConnected = agent.connected || connected || whatsappAgentLooksConnected(agent);
+      return {
+        ...agent,
+        agentName: agent.agentName || primarySummary.agentName,
+        companyName: agent.companyName || primarySummary.companyName,
+        connected: agentConnected,
+        connectedAt: agent.connectedAt || (agentConnected ? primarySummary.connectedAt : undefined),
+        displayName: agent.displayName || primarySummary.displayName,
+        phoneNumber: agent.phoneNumber || primarySummary.phoneNumber,
+        profileImageSyncedAt: agent.profileImageSyncedAt || primarySummary.profileImageSyncedAt,
+        profileImageUrl: agent.profileImageUrl || primarySummary.profileImageUrl,
+        sector: agent.sector || primarySummary.sector,
+        status: agentConnected ? "connected" : agent.status || primarySummary.status,
+      };
+    });
+
+    const hasPrimaryAgent = enrichedAgents.some(
+      (agent) => agent.agentKey === state.agentKey || agent.agentKey === PRIMARY_WHATSAPP_AGENT_KEY
+    );
+    return hasPrimaryAgent ? enrichedAgents : [primarySummary, ...enrichedAgents];
   }, [
     agentInstances,
     config.companyName,

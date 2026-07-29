@@ -387,7 +387,7 @@ function normalizeConnectionState(value: unknown, connected: boolean) {
   return clean;
 }
 
-function connectionStateIsExplicitlyDisconnected(value: unknown) {
+function connectionStateIsTerminallyDisconnected(value: unknown) {
   const normalized = cleanString(value).toLowerCase().replace(/\s+/g, "_");
   return Boolean(
     normalized.includes("disconnect") ||
@@ -396,9 +396,6 @@ function connectionStateIsExplicitlyDisconnected(value: unknown) {
       normalized.includes("not_logged") ||
       normalized.includes("notlogged") ||
       normalized.includes("logout") ||
-      normalized.includes("qr") ||
-      normalized.includes("scan") ||
-      normalized.includes("pair") ||
       normalized === "close" ||
       normalized === "closed" ||
       normalized === "offline" ||
@@ -1123,6 +1120,16 @@ async function persistConnectyHubInstance(input: {
 
   const status = normalizeStatusPayload(input.statusPayload || {});
   const phone = extractWhatsappPhoneNumber(input.statusPayload);
+  const profileImageUrl = extractProfileImageUrl(input.statusPayload);
+  const displayName =
+    extractWhatsappProfileDisplayName(input.statusPayload) || extractWhatsappDisplayName(input.statusPayload);
+  const hasRemoteIdentity = Boolean(phone && (profileImageUrl || displayName || status.jid));
+  const connectedAt =
+    status.connected ||
+    status.loggedIn ||
+    (!connectionStateIsTerminallyDisconnected(status.state) && hasRemoteIdentity)
+      ? new Date().toISOString()
+      : null;
   await supabase.from("whatsapp_instances").upsert(
     {
       agent_key: agentKey,
@@ -1136,7 +1143,7 @@ async function persistConnectyHubInstance(input: {
       webhook_url: input.webhookUrl || null,
       webhook_secret_preview: null,
       last_seen_at: new Date().toISOString(),
-      connected_at: status.connected || status.loggedIn ? new Date().toISOString() : null,
+      connected_at: connectedAt,
     },
     { onConflict: "provider,instance_name" }
   );
@@ -1276,7 +1283,7 @@ function whatsappInstanceSummaryFromRow(row: Record<string, unknown>): WhatsAppA
   const connected =
     status === "connected" ||
     Boolean(row.connected_at) ||
-    (!connectionStateIsExplicitlyDisconnected(status) && hasSyncedProfile);
+    (!connectionStateIsTerminallyDisconnected(status) && hasSyncedProfile);
 
   return {
     agentKey,
@@ -1333,7 +1340,7 @@ async function listWhatsappAgentInstances(options: { checkRemote?: boolean } = {
         const connectedAt =
           status.connected ||
           status.loggedIn ||
-          (!connectionStateIsExplicitlyDisconnected(status.state) && remoteHasProfile)
+          (!connectionStateIsTerminallyDisconnected(status.state) && remoteHasProfile)
             ? cleanString(row.connected_at) || new Date().toISOString()
             : null;
         const patch = {
@@ -1443,6 +1450,26 @@ function mergeWhatsappAgentSummaries(
   });
 }
 
+function willianStateLooksConnected(state: WillianInstanceState) {
+  const status =
+    state.status?.state ||
+    state.finalStatus ||
+    state.connection?.finalStatus ||
+    state.connection?.status;
+  const hasSyncedProfile = Boolean(
+    cleanString(state.phoneNumber) &&
+      (cleanString(state.profileImageSyncedAt) ||
+        cleanString(state.profileImageUrl) ||
+        cleanString(state.displayName))
+  );
+
+  return Boolean(
+    state.status?.connected ||
+      state.status?.loggedIn ||
+      (!connectionStateIsTerminallyDisconnected(status) && hasSyncedProfile)
+  );
+}
+
 function ensureWillianSummary(
   state: WillianInstanceState,
   summaries: WhatsAppAgentInstanceSummary[],
@@ -1463,9 +1490,27 @@ function ensureWillianSummary(
   const hasWillian = summaries.some(
     (summary) => summary.agentKey === WILLIAN_AGENT_KEY || summary.instanceName === state.instanceName
   );
-  if (hasWillian) return summaries;
+  const connected = willianStateLooksConnected(state);
+  if (hasWillian) {
+    return summaries.map((summary) => {
+      if (summary.agentKey !== WILLIAN_AGENT_KEY && summary.instanceName !== state.instanceName) return summary;
+      return {
+        ...summary,
+        agentName: summary.agentName || WILLIAN_AGENT_NAME,
+        companyName: summary.companyName || "Betel Leiloes",
+        sector: summary.sector || "Comercial Betel",
+        phoneNumber: summary.phoneNumber || state.phoneNumber,
+        displayName: summary.displayName || state.displayName,
+        profileImageUrl: summary.profileImageUrl || state.profileImageUrl,
+        profileImageSyncedAt: summary.profileImageSyncedAt || state.profileImageSyncedAt,
+        status: summary.connected || connected ? "connected" : summary.status || state.status?.state || "draft",
+        connected: summary.connected || connected,
+        connectedAt: summary.connectedAt || (connected ? state.profileImageSyncedAt : undefined),
+        updatedAt: summary.updatedAt || state.profileImageSyncedAt,
+      };
+    });
+  }
 
-  const connected = Boolean(state.status?.connected || state.status?.loggedIn);
   return [
     {
       agentKey: WILLIAN_AGENT_KEY,
