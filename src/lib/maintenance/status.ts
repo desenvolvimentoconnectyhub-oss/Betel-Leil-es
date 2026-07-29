@@ -49,6 +49,10 @@ const DEFAULT_CONFIG_VALUES: Record<string, string> = {
   betel_sncr_base_url: "https://sncr.serpro.gov.br/sncr-web",
   betel_bcb_imoveis_api_base_url: "https://dadosabertos.bcb.gov.br/api/3/action",
   betel_nominatim_api_base_url: "https://nominatim.openstreetmap.org",
+  meta_graph_api_version: "v26.0",
+  meta_default_language: "pt_BR",
+  meta_rate_limit_per_minute: "60",
+  meta_daily_limit_per_number: "1000",
 };
 
 type MaintenanceAppConfig = Map<string, string>;
@@ -305,6 +309,40 @@ async function checkElevenLabs(): Promise<MaintenanceIntegration> {
   };
 }
 
+function checkMetaWhatsApp(appConfig: MaintenanceAppConfig): MaintenanceIntegration {
+  const items = [
+    envItem("META_APP_ID", "Meta App ID", false, appConfig, "meta_app_id"),
+    envItem("META_APP_SECRET", "Meta App Secret", true, appConfig, "meta_app_secret"),
+    envItem("META_SYSTEM_USER_TOKEN", "Business/System User Token", true, appConfig, "meta_system_user_token"),
+    envItem("META_WABA_ID", "WhatsApp Business Account ID / WABA ID", false, appConfig, "meta_waba_id"),
+    envItem("META_PHONE_NUMBER_ID", "Phone Number ID padrao", false, appConfig, "meta_phone_number_id"),
+    envItem("META_WEBHOOK_VERIFY_TOKEN", "Webhook Verify Token", true, appConfig, "meta_webhook_verify_token"),
+    envItem("META_GRAPH_API_VERSION", "API Version", false, appConfig, "meta_graph_api_version"),
+    envItem("META_DEFAULT_LANGUAGE", "Idioma padrao", false, appConfig, "meta_default_language"),
+    envItem("META_RATE_LIMIT_PER_MINUTE", "Limite interno por minuto", false, appConfig, "meta_rate_limit_per_minute"),
+    envItem("META_DAILY_LIMIT_PER_NUMBER", "Limite diario por numero", false, appConfig, "meta_daily_limit_per_number"),
+  ];
+  const missing = items.filter((item) => !item.configured && [
+    "meta_system_user_token",
+    "meta_waba_id",
+    "meta_phone_number_id",
+    "meta_webhook_verify_token",
+  ].includes(item.configKey || ""));
+
+  return {
+    id: "meta_whatsapp",
+    title: "Meta WhatsApp Oficial",
+    status: missing.length ? "missing" : "ok",
+    message: missing.length
+      ? "Credenciais obrigatorias da WhatsApp Cloud API pendentes."
+      : "Base de credenciais oficial configurada.",
+    items,
+    group: "Trafego IA",
+    usedBy: "Campanhas Meta WhatsApp, Templates Meta e futuro trafego pago com IA",
+    site: "developers.facebook.com",
+  };
+}
+
 function staticCheck(
   id: string,
   title: string,
@@ -422,6 +460,8 @@ export async function getMaintenanceStatus(): Promise<MaintenancePayload> {
       "CONNECTYHUB_WEBHOOK_SECRET",
       "CONNECTYHUB_WEBHOOK_URL",
     ], { group: "Essenciais para Operacao", usedBy: "Notificacoes do sistema e agentes WhatsApp", site: "connectyhub.com.br" }, appConfig),
+
+    checkMetaWhatsApp(appConfig),
 
     staticCheck("resend", "Resend (Email)", "Email transacional configurado.", [
       "RESEND_API_KEY",
