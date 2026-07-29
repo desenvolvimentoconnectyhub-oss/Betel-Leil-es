@@ -31,9 +31,15 @@ import {
   resolveWhatsAppVoiceResponse,
   sendWhatsAppAgentVoiceReply,
 } from "@/lib/whatsapp/voice-response";
+import {
+  detectWhatsAppInboundMediaKind,
+  maybeAnalyzeInboundMedia,
+  type InboundMediaAnalysisResult,
+} from "@/lib/whatsapp/inbound-media-analysis";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 function cleanString(value: unknown, fallback = "") {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
@@ -1041,6 +1047,25 @@ async function maybeTranscribeInboundAudio(input: {
   };
 }
 
+function mediaAnalysisMetadata(result: InboundMediaAnalysisResult | null) {
+  if (!result) return null;
+
+  return {
+    kind: result.kind,
+    enabled: result.enabled,
+    source: result.source,
+    mimeType: result.mimeType,
+    mediaUrl: result.mediaUrl || null,
+    storageUrl: result.storageUrl || null,
+    storageKey: result.storageKey || null,
+    storageStatus: result.storageStatus,
+    sizeBytes: result.sizeBytes,
+    analysisText: result.analysisText || null,
+    error: result.error || null,
+    analyzedAt: result.analyzedAt,
+  };
+}
+
 async function getExpectedSecret() {
   const envSecret = cleanString(process.env.CONNECTYHUB_WEBHOOK_SECRET);
   if (envSecret) return envSecret;
@@ -1271,20 +1296,30 @@ async function persistWebhookCrm(
           providerInstanceId,
           agentKey,
           chatId: message.chatId,
-        })
+      })
       : null;
   const generatedTranscript = audioResolution?.transcript || "";
-  const inboundMediaUrl = audioResolution?.mediaUrl || message.mediaUrl;
-  const inboundMediaMimeType = audioResolution?.mediaMimeType || message.mediaMimeType;
+  const initialInboundMediaUrl = audioResolution?.mediaUrl || message.mediaUrl;
+  const initialInboundMediaMimeType = audioResolution?.mediaMimeType || message.mediaMimeType;
   const hardAudioFallback =
     !message.text &&
     !message.transcript &&
     !generatedTranscript &&
-    isAudioMessage(message.messageType, inboundMediaMimeType) &&
+    isAudioMessage(message.messageType, initialInboundMediaMimeType) &&
     agentConfig?.behavior.hardAudioProtection
       ? "Audio recebido sem transcricao. Responda de forma curta e humana pedindo para o lead reenviar ou resumir em texto."
       : "";
-  const inboundText = message.text || message.transcript || generatedTranscript || (hardAudioFallback ? "Audio recebido sem transcricao." : "");
+  const preliminaryInboundText =
+    message.text ||
+    message.transcript ||
+    generatedTranscript ||
+    (hardAudioFallback ? "Audio recebido sem transcricao." : "");
+  const detectedMediaKind = detectWhatsAppInboundMediaKind({
+    messageType: message.messageType,
+    mediaMimeType: initialInboundMediaMimeType,
+    mediaUrl: initialInboundMediaUrl,
+    payload,
+  });
 
   const { data: existingLead } = await supabase
     .from("whatsapp_leads")
@@ -1293,6 +1328,20 @@ async function persistWebhookCrm(
     .maybeSingle();
   const existingLeadMetadata = asRecord((existingLead as Record<string, unknown> | null)?.metadata);
   const existingLeadRecord = asRecord(existingLead);
+  const baseLeadMetadata = {
+    ...existingLeadMetadata,
+    last_event_type: eventType,
+    connectyhub_instance_id: providerInstanceId || null,
+    chat_id: message.chatId || null,
+    last_inbound_provider_message_id: message.providerMessageId || null,
+    last_inbound_message_type: message.messageType || null,
+    last_inbound_media_url: initialInboundMediaUrl || null,
+    last_inbound_media_kind: detectedMediaKind || null,
+    last_inbound_transcribed: Boolean(generatedTranscript),
+    last_inbound_audio_source: audioResolution?.source || null,
+    last_inbound_audio_error: audioResolution?.error || null,
+    last_inbound_at: receivedAt,
+  };
 
   const { data: leadRow, error: leadError } = await supabase
     .from("whatsapp_leads")
@@ -1302,19 +1351,7 @@ async function persistWebhookCrm(
         name: message.name || cleanString((existingLead as Record<string, unknown> | null)?.name) || null,
         owner_agent_key: agentKey,
         last_message_at: receivedAt,
-        metadata: {
-          ...existingLeadMetadata,
-          last_event_type: eventType,
-          connectyhub_instance_id: providerInstanceId || null,
-          chat_id: message.chatId || null,
-          last_inbound_provider_message_id: message.providerMessageId || null,
-          last_inbound_message_type: message.messageType || null,
-          last_inbound_media_url: inboundMediaUrl || null,
-          last_inbound_transcribed: Boolean(generatedTranscript),
-          last_inbound_audio_source: audioResolution?.source || null,
-          last_inbound_audio_error: audioResolution?.error || null,
-          last_inbound_at: receivedAt,
-        },
+        metadata: baseLeadMetadata,
       },
       { onConflict: "phone" }
     )
@@ -1362,27 +1399,112 @@ async function persistWebhookCrm(
       .eq("id", conversationId);
   }
 
-  await supabase.from("whatsapp_conversation_messages").insert({
-    conversation_id: conversationId,
-    lead_id: leadRow.id,
-    instance_id: instanceId || null,
-    webhook_event_id: eventId || null,
-    direction: "inbound",
-    author_type: "lead",
-    author_label: message.name || message.phone,
-    message_type: message.messageType,
-    text: inboundText || null,
-    provider_message_id: message.providerMessageId || null,
-    provider_chat_id: message.chatId || null,
-    occurred_at: receivedAt,
-    media_url: inboundMediaUrl || null,
-    media_mime_type: inboundMediaUrl ? fallbackMimeType(message.messageType, inboundMediaMimeType) : null,
-    transcript: generatedTranscript || message.transcript || null,
-    payload,
-  });
+  const leadId = cleanString(leadRow.id);
+  const mediaAnalysis =
+    agentConfig && detectedMediaKind
+      ? await maybeAnalyzeInboundMedia({
+          agentKey,
+          providerInstanceId,
+          providerMessageId: message.providerMessageId,
+          chatId: message.chatId,
+          messageType: message.messageType,
+          mediaUrl: initialInboundMediaUrl,
+          mediaMimeType: initialInboundMediaMimeType,
+          payload,
+          caption: message.text,
+          config: agentConfig,
+          leadId,
+          conversationId,
+          eventId,
+          phone: message.phone,
+        })
+      : null;
+  const mediaMetadata = mediaAnalysisMetadata(mediaAnalysis);
+  const inboundMediaUrl = mediaAnalysis?.mediaUrl || initialInboundMediaUrl;
+  const inboundMediaMimeType = mediaAnalysis?.mimeType || initialInboundMediaMimeType;
+  const hardMediaFallback =
+    !preliminaryInboundText && detectedMediaKind && !mediaAnalysis?.runtimeText
+      ? "Midia recebida sem analise automatica. Responda de forma curta pedindo uma descricao ou reenvio legivel."
+      : "";
+  const inboundText =
+    mediaAnalysis?.runtimeText ||
+    preliminaryInboundText ||
+    (hardMediaFallback ? "Midia recebida sem analise automatica." : "");
+  const messagePayload = mediaMetadata
+    ? {
+        ...payload,
+        betel_media_analysis: mediaMetadata,
+      }
+    : payload;
+
+  const { data: messageRow, error: messageError } = await supabase
+    .from("whatsapp_conversation_messages")
+    .insert({
+      conversation_id: conversationId,
+      lead_id: leadId,
+      instance_id: instanceId || null,
+      webhook_event_id: eventId || null,
+      direction: "inbound",
+      author_type: "lead",
+      author_label: message.name || message.phone,
+      message_type: message.messageType,
+      text: inboundText || null,
+      provider_message_id: message.providerMessageId || null,
+      provider_chat_id: message.chatId || null,
+      occurred_at: receivedAt,
+      media_url: inboundMediaUrl || null,
+      media_mime_type: inboundMediaUrl ? fallbackMimeType(message.messageType, inboundMediaMimeType) : null,
+      transcript: generatedTranscript || message.transcript || null,
+      payload: messagePayload,
+    })
+    .select("id")
+    .maybeSingle();
+
+  if (messageError) return { ok: false, reason: messageError.message || "message_not_persisted" };
+
+  if (mediaMetadata && (mediaAnalysis?.mediaUrl || mediaAnalysis?.storageUrl)) {
+    await supabase.from("whatsapp_lead_files").insert({
+      lead_id: leadId,
+      conversation_id: conversationId,
+      message_id: cleanString(messageRow?.id) || null,
+      storage_key: mediaAnalysis?.storageKey || null,
+      file_url: mediaAnalysis?.storageUrl || mediaAnalysis?.mediaUrl || null,
+      mime_type: mediaAnalysis?.mimeType || null,
+      source: "whatsapp",
+      metadata: {
+        ...mediaMetadata,
+        agentKey,
+        providerMessageId: message.providerMessageId || null,
+        providerChatId: message.chatId || null,
+        connectyhubInstanceId: providerInstanceId || null,
+      },
+    });
+  }
+
+  if (mediaMetadata) {
+    await supabase
+      .from("whatsapp_leads")
+      .update({
+        metadata: {
+          ...baseLeadMetadata,
+          last_inbound_media_url: inboundMediaUrl || null,
+          last_inbound_media_mime_type: inboundMediaMimeType || null,
+          last_inbound_media_kind: mediaAnalysis?.kind || detectedMediaKind || null,
+          last_inbound_media_analysis: mediaAnalysis?.analysisText || null,
+          last_inbound_media_analysis_status: mediaAnalysis?.source || null,
+          last_inbound_media_analysis_error: mediaAnalysis?.error || null,
+          last_inbound_media_storage_url: mediaAnalysis?.storageUrl || null,
+          last_inbound_media_storage_key: mediaAnalysis?.storageKey || null,
+          last_inbound_media_storage_status: mediaAnalysis?.storageStatus || null,
+          last_inbound_media_size_bytes: mediaAnalysis?.sizeBytes || null,
+        },
+        updated_at: receivedAt,
+      })
+      .eq("id", leadId);
+  }
 
   await syncWhatsAppLeadProfile(supabase, {
-    leadId: cleanString(leadRow.id),
+    leadId,
     agentKey,
     text: inboundText || "",
     score: asNumber(existingLeadRecord.qualification_score, 0),
@@ -1397,6 +1519,8 @@ async function persistWebhookCrm(
       lastChatId: message.chatId || null,
       lastMessageType: message.messageType || null,
       lastMediaUrl: inboundMediaUrl || null,
+      lastMediaKind: mediaAnalysis?.kind || detectedMediaKind || null,
+      mediaAnalysis: mediaMetadata,
       transcribedAudio: Boolean(generatedTranscript),
       audioResolutionSource: audioResolution?.source || null,
       audioResolutionError: audioResolution?.error || null,
@@ -1408,7 +1532,7 @@ async function persistWebhookCrm(
   return {
     ok: true,
     eventId,
-    leadId: cleanString(leadRow.id),
+    leadId,
     conversationId,
     instanceId,
     providerInstanceId,
@@ -1421,8 +1545,10 @@ async function persistWebhookCrm(
       mediaMimeType: inboundMediaMimeType,
       transcript: generatedTranscript || message.transcript,
       audioResolution: audioResolution || null,
+      mediaAnalysis: mediaMetadata,
       hardAudioFallback: Boolean(hardAudioFallback),
-      runtimeText: hardAudioFallback || inboundText,
+      hardMediaFallback: Boolean(hardMediaFallback),
+      runtimeText: hardAudioFallback || hardMediaFallback || inboundText,
     },
   };
 }

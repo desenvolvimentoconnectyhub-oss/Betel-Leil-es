@@ -19,6 +19,16 @@ export type StoredImageAsset = {
   collectedAt: string;
 };
 
+export type StoredR2Object = {
+  url: string;
+  storageKey: string;
+  status: "stored" | "unavailable" | "failed";
+  contentType?: string;
+  sizeBytes?: number;
+  error?: string;
+  storedAt: string;
+};
+
 type R2Config = {
   endpoint: string;
   accessKeyId: string;
@@ -80,6 +90,83 @@ function safeSegment(value: string) {
     .replace(/^-|-$/g, "")
     .toLowerCase()
     .slice(0, 90) || "imovel";
+}
+
+export async function putPublicR2Object(input: {
+  storageKey: string;
+  body: Buffer | Uint8Array;
+  contentType?: string;
+  cacheControl?: string;
+}): Promise<StoredR2Object> {
+  const storedAt = new Date().toISOString();
+  const storageKey = input.storageKey.replace(/^\/+/, "").trim();
+  const body = Buffer.isBuffer(input.body) ? input.body : Buffer.from(input.body);
+  const contentType = input.contentType || "application/octet-stream";
+
+  if (!storageKey || !body.length) {
+    return {
+      url: "",
+      storageKey,
+      status: "failed",
+      contentType,
+      sizeBytes: body.length,
+      error: "Objeto R2 sem chave ou sem bytes.",
+      storedAt,
+    };
+  }
+
+  const config = await getR2Config();
+  if (!config) {
+    return {
+      url: "",
+      storageKey,
+      status: "unavailable",
+      contentType,
+      sizeBytes: body.length,
+      error: "R2 publico nao configurado.",
+      storedAt,
+    };
+  }
+
+  try {
+    const client = new S3Client({
+      region: "auto",
+      endpoint: config.endpoint,
+      credentials: {
+        accessKeyId: config.accessKeyId,
+        secretAccessKey: config.secretAccessKey,
+      },
+    });
+
+    await client.send(
+      new PutObjectCommand({
+        Bucket: config.publicBucket,
+        Key: storageKey,
+        Body: body,
+        ContentType: contentType,
+        CacheControl: input.cacheControl || "public, max-age=31536000, immutable",
+      })
+    );
+
+    return {
+      url: `${config.publicUrl}/${storageKey}`,
+      storageKey,
+      status: "stored",
+      contentType,
+      sizeBytes: body.length,
+      storedAt,
+    };
+  } catch (error) {
+    return {
+      url: "",
+      storageKey,
+      status: "failed",
+      contentType,
+      sizeBytes: body.length,
+      error: error instanceof Error ? error.message : "Falha ao gravar objeto no R2.",
+      storedAt,
+    };
+  }
 }
 
 function extensionFor(contentType: string, sourceUrl: string) {

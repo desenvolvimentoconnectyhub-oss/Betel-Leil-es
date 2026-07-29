@@ -530,7 +530,7 @@ export const DEFAULT_WILLIAN_AGENT_CONFIG: WillianAgentConfig = {
     followUpWindowEnd: "20:00",
     transcribeAudio: true,
     analyzeImages: true,
-    analyzeVideos: false,
+    analyzeVideos: true,
     analyzeDocuments: true,
     imageAnalysisLimit: 8,
     videoAnalysisLimit: 2,
