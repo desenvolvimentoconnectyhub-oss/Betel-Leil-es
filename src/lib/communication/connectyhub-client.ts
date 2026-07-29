@@ -67,6 +67,14 @@ export type ConnectyHubDeliveryResult = {
   errorMessage?: string;
 };
 
+export type ConnectyHubMediaDownloadResult = {
+  fileUrl: string;
+  mimeType: string;
+  base64Data: string;
+  transcription: string;
+  payload: unknown;
+};
+
 function cleanString(value: unknown, fallback = "") {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
@@ -511,9 +519,16 @@ function findFirstString(payload: unknown, keys: string[]): string {
   if (!payload || typeof payload !== "object") return "";
 
   const record = asRecord(payload);
+  const normalizedKeys = keys.map((key) => key.toLowerCase());
   for (const key of keys) {
     const value = cleanString(record[key]);
     if (value) return value;
+  }
+  for (const [key, value] of Object.entries(record)) {
+    if (normalizedKeys.includes(key.toLowerCase())) {
+      const clean = cleanString(value);
+      if (clean) return clean;
+    }
   }
 
   for (const value of Object.values(record)) {
@@ -2697,6 +2712,113 @@ export async function sendWhatsAppAgentReply(input: {
       errorMessage: error instanceof Error ? error.message : "Erro desconhecido na ConnectyHub.",
     };
   }
+}
+
+function extractDownloadedMediaUrl(payload: unknown) {
+  return findFirstString(payload, ["fileURL", "fileUrl", "downloadUrl", "download_url", "url", "link"]);
+}
+
+function extractDownloadedMimeType(payload: unknown) {
+  return findFirstString(payload, ["mimetype", "mimeType", "contentType", "content_type"]);
+}
+
+function extractDownloadedTranscription(payload: unknown) {
+  return findFirstString(payload, [
+    "transcription",
+    "transcript",
+    "text",
+    "transcribedText",
+    "transcribed_text",
+    "speechText",
+    "speech_text",
+    "audioText",
+    "audio_text",
+  ]);
+}
+
+function extractDownloadedBase64(payload: unknown) {
+  return findFirstString(payload, ["base64Data", "base64_data", "base64", "data"]);
+}
+
+export async function downloadWhatsAppAgentMessageMedia(input: {
+  agentKey: string;
+  instanceId?: string;
+  messageId: string;
+  chatId?: string;
+  transcribe?: boolean;
+  returnLink?: boolean;
+  returnBase64?: boolean;
+  generateMp3?: boolean;
+  timeoutMs?: number;
+}): Promise<ConnectyHubMediaDownloadResult> {
+  const messageId = cleanString(input.messageId);
+  const agentKey = cleanString(input.agentKey);
+  const config = await getWillianConfig();
+  const persisted =
+    !input.instanceId && agentKey && agentKey !== WILLIAN_AGENT_KEY
+      ? await findPersistedWhatsappInstance(agentKey)
+      : null;
+  const instanceId = cleanString(
+    input.instanceId ||
+      (agentKey === WILLIAN_AGENT_KEY ? await resolveConnectyHubInstanceId(config).catch(() => "") : "") ||
+      persisted?.provider_instance_id
+  );
+
+  if (!config.apiToken || !instanceId || !messageId) {
+    throw new Error(
+      !config.apiToken
+        ? "CONNECTYHUB_API_TOKEN ausente para baixar midia."
+        : !instanceId
+          ? "Instancia ConnectyHub ausente para baixar midia."
+          : "ID da mensagem ausente para baixar midia."
+    );
+  }
+
+  const basePayload: Record<string, unknown> = {
+    id: messageId,
+    transcribe: Boolean(input.transcribe),
+    return_link: input.returnLink !== false,
+    return_base64: Boolean(input.returnBase64),
+    generate_mp3: input.generateMp3 !== false,
+  };
+  const chatId = cleanString(input.chatId);
+  const payloads = chatId
+    ? [
+        basePayload,
+        {
+          ...basePayload,
+          messageid: messageId,
+          messageId,
+          chatid: chatId,
+        },
+      ]
+    : [basePayload];
+  let lastError = "sem detalhe do provedor";
+
+  for (const payload of payloads) {
+    try {
+      const response = await connectyhubRequest("/provider/message/download", {
+        method: "POST",
+        body: {
+          instanceId,
+          payload,
+        },
+        timeoutMs: input.timeoutMs || 30000,
+      });
+
+      return {
+        fileUrl: extractDownloadedMediaUrl(response),
+        mimeType: extractDownloadedMimeType(response),
+        base64Data: extractDownloadedBase64(response),
+        transcription: extractDownloadedTranscription(response),
+        payload: sanitizePayload(response),
+      };
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : "falha ao baixar midia";
+    }
+  }
+
+  throw new Error(`Nao foi possivel baixar a midia da mensagem ${messageId}: ${lastError}`);
 }
 
 export async function sendWillianWhatsAppMedia(input: {

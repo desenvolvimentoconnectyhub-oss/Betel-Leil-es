@@ -4,6 +4,7 @@ import { getGeminiApiKey, getGeminiModel } from "@/lib/ai/config";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   CONNECTYHUB_PROVIDER,
+  downloadWhatsAppAgentMessageMedia,
   getConnectyHubWhatsappAgentControlStatus,
   normalizeWhatsAppNumber,
   sendWhatsAppAgentReply,
@@ -643,9 +644,16 @@ function findFirstString(payload: unknown, keys: string[]): string {
   if (!payload || typeof payload !== "object") return "";
 
   const record = asRecord(payload);
+  const normalizedKeys = keys.map((key) => key.toLowerCase());
   for (const key of keys) {
     const value = cleanString(record[key]);
     if (value) return value;
+  }
+  for (const [key, value] of Object.entries(record)) {
+    if (normalizedKeys.includes(key.toLowerCase())) {
+      const clean = cleanString(value);
+      if (clean) return clean;
+    }
   }
 
   for (const value of Object.values(record)) {
@@ -662,8 +670,12 @@ function findFirstBoolean(payload: unknown, keys: string[]) {
   if (!payload || typeof payload !== "object") return false;
 
   const record = asRecord(payload);
+  const normalizedKeys = keys.map((key) => key.toLowerCase());
   for (const key of keys) {
     if (key in record && asBoolean(record[key])) return true;
+  }
+  for (const [key, value] of Object.entries(record)) {
+    if (normalizedKeys.includes(key.toLowerCase()) && asBoolean(value)) return true;
   }
 
   for (const value of Object.values(record)) {
@@ -717,9 +729,40 @@ function extractInstanceIdentity(payload: Record<string, unknown>) {
   return { instanceId, instanceName, phone };
 }
 
+function providerMessageRecord(data: Record<string, unknown>) {
+  return asRecord(data.message);
+}
+
+function extractProviderMessageId(data: Record<string, unknown>) {
+  const message = providerMessageRecord(data);
+  const key = asRecord(message.key);
+  const directMessageId = cleanString(
+    message.messageid ||
+      message.messageId ||
+      message.messageID ||
+      message.stanzaId ||
+      message.keyId ||
+      key.id ||
+      message.id
+  );
+  if (directMessageId) return directMessageId.replace(/^.+:/, "");
+
+  const rootMessageId = cleanString(
+    data.messageid ||
+      data.messageId ||
+      data.messageID ||
+      data.stanzaId ||
+      data.keyId ||
+      data.id
+  );
+  if (rootMessageId) return rootMessageId.replace(/^.+:/, "");
+
+  return findFirstString(data, ["messageid", "messageId", "messageID", "stanzaId", "keyId"]).replace(/^.+:/, "");
+}
+
 function eventHash(payload: Record<string, unknown>) {
   const data = eventPayload(payload);
-  const providerId = findFirstString(data, ["messageid", "messageId", "messageID", "id", "stanzaId", "keyId"]);
+  const providerId = extractProviderMessageId(data);
   const instance = extractInstanceIdentity(payload).instanceId;
   const base = providerId ? `${eventName(payload)}:${instance}:${providerId}` : JSON.stringify(payload);
   return createHash("sha256").update(base).digest("hex");
@@ -727,7 +770,7 @@ function eventHash(payload: Record<string, unknown>) {
 
 function extractWebhookMessage(payload: Record<string, unknown>) {
   const data = eventPayload(payload);
-  const providerMessageId = findFirstString(data, ["messageid", "messageId", "messageID", "id", "stanzaId", "keyId"]);
+  const providerMessageId = extractProviderMessageId(data);
   const chatId = findFirstString(data, ["chatid", "chatId", "wa_chatid", "remoteJid"]);
   const rawPhone =
     findFirstString(data, [
@@ -753,11 +796,13 @@ function extractWebhookMessage(payload: Record<string, unknown>) {
     "download_url",
     "fileUrl",
     "file_url",
+    "fileURL",
     "url",
+    "URL",
     "file",
     "media",
   ]);
-  const mediaMimeType = findFirstString(data, ["mimeType", "mimetype", "mediaMimeType", "media_mime_type"]);
+  const mediaMimeType = findFirstString(data, ["mimeType", "mimetype", "mediaMimeType", "media_mime_type", "contentType", "content_type"]);
   const transcript = findFirstString(data, ["transcript", "transcription", "audioTranscript", "audio_transcript"]);
   const fromApi = findFirstBoolean(data, ["wasSentByApi", "fromMe", "isFromMe", "fromApi"]);
   const isGroup = findFirstBoolean(data, ["isGroup", "isGroupYes"]);
@@ -779,46 +824,146 @@ function fallbackMimeType(messageType: string, mimeType: string) {
   return "application/octet-stream";
 }
 
+function normalizeTranscriptText(value: string) {
+  const text = value
+    .replace(/\r/g, "")
+    .replace(/^transcricao\s*:\s*/i, "")
+    .replace(/^["']+|["']+$/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  const lower = text.toLowerCase();
+  if (!text || lower === "vazio" || lower.includes("sem fala compreensivel") || lower.includes("nao ha fala")) {
+    return "";
+  }
+  return clampText(text, 2200);
+}
+
+function isEncryptedWhatsAppMediaUrl(value: string) {
+  const clean = cleanString(value).toLowerCase();
+  return clean.includes(".enc?") || clean.endsWith(".enc") || clean.includes("mmg.whatsapp.net");
+}
+
+async function transcribeAudioBufferWithGemini(input: {
+  buffer: Buffer;
+  mimeType: string;
+}) {
+  const apiKey = await getGeminiApiKey();
+  const modelName = await getGeminiModel();
+  if (!apiKey || !input.buffer.length || input.buffer.length > 12 * 1024 * 1024) return "";
+
+  const { GoogleGenerativeAI } = await import("@google/generative-ai");
+  const client = new GoogleGenerativeAI(apiKey);
+  const model = client.getGenerativeModel({ model: modelName });
+  const result = await model.generateContent([
+    {
+      inlineData: {
+        data: input.buffer.toString("base64"),
+        mimeType: input.mimeType,
+      },
+    },
+    {
+      text: "Transcreva este audio de WhatsApp em portugues brasileiro. Retorne apenas a transcricao, sem comentarios.",
+    },
+  ]);
+
+  return normalizeTranscriptText(result.response.text());
+}
+
+async function transcribeAudioUrlWithGemini(input: {
+  mediaUrl: string;
+  mimeType: string;
+}) {
+  if (!input.mediaUrl || isEncryptedWhatsAppMediaUrl(input.mediaUrl)) return "";
+
+  const response = await fetch(input.mediaUrl, { cache: "no-store" });
+  if (!response.ok) return "";
+
+  const contentLength = Number(response.headers.get("content-length") || "0");
+  if (contentLength > 12 * 1024 * 1024) return "";
+
+  const buffer = Buffer.from(await response.arrayBuffer());
+  return transcribeAudioBufferWithGemini({
+    buffer,
+    mimeType: input.mimeType,
+  });
+}
+
 async function maybeTranscribeInboundAudio(input: {
   mediaUrl: string;
   mediaMimeType: string;
   messageType: string;
+  providerMessageId: string;
+  providerInstanceId: string;
+  agentKey: string;
+  chatId: string;
 }) {
-  if (!input.mediaUrl || !isAudioMessage(input.messageType, input.mediaMimeType)) return "";
+  const empty = {
+    transcript: "",
+    mediaUrl: input.mediaUrl,
+    mediaMimeType: input.mediaMimeType,
+    source: "none",
+    error: "",
+  };
+  if (!isAudioMessage(input.messageType, input.mediaMimeType)) return empty;
 
-  const apiKey = await getGeminiApiKey();
-  const modelName = await getGeminiModel();
-  if (!apiKey) return "";
+  let mediaUrl = input.mediaUrl;
+  let mediaMimeType = fallbackMimeType(input.messageType, input.mediaMimeType);
+  let downloadError = "";
+
+  if (input.providerMessageId && input.providerInstanceId) {
+    try {
+      const downloaded = await downloadWhatsAppAgentMessageMedia({
+        agentKey: input.agentKey,
+        instanceId: input.providerInstanceId,
+        messageId: input.providerMessageId,
+        chatId: input.chatId,
+        transcribe: false,
+        returnLink: true,
+        returnBase64: false,
+        generateMp3: true,
+      });
+      mediaUrl = downloaded.fileUrl || mediaUrl;
+      mediaMimeType = downloaded.mimeType || mediaMimeType;
+      const transcript = normalizeTranscriptText(downloaded.transcription);
+      if (transcript) {
+        return {
+          transcript,
+          mediaUrl,
+          mediaMimeType,
+          source: "connectyhub_transcription",
+          error: "",
+        };
+      }
+    } catch (error) {
+      downloadError = error instanceof Error ? error.message : "Falha ao baixar audio pela ConnectyHub.";
+    }
+  }
 
   try {
-    const response = await fetch(input.mediaUrl, { cache: "no-store" });
-    if (!response.ok) return "";
-
-    const contentLength = Number(response.headers.get("content-length") || "0");
-    if (contentLength > 12 * 1024 * 1024) return "";
-
-    const buffer = Buffer.from(await response.arrayBuffer());
-    if (!buffer.length || buffer.length > 12 * 1024 * 1024) return "";
-
-    const { GoogleGenerativeAI } = await import("@google/generative-ai");
-    const client = new GoogleGenerativeAI(apiKey);
-    const model = client.getGenerativeModel({ model: modelName });
-    const result = await model.generateContent([
-      {
-        inlineData: {
-          data: buffer.toString("base64"),
-          mimeType: fallbackMimeType(input.messageType, input.mediaMimeType),
-        },
-      },
-      {
-        text: "Transcreva este audio de WhatsApp em portugues brasileiro. Retorne apenas a transcricao, sem comentarios.",
-      },
-    ]);
-
-    return clampText(result.response.text(), 2200);
-  } catch {
-    return "";
+    const transcript = await transcribeAudioUrlWithGemini({
+      mediaUrl,
+      mimeType: mediaMimeType,
+    });
+    if (transcript) {
+      return {
+        transcript,
+        mediaUrl,
+        mediaMimeType,
+        source: "gemini_audio",
+        error: "",
+      };
+    }
+  } catch (error) {
+    downloadError = downloadError || (error instanceof Error ? error.message : "Falha ao transcrever audio.");
   }
+
+  return {
+    transcript: "",
+    mediaUrl,
+    mediaMimeType,
+    source: downloadError ? "failed" : "unavailable",
+    error: downloadError,
+  };
 }
 
 async function getExpectedSecret() {
@@ -1041,15 +1186,30 @@ async function persistWebhookCrm(
   }
 
   const agentConfig = await getWhatsAppAgentConfig(agentKey).catch(() => null);
-  const generatedTranscript =
+  const audioResolution =
     !message.text && !message.transcript && agentConfig?.behavior.transcribeAudio
       ? await maybeTranscribeInboundAudio({
           mediaUrl: message.mediaUrl,
           mediaMimeType: message.mediaMimeType,
           messageType: message.messageType,
+          providerMessageId: message.providerMessageId,
+          providerInstanceId,
+          agentKey,
+          chatId: message.chatId,
         })
+      : null;
+  const generatedTranscript = audioResolution?.transcript || "";
+  const inboundMediaUrl = audioResolution?.mediaUrl || message.mediaUrl;
+  const inboundMediaMimeType = audioResolution?.mediaMimeType || message.mediaMimeType;
+  const hardAudioFallback =
+    !message.text &&
+    !message.transcript &&
+    !generatedTranscript &&
+    isAudioMessage(message.messageType, inboundMediaMimeType) &&
+    agentConfig?.behavior.hardAudioProtection
+      ? "Audio recebido sem transcricao. Responda de forma curta e humana pedindo para o lead reenviar ou resumir em texto."
       : "";
-  const inboundText = message.text || message.transcript || generatedTranscript;
+  const inboundText = message.text || message.transcript || generatedTranscript || (hardAudioFallback ? "Audio recebido sem transcricao." : "");
 
   const { data: existingLead } = await supabase
     .from("whatsapp_leads")
@@ -1074,8 +1234,10 @@ async function persistWebhookCrm(
           chat_id: message.chatId || null,
           last_inbound_provider_message_id: message.providerMessageId || null,
           last_inbound_message_type: message.messageType || null,
-          last_inbound_media_url: message.mediaUrl || null,
+          last_inbound_media_url: inboundMediaUrl || null,
           last_inbound_transcribed: Boolean(generatedTranscript),
+          last_inbound_audio_source: audioResolution?.source || null,
+          last_inbound_audio_error: audioResolution?.error || null,
           last_inbound_at: receivedAt,
         },
       },
@@ -1138,8 +1300,8 @@ async function persistWebhookCrm(
     provider_message_id: message.providerMessageId || null,
     provider_chat_id: message.chatId || null,
     occurred_at: receivedAt,
-    media_url: message.mediaUrl || null,
-    media_mime_type: message.mediaUrl ? fallbackMimeType(message.messageType, message.mediaMimeType) : null,
+    media_url: inboundMediaUrl || null,
+    media_mime_type: inboundMediaUrl ? fallbackMimeType(message.messageType, inboundMediaMimeType) : null,
     transcript: generatedTranscript || message.transcript || null,
     payload,
   });
@@ -1159,8 +1321,10 @@ async function persistWebhookCrm(
       lastProviderMessageId: message.providerMessageId || null,
       lastChatId: message.chatId || null,
       lastMessageType: message.messageType || null,
-      lastMediaUrl: message.mediaUrl || null,
+      lastMediaUrl: inboundMediaUrl || null,
       transcribedAudio: Boolean(generatedTranscript),
+      audioResolutionSource: audioResolution?.source || null,
+      audioResolutionError: audioResolution?.error || null,
     },
   });
 
@@ -1175,7 +1339,16 @@ async function persistWebhookCrm(
     providerInstanceId,
     agentKey,
     messagePersisted: true,
-    inbound: { ...message, text: inboundText, transcript: generatedTranscript || message.transcript },
+    inbound: {
+      ...message,
+      text: inboundText,
+      mediaUrl: inboundMediaUrl,
+      mediaMimeType: inboundMediaMimeType,
+      transcript: generatedTranscript || message.transcript,
+      audioResolution: audioResolution || null,
+      hardAudioFallback: Boolean(hardAudioFallback),
+      runtimeText: hardAudioFallback || inboundText,
+    },
   };
 }
 
@@ -1547,7 +1720,7 @@ async function processWhatsappAgentRuntime(
   crmResult: Record<string, unknown>
 ) {
   const inbound = asRecord(crmResult.inbound);
-  const text = cleanString(inbound.text);
+  const text = cleanString(inbound.runtimeText || inbound.text);
   const phone = cleanString(inbound.phone);
   const name = cleanString(inbound.name);
   const inboundMessageType = cleanString(inbound.messageType, "text");
