@@ -328,6 +328,13 @@ function deliveryStatus(message?: DbRow) {
   return asString(message?.delivery_status, asString(delivery.providerStatus, asString(delivery.status)));
 }
 
+function isEffectiveOutboundMessage(message: DbRow) {
+  if (asString(message.direction) !== "outbound") return false;
+  const status = deliveryStatus(message).toLowerCase();
+  if (!status) return true;
+  return !/(error|failed|fail|missing|invalid|blocked|rejected|unauthorized|forbidden|not_sent|canceled|cancelled)/.test(status);
+}
+
 function timelineItem(message: DbRow): WhatsAppCrmTimelineItem {
   const direction = asString(message.direction, "system");
   return {
@@ -383,11 +390,17 @@ function computeSla(input: {
   optOut: boolean;
   humanInterventionActive: boolean;
   lastInboundAt: string;
+  lastOutboundAt: string;
   lastMessageAt: string;
   explicitDueAt: string;
 }) {
   if (input.optOut || input.status === "closed" || input.status === "fechado") {
     return { dueAt: "", status: "pausado" as const };
+  }
+
+  const hasPendingLeadMessage = timestamp(input.lastInboundAt) > timestamp(input.lastOutboundAt);
+  if (!hasPendingLeadMessage) {
+    return { dueAt: "", status: "ok" as const };
   }
 
   const dueAt =
@@ -727,7 +740,7 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
       (left, right) => timestamp(messageCreatedAt(right)) - timestamp(messageCreatedAt(left))
     );
     const inbound = messages.filter((message) => asString(message.direction) === "inbound");
-    const outbound = messages.filter((message) => asString(message.direction) === "outbound");
+    const outbound = messages.filter(isEffectiveOutboundMessage);
     const profile = profilesByLead.get(leadId);
     const score = Math.round(asNumber(profile?.lead_score, asNumber(lead.qualification_score, 0)));
     const qualification = extractQualification(lead, conversation, profile);
@@ -761,6 +774,7 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
       optOut,
       humanInterventionActive,
       lastInboundAt,
+      lastOutboundAt,
       lastMessageAt,
       explicitDueAt,
     });
@@ -843,7 +857,7 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
       (left, right) => timestamp(messageCreatedAt(right)) - timestamp(messageCreatedAt(left))
     );
     const inbound = messages.filter((message) => asString(message.direction) === "inbound");
-    const outbound = messages.filter((message) => asString(message.direction) === "outbound");
+    const outbound = messages.filter(isEffectiveOutboundMessage);
     const score = Math.round(asNumber(profile?.lead_score, asNumber(lead.qualification_score, 0)));
     const qualification = extractQualification(lead, {}, profile);
     const lastInboundAt = messageCreatedAt(inbound[0]) || asString(lead.last_message_at);
@@ -870,6 +884,7 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
       optOut,
       humanInterventionActive,
       lastInboundAt,
+      lastOutboundAt,
       lastMessageAt,
       explicitDueAt: asString(profile?.next_action_due_at),
     });

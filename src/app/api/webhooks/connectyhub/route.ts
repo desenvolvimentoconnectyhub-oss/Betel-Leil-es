@@ -1820,6 +1820,8 @@ async function insertOutboundMessages(
   }
 ) {
   if (!input.texts.length) return;
+  const sentAt = new Date().toISOString();
+  const hasAcceptedDelivery = input.deliveries.some((delivery) => asBoolean(delivery.ok));
   await supabase.from("whatsapp_conversation_messages").insert(
     input.texts.map((text, index) => ({
       conversation_id: input.conversationId,
@@ -1832,6 +1834,7 @@ async function insertOutboundMessages(
       message_type: input.messageType || "text",
       text,
       transcript: input.messageType === "audio" ? text : null,
+      occurred_at: sentAt,
       media_mime_type: input.messageType === "audio" ? "audio/mpeg" : null,
       provider_message_id: cleanString(input.deliveries[index]?.externalDeliveryId) || null,
       payload: {
@@ -1844,6 +1847,27 @@ async function insertOutboundMessages(
       },
     }))
   );
+
+  if (!hasAcceptedDelivery) return;
+
+  const preview = clampText(input.texts.join("\n\n"), 180);
+  await Promise.all([
+    supabase
+      .from("whatsapp_conversations")
+      .update({
+        last_message_at: sentAt,
+        last_message_preview: preview,
+        updated_at: sentAt,
+      })
+      .eq("id", input.conversationId),
+    supabase
+      .from("whatsapp_leads")
+      .update({
+        last_message_at: sentAt,
+        updated_at: sentAt,
+      })
+      .eq("id", input.leadId),
+  ]);
 }
 
 async function updateLeadRuntimeMemory(
