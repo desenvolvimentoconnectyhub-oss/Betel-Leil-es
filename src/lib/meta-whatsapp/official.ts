@@ -52,6 +52,11 @@ export type CreateMetaWhatsAppCampaignInput = {
   dailyLimitPerNumber?: number;
 };
 
+export type ProcessMetaWhatsAppCampaignInput = {
+  campaignId: string;
+  limit?: number;
+};
+
 export type MetaWhatsAppConfig = {
   appId: string;
   appSecretConfigured: boolean;
@@ -876,6 +881,250 @@ export async function createMetaWhatsAppCampaign(input: CreateMetaWhatsAppCampai
     skipped: totals.skipped,
     status: campaignStatus,
     approvalStatus: "pending_review",
+  };
+}
+
+export async function approveMetaWhatsAppCampaign(input: { campaignId: string }) {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) throw new Error("Supabase admin nao configurado.");
+
+  const campaignId = cleanString(input.campaignId);
+  if (!campaignId) throw new Error("Campanha invalida.");
+
+  const { data: campaign, error } = await supabase
+    .from("meta_whatsapp_campaigns")
+    .select("*")
+    .eq("id", campaignId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!campaign) throw new Error("Campanha nao encontrada.");
+
+  const row = campaign as DbRow;
+  if (!["draft", "scheduled", "paused"].includes(cleanString(row.status))) {
+    throw new Error("Somente campanhas em rascunho, agendadas ou pausadas podem ser aprovadas.");
+  }
+
+  const scheduledFor = cleanString(row.scheduled_for);
+  const isFuture = scheduledFor ? new Date(scheduledFor).getTime() > Date.now() : false;
+  const nextStatus = isFuture ? "scheduled" : "running";
+  const { error: updateError } = await supabase
+    .from("meta_whatsapp_campaigns")
+    .update({
+      approval_status: "approved",
+      status: nextStatus,
+      started_at: nextStatus === "running" ? new Date().toISOString() : null,
+    })
+    .eq("id", campaignId);
+  if (updateError) throw updateError;
+
+  return { ok: true, campaignId, status: nextStatus, scheduledFor };
+}
+
+export async function getMetaWhatsAppCampaignSchedule(campaignId: string) {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) throw new Error("Supabase admin nao configurado.");
+
+  const { data, error } = await supabase
+    .from("meta_whatsapp_campaigns")
+    .select("id,status,approval_status,scheduled_for")
+    .eq("id", campaignId)
+    .maybeSingle();
+  if (error) throw error;
+  const campaign = data as DbRow | null;
+  if (!campaign) throw new Error("Campanha nao encontrada.");
+  return {
+    campaignId,
+    status: cleanString(campaign.status),
+    approvalStatus: cleanString(campaign.approval_status),
+    scheduledFor: cleanString(campaign.scheduled_for),
+  };
+}
+
+function templateLanguageForCampaign(campaign: DbRow, template: DbRow, config: MetaConfigInternal) {
+  return cleanString(campaign.language, cleanString(template.language, config.defaultLanguage));
+}
+
+function buildMetaTemplatePayload(input: {
+  recipient: DbRow;
+  template: DbRow;
+  campaign: DbRow;
+  config: MetaConfigInternal;
+}) {
+  const variables = asObject(input.recipient.variables);
+  const templateVariables = asArray(input.template.variables).map((variable) => cleanString(variable)).filter(Boolean);
+  const components: DbRow[] = [];
+
+  if (templateVariables.length) {
+    components.push({
+      type: "body",
+      parameters: templateVariables.map((variable) => ({
+        type: "text",
+        text: cleanString(variables[variable], " "),
+      })),
+    });
+  }
+
+  return {
+    messaging_product: "whatsapp",
+    to: cleanString(input.recipient.phone_e164),
+    type: "template",
+    template: {
+      name: cleanString(input.template.name),
+      language: { code: templateLanguageForCampaign(input.campaign, input.template, input.config) },
+      ...(components.length ? { components } : {}),
+    },
+  };
+}
+
+async function refreshMetaWhatsAppCampaignTotals(campaignId: string) {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) throw new Error("Supabase admin nao configurado.");
+
+  const rows: DbRow[] = [];
+  const pageSize = 1000;
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabase
+      .from("meta_whatsapp_campaign_recipients")
+      .select("status")
+      .eq("campaign_id", campaignId)
+      .range(from, from + pageSize - 1);
+    if (error) throw error;
+    rows.push(...((data || []) as DbRow[]));
+    if (!data || data.length < pageSize) break;
+  }
+
+  const count = (statuses: string[]) => rows.filter((row) => statuses.includes(cleanString(row.status))).length;
+  const totals = {
+    total: rows.length,
+    queued: count(["queued", "scheduled", "sending"]),
+    skipped: count(["skipped", "cancelled"]),
+    sent: count(["sent", "delivered", "read"]),
+    delivered: count(["delivered", "read"]),
+    read: count(["read"]),
+    failed: count(["failed"]),
+  };
+  const completed = totals.queued === 0;
+  const { error: updateError } = await supabase
+    .from("meta_whatsapp_campaigns")
+    .update({
+      totals,
+      status: completed ? "completed" : "running",
+      completed_at: completed ? new Date().toISOString() : null,
+    })
+    .eq("id", campaignId)
+    .eq("approval_status", "approved")
+    .not("status", "in", "(paused,cancelled)");
+  if (updateError) throw updateError;
+  return { totals, completed };
+}
+
+export async function processMetaWhatsAppCampaign(input: ProcessMetaWhatsAppCampaignInput) {
+  const supabase = getSupabaseAdminClient();
+  const config = await getMetaWhatsAppConfigInternal();
+  if (!supabase) throw new Error("Supabase admin nao configurado.");
+
+  const campaignId = cleanString(input.campaignId);
+  const limit = Math.max(1, Math.min(asNumber(input.limit, config.rateLimitPerMinute), config.rateLimitPerMinute, 250));
+  const { data: campaignData, error: campaignError } = await supabase
+    .from("meta_whatsapp_campaigns")
+    .select("*")
+    .eq("id", campaignId)
+    .maybeSingle();
+  if (campaignError) throw campaignError;
+  const campaign = campaignData as DbRow | null;
+  if (!campaign) throw new Error("Campanha nao encontrada.");
+
+  if (cleanString(campaign.approval_status) !== "approved") {
+    return { ok: false, campaignId, processed: 0, remaining: 0, reason: "Campanha ainda nao aprovada." };
+  }
+  if (["paused", "cancelled", "completed"].includes(cleanString(campaign.status))) {
+    return { ok: true, campaignId, processed: 0, remaining: 0, reason: `Campanha ${cleanString(campaign.status)}.` };
+  }
+
+  const scheduledFor = cleanString(campaign.scheduled_for);
+  if (scheduledFor && new Date(scheduledFor).getTime() > Date.now()) {
+    return { ok: true, campaignId, processed: 0, remaining: 0, reason: "Campanha ainda nao chegou no horario." };
+  }
+
+  const [{ data: templateData, error: templateError }, { data: senderData, error: senderError }] = await Promise.all([
+    supabase.from("meta_whatsapp_templates").select("*").eq("id", cleanString(campaign.template_id)).maybeSingle(),
+    supabase.from("meta_whatsapp_senders").select("*").eq("id", cleanString(campaign.sender_id)).maybeSingle(),
+  ]);
+  if (templateError) throw templateError;
+  if (senderError) throw senderError;
+  const template = templateData as DbRow | null;
+  const sender = senderData as DbRow | null;
+  if (!template) throw new Error("Template da campanha nao encontrado.");
+  if (!sender) throw new Error("Numero remetente da campanha nao encontrado.");
+
+  await supabase.from("meta_whatsapp_campaigns").update({ status: "running", started_at: cleanString(campaign.started_at) || new Date().toISOString() }).eq("id", campaignId);
+
+  const { data: recipients, error: recipientsError } = await supabase
+    .from("meta_whatsapp_campaign_recipients")
+    .select("*")
+    .eq("campaign_id", campaignId)
+    .in("status", ["queued", "scheduled"])
+    .order("created_at", { ascending: true })
+    .limit(limit);
+  if (recipientsError) throw recipientsError;
+
+  let processed = 0;
+  let failed = 0;
+  for (const recipient of (recipients || []) as DbRow[]) {
+    const recipientId = cleanString(recipient.id);
+    const payload = buildMetaTemplatePayload({ recipient, template, campaign, config });
+    await supabase
+      .from("meta_whatsapp_campaign_recipients")
+      .update({ status: "sending", attempt_count: asNumber(recipient.attempt_count) + 1, payload })
+      .eq("id", recipientId);
+
+    try {
+      const response = await metaFetch(config, `${cleanString(sender.phone_number_id)}/messages`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      const message = asObject(asArray(response.messages)[0]);
+      await supabase
+        .from("meta_whatsapp_campaign_recipients")
+        .update({
+          status: "sent",
+          provider_status: "accepted",
+          provider_message_id: cleanString(message.id),
+          response_payload: response,
+          sent_at: new Date().toISOString(),
+        })
+        .eq("id", recipientId);
+      processed += 1;
+    } catch (error) {
+      failed += 1;
+      await supabase
+        .from("meta_whatsapp_campaign_recipients")
+        .update({
+          status: "failed",
+          provider_status: "failed",
+          error_message: error instanceof Error ? error.message : "Falha ao enviar mensagem Meta.",
+          failed_at: new Date().toISOString(),
+        })
+        .eq("id", recipientId);
+    }
+  }
+
+  const { count: remainingCount, error: countError } = await supabase
+    .from("meta_whatsapp_campaign_recipients")
+    .select("id", { count: "exact", head: true })
+    .eq("campaign_id", campaignId)
+    .in("status", ["queued", "scheduled"]);
+  if (countError) throw countError;
+  const totals = await refreshMetaWhatsAppCampaignTotals(campaignId);
+
+  return {
+    ok: true,
+    campaignId,
+    processed,
+    failed,
+    remaining: remainingCount || 0,
+    completed: totals.completed,
+    totals: totals.totals,
   };
 }
 

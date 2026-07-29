@@ -208,6 +208,27 @@ export function MetaWhatsAppCampaignsClient({
     }
   }
 
+  async function handleStartCampaign(campaignId: string) {
+    setLoading(`start:${campaignId}`);
+    setFeedback(null);
+    try {
+      const response = await fetch(`/api/admin/meta-whatsapp/campaigns/${campaignId}/start`, { method: "POST" });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.ok) throw new Error(payload.error || "Falha ao iniciar campanha.");
+      await refresh();
+      setFeedback({
+        type: "ok",
+        message: payload.result.status === "scheduled"
+          ? "Campanha aprovada e agendada na Inngest."
+          : "Campanha aprovada e enviada para a fila Inngest.",
+      });
+    } catch (error) {
+      setFeedback({ type: "err", message: error instanceof Error ? error.message : "Falha ao iniciar campanha." });
+    } finally {
+      setLoading("");
+    }
+  }
+
   return (
     <main className="space-y-4 px-4 py-4 lg:px-6">
       <section className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-4 shadow-sm">
@@ -422,6 +443,19 @@ export function MetaWhatsAppCampaignsClient({
                     <MiniStat label="Lidas" value={String(item.read)} />
                     <MiniStat label="Falhas" value={String(item.failed)} />
                   </div>
+                  {item.approvalStatus !== "approved" && item.queued > 0 && (
+                    <div className="xl:col-span-2">
+                      <button
+                        type="button"
+                        onClick={() => handleStartCampaign(item.id)}
+                        disabled={loading === `start:${item.id}`}
+                        className="inline-flex h-8 items-center gap-2 rounded-md border border-[rgba(22,163,74,0.28)] bg-[rgba(22,163,74,0.08)] px-3 text-xs font-semibold text-[var(--admin-green)] disabled:opacity-60"
+                      >
+                        {loading === `start:${item.id}` ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle2 size={13} />}
+                        Aprovar e enfileirar
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
