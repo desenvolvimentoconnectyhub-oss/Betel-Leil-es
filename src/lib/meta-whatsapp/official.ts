@@ -30,6 +30,28 @@ export type CreateMetaWhatsAppTemplateInput = {
   variableExamples?: Record<string, string>;
 };
 
+export type ImportMetaWhatsAppContactListInput = {
+  name: string;
+  sourceFilename: string;
+  sourceType: "csv" | "txt" | "xlsx" | "manual" | "import";
+  rows: Array<Record<string, string>>;
+  optInConfirmed: boolean;
+  optInSource?: string;
+};
+
+export type CreateMetaWhatsAppCampaignInput = {
+  name: string;
+  campaignType: string;
+  senderId?: string;
+  templateId: string;
+  contactListId: string;
+  language?: string;
+  scheduledFor?: string;
+  requireOptIn: boolean;
+  rateLimitPerMinute?: number;
+  dailyLimitPerNumber?: number;
+};
+
 export type MetaWhatsAppConfig = {
   appId: string;
   appSecretConfigured: boolean;
@@ -50,7 +72,24 @@ export type MetaWhatsAppDashboardData = {
   generatedAt: string;
   config: MetaWhatsAppConfig;
   metrics: Array<{ label: string; value: string; detail: string; tone: "green" | "yellow" | "red" | "purple" | "muted" }>;
-  campaigns: Array<{ id: string; name: string; status: string; sent: number; delivered: number; read: number; failed: number; scheduledFor: string }>;
+  campaigns: Array<{
+    id: string;
+    name: string;
+    campaignType: string;
+    status: string;
+    approvalStatus: string;
+    sent: number;
+    delivered: number;
+    read: number;
+    failed: number;
+    queued: number;
+    skipped: number;
+    total: number;
+    scheduledFor: string;
+    templateName: string;
+    contactListName: string;
+    createdAt: string;
+  }>;
   templates: Array<{
     id: string;
     metaTemplateId: string;
@@ -67,8 +106,18 @@ export type MetaWhatsAppDashboardData = {
     variables: unknown[];
     rejectionReason: string;
   }>;
-  senders: Array<{ id: string; label: string; phoneNumberId: string; status: string; qualityRating: string; isDefault: boolean }>;
-  contactLists: Array<{ id: string; name: string; validCount: number; duplicateCount: number; invalidCount: number }>;
+  senders: Array<{ id: string; label: string; phoneNumberId: string; displayPhoneNumber: string; status: string; qualityRating: string; isDefault: boolean }>;
+  contactLists: Array<{
+    id: string;
+    name: string;
+    validCount: number;
+    duplicateCount: number;
+    invalidCount: number;
+    optInCount: number;
+    sourceFilename: string;
+    sourceType: string;
+    createdAt: string;
+  }>;
 };
 
 const DEFAULT_API_VERSION = "v26.0";
@@ -91,9 +140,77 @@ function asArray(value: unknown) {
   return Array.isArray(value) ? value : [];
 }
 
+function asObject(value: unknown): DbRow {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as DbRow : {};
+}
+
 function tableMissing(error: unknown) {
   const message = error instanceof Error ? error.message : cleanString((error as DbRow | null)?.message);
   return /relation .* does not exist|schema cache|Could not find the table|does not exist/i.test(message);
+}
+
+function normalizeKey(value: string) {
+  return cleanString(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9{}]+/g, "");
+}
+
+function pickValue(row: Record<string, string>, keys: string[]) {
+  const normalizedKeys = keys.map(normalizeKey);
+  const entry = Object.entries(row).find(([key]) => normalizedKeys.includes(normalizeKey(key)));
+  return cleanString(entry?.[1]);
+}
+
+function normalizePhone(value: unknown) {
+  let digits = cleanString(value).replace(/\D/g, "");
+  if (digits.startsWith("00")) digits = digits.slice(2);
+  if ((digits.length === 10 || digits.length === 11) && !digits.startsWith("55")) digits = `55${digits}`;
+  if (digits.startsWith("055")) digits = digits.slice(1);
+  if (digits.length < 10 || digits.length > 15) return "";
+  return digits;
+}
+
+function tagsFromValue(value: string) {
+  return cleanString(value)
+    .split(/[;,]/)
+    .map((tag) => tag.trim())
+    .filter(Boolean)
+    .slice(0, 12);
+}
+
+function variablesFromRow(row: Record<string, string>) {
+  const variables: Record<string, string> = {};
+  for (const [key, value] of Object.entries(row)) {
+    const normalized = normalizeKey(key);
+    const match = normalized.match(/^(?:var|variavel|variable)?(\d+)$/) || normalized.match(/^\{\{(\d+)\}\}$/);
+    if (match && cleanString(value)) variables[match[1]] = cleanString(value);
+  }
+  return variables;
+}
+
+function standardVariablesForContact(contact: DbRow, templateVariables: unknown[]) {
+  const baseVariables = asObject(contact.variables);
+  const values: Record<string, string> = {};
+  for (const variable of templateVariables) {
+    const key = cleanString(variable);
+    values[key] =
+      cleanString(baseVariables[key]) ||
+      (key === "1" ? cleanString(contact.name) : "") ||
+      (key === "2" ? cleanString(contact.city) : "") ||
+      (key === "3" ? cleanString(contact.email) : "");
+  }
+  return values;
+}
+
+async function insertInChunks(table: string, rows: DbRow[], chunkSize = 500) {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase || rows.length === 0) return;
+  for (let index = 0; index < rows.length; index += chunkSize) {
+    const { error } = await supabase.from(table).insert(rows.slice(index, index + chunkSize));
+    if (error) throw error;
+  }
 }
 
 async function readAppConfig() {
@@ -505,6 +622,263 @@ export async function deleteMetaWhatsAppTemplate(input: { id: string }) {
   return { ok: true };
 }
 
+export async function importMetaWhatsAppContactList(input: ImportMetaWhatsAppContactListInput) {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) throw new Error("Supabase admin nao configurado.");
+
+  const name = cleanString(input.name, "Lista Meta WhatsApp");
+  const sourceFilename = cleanString(input.sourceFilename);
+  const sourceType = cleanString(input.sourceType, "import");
+  const optInSource = cleanString(input.optInSource, "upload_painel_meta_whatsapp");
+  const now = new Date().toISOString();
+  const seen = new Set<string>();
+  const validContacts: DbRow[] = [];
+  let duplicateCount = 0;
+  let invalidCount = 0;
+
+  for (const row of input.rows) {
+    const phone = normalizePhone(
+      pickValue(row, ["whatsapp", "telefone", "celular", "phone", "mobile", "numero", "número", "contato"]) ||
+        Object.values(row).find((value) => normalizePhone(value))
+    );
+
+    if (!phone) {
+      invalidCount += 1;
+      continue;
+    }
+    if (seen.has(phone)) {
+      duplicateCount += 1;
+      continue;
+    }
+    seen.add(phone);
+
+    validContacts.push({
+      name: pickValue(row, ["nome", "name", "lead", "cliente", "contato"]),
+      phone_e164: phone,
+      email: pickValue(row, ["email", "e-mail", "mail"]),
+      city: pickValue(row, ["cidade", "city", "municipio", "município"]),
+      tags: tagsFromValue(pickValue(row, ["tags", "tag", "segmento", "segmentos"])),
+      variables: variablesFromRow(row),
+      opt_in_confirmed: input.optInConfirmed,
+      opt_in_source: input.optInConfirmed ? optInSource : null,
+      opt_in_at: input.optInConfirmed ? now : null,
+      status: "valid",
+      raw_payload: row,
+    });
+  }
+
+  const { data: list, error: listError } = await supabase
+    .from("meta_whatsapp_contact_lists")
+    .insert({
+      name,
+      source_filename: sourceFilename,
+      source_type: sourceType,
+      opt_in_required: true,
+      valid_count: validContacts.length,
+      duplicate_count: duplicateCount,
+      invalid_count: invalidCount,
+      metadata: {
+        opt_in_count: input.optInConfirmed ? validContacts.length : 0,
+        imported_rows: input.rows.length,
+      },
+    })
+    .select("*")
+    .single();
+  if (listError) throw listError;
+
+  const listId = cleanString((list as DbRow).id);
+  const contacts: DbRow[] = validContacts.map((contact) => ({ ...contact, list_id: listId }));
+  await insertInChunks("meta_whatsapp_contact_list_contacts", contacts);
+
+  if (input.optInConfirmed && contacts.length) {
+    await insertInChunks(
+      "meta_whatsapp_opt_ins",
+      contacts.map((contact) => ({
+        phone_e164: cleanString(contact.phone_e164),
+        source: optInSource,
+        source_reference: listId,
+        consent_text: "Opt-in confirmado na importacao da lista pelo painel.",
+        consent_at: now,
+        metadata: { contact_list_id: listId, source_filename: sourceFilename },
+      }))
+    );
+  }
+
+  return {
+    ok: true,
+    listId,
+    validCount: validContacts.length,
+    duplicateCount,
+    invalidCount,
+    optInCount: input.optInConfirmed ? validContacts.length : 0,
+  };
+}
+
+async function fetchAllListContacts(listId: string) {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) throw new Error("Supabase admin nao configurado.");
+
+  const rows: DbRow[] = [];
+  const pageSize = 1000;
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabase
+      .from("meta_whatsapp_contact_list_contacts")
+      .select("*")
+      .eq("list_id", listId)
+      .eq("status", "valid")
+      .range(from, from + pageSize - 1);
+    if (error) throw error;
+    rows.push(...((data || []) as DbRow[]));
+    if (!data || data.length < pageSize) break;
+  }
+  return rows;
+}
+
+async function selectCampaignSender(senderId: string, config: MetaConfigInternal) {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) throw new Error("Supabase admin nao configurado.");
+
+  let query = supabase.from("meta_whatsapp_senders").select("*").eq("status", "active").limit(1);
+  if (senderId) query = query.eq("id", senderId);
+  else if (config.phoneNumberId) query = query.eq("phone_number_id", config.phoneNumberId);
+
+  const { data, error } = await query.maybeSingle();
+  if (error) throw error;
+  if (data) return data as DbRow;
+
+  const { data: fallback, error: fallbackError } = await supabase
+    .from("meta_whatsapp_senders")
+    .select("*")
+    .eq("status", "active")
+    .order("is_default", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (fallbackError) throw fallbackError;
+  if (!fallback) throw new Error("Nenhum numero oficial Meta ativo. Sincronize os numeros ou configure o Phone Number ID.");
+  return fallback as DbRow;
+}
+
+export async function createMetaWhatsAppCampaign(input: CreateMetaWhatsAppCampaignInput) {
+  const supabase = getSupabaseAdminClient();
+  const config = await getMetaWhatsAppConfigInternal();
+  if (!supabase) throw new Error("Supabase admin nao configurado.");
+
+  const name = cleanString(input.name, "Campanha Meta WhatsApp");
+  const templateId = cleanString(input.templateId);
+  const contactListId = cleanString(input.contactListId);
+  if (!templateId) throw new Error("Selecione um template aprovado.");
+  if (!contactListId) throw new Error("Selecione uma lista de contatos.");
+
+  const [{ data: template, error: templateError }, { data: list, error: listError }] = await Promise.all([
+    supabase
+      .from("meta_whatsapp_templates")
+      .select("*")
+      .eq("id", templateId)
+      .eq("managed_from_panel", true)
+      .eq("status", "approved")
+      .maybeSingle(),
+    supabase.from("meta_whatsapp_contact_lists").select("*").eq("id", contactListId).maybeSingle(),
+  ]);
+  if (templateError) throw templateError;
+  if (listError) throw listError;
+  if (!template) throw new Error("Template precisa estar aprovado e gerenciado pelo painel.");
+  if (!list) throw new Error("Lista de contatos nao encontrada.");
+
+  const sender = await selectCampaignSender(cleanString(input.senderId), config);
+  const contacts = await fetchAllListContacts(contactListId);
+  if (!contacts.length) throw new Error("A lista selecionada nao possui contatos validos.");
+
+  const phones = contacts.map((contact) => cleanString(contact.phone_e164)).filter(Boolean);
+  const { data: suppressed, error: suppressionError } = phones.length
+    ? await supabase.from("meta_whatsapp_suppression_list").select("phone_e164").in("phone_e164", phones)
+    : { data: [], error: null };
+  if (suppressionError) throw suppressionError;
+  const blockedPhones = new Set(((suppressed || []) as DbRow[]).map((row) => cleanString(row.phone_e164)));
+  const requireOptIn = input.requireOptIn !== false;
+  const eligible = contacts.filter((contact) => {
+    const phone = cleanString(contact.phone_e164);
+    if (!phone || blockedPhones.has(phone)) return false;
+    if (requireOptIn && !asBoolean(contact.opt_in_confirmed)) return false;
+    return true;
+  });
+
+  if (!eligible.length) {
+    throw new Error("Nenhum contato elegivel. Confirme opt-in na lista ou desative a trava apenas para testes autorizados.");
+  }
+
+  const scheduledFor = cleanString(input.scheduledFor);
+  const campaignStatus = scheduledFor ? "scheduled" : "draft";
+  const recipientStatus = scheduledFor ? "scheduled" : "queued";
+  const rateLimit = Math.max(1, Math.min(config.rateLimitPerMinute, asNumber(input.rateLimitPerMinute, config.rateLimitPerMinute)));
+  const dailyLimit = Math.max(1, Math.min(config.dailyLimitPerNumber, asNumber(input.dailyLimitPerNumber, config.dailyLimitPerNumber)));
+  const totals = {
+    total: contacts.length,
+    queued: eligible.length,
+    skipped: contacts.length - eligible.length,
+    sent: 0,
+    delivered: 0,
+    read: 0,
+    failed: 0,
+  };
+
+  const { data: campaign, error: campaignError } = await supabase
+    .from("meta_whatsapp_campaigns")
+    .insert({
+      name,
+      campaign_type: cleanString(input.campaignType, "marketing"),
+      status: campaignStatus,
+      sender_id: cleanString(sender.id),
+      sender_pool: [cleanString(sender.id)],
+      template_id: templateId,
+      language: cleanString(input.language, cleanString((template as DbRow).language, config.defaultLanguage)),
+      contact_list_id: contactListId,
+      scheduled_for: scheduledFor || null,
+      rate_limit_per_minute: rateLimit,
+      daily_limit_per_number: dailyLimit,
+      require_opt_in: requireOptIn,
+      approval_status: "pending_review",
+      totals,
+      metadata: {
+        template_name: cleanString((template as DbRow).name),
+        contact_list_name: cleanString((list as DbRow).name),
+        phone_number_id: cleanString(sender.phone_number_id),
+        next_step: "Aprovacao humana antes da fila Inngest.",
+      },
+    })
+    .select("*")
+    .single();
+  if (campaignError) throw campaignError;
+
+  const campaignId = cleanString((campaign as DbRow).id);
+  const templateVariables = asArray((template as DbRow).variables);
+  const recipients = eligible.map((contact) => ({
+    campaign_id: campaignId,
+    contact_list_contact_id: cleanString(contact.id) || null,
+    sender_id: cleanString(sender.id),
+    phone_e164: cleanString(contact.phone_e164),
+    name: cleanString(contact.name),
+    variables: standardVariablesForContact(contact, templateVariables),
+    opt_in_confirmed: asBoolean(contact.opt_in_confirmed),
+    status: recipientStatus,
+    payload: {
+      template_name: cleanString((template as DbRow).name),
+      language: cleanString((template as DbRow).language, config.defaultLanguage),
+      components: asArray((template as DbRow).components),
+    },
+    scheduled_for: scheduledFor || null,
+  }));
+  await insertInChunks("meta_whatsapp_campaign_recipients", recipients);
+
+  return {
+    ok: true,
+    campaignId,
+    queued: recipients.length,
+    skipped: totals.skipped,
+    status: campaignStatus,
+    approvalStatus: "pending_review",
+  };
+}
+
 function emptyDashboard(source: MetaWhatsAppDashboardData["source"], reason?: string): MetaWhatsAppDashboardData {
   return {
     source,
@@ -573,16 +947,25 @@ export async function getMetaWhatsAppDashboardData(): Promise<MetaWhatsAppDashbo
         { label: "Falhas", value: String(failed), detail: `${read} lidas`, tone: failed ? "red" : "muted" },
       ],
       campaigns: ((campaignsResult.data || []) as DbRow[]).map((row) => {
-        const totals = row.totals && typeof row.totals === "object" ? row.totals as DbRow : {};
+        const totals = asObject(row.totals);
+        const metadata = asObject(row.metadata);
         return {
           id: cleanString(row.id),
           name: cleanString(row.name, "Campanha Meta WhatsApp"),
+          campaignType: cleanString(row.campaign_type, "marketing"),
           status: cleanString(row.status, "draft"),
+          approvalStatus: cleanString(row.approval_status, "draft"),
           sent: asNumber(totals.sent),
           delivered: asNumber(totals.delivered),
           read: asNumber(totals.read),
           failed: asNumber(totals.failed),
+          queued: asNumber(totals.queued),
+          skipped: asNumber(totals.skipped),
+          total: asNumber(totals.total),
           scheduledFor: cleanString(row.scheduled_for),
+          templateName: cleanString(metadata.template_name),
+          contactListName: cleanString(metadata.contact_list_name),
+          createdAt: cleanString(row.created_at),
         };
       }),
       templates: ((templatesResult.data || []) as DbRow[]).map((row) => ({
@@ -605,17 +988,25 @@ export async function getMetaWhatsAppDashboardData(): Promise<MetaWhatsAppDashbo
         id: cleanString(row.id),
         label: cleanString(row.verified_name, cleanString(row.display_phone_number, "Numero oficial")),
         phoneNumberId: cleanString(row.phone_number_id),
+        displayPhoneNumber: cleanString(row.display_phone_number),
         status: cleanString(row.status, "active"),
         qualityRating: cleanString(row.quality_rating, "desconhecido"),
         isDefault: asBoolean(row.is_default),
       })),
-      contactLists: ((listsResult.data || []) as DbRow[]).map((row) => ({
-        id: cleanString(row.id),
-        name: cleanString(row.name, "Lista Meta WhatsApp"),
-        validCount: asNumber(row.valid_count),
-        duplicateCount: asNumber(row.duplicate_count),
-        invalidCount: asNumber(row.invalid_count),
-      })),
+      contactLists: ((listsResult.data || []) as DbRow[]).map((row) => {
+        const metadata = asObject(row.metadata);
+        return {
+          id: cleanString(row.id),
+          name: cleanString(row.name, "Lista Meta WhatsApp"),
+          validCount: asNumber(row.valid_count),
+          duplicateCount: asNumber(row.duplicate_count),
+          invalidCount: asNumber(row.invalid_count),
+          optInCount: asNumber(metadata.opt_in_count),
+          sourceFilename: cleanString(row.source_filename),
+          sourceType: cleanString(row.source_type, "import"),
+          createdAt: cleanString(row.created_at),
+        };
+      }),
     };
   } catch (error) {
     if (tableMissing(error)) {
