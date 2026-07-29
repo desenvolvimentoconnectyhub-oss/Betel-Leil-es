@@ -2130,6 +2130,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
   const [voiceLoading, setVoiceLoading] = useState(false);
   const [voiceAction, setVoiceAction] = useState<string | null>(null);
   const [voiceError, setVoiceError] = useState("");
+  const [voiceNotice, setVoiceNotice] = useState<{ type: "info" | "ok" | "err"; msg: string } | null>(null);
   const [voicePreviewUrl, setVoicePreviewUrl] = useState("");
   const [cloneName, setCloneName] = useState(config.selectedVoiceLabel || "Agente Betel");
   const [cloneDescription, setCloneDescription] = useState("Voz autorizada do agente de WhatsApp para atendimento Betel.");
@@ -2253,12 +2254,13 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
 
   async function cloneVoice() {
     if (!cloneConsentReady) {
-      setVoiceError("Confirme que voce tem direito e consentimento para clonar esta voz.");
+      setVoiceNotice({ type: "err", msg: "Confirme que voce tem direito e consentimento para clonar esta voz." });
       return;
     }
 
     setVoiceAction("clone");
     setVoiceError("");
+    setVoiceNotice({ type: "info", msg: "Enviando amostras para a ElevenLabs. Aguarde o retorno da clonagem." });
     try {
       const form = new FormData();
       form.set("action", "clone_willian");
@@ -2275,8 +2277,10 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.message || "Falha ao clonar voz.");
 
+      const nextVoiceId = String(data.voiceId || "");
+      const requiresVerification = Boolean(data.requiresVerification);
       setBehavior({
-        selectedVoiceId: String(data.voiceId || ""),
+        selectedVoiceId: nextVoiceId,
         selectedVoiceLabel: cloneName,
         voiceCloneEnabled: true,
         voiceCloneConsent: true,
@@ -2284,14 +2288,18 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
         voiceCloneConsentOwnerName: cloneName,
         voiceCloneConsentEvidence: "Consentimento confirmado no painel antes do envio das amostras.",
         voiceCloneConsentAt: new Date().toISOString(),
-        voiceCloneStatus: data.requiresVerification ? "testing" : "active",
+        voiceCloneStatus: requiresVerification ? "testing" : "active",
         audioVoiceSource: "elevenlabs_clone",
         audioModelId: config.audioModelId || "eleven_multilingual_v2",
+      });
+      setVoiceNotice({
+        type: "ok",
+        msg: `${data.message || "Voz criada na ElevenLabs."} ${requiresVerification ? "Ela ficou em teste/verificacao." : "Ela ja ficou selecionada para o agente."}${nextVoiceId ? ` ID: ${nextVoiceId}` : ""}`,
       });
       setCloneFiles([]);
       await loadVoices(false);
     } catch (error) {
-      setVoiceError(error instanceof Error ? error.message : "Falha ao clonar voz.");
+      setVoiceNotice({ type: "err", msg: error instanceof Error ? error.message : "Falha ao clonar voz." });
     } finally {
       setVoiceAction(null);
     }
@@ -2471,7 +2479,10 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
               type="file"
               accept="audio/*"
               multiple
-              onChange={(event) => setCloneFiles(Array.from(event.target.files || []))}
+              onChange={(event) => {
+                setCloneFiles(Array.from(event.target.files || []));
+                setVoiceNotice(null);
+              }}
               className="block h-10 w-full cursor-pointer rounded-md border border-[var(--admin-border)] bg-white text-xs text-[var(--admin-muted)] file:mr-3 file:h-10 file:border-0 file:bg-[rgba(200,90,31,0.1)] file:px-3 file:text-xs file:font-bold file:text-[var(--admin-cyan)]"
             />
           </label>
@@ -2505,6 +2516,29 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
               </span>
             </span>
           </button>
+
+          {voiceNotice && (
+            <div
+              className={cn(
+                "mt-3 flex items-start gap-2 rounded-md border px-3 py-2 text-xs leading-5",
+                voiceNotice.type === "ok" &&
+                  "border-[rgba(34,197,94,0.28)] bg-[rgba(34,197,94,0.08)] text-[var(--admin-green)]",
+                voiceNotice.type === "err" &&
+                  "border-[rgba(239,68,68,0.28)] bg-[rgba(239,68,68,0.08)] text-[var(--admin-red)]",
+                voiceNotice.type === "info" &&
+                  "border-[rgba(184,122,22,0.28)] bg-[rgba(184,122,22,0.08)] text-[var(--admin-yellow)]"
+              )}
+            >
+              {voiceNotice.type === "info" ? (
+                <Loader2 size={14} className="mt-0.5 shrink-0 animate-spin" />
+              ) : voiceNotice.type === "ok" ? (
+                <CheckCircle2 size={14} className="mt-0.5 shrink-0" />
+              ) : (
+                <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+              )}
+              <span>{voiceNotice.msg}</span>
+            </div>
+          )}
 
           <div className="mt-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <p className="min-w-0 text-xs leading-5 text-[var(--admin-muted)]">

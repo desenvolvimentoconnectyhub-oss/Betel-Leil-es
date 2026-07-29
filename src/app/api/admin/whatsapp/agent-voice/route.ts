@@ -102,8 +102,9 @@ async function handleMultipart(request: NextRequest) {
     );
   }
 
+  const voiceName = cleanString(form.get("name"), "Agente Betel");
   const result = await createElevenLabsVoiceClone({
-    name: cleanString(form.get("name"), "Agente Betel"),
+    name: voiceName,
     description: cleanString(form.get("description")),
     consentType,
     files,
@@ -112,6 +113,8 @@ async function handleMultipart(request: NextRequest) {
   return NextResponse.json({
     success: true,
     message: "Voz do agente criada na ElevenLabs.",
+    fileCount: files.length,
+    voiceName,
     voiceId: result.voiceId,
     requiresVerification: result.requiresVerification,
   });
