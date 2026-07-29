@@ -2048,10 +2048,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
   const [cloneName, setCloneName] = useState(config.selectedVoiceLabel || "Agente Betel");
   const [cloneDescription, setCloneDescription] = useState("Voz autorizada do agente de WhatsApp para atendimento Betel.");
   const [cloneFiles, setCloneFiles] = useState<File[]>([]);
-  const [consentRights, setConsentRights] = useState(false);
-  const [consentSamples, setConsentSamples] = useState(false);
-  const [consentBusinessUse, setConsentBusinessUse] = useState(false);
-  const [consentNoRestrictedVoice, setConsentNoRestrictedVoice] = useState(false);
+  const [cloneConsentConfirmed, setCloneConsentConfirmed] = useState(false);
 
   const filteredVoices = useMemo(() => {
     const query = config.voiceSearch.trim().toLowerCase();
@@ -2067,13 +2064,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
     () => voices.find((voice) => voice.voiceId === config.selectedVoiceId),
     [config.selectedVoiceId, voices]
   );
-  const cloneConsentReady =
-    config.voiceCloneConsentOwnerName.trim().length >= 3 &&
-    config.voiceCloneConsentEvidence.trim().length >= 3 &&
-    consentRights &&
-    consentSamples &&
-    consentBusinessUse &&
-    consentNoRestrictedVoice;
+  const cloneConsentReady = cloneConsentConfirmed;
 
   const loadVoices = useCallback(async (syncConfiguredVoice = false) => {
     setVoiceLoading(true);
@@ -2176,7 +2167,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
 
   async function cloneVoice() {
     if (!cloneConsentReady) {
-      setVoiceError("Complete e confirme o consentimento antes de clonar a voz.");
+      setVoiceError("Confirme que voce tem direito e consentimento para clonar esta voz.");
       return;
     }
 
@@ -2188,13 +2179,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
       form.set("name", cloneName);
       form.set("description", cloneDescription);
       form.set("authorized", String(cloneConsentReady));
-      form.set("consentType", config.voiceCloneConsentType);
-      form.set("consentOwnerName", config.voiceCloneConsentOwnerName);
-      form.set("consentEvidence", config.voiceCloneConsentEvidence);
-      form.set("consentRights", String(consentRights));
-      form.set("consentSamples", String(consentSamples));
-      form.set("consentBusinessUse", String(consentBusinessUse));
-      form.set("consentNoRestrictedVoice", String(consentNoRestrictedVoice));
+      form.set("consentType", "authorized_voice");
       cloneFiles.forEach((file) => form.append("files[]", file, file.name));
 
       const res = await fetch(WHATSAPP_AGENT_VOICE_ENDPOINT, {
@@ -2209,6 +2194,9 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
         selectedVoiceLabel: cloneName,
         voiceCloneEnabled: true,
         voiceCloneConsent: true,
+        voiceCloneConsentType: "authorized_voice",
+        voiceCloneConsentOwnerName: cloneName,
+        voiceCloneConsentEvidence: "Consentimento confirmado no painel antes do envio das amostras.",
         voiceCloneConsentAt: new Date().toISOString(),
         voiceCloneStatus: data.requiresVerification ? "testing" : "active",
         audioVoiceSource: "elevenlabs_clone",
@@ -2374,99 +2362,70 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
             )}
           </div>
         )}
-        <div className="mt-4 rounded-xl border border-[var(--admin-border)] bg-[rgba(255,255,255,0.02)] p-4">
-          <div className="grid gap-3 xl:grid-cols-[0.8fr_1.2fr]">
-            <Field label="Nome do clone" value={cloneName} onChange={setCloneName} />
-            <TextAreaField label="Descricao do clone" rows={2} value={cloneDescription} onChange={setCloneDescription} />
+        <div className="mt-4 rounded-lg border border-[var(--admin-border)] bg-white p-4">
+          <div className="flex flex-col gap-2 border-b border-[var(--admin-border)] pb-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Instant voice clone</p>
+              <h3 className="mt-1 text-base font-semibold text-[var(--admin-foreground)]">Criar voz clonada</h3>
+            </div>
+            <StatusPill
+              ok={Boolean(config.voiceCloneConsent && config.voiceCloneConsentAt)}
+              label={config.voiceCloneConsentAt ? `consentido ${formatDateTime(config.voiceCloneConsentAt || "")}` : "consentimento pendente"}
+            />
           </div>
-          <div className="mt-4 rounded-lg border border-[rgba(234,179,8,0.28)] bg-[rgba(234,179,8,0.08)] p-3">
-            <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-              <div>
-                <div className="flex items-center gap-2">
-                  <ShieldCheck size={15} className="text-[var(--admin-yellow)]" />
-                  <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--admin-yellow)]">Consentimento de voz obrigatorio</p>
-                </div>
-                <p className="mt-2 text-xs leading-5 text-[var(--admin-muted)]">
-                  Clone apenas voz propria, autorizada pelo titular ou coberta por autorizacao formal da empresa. Mantenha a evidencia arquivada.
-                </p>
-              </div>
-              <StatusPill
-                ok={Boolean(config.voiceCloneConsent && config.voiceCloneConsentAt)}
-                label={config.voiceCloneConsentAt ? `registrado ${formatDateTime(config.voiceCloneConsentAt || "")}` : "pendente"}
-              />
-            </div>
-            <div className="mt-3 grid gap-3 xl:grid-cols-[220px_minmax(0,1fr)_minmax(0,1fr)]">
-              <SelectField
-                label="Tipo de consentimento"
-                value={config.voiceCloneConsentType}
-                options={[
-                  ["own_voice", "Sou o titular"],
-                  ["authorized_voice", "Titular autorizou"],
-                  ["company_authorization", "Termo da empresa"],
-                ]}
-                onChange={(voiceCloneConsentType) =>
-                  setBehavior({
-                    voiceCloneConsent: false,
-                    voiceCloneConsentAt: null,
-                    voiceCloneConsentType: voiceCloneConsentType as WillianBehaviorConfig["voiceCloneConsentType"],
-                  })
-                }
-              />
-              <Field
-                label="Titular da voz"
-                value={config.voiceCloneConsentOwnerName}
-                onChange={(voiceCloneConsentOwnerName) =>
-                  setBehavior({ voiceCloneConsent: false, voiceCloneConsentAt: null, voiceCloneConsentOwnerName })
-                }
-                placeholder="Nome de quem autorizou"
-              />
-              <Field
-                label="Evidencia arquivada"
-                value={config.voiceCloneConsentEvidence}
-                onChange={(voiceCloneConsentEvidence) =>
-                  setBehavior({ voiceCloneConsent: false, voiceCloneConsentAt: null, voiceCloneConsentEvidence })
-                }
-                placeholder="Contrato, termo, e-mail ou autorizacao gravada"
-              />
-            </div>
-            <div className="mt-3 grid gap-2 md:grid-cols-2">
-              <ConsentCheck
-                checked={consentRights}
-                onChange={setConsentRights}
-                title="Tenho direito e consentimento"
-                detail="O titular permitiu criar e usar esta voz no atendimento Betel."
-              />
-              <ConsentCheck
-                checked={consentSamples}
-                onChange={setConsentSamples}
-                title="Amostras foram autorizadas"
-                detail="Os audios enviados sao do titular e foram fornecidos para este uso."
-              />
-              <ConsentCheck
-                checked={consentBusinessUse}
-                onChange={setConsentBusinessUse}
-                title="Uso comercial permitido"
-                detail="A autorizacao cobre mensagens de atendimento, follow-up e testes."
-              />
-              <ConsentCheck
-                checked={consentNoRestrictedVoice}
-                onChange={setConsentNoRestrictedVoice}
-                title="Nao e voz restrita"
-                detail="Nao e voz de menor, figura publica sensivel ou terceiro sem autorizacao."
-              />
-            </div>
+
+          <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(220px,0.8fr)_minmax(260px,1.2fr)]">
+            <Field label="Nome da voz" value={cloneName} onChange={setCloneName} />
+            <TextAreaField label="Descricao opcional" rows={2} value={cloneDescription} onChange={setCloneDescription} />
           </div>
-          <div className="mt-3 grid gap-3 xl:grid-cols-[1fr_auto] xl:items-end">
-            <label className="grid gap-1">
-              <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Amostras de audio autorizadas</span>
-              <input
-                type="file"
-                accept="audio/*"
-                multiple
-                onChange={(event) => setCloneFiles(Array.from(event.target.files || []))}
-                className="block h-10 w-full cursor-pointer rounded-lg border border-[var(--admin-border)] bg-[#050505] text-xs text-[var(--admin-muted)] file:mr-3 file:h-10 file:border-0 file:bg-[rgba(0,243,255,0.12)] file:px-3 file:text-xs file:font-bold file:text-[var(--admin-cyan)]"
-              />
-            </label>
+
+          <label className="mt-3 grid gap-1">
+            <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Amostras de audio</span>
+            <input
+              type="file"
+              accept="audio/*"
+              multiple
+              onChange={(event) => setCloneFiles(Array.from(event.target.files || []))}
+              className="block h-10 w-full cursor-pointer rounded-md border border-[var(--admin-border)] bg-white text-xs text-[var(--admin-muted)] file:mr-3 file:h-10 file:border-0 file:bg-[rgba(200,90,31,0.1)] file:px-3 file:text-xs file:font-bold file:text-[var(--admin-cyan)]"
+            />
+          </label>
+
+          <button
+            type="button"
+            onClick={() => setCloneConsentConfirmed((checked) => !checked)}
+            className={cn(
+              "mt-3 grid w-full grid-cols-[18px_minmax(0,1fr)] gap-2 rounded-md border p-3 text-left transition",
+              cloneConsentConfirmed
+                ? "border-[rgba(34,197,94,0.28)] bg-[rgba(34,197,94,0.08)]"
+                : "border-[var(--admin-border)] bg-white hover:border-[rgba(200,90,31,0.22)]"
+            )}
+          >
+            <span
+              className={cn(
+                "mt-0.5 grid size-4 place-items-center rounded border",
+                cloneConsentConfirmed
+                  ? "border-[var(--admin-green)] bg-[var(--admin-green)] text-white"
+                  : "border-[var(--admin-border)] bg-white text-transparent"
+              )}
+            >
+              <CheckCircle2 size={11} />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-xs font-semibold text-[var(--admin-foreground)]">
+                Confirmo que tenho os direitos e o consentimento para clonar e usar esta voz.
+              </span>
+              <span className="mt-1 block text-[11px] leading-4 text-[var(--admin-muted)]">
+                Use apenas voz propria ou autorizada pelo titular.
+              </span>
+            </span>
+          </button>
+
+          <div className="mt-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <p className="min-w-0 text-xs leading-5 text-[var(--admin-muted)]">
+              {cloneFiles.length
+                ? `${cloneFiles.length} arquivo(s): ${cloneFiles.map((file) => file.name).join(", ")}`
+                : "Envie uma ou mais amostras de voz falada."}
+            </p>
             <ActionButton
               icon={<Paperclip size={14} />}
               label="Clonar voz"
@@ -2475,11 +2434,6 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
               onClick={() => void cloneVoice()}
             />
           </div>
-          <p className="mt-2 text-xs leading-5 text-[var(--admin-muted)]">
-            {cloneFiles.length
-              ? cloneFiles.map((file) => file.name).join(", ")
-              : "O clone exige consentimento completo e amostras autorizadas do titular da voz."}
-          </p>
         </div>
       </Panel>
 
@@ -2985,36 +2939,6 @@ function CompactToggle({ checked, detail, onChange, title }: { checked: boolean;
       </span>
       <span className={cn("h-5 w-9 shrink-0 rounded-full border p-0.5 transition", checked ? "border-[rgba(200,90,31,0.45)] bg-[rgba(200,90,31,0.18)]" : "border-[var(--admin-border)] bg-white")}>
         <span className={cn("block size-3.5 rounded-full transition", checked ? "translate-x-4 bg-[var(--admin-cyan)]" : "bg-[var(--admin-muted)]")} />
-      </span>
-    </button>
-  );
-}
-
-function ConsentCheck({ checked, detail, onChange, title }: { checked: boolean; detail: string; onChange: (checked: boolean) => void; title: string }) {
-  return (
-    <button
-      type="button"
-      onClick={() => onChange(!checked)}
-      className={cn(
-        "grid min-h-16 grid-cols-[18px_minmax(0,1fr)] gap-2 rounded-md border p-2.5 text-left transition",
-        checked
-          ? "border-[rgba(34,197,94,0.28)] bg-[rgba(34,197,94,0.08)]"
-          : "border-[var(--admin-border)] bg-white hover:border-[rgba(200,90,31,0.22)]"
-      )}
-    >
-      <span
-        className={cn(
-          "mt-0.5 grid size-4 place-items-center rounded border",
-          checked
-            ? "border-[var(--admin-green)] bg-[var(--admin-green)] text-white"
-            : "border-[var(--admin-border)] bg-white text-transparent"
-        )}
-      >
-        <CheckCircle2 size={11} />
-      </span>
-      <span className="min-w-0">
-        <span className="block text-xs font-semibold text-[var(--admin-foreground)]">{title}</span>
-        <span className="mt-1 block text-[11px] leading-4 text-[var(--admin-muted)]">{detail}</span>
       </span>
     </button>
   );

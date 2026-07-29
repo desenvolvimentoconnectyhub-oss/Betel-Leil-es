@@ -71,29 +71,15 @@ async function handleMultipart(request: NextRequest) {
   }
 
   const authorized = formBoolean(form, "authorized");
-  const consentOwnerName = cleanString(form.get("consentOwnerName"));
-  const consentEvidence = cleanString(form.get("consentEvidence"));
-  const consentType = cleanString(form.get("consentType"));
-  const consentRights = formBoolean(form, "consentRights");
-  const consentSamples = formBoolean(form, "consentSamples");
-  const consentBusinessUse = formBoolean(form, "consentBusinessUse");
-  const consentNoRestrictedVoice = formBoolean(form, "consentNoRestrictedVoice");
-  const allConsentChecks =
-    authorized &&
-    consentRights &&
-    consentSamples &&
-    consentBusinessUse &&
-    consentNoRestrictedVoice &&
-    consentOwnerName.length >= 3 &&
-    consentEvidence.length >= 3 &&
-    ["own_voice", "authorized_voice", "company_authorization"].includes(consentType);
+  const consentType = cleanString(form.get("consentType"), "authorized_voice");
+  const consentAccepted = authorized && ["own_voice", "authorized_voice", "company_authorization"].includes(consentType);
 
-  if (!allConsentChecks) {
+  if (!consentAccepted) {
     return NextResponse.json(
       {
         success: false,
         message:
-          "Antes de clonar, confirme titular, evidencia de consentimento, direito de uso, amostras autorizadas e ausencia de voz restrita.",
+          "Antes de clonar, confirme que voce tem direito e consentimento para usar esta voz.",
       },
       { status: 400 }
     );
