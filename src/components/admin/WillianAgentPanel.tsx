@@ -92,6 +92,146 @@ type ElevenLabsVoice = {
   labels: Record<string, string>;
 };
 
+type WhatsAppCommunityReplyMode =
+  | "off"
+  | "mentions"
+  | "relevant"
+  | "observer"
+  | "all"
+  | "admins"
+  | "approval";
+
+type WhatsAppCommunityDestination = {
+  id: string;
+  agentKey: string;
+  instanceId: string;
+  provider: string;
+  destinationType: "group" | "channel" | "status" | "contact_list" | "lead_segment";
+  jid: string;
+  name: string;
+  description: string;
+  participantCount: number;
+  adminCount: number;
+  isAnnouncement: boolean;
+  isCommunity: boolean;
+  isAdmin: boolean;
+  inviteUrl: string;
+  status: "active" | "paused" | "blocked" | "archived";
+  replyMode: WhatsAppCommunityReplyMode;
+  respondWithMention: boolean;
+  mentionAllAllowed: boolean;
+  humanApprovalRequired: boolean;
+  dailyMessageLimit: number;
+  cooldownMinutes: number;
+  lastSyncedAt: string;
+  lastMessageAt: string;
+  updatedAt: string;
+};
+
+type WhatsAppCommunityCampaign = {
+  id: string;
+  agentKey: string;
+  name: string;
+  status: string;
+  campaignType: string;
+  approvalMode: string;
+  aiEnabled: boolean;
+  voiceEnabled: boolean;
+  voiceId: string;
+  productRef: string;
+  subject: string;
+  bodyText: string;
+  scheduledFor: string;
+  nextRunAt: string;
+  dailyLimit: number;
+  mentionAllRequested: boolean;
+  mentionAllConfirmed: boolean;
+  targetCount: number;
+  sentCount: number;
+  failedCount: number;
+  updatedAt: string;
+};
+
+type WhatsAppCommunityEvent = {
+  id: string;
+  destinationId: string;
+  providerChatId: string;
+  participantPhone: string;
+  participantName: string;
+  messageType: string;
+  text: string;
+  decisionStatus: string;
+  occurredAt: string;
+};
+
+type WhatsAppCommunityData = {
+  ok: boolean;
+  migrationRequired: boolean;
+  error: string;
+  metrics: {
+    totalDestinations: number;
+    activeDestinations: number;
+    groups: number;
+    channels: number;
+    scheduledCampaigns: number;
+    pendingApprovals: number;
+    observedEvents24h: number;
+  };
+  destinations: WhatsAppCommunityDestination[];
+  campaigns: WhatsAppCommunityCampaign[];
+  recentEvents: WhatsAppCommunityEvent[];
+};
+
+type WhatsAppCampaignDraft = {
+  name: string;
+  bodyText: string;
+  scheduledFor: string;
+  campaignType: string;
+  approvalMode: string;
+  dailyLimit: number;
+  destinationIds: string[];
+  mentionAllRequested: boolean;
+  mentionAllConfirmed: boolean;
+  aiEnabled: boolean;
+  voiceEnabled: boolean;
+  subject: string;
+  prompt: string;
+};
+
+const emptyCommunityData: WhatsAppCommunityData = {
+  ok: true,
+  migrationRequired: false,
+  error: "",
+  metrics: {
+    totalDestinations: 0,
+    activeDestinations: 0,
+    groups: 0,
+    channels: 0,
+    scheduledCampaigns: 0,
+    pendingApprovals: 0,
+    observedEvents24h: 0,
+  },
+  destinations: [],
+  campaigns: [],
+  recentEvents: [],
+};
+
+const defaultCampaignDraft: WhatsAppCampaignDraft = {
+  name: "Campanha WhatsApp",
+  bodyText: "",
+  scheduledFor: "",
+  campaignType: "single",
+  approvalMode: "manual",
+  dailyLimit: 20,
+  destinationIds: [],
+  mentionAllRequested: false,
+  mentionAllConfirmed: false,
+  aiEnabled: false,
+  voiceEnabled: false,
+  subject: "",
+  prompt: "",
+};
+
 async function readVoiceEndpointPayload(res: Response) {
   const text = await res.text();
   if (!text) return {};
@@ -132,6 +272,7 @@ function formatFileSize(bytes: number) {
 const WHATSAPP_AGENT_VOICE_ENDPOINT = "/api/admin/whatsapp/agent-voice";
 const WHATSAPP_AGENT_INSTANCE_ENDPOINT = "/api/admin/whatsapp/agent-instance";
 const WHATSAPP_AGENT_CONFIG_ENDPOINT = "/api/admin/whatsapp/agent-config";
+const WHATSAPP_AGENT_GROUPS_ENDPOINT = "/api/admin/whatsapp/groups";
 const PRIMARY_WHATSAPP_AGENT_KEY = "multichannel-dispatch";
 const PRIMARY_WHATSAPP_AGENT_LABEL = "Agente de WhatsApp";
 const PASSKEY_BLOCKED_STATUS = "passkey_blocked";
@@ -537,6 +678,9 @@ export function WillianAgentPanel({
   const [loading, setLoading] = useState<string | null>(null);
   const [savingConfig, setSavingConfig] = useState(false);
   const [feedback, setFeedback] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
+  const [communityData, setCommunityData] = useState<WhatsAppCommunityData>(emptyCommunityData);
+  const [communityLoading, setCommunityLoading] = useState<string | null>(null);
+  const [campaignDraft, setCampaignDraft] = useState<WhatsAppCampaignDraft>(defaultCampaignDraft);
   const [connection, setConnection] = useState<WillianConnectionInfo | null>(null);
   const [agentInstances, setAgentInstances] = useState<WhatsAppAgentInstanceSummary[]>(initialState?.agentInstances || []);
   const [selectedAgentKey, setSelectedAgentKey] = useState<string>(
@@ -744,6 +888,87 @@ export function WillianAgentPanel({
     whatsappAgents[0];
   const selectedConfigAgentKey = selectedWhatsappAgent?.agentKey || (state.primaryAgentArchived ? "" : state.agentKey);
 
+  const fetchCommunityData = useCallback(async (agentKey: string, quiet = false) => {
+    if (!agentKey) return null;
+    if (!quiet) setCommunityLoading("load");
+    try {
+      const res = await fetch(
+        `${WHATSAPP_AGENT_GROUPS_ENDPOINT}?agentKey=${encodeURIComponent(agentKey)}`,
+        { cache: "no-store", method: "GET" }
+      );
+      const result = await res.json();
+      const data = result?.data as WhatsAppCommunityData | undefined;
+      if (data) {
+        setCommunityData(data);
+        if (data.error && !data.migrationRequired && !quiet) {
+          setFeedback({ type: "err", msg: data.error });
+        }
+        return data;
+      }
+    } catch {
+      if (!quiet) setFeedback({ type: "err", msg: "Nao foi possivel carregar grupos e campanhas." });
+    } finally {
+      if (!quiet) setCommunityLoading(null);
+    }
+    return null;
+  }, []);
+
+  async function runCommunityAction(action: string, payload: Record<string, unknown> = {}, loadingKey = action) {
+    if (!selectedConfigAgentKey) return null;
+    setCommunityLoading(loadingKey);
+    setFeedback(null);
+    try {
+      const res = await fetch(WHATSAPP_AGENT_GROUPS_ENDPOINT, {
+        body: JSON.stringify({
+          action,
+          agentKey: selectedConfigAgentKey,
+          ...payload,
+        }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      });
+      const result = await res.json();
+      if (!res.ok || !result.success) {
+        setFeedback({ type: "err", msg: result.error || "Nao foi possivel operar grupos/campanhas." });
+        return null;
+      }
+
+      const nextData = result?.data?.data as WhatsAppCommunityData | undefined;
+      if (nextData) setCommunityData(nextData);
+      else await fetchCommunityData(selectedConfigAgentKey, true);
+      return result.data;
+    } catch {
+      setFeedback({ type: "err", msg: "Falha de rede ao operar grupos/campanhas." });
+      return null;
+    } finally {
+      setCommunityLoading(null);
+    }
+  }
+
+  async function syncCommunityDestinations() {
+    const result = await runCommunityAction("sync", { force: true, noParticipants: false }, "sync");
+    if (result) setFeedback({ type: "ok", msg: "Grupos e canais sincronizados da ConnectyHub." });
+  }
+
+  async function updateCommunityDestination(id: string, patch: Record<string, unknown>) {
+    const result = await runCommunityAction("updateDestination", { id, ...patch }, `destination:${id}`);
+    if (result) setFeedback({ type: "ok", msg: "Permissao do destino atualizada." });
+  }
+
+  async function createCommunityCampaign() {
+    const result = await runCommunityAction(
+      "createCampaign",
+      {
+        ...campaignDraft,
+      },
+      "campaign"
+    );
+    if (result) {
+      setCampaignDraft({ ...defaultCampaignDraft, destinationIds: campaignDraft.destinationIds });
+      setFeedback({ type: "ok", msg: "Campanha criada e enviada para a fila da Inngest." });
+    }
+  }
+
   const fetchAgentConfig = useCallback(async (agentKey: string, quiet = false) => {
     try {
       const res = await fetch(
@@ -785,6 +1010,14 @@ export function WillianAgentPanel({
       cancelled = true;
     };
   }, [fetchAgentConfig, selectedConfigAgentKey]);
+
+  useEffect(() => {
+    if (activeTab !== "multichannel" || !selectedConfigAgentKey) return;
+    const timer = window.setTimeout(() => {
+      void fetchCommunityData(selectedConfigAgentKey, true);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [activeTab, fetchCommunityData, selectedConfigAgentKey]);
 
   const readyScore = useMemo(() => {
     const checks = [
@@ -1267,7 +1500,18 @@ export function WillianAgentPanel({
             )}
             {activeTab === "behavior" && <BehaviorTab config={config.behavior} setBehavior={setBehavior} />}
             {activeTab === "multichannel" && (
-              <MultichannelTab config={config.multichannel} setMultichannel={setMultichannel} />
+              <MultichannelTab
+                campaignDraft={campaignDraft}
+                communityData={communityData}
+                communityLoading={communityLoading}
+                config={config.multichannel}
+                createCampaign={createCommunityCampaign}
+                refreshCommunity={() => selectedConfigAgentKey && fetchCommunityData(selectedConfigAgentKey)}
+                setCampaignDraft={setCampaignDraft}
+                setMultichannel={setMultichannel}
+                syncDestinations={syncCommunityDestinations}
+                updateDestination={updateCommunityDestination}
+              />
             )}
             {activeTab === "files" && (
               <FilesTab config={config.files} memory={config.memory} setFiles={setFiles} setMemory={setMemory} />
@@ -2827,38 +3071,406 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
   );
 }
 
-function MultichannelTab({ config, setMultichannel }: { config: WillianMultichannelConfig; setMultichannel: (patch: Partial<WillianMultichannelConfig>) => void }) {
-  return (
-    <div className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
-      <Panel title="Operacao multicanal" eyebrow="Grupos / status / canais / campanhas">
-        <div className="grid gap-3 md:grid-cols-4">
-          <ChannelStatus label="Grupos" value={config.groupStatus} />
-          <ChannelStatus label="Status" value={config.statusStatus} />
-          <ChannelStatus label="Canais" value={config.channelsStatus} />
-          <ChannelStatus label="Campanhas" value={config.campaignsStatus} />
-        </div>
-        <div className="mt-4 grid gap-3">
-          <Field label="Agendar para" value={config.scheduleAt} onChange={(scheduleAt) => setMultichannel({ scheduleAt })} placeholder="dd/mm/aaaa --:--" />
-          <TextAreaField label="Status WhatsApp" rows={5} value={config.whatsappStatusText} onChange={(whatsappStatusText) => setMultichannel({ whatsappStatusText })} />
-        </div>
-      </Panel>
+function MultichannelTab({
+  campaignDraft,
+  communityData,
+  communityLoading,
+  config,
+  createCampaign,
+  refreshCommunity,
+  setCampaignDraft,
+  setMultichannel,
+  syncDestinations,
+  updateDestination,
+}: {
+  campaignDraft: WhatsAppCampaignDraft;
+  communityData: WhatsAppCommunityData;
+  communityLoading: string | null;
+  config: WillianMultichannelConfig;
+  createCampaign: () => void;
+  refreshCommunity: () => void;
+  setCampaignDraft: (draft: WhatsAppCampaignDraft | ((current: WhatsAppCampaignDraft) => WhatsAppCampaignDraft)) => void;
+  setMultichannel: (patch: Partial<WillianMultichannelConfig>) => void;
+  syncDestinations: () => void;
+  updateDestination: (id: string, patch: Record<string, unknown>) => void;
+}) {
+  const [destinationSearch, setDestinationSearch] = useState("");
+  const replyModeOptions: Array<[string, string]> = [
+    ["off", "Desligado"],
+    ["mentions", "Somente mencoes"],
+    ["relevant", "Relevantes"],
+    ["observer", "Observador"],
+    ["all", "Todas"],
+    ["admins", "Admins"],
+    ["approval", "Aprovar antes"],
+  ];
+  const statusOptions: Array<[string, string]> = [
+    ["paused", "Pausado"],
+    ["active", "Ativo"],
+    ["blocked", "Bloqueado"],
+  ];
+  const campaignTypeOptions: Array<[string, string]> = [
+    ["single", "Unica"],
+    ["daily", "Diaria"],
+    ["weekly", "Semanal"],
+    ["fixed", "Post fixo"],
+    ["ai", "IA"],
+    ["voice", "Voz clonada"],
+    ["mixed", "Mista"],
+  ];
+  const channelStatusOptions: Array<[string, string]> = [
+    ["paused", "Pausado"],
+    ["enabled", "Liberado"],
+    ["blocked", "Bloqueado"],
+  ];
+  const filteredDestinations = communityData.destinations.filter((destination) => {
+    const haystack = `${destination.name} ${destination.jid} ${destination.destinationType}`.toLowerCase();
+    return haystack.includes(destinationSearch.toLowerCase().trim());
+  });
+  const selectedTargetNames = communityData.destinations
+    .filter((destination) => campaignDraft.destinationIds.includes(destination.id))
+    .map((destination) => destination.name);
+  const canCreateCampaign = Boolean(campaignDraft.bodyText.trim() && campaignDraft.destinationIds.length);
 
-      <Panel title="Campanha simples" eyebrow="Envio futuro supervisionado">
-        <Field label="Nome da campanha" value={config.campaignName} onChange={(campaignName) => setMultichannel({ campaignName })} />
-        <div className="mt-3">
-          <TextAreaField label="Destinatarios" rows={5} value={config.campaignRecipients} onChange={(campaignRecipients) => setMultichannel({ campaignRecipients })} />
+  function updateDraft(patch: Partial<WhatsAppCampaignDraft>) {
+    setCampaignDraft((current) => ({ ...current, ...patch }));
+  }
+
+  function toggleDestination(destinationId: string) {
+    setCampaignDraft((current) => {
+      const active = current.destinationIds.includes(destinationId);
+      return {
+        ...current,
+        destinationIds: active
+          ? current.destinationIds.filter((id) => id !== destinationId)
+          : [...current.destinationIds, destinationId],
+      };
+    });
+  }
+
+  return (
+    <div className="space-y-3">
+      {communityData.migrationRequired && (
+        <div className="rounded-lg border border-[rgba(234,179,8,0.28)] bg-[rgba(234,179,8,0.08)] px-3 py-2 text-xs font-semibold text-[var(--admin-yellow)]">
+          A migration de grupos/campanhas ainda precisa ser aplicada no Supabase para liberar sincronizacao e campanhas.
         </div>
-        <div className="mt-3">
-          <TextAreaField label="Mensagem da campanha" rows={6} value={config.campaignMessage} onChange={(campaignMessage) => setMultichannel({ campaignMessage })} />
+      )}
+      {!communityData.migrationRequired && communityData.error && (
+        <div className="rounded-lg border border-[rgba(239,68,68,0.28)] bg-[rgba(239,68,68,0.08)] px-3 py-2 text-xs font-semibold text-[var(--admin-red)]">
+          {communityData.error}
         </div>
-        <div className="mt-3">
-          <Field label="Canal / newsletter" value={config.newsletterChannel} onChange={(newsletterChannel) => setMultichannel({ newsletterChannel })} />
+      )}
+
+      <div className="grid gap-2 md:grid-cols-4">
+        <CommunityMetricCard label="Destinos" value={String(communityData.metrics.totalDestinations)} detail={`${communityData.metrics.activeDestinations} ativos`} tone="green" />
+        <CommunityMetricCard label="Grupos" value={String(communityData.metrics.groups)} detail="sincronizados" tone="cyan" />
+        <CommunityMetricCard label="Campanhas" value={String(communityData.metrics.scheduledCampaigns)} detail="agendadas" tone="yellow" />
+        <CommunityMetricCard label="Eventos 24h" value={String(communityData.metrics.observedEvents24h)} detail={`${communityData.metrics.pendingApprovals} aprovacoes`} tone="purple" />
+      </div>
+
+      <div className="grid gap-3 xl:grid-cols-[0.92fr_1.08fr]">
+        <Panel
+          title="Grupos e canais autorizados"
+          eyebrow="Sincronizar / permissao / modo"
+          action={
+            <div className="flex gap-2">
+              <ActionButton icon={<RefreshCw size={14} />} label="Atualizar" loading={communityLoading === "load"} onClick={refreshCommunity} />
+              <ActionButton icon={<Radio size={14} />} label="Sincronizar" loading={communityLoading === "sync"} onClick={syncDestinations} tone="primary" />
+            </div>
+          }
+        >
+          <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_140px]">
+            <label className="flex h-9 items-center gap-2 rounded-md border border-[var(--admin-border)] bg-white px-2.5">
+              <Search size={14} className="text-[var(--admin-muted)]" />
+              <input
+                value={destinationSearch}
+                onChange={(event) => setDestinationSearch(event.target.value)}
+                placeholder="Buscar grupo, canal ou JID"
+                className="min-w-0 flex-1 bg-transparent text-xs outline-none"
+              />
+            </label>
+            <ActionButton
+              disabled={!filteredDestinations.length}
+              icon={<CheckCircle2 size={14} />}
+              label="Selecionar ativos"
+              onClick={() => updateDraft({ destinationIds: filteredDestinations.filter((item) => item.status === "active").map((item) => item.id) })}
+            />
+          </div>
+
+          <div className="mt-2 max-h-[460px] space-y-2 overflow-y-auto pr-1">
+            {filteredDestinations.length ? (
+              filteredDestinations.map((destination) => {
+                const selected = campaignDraft.destinationIds.includes(destination.id);
+                const itemLoading = communityLoading === `destination:${destination.id}`;
+                return (
+                  <div
+                    key={destination.id}
+                    className={cn(
+                      "rounded-lg border p-2.5 transition",
+                      selected
+                        ? "border-[rgba(200,90,31,0.32)] bg-[rgba(200,90,31,0.07)]"
+                        : "border-[var(--admin-border)] bg-white"
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => toggleDestination(destination.id)}
+                        className="grid min-w-0 flex-1 grid-cols-[20px_minmax(0,1fr)] gap-2 text-left"
+                      >
+                        <span
+                          className={cn(
+                            "mt-0.5 grid size-5 place-items-center rounded border text-[10px] font-bold",
+                            selected
+                              ? "border-[var(--admin-cyan)] bg-[rgba(200,90,31,0.12)] text-[var(--admin-cyan)]"
+                              : "border-[var(--admin-border)] text-[var(--admin-muted)]"
+                          )}
+                        >
+                          {selected ? "OK" : ""}
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block truncate text-sm font-semibold text-[var(--admin-foreground)]">{destination.name}</span>
+                          <span className="mt-0.5 block truncate text-[10px] text-[var(--admin-muted)]">{destination.jid}</span>
+                        </span>
+                      </button>
+                      <DestinationBadge status={destination.status} />
+                    </div>
+
+                    <div className="mt-2 grid gap-2 md:grid-cols-2">
+                      <SelectField
+                        label="Modo"
+                        options={replyModeOptions}
+                        value={destination.replyMode}
+                        onChange={(replyMode) => updateDestination(destination.id, { replyMode })}
+                      />
+                      <SelectField
+                        label="Status"
+                        options={statusOptions}
+                        value={destination.status}
+                        onChange={(status) => updateDestination(destination.id, { status })}
+                      />
+                    </div>
+
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      <MiniToggle
+                        checked={destination.respondWithMention}
+                        label="@ resposta"
+                        loading={itemLoading}
+                        onClick={() => updateDestination(destination.id, { respondWithMention: !destination.respondWithMention })}
+                      />
+                      <MiniToggle
+                        checked={destination.humanApprovalRequired}
+                        label="aprovar"
+                        loading={itemLoading}
+                        onClick={() => updateDestination(destination.id, { humanApprovalRequired: !destination.humanApprovalRequired })}
+                      />
+                      <MiniToggle
+                        checked={destination.mentionAllAllowed}
+                        label="@ todos"
+                        loading={itemLoading}
+                        onClick={() => updateDestination(destination.id, { mentionAllAllowed: !destination.mentionAllAllowed })}
+                      />
+                      <span className="ml-auto text-[10px] text-[var(--admin-muted)]">{destination.participantCount || 0} membros</span>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="rounded-lg border border-dashed border-[var(--admin-border)] bg-white p-6 text-center text-xs text-[var(--admin-muted)]">
+                Nenhum grupo/canal sincronizado ainda. Clique em Sincronizar.
+              </div>
+            )}
+          </div>
+        </Panel>
+
+        <div className="space-y-3">
+          <Panel title="Campanha para grupos e canais" eyebrow="Texto / agenda / destinos" action={<StatusPill ok={canCreateCampaign} label={`${campaignDraft.destinationIds.length} destinos`} />}>
+            <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_170px]">
+              <Field label="Nome" value={campaignDraft.name} onChange={(name) => updateDraft({ name })} />
+              <SelectField label="Tipo" value={campaignDraft.campaignType} options={campaignTypeOptions} onChange={(campaignType) => updateDraft({ campaignType })} />
+            </div>
+            <div className="mt-2 grid gap-2 md:grid-cols-[minmax(0,1fr)_170px]">
+              <Field
+                label="Agendar para"
+                value={campaignDraft.scheduledFor}
+                onChange={(scheduledFor) => updateDraft({ scheduledFor })}
+                placeholder="2026-07-29T09:00:00-03:00"
+              />
+              <NumberField label="Limite/dia" value={campaignDraft.dailyLimit} onChange={(dailyLimit) => updateDraft({ dailyLimit })} />
+            </div>
+            <div className="mt-2">
+              <TextAreaField label="Mensagem" rows={5} value={campaignDraft.bodyText} onChange={(bodyText) => updateDraft({ bodyText })} />
+            </div>
+            <div className="mt-2 grid gap-2 md:grid-cols-2">
+              <ToggleTile
+                checked={campaignDraft.aiEnabled}
+                detail="Gera variacoes por tema em fase seguinte."
+                title="Campanha com IA"
+                onChange={(aiEnabled) => updateDraft({ aiEnabled })}
+              />
+              <ToggleTile
+                checked={campaignDraft.voiceEnabled}
+                detail="Usa voz clonada quando o motor estiver liberado."
+                title="Audio com voz clonada"
+                onChange={(voiceEnabled) => updateDraft({ voiceEnabled })}
+              />
+            </div>
+            <div className="mt-2 grid gap-2 md:grid-cols-2">
+              <MiniToggle
+                checked={campaignDraft.mentionAllRequested}
+                label="solicitar @ todos"
+                onClick={() => updateDraft({ mentionAllRequested: !campaignDraft.mentionAllRequested, mentionAllConfirmed: false })}
+              />
+              <MiniToggle
+                checked={campaignDraft.mentionAllConfirmed}
+                label="confirmar trava @ todos"
+                onClick={() => updateDraft({ mentionAllConfirmed: !campaignDraft.mentionAllConfirmed })}
+              />
+            </div>
+            <div className="mt-2 rounded-md border border-[var(--admin-border)] bg-white px-3 py-2 text-[11px] text-[var(--admin-muted)]">
+              {selectedTargetNames.length ? selectedTargetNames.join(", ") : "Selecione os grupos/canais na lista ao lado."}
+            </div>
+            <div className="mt-2 flex justify-end">
+              <ActionButton
+                disabled={!canCreateCampaign}
+                icon={<Send size={14} />}
+                label="Criar campanha"
+                loading={communityLoading === "campaign"}
+                onClick={createCampaign}
+                tone="primary"
+              />
+            </div>
+          </Panel>
+
+          <Panel title="Chaves operacionais" eyebrow="Status local do agente">
+            <div className="grid gap-2 md:grid-cols-4">
+              <ChannelStatus label="Grupos" value={config.groupStatus} />
+              <ChannelStatus label="Status" value={config.statusStatus} />
+              <ChannelStatus label="Canais" value={config.channelsStatus} />
+              <ChannelStatus label="Campanhas" value={config.campaignsStatus} />
+            </div>
+            <div className="mt-2 grid gap-2 md:grid-cols-2">
+              <SelectField label="Grupos" value={config.groupStatus} options={channelStatusOptions} onChange={(groupStatus) => setMultichannel({ groupStatus: groupStatus as WillianMultichannelConfig["groupStatus"] })} />
+              <SelectField label="Campanhas" value={config.campaignsStatus} options={channelStatusOptions} onChange={(campaignsStatus) => setMultichannel({ campaignsStatus: campaignsStatus as WillianMultichannelConfig["campaignsStatus"] })} />
+            </div>
+          </Panel>
+
+          <Panel title="Auditoria recente" eyebrow="Eventos / campanhas / pendencias">
+            <div className="grid gap-2 md:grid-cols-2">
+              <div className="rounded-lg border border-[var(--admin-border)] bg-white p-2">
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Campanhas</p>
+                <div className="mt-2 space-y-1.5">
+                  {communityData.campaigns.slice(0, 4).map((campaign) => (
+                    <div key={campaign.id} className="flex items-center justify-between gap-2 rounded-md bg-[rgba(184,122,22,0.06)] px-2 py-1.5">
+                      <span className="min-w-0">
+                        <span className="block truncate text-xs font-semibold text-[var(--admin-foreground)]">{campaign.name}</span>
+                        <span className="text-[10px] text-[var(--admin-muted)]">{campaign.targetCount} destinos - {campaign.status}</span>
+                      </span>
+                      <span className="text-[10px] font-bold text-[var(--admin-green)]">{campaign.sentCount}/{campaign.targetCount}</span>
+                    </div>
+                  ))}
+                  {!communityData.campaigns.length && <p className="py-4 text-center text-xs text-[var(--admin-muted)]">Sem campanhas criadas.</p>}
+                </div>
+              </div>
+              <div className="rounded-lg border border-[var(--admin-border)] bg-white p-2">
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Eventos de grupo</p>
+                <div className="mt-2 space-y-1.5">
+                  {communityData.recentEvents.slice(0, 4).map((event) => (
+                    <div key={event.id} className="rounded-md bg-[rgba(184,122,22,0.06)] px-2 py-1.5">
+                      <p className="truncate text-xs font-semibold text-[var(--admin-foreground)]">{event.participantName || event.participantPhone || event.providerChatId}</p>
+                      <p className="line-clamp-1 text-[10px] text-[var(--admin-muted)]">{event.text || event.messageType}</p>
+                    </div>
+                  ))}
+                  {!communityData.recentEvents.length && <p className="py-4 text-center text-xs text-[var(--admin-muted)]">Sem eventos observados.</p>}
+                </div>
+              </div>
+            </div>
+          </Panel>
         </div>
-        <div className="mt-3">
-          <TextAreaField label="Texto para canal" rows={5} value={config.newsletterMessage} onChange={(newsletterMessage) => setMultichannel({ newsletterMessage })} />
-        </div>
-      </Panel>
+      </div>
     </div>
+  );
+}
+
+function CommunityMetricCard({
+  detail,
+  label,
+  tone,
+  value,
+}: {
+  detail: string;
+  label: string;
+  tone: "cyan" | "green" | "purple" | "yellow";
+  value: string;
+}) {
+  const toneClass: Record<typeof tone, string> = {
+    cyan: "border-[rgba(200,90,31,0.20)] bg-[rgba(200,90,31,0.06)] text-[var(--admin-cyan)]",
+    green: "border-[rgba(34,197,94,0.22)] bg-[rgba(34,197,94,0.08)] text-[var(--admin-green)]",
+    purple: "border-[rgba(139,92,246,0.20)] bg-[rgba(139,92,246,0.07)] text-[var(--admin-purple)]",
+    yellow: "border-[rgba(234,179,8,0.24)] bg-[rgba(234,179,8,0.08)] text-[var(--admin-yellow)]",
+  };
+
+  return (
+    <div className={cn("rounded-lg border px-3 py-2", toneClass[tone])}>
+      <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--admin-muted)]">{label}</p>
+      <p className="mt-1 font-mono text-xl font-bold">{value}</p>
+      <p className="text-[10px] text-[var(--admin-muted)]">{detail}</p>
+    </div>
+  );
+}
+
+function DestinationBadge({ status }: { status: WhatsAppCommunityDestination["status"] }) {
+  const labels: Record<WhatsAppCommunityDestination["status"], string> = {
+    active: "Ativo",
+    archived: "Arquivado",
+    blocked: "Bloqueado",
+    paused: "Pausado",
+  };
+  const ok = status === "active";
+  const blocked = status === "blocked";
+
+  return (
+    <span
+      className={cn(
+        "inline-flex h-6 shrink-0 items-center rounded-full border px-2 text-[9px] font-bold uppercase tracking-[0.08em]",
+        ok
+          ? "border-[rgba(34,197,94,0.30)] bg-[rgba(34,197,94,0.08)] text-[var(--admin-green)]"
+          : blocked
+            ? "border-[rgba(239,68,68,0.28)] bg-[rgba(239,68,68,0.08)] text-[var(--admin-red)]"
+            : "border-[rgba(234,179,8,0.28)] bg-[rgba(234,179,8,0.08)] text-[var(--admin-yellow)]"
+      )}
+    >
+      {labels[status] || status}
+    </span>
+  );
+}
+
+function MiniToggle({
+  checked,
+  label,
+  loading,
+  onClick,
+}: {
+  checked: boolean;
+  label: string;
+  loading?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={loading}
+      onClick={onClick}
+      className={cn(
+        "inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-[10px] font-bold uppercase tracking-[0.06em] transition disabled:opacity-50",
+        checked
+          ? "border-[rgba(34,197,94,0.30)] bg-[rgba(34,197,94,0.08)] text-[var(--admin-green)]"
+          : "border-[var(--admin-border)] bg-white text-[var(--admin-muted)] hover:border-[var(--admin-cyan)]"
+      )}
+    >
+      {loading ? <Loader2 size={12} className="animate-spin" /> : <span className={cn("size-1.5 rounded-full", checked ? "bg-[var(--admin-green)]" : "bg-[var(--admin-muted)]")} />}
+      {label}
+    </button>
   );
 }
 

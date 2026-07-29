@@ -37,6 +37,7 @@ import {
   maybeAnalyzeInboundMedia,
   type InboundMediaAnalysisResult,
 } from "@/lib/whatsapp/inbound-media-analysis";
+import { recordWhatsAppGroupMessageEvent } from "@/lib/whatsapp/group-campaigns";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -988,8 +989,29 @@ function extractWebhookMessage(payload: Record<string, unknown>) {
   const profileImageUrl = extractLeadProfileImageUrl(data);
   const fromApi = findFirstBoolean(data, ["wasSentByApi", "fromMe", "isFromMe", "fromApi"]);
   const isGroup = findFirstBoolean(data, ["isGroup", "isGroupYes"]);
+  const participantJid = isGroup
+    ? findFirstString(data, ["participant", "participantJid", "participant_jid", "author", "sender", "senderJid", "sender_jid"])
+    : "";
+  const participantPhone = isGroup ? normalizeWhatsAppNumber(participantJid.replace(/@.+$/, "") || rawPhone.replace(/@.+$/, "")) : phone;
+  const groupName = isGroup ? findFirstString(data, ["groupName", "group_name", "subject", "chatName", "chat_name", "title"]) : "";
 
-  return { providerMessageId, phone, name, text, messageType, mediaUrl, mediaMimeType, transcript, profileImageUrl, fromApi, isGroup, chatId };
+  return {
+    providerMessageId,
+    phone,
+    name,
+    text,
+    messageType,
+    mediaUrl,
+    mediaMimeType,
+    transcript,
+    profileImageUrl,
+    fromApi,
+    isGroup,
+    chatId,
+    participantJid,
+    participantPhone,
+    groupName,
+  };
 }
 
 function isAudioMessage(messageType: string, mimeType: string) {
@@ -1372,13 +1394,63 @@ async function persistWebhookCrm(
     };
   }
 
-  if (!message.phone || message.fromApi || message.isGroup) {
+  if (message.fromApi) {
     await markEventProcessed(supabase, eventId, "skipped");
     return {
       ok: true,
       eventId,
       skipped: true,
-      reason: message.isGroup ? "group_message" : message.fromApi ? "sent_by_api" : "missing_phone",
+      reason: "sent_by_api",
+      instanceId,
+      providerInstanceId,
+      agentKey,
+      inbound: message,
+    };
+  }
+
+  if (message.isGroup) {
+    const groupResult = await recordWhatsAppGroupMessageEvent({
+      agentKey,
+      instanceId,
+      webhookEventId: eventId,
+      destinationJid: message.chatId,
+      destinationName: message.groupName,
+      providerMessageId: message.providerMessageId,
+      participantJid: message.participantJid,
+      participantPhone: message.participantPhone || message.phone,
+      participantName: message.name,
+      messageType: message.messageType,
+      text: message.text || message.transcript,
+      mediaUrl: message.mediaUrl,
+      mediaMimeType: message.mediaMimeType,
+      payload,
+    });
+    await markEventProcessed(
+      supabase,
+      eventId,
+      groupResult.ok ? "processed" : "skipped",
+      groupResult.ok ? undefined : groupResult.reason
+    );
+    return {
+      ok: true,
+      eventId,
+      skipped: true,
+      reason: groupResult.ok ? "group_observed" : "group_observe_failed",
+      groupResult,
+      instanceId,
+      providerInstanceId,
+      agentKey,
+      inbound: message,
+    };
+  }
+
+  if (!message.phone) {
+    await markEventProcessed(supabase, eventId, "skipped");
+    return {
+      ok: true,
+      eventId,
+      skipped: true,
+      reason: "missing_phone",
       instanceId,
       providerInstanceId,
       agentKey,

@@ -82,6 +82,31 @@ export type WhatsAppAgentSendOptions = {
   readMessages?: boolean;
 };
 
+export type ConnectyHubWhatsAppDestinationType = "group" | "channel";
+
+export type ConnectyHubWhatsAppGroupParticipant = {
+  jid: string;
+  phone: string;
+  displayName: string;
+  isAdmin: boolean;
+  isSuperAdmin: boolean;
+  raw: unknown;
+};
+
+export type ConnectyHubWhatsAppGroupSummary = {
+  jid: string;
+  name: string;
+  description: string;
+  participantCount: number;
+  adminCount: number;
+  isAnnouncement: boolean;
+  isCommunity: boolean;
+  isAdmin: boolean;
+  inviteUrl: string;
+  participants: ConnectyHubWhatsAppGroupParticipant[];
+  raw: unknown;
+};
+
 export type WhatsAppAgentChatPresence = "composing" | "recording" | "paused";
 export type WhatsAppAgentInstancePresence = "available" | "unavailable";
 
@@ -953,6 +978,8 @@ async function sendConnectyHubWhatsAppMessage(input: {
   idempotencyKey?: string;
   actionButton?: WhatsAppActionButtonInput;
   sendOptions?: WhatsAppAgentSendOptions;
+  mentions?: string[];
+  replyId?: string;
   timeoutMs?: number;
 }): Promise<ConnectyHubWhatsAppMessageResult> {
   const button = normalizeActionButton(input.actionButton, input.text);
@@ -991,6 +1018,8 @@ async function sendConnectyHubWhatsAppMessage(input: {
           number: input.number,
           text: input.text,
           linkPreview: true,
+          ...(input.mentions?.length ? { mentions: input.mentions.join(",") } : {}),
+          ...(input.replyId ? { replyid: input.replyId } : {}),
           track_source: "betel_ai",
           track_id: input.trackId,
           ...sendFields,
@@ -1010,6 +1039,8 @@ async function sendConnectyHubWhatsAppMessage(input: {
         number: input.number,
         text: input.text,
         linkPreview: true,
+        ...(input.mentions?.length ? { mentions: input.mentions.join(",") } : {}),
+        ...(input.replyId ? { replyid: input.replyId } : {}),
         trackId: input.trackId,
         delay: sendFields.delay,
         readchat: sendFields.readchat,
@@ -1020,6 +1051,215 @@ async function sendConnectyHubWhatsAppMessage(input: {
     });
 
     return { payload, usedIdempotencyKey, sentAsButton: false, endpoint: "legacy" };
+  }
+}
+
+function firstArrayPayload(payload: unknown, keys: string[]): unknown[] {
+  if (Array.isArray(payload)) return payload;
+  if (!payload || typeof payload !== "object") return [];
+
+  const record = asRecord(payload);
+  for (const key of keys) {
+    const value = record[key];
+    if (Array.isArray(value)) return value;
+  }
+  for (const [key, value] of Object.entries(record)) {
+    if (keys.some((candidate) => candidate.toLowerCase() === key.toLowerCase()) && Array.isArray(value)) {
+      return value;
+    }
+  }
+  for (const value of Object.values(record)) {
+    if (value && typeof value === "object") {
+      const nested = firstArrayPayload(value, keys);
+      if (nested.length) return nested;
+    }
+  }
+  return [];
+}
+
+function readNumberLike(value: unknown, fallback = 0) {
+  const numeric = typeof value === "number" ? value : Number(value || "");
+  return Number.isFinite(numeric) ? Math.trunc(numeric) : fallback;
+}
+
+function normalizeWhatsappJid(value: unknown) {
+  const clean = cleanString(value);
+  if (!clean) return "";
+  if (clean.includes("@")) return clean;
+  const digits = normalizeWhatsAppNumber(clean);
+  return digits || clean;
+}
+
+function normalizeGroupParticipant(value: unknown): ConnectyHubWhatsAppGroupParticipant {
+  const record = asRecord(value);
+  const jid = normalizeWhatsappJid(
+    record.id ||
+      record.jid ||
+      record.participant ||
+      record.user ||
+      record.phone ||
+      record.number
+  );
+  const participantPhone = normalizeWhatsAppNumber(jid.replace(/@.+$/, "") || cleanString(record.phone || record.number));
+  const role = cleanString(record.role || record.type || record.admin).toLowerCase();
+
+  return {
+    jid,
+    phone: participantPhone,
+    displayName: cleanString(record.name || record.pushName || record.displayName || record.notifyName),
+    isAdmin: record.isAdmin === true || role === "admin" || role === "superadmin" || role === "super_admin",
+    isSuperAdmin: record.isSuperAdmin === true || role === "superadmin" || role === "super_admin" || role === "owner",
+    raw: sanitizePayload(value),
+  };
+}
+
+function normalizeConnectyHubGroup(value: unknown): ConnectyHubWhatsAppGroupSummary {
+  const record = asRecord(value);
+  const participants = firstArrayPayload(record, ["participants", "members", "users"]).map(normalizeGroupParticipant);
+  const jid = normalizeWhatsappJid(
+    record.id ||
+      record.jid ||
+      record.groupJid ||
+      record.group_jid ||
+      record.chatid ||
+      record.chatId ||
+      record.remoteJid
+  );
+  const adminCount = participants.filter((participant) => participant.isAdmin || participant.isSuperAdmin).length;
+
+  return {
+    jid,
+    name: cleanString(record.subject || record.name || record.title || record.groupName, jid || "Grupo WhatsApp"),
+    description: cleanString(record.desc || record.description || record.groupDescription),
+    participantCount: readNumberLike(record.size || record.participantCount || record.participantsCount, participants.length),
+    adminCount: readNumberLike(record.adminCount || record.adminsCount, adminCount),
+    isAnnouncement: Boolean(record.announce || record.isAnnouncement || record.announcement),
+    isCommunity: Boolean(record.isCommunity || record.community || record.isCommunityAnnounce),
+    isAdmin: Boolean(record.isAdmin || record.owner || record.isOwner),
+    inviteUrl: cleanString(record.inviteUrl || record.invite_url || record.inviteCode || record.invite),
+    participants,
+    raw: sanitizePayload(value),
+  };
+}
+
+export async function listConnectyHubWhatsAppGroups(input: {
+  agentKey?: string;
+  instanceId?: string;
+  force?: boolean;
+  noParticipants?: boolean;
+  limit?: number;
+  search?: string;
+}): Promise<{ ok: boolean; instanceId: string; groups: ConnectyHubWhatsAppGroupSummary[]; raw: unknown }> {
+  const agentKey = cleanString(input.agentKey, WILLIAN_AGENT_KEY);
+  const { config, instanceId } = await resolveAgentProviderInstanceId(agentKey, input.instanceId);
+
+  if (!config.apiToken || !instanceId) {
+    throw new Error(!config.apiToken ? "CONNECTYHUB_API_TOKEN ausente." : "Instancia ConnectyHub ausente para listar grupos.");
+  }
+
+  const query = new URLSearchParams({
+    instanceId,
+    force: input.force ? "true" : "false",
+    noparticipants: input.noParticipants ? "true" : "false",
+  });
+  if (input.search) query.set("search", input.search);
+
+  let payload: unknown;
+  try {
+    payload = await connectyhubRequest(`/provider/group/list?${query.toString()}`, {
+      method: "GET",
+      timeoutMs: 20000,
+    });
+  } catch {
+    payload = await connectyhubRequest("/provider/group/list", {
+      body: {
+        instanceId,
+        payload: {
+          force: Boolean(input.force),
+          noParticipants: Boolean(input.noParticipants),
+          limit: input.limit || 1000,
+          ...(input.search ? { search: input.search } : {}),
+        },
+      },
+      timeoutMs: 20000,
+    });
+  }
+
+  const groups = firstArrayPayload(payload, ["groups", "data", "items", "result", "results"])
+    .map(normalizeConnectyHubGroup)
+    .filter((group) => Boolean(group.jid));
+
+  return {
+    ok: true,
+    instanceId,
+    groups,
+    raw: sanitizePayload(payload),
+  };
+}
+
+export async function sendWhatsAppDestinationText(input: {
+  agentKey: string;
+  instanceId?: string;
+  destinationJid: string;
+  text: string;
+  trackId: string;
+  mentions?: string[];
+  replyId?: string;
+  sendOptions?: WhatsAppAgentSendOptions;
+}): Promise<ConnectyHubDeliveryResult> {
+  const startedMs = Date.now();
+  const processedAt = new Date().toISOString();
+  const destinationJid = normalizeWhatsappJid(input.destinationJid);
+  const { config, instanceId } = await resolveAgentProviderInstanceId(input.agentKey, input.instanceId);
+
+  if (!config.apiToken || !instanceId || !destinationJid || !input.text.trim()) {
+    return {
+      ok: false,
+      providerStatus: !config.apiToken
+        ? "missing_connectyhub_token"
+        : !instanceId
+          ? "missing_connectyhub_instance"
+          : !destinationJid
+            ? "missing_destination_jid"
+            : "missing_reply_text",
+      endpointConfigured: Boolean(config.apiToken && instanceId),
+      latencyMs: Math.max(Date.now() - startedMs, 1),
+      processedAt,
+      errorMessage: "Mensagem WhatsApp de grupo/canal incompleta.",
+    };
+  }
+
+  try {
+    const delivery = await sendConnectyHubWhatsAppMessage({
+      instanceId,
+      number: destinationJid,
+      text: input.text.trim(),
+      trackId: input.trackId,
+      idempotencyKey: input.trackId,
+      mentions: input.mentions?.map(normalizeWhatsAppNumber).filter(Boolean),
+      replyId: cleanString(input.replyId),
+      sendOptions: input.sendOptions,
+      timeoutMs: 20000,
+    });
+
+    return {
+      ok: true,
+      providerStatus: delivery.usedIdempotencyKey ? "connectyhub_destination_accepted" : "connectyhub_destination_accepted_without_idempotency",
+      endpointConfigured: true,
+      latencyMs: Math.max(Date.now() - startedMs, 1),
+      processedAt,
+      externalDeliveryId: extractDeliveryId(delivery.payload),
+      responsePreview: preview(JSON.stringify(sanitizePayload(delivery.payload))),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      providerStatus: "connectyhub_destination_error",
+      endpointConfigured: true,
+      latencyMs: Math.max(Date.now() - startedMs, 1),
+      processedAt,
+      errorMessage: error instanceof Error ? error.message : "Erro desconhecido na ConnectyHub.",
+    };
   }
 }
 
