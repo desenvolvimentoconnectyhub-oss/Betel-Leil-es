@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import {
   sendWhatsAppAgentMediaReply,
   type ConnectyHubDeliveryResult,
+  type WhatsAppAgentSendOptions,
 } from "@/lib/communication/connectyhub-client";
 import type { WillianAgentConfig } from "@/lib/communication/willian-types";
 import { getElevenLabsConfig, synthesizeElevenLabsPreview } from "@/lib/voice/elevenlabs";
@@ -131,6 +132,7 @@ export async function sendWhatsAppAgentVoiceReply(input: {
   text: string;
   trackId: string;
   decision: WhatsAppVoiceDecision;
+  sendOptions?: WhatsAppAgentSendOptions;
 }): Promise<WhatsAppVoiceDeliveryResult> {
   const startedMs = Date.now();
   const processedAt = new Date().toISOString();
@@ -160,6 +162,7 @@ export async function sendWhatsAppAgentVoiceReply(input: {
       type: "myaudio",
       file: `data:${audio.contentType || "audio/mpeg"};base64,${audio.audioBase64}`,
       trackId: input.trackId,
+      sendOptions: input.sendOptions,
     });
 
     return {

@@ -4,7 +4,10 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { getGeminiApiKey, getGeminiModel } from "@/lib/ai/config";
 import {
   getConnectyHubWhatsappAgentControlStatus,
+  sendWhatsAppAgentChatPresence,
   sendWhatsAppAgentReply,
+  setWhatsAppAgentInstancePresence,
+  type ConnectyHubDeliveryResult,
 } from "@/lib/communication/connectyhub-client";
 import { getWhatsAppAgentConfig } from "@/lib/communication/willian-agent-config";
 import {
@@ -20,6 +23,10 @@ import {
   resolveWhatsAppVoiceResponse,
   sendWhatsAppAgentVoiceReply,
 } from "@/lib/whatsapp/voice-response";
+import {
+  buildWhatsAppHumanizationPlan,
+  type WhatsAppHumanizationPlan,
+} from "@/lib/whatsapp/humanization-runtime";
 
 type DbRow = Record<string, unknown>;
 
@@ -260,6 +267,64 @@ async function insertRuntimeEvent(input: {
   });
 }
 
+async function startFollowUpHumanizationSignals(input: {
+  agentKey: string;
+  instanceId: string;
+  number: string;
+  followUpId: string;
+  conversationId: string;
+  leadId: string;
+  plan: WhatsAppHumanizationPlan;
+}) {
+  const signalPromises: Array<Promise<ConnectyHubDeliveryResult>> = [];
+
+  if (input.plan.setAvailable) {
+    signalPromises.push(
+      setWhatsAppAgentInstancePresence({
+        agentKey: input.agentKey,
+        instanceId: input.instanceId,
+        presence: "available",
+      })
+    );
+  }
+
+  for (const part of input.plan.parts) {
+    if (part.presenceDelayMs <= 0) continue;
+    signalPromises.push(
+      sendWhatsAppAgentChatPresence({
+        agentKey: input.agentKey,
+        instanceId: input.instanceId,
+        number: input.number,
+        presence: part.presence,
+        delayMs: input.plan.mode === "audio" ? part.presenceDelayMs + 12000 : part.presenceDelayMs,
+      })
+    );
+  }
+
+  const signals = await Promise.all(signalPromises);
+  if (signals.length) {
+    await insertRuntimeEvent({
+      agentKey: input.agentKey,
+      eventType: "whatsapp_followup_humanization_signals",
+      status: signals.every((signal) => signal.ok) ? "accepted" : "partial",
+      message: "Sinais de presenca e temporizacao enviados antes do follow-up WhatsApp.",
+      payload: {
+        followUpId: input.followUpId,
+        conversationId: input.conversationId,
+        leadId: input.leadId,
+        plan: {
+          ...input.plan.summary,
+          mode: input.plan.mode,
+          enabled: input.plan.enabled,
+        },
+        signals,
+      },
+    });
+  }
+
+  return signals;
+}
+
 function skippedItem(followUp: DbRow, reason: string): WhatsAppFollowUpWorkerItem {
   return {
     followUpId: cleanString(followUp.id),
@@ -445,6 +510,22 @@ export async function processWhatsAppFollowUps(input: {
       seed: `${agentKey}:${followUpId}:${conversationId}:${leadId}:${generated.text}`,
       source: "followup",
     });
+    const humanizationPlan = buildWhatsAppHumanizationPlan({
+      config,
+      inboundText: historyForPrompt(messages),
+      replyParts: [generated.text],
+      mode: voiceDecision.mode === "audio" ? "audio" : "text",
+      seed: `${agentKey}:${followUpId}:${conversationId}:${leadId}:${generated.text}`,
+    });
+    await startFollowUpHumanizationSignals({
+      agentKey,
+      instanceId: providerInstanceId,
+      number: cleanString(lead.phone),
+      followUpId,
+      conversationId,
+      leadId,
+      plan: humanizationPlan,
+    });
     const audioDelivery = voiceDecision.mode === "audio"
       ? await sendWhatsAppAgentVoiceReply({
           agentKey,
@@ -453,6 +534,7 @@ export async function processWhatsAppFollowUps(input: {
           text: generated.text,
           trackId: `${trackId}-audio`,
           decision: voiceDecision,
+          sendOptions: humanizationPlan.parts[0]?.sendOptions,
         })
       : null;
     const delivery = audioDelivery?.ok
@@ -468,6 +550,7 @@ export async function processWhatsAppFollowUps(input: {
           number: cleanString(lead.phone),
           text: generated.text,
           trackId,
+          sendOptions: humanizationPlan.parts[0]?.sendOptions,
         });
     const deliveryMode = audioDelivery?.ok ? "audio" : "text";
     const sentAt = new Date().toISOString();
@@ -499,6 +582,12 @@ export async function processWhatsAppFollowUps(input: {
             : voiceDecision.fallbackReason || null,
         audioDelivery,
         delivery,
+        humanizationPlan: {
+          ...humanizationPlan.summary,
+          mode: humanizationPlan.mode,
+          enabled: humanizationPlan.enabled,
+          fallbackToText: voiceDecision.mode === "audio" && !audioDelivery?.ok,
+        },
       },
     });
 

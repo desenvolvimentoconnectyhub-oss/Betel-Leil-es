@@ -7,7 +7,10 @@ import {
   downloadWhatsAppAgentMessageMedia,
   getConnectyHubWhatsappAgentControlStatus,
   normalizeWhatsAppNumber,
+  sendWhatsAppAgentChatPresence,
   sendWhatsAppAgentReply,
+  setWhatsAppAgentInstancePresence,
+  type ConnectyHubDeliveryResult,
 } from "@/lib/communication/connectyhub-client";
 import { getWhatsAppAgentConfig } from "@/lib/communication/willian-agent-config";
 import type { WillianAgentConfig } from "@/lib/communication/willian-types";
@@ -19,6 +22,10 @@ import {
   getWhatsAppGlobalBehaviorConfig,
 } from "@/lib/communication/whatsapp-global-behavior-config";
 import { buildWhatsAppAgentKnowledgeContext } from "@/lib/whatsapp/agent-knowledge";
+import {
+  buildWhatsAppHumanizationPlan,
+  type WhatsAppHumanizationPlan,
+} from "@/lib/whatsapp/humanization-runtime";
 import {
   isWhatsAppAudioMessage,
   resolveWhatsAppVoiceResponse,
@@ -144,6 +151,74 @@ function splitWhatsAppReply(text: string) {
 
   if (current) parts.push(current);
   return parts.slice(0, 6);
+}
+
+async function startWhatsAppHumanizationSignals(
+  supabase: NonNullable<ReturnType<typeof getSupabaseAdminClient>>,
+  input: {
+    agentKey: string;
+    instanceId: string;
+    number: string;
+    eventId: string;
+    leadId: string;
+    conversationId: string;
+    plan: WhatsAppHumanizationPlan;
+  }
+) {
+  const signalPromises: Array<Promise<ConnectyHubDeliveryResult>> = [];
+
+  if (input.plan.setAvailable) {
+    signalPromises.push(
+      setWhatsAppAgentInstancePresence({
+        agentKey: input.agentKey,
+        instanceId: input.instanceId,
+        presence: "available",
+      })
+    );
+  }
+
+  for (const part of input.plan.parts) {
+    if (part.presenceDelayMs <= 0) continue;
+    signalPromises.push(
+      sendWhatsAppAgentChatPresence({
+        agentKey: input.agentKey,
+        instanceId: input.instanceId,
+        number: input.number,
+        presence: part.presence,
+        delayMs: input.plan.mode === "audio" ? part.presenceDelayMs + 12000 : part.presenceDelayMs,
+      })
+    );
+  }
+
+  const signals = await Promise.all(signalPromises);
+  if (signals.length) {
+    await insertRuntimeEvent(supabase, {
+      agentKey: input.agentKey,
+      eventType: "whatsapp_agent_humanization_signals",
+      status: signals.every((signal) => signal.ok) ? "accepted" : "partial",
+      message: "Sinais de presenca e temporizacao enviados antes da resposta WhatsApp.",
+      payload: {
+        eventId: input.eventId,
+        leadId: input.leadId,
+        conversationId: input.conversationId,
+        plan: {
+          ...input.plan.summary,
+          mode: input.plan.mode,
+          enabled: input.plan.enabled,
+          parts: input.plan.parts.map((part) => ({
+            index: part.index + 1,
+            presence: part.presence,
+            presenceDelayMs: part.presenceDelayMs,
+            sendDelayMs: part.sendOptions.delayMs || 0,
+            textLength: part.text.length,
+          })),
+        },
+        signals,
+      },
+    });
+  }
+
+  return signals;
 }
 
 function formatList(items: string[]) {
@@ -1840,12 +1915,29 @@ async function processWhatsappAgentRuntime(
       reason: "lead_requested_human",
     });
     const reply = handoffReply();
+    const handoffPlan = buildWhatsAppHumanizationPlan({
+      config,
+      inboundText: text,
+      replyParts: [reply],
+      mode: "text",
+      seed: `${trackId}-handoff:${phone}:${reply}`,
+    });
+    await startWhatsAppHumanizationSignals(supabase, {
+      agentKey,
+      instanceId: providerInstanceId,
+      number: phone,
+      eventId,
+      leadId,
+      conversationId,
+      plan: handoffPlan,
+    });
     const delivery = await sendWhatsAppAgentReply({
       agentKey,
       instanceId: providerInstanceId,
       number: phone,
       text: reply,
       trackId: `${trackId}-handoff`,
+      sendOptions: handoffPlan.parts[0]?.sendOptions,
     });
     await insertOutboundMessages(supabase, {
       conversationId,
@@ -1903,7 +1995,29 @@ async function processWhatsappAgentRuntime(
     seed: `${agentKey}:${conversationId}:${eventId}:${phone}:${generated.text}`,
     source: "runtime",
   });
-  const audioDelivery = voiceDecision.mode === "audio"
+  const wantsAudio = voiceDecision.mode === "audio";
+  const plannedReplyParts = wantsAudio
+    ? [generated.text]
+    : config.behavior.splitReplies
+      ? splitWhatsAppReply(generated.text)
+      : [generated.text];
+  const humanizationPlan = buildWhatsAppHumanizationPlan({
+    config,
+    inboundText: text,
+    replyParts: plannedReplyParts,
+    mode: wantsAudio ? "audio" : "text",
+    seed: `${trackId}:${phone}:${generated.text}`,
+  });
+  await startWhatsAppHumanizationSignals(supabase, {
+    agentKey,
+    instanceId: providerInstanceId,
+    number: phone,
+    eventId,
+    leadId,
+    conversationId,
+    plan: humanizationPlan,
+  });
+  const audioDelivery = wantsAudio
     ? await sendWhatsAppAgentVoiceReply({
         agentKey,
         instanceId: providerInstanceId,
@@ -1911,27 +2025,57 @@ async function processWhatsappAgentRuntime(
         text: generated.text,
         trackId: `${trackId}-audio`,
         decision: voiceDecision,
+        sendOptions: humanizationPlan.parts[0]?.sendOptions,
       })
     : null;
   const replyParts = audioDelivery?.ok
     ? [generated.text]
-    : config.behavior.splitReplies
-      ? splitWhatsAppReply(generated.text)
-      : [generated.text];
+    : wantsAudio
+      ? config.behavior.splitReplies
+        ? splitWhatsAppReply(generated.text)
+        : [generated.text]
+      : plannedReplyParts;
   const deliveries = [];
 
   if (audioDelivery?.ok) {
     deliveries.push(audioDelivery);
   } else {
-    for (let index = 0; index < replyParts.length; index += 1) {
-      deliveries.push(await sendWhatsAppAgentReply({
+    const textHumanizationPlan = wantsAudio
+      ? buildWhatsAppHumanizationPlan({
+          config,
+          inboundText: text,
+          replyParts,
+          mode: "text",
+          seed: `${trackId}:audio-fallback:${phone}:${generated.text}`,
+        })
+      : humanizationPlan;
+
+    if (wantsAudio) {
+      await startWhatsAppHumanizationSignals(supabase, {
         agentKey,
         instanceId: providerInstanceId,
         number: phone,
-        text: replyParts[index],
-        trackId: `${trackId}-${index + 1}`,
-      }));
+        eventId,
+        leadId,
+        conversationId,
+        plan: textHumanizationPlan,
+      });
     }
+
+    deliveries.push(
+      ...(await Promise.all(
+        replyParts.map((part, index) =>
+          sendWhatsAppAgentReply({
+            agentKey,
+            instanceId: providerInstanceId,
+            number: phone,
+            text: part,
+            trackId: `${trackId}-${index + 1}`,
+            sendOptions: textHumanizationPlan.parts[index]?.sendOptions,
+          })
+        )
+      ))
+    );
   }
 
   await insertOutboundMessages(supabase, {
@@ -1951,6 +2095,12 @@ async function processWhatsappAgentRuntime(
         audioDelivery && !audioDelivery.ok
           ? audioDelivery.errorMessage || audioDelivery.providerStatus
           : voiceDecision.fallbackReason || null,
+      humanization_plan: {
+        ...humanizationPlan.summary,
+        mode: humanizationPlan.mode,
+        enabled: humanizationPlan.enabled,
+        fallback_to_text: wantsAudio && !audioDelivery?.ok,
+      },
     },
   });
 

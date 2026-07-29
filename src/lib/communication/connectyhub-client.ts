@@ -54,6 +54,7 @@ type ConnectyHubWhatsAppMessageResult = {
   payload: unknown;
   usedIdempotencyKey: boolean;
   sentAsButton: boolean;
+  endpoint: "provider" | "legacy";
 };
 
 export type ConnectyHubDeliveryResult = {
@@ -74,6 +75,15 @@ export type ConnectyHubMediaDownloadResult = {
   transcription: string;
   payload: unknown;
 };
+
+export type WhatsAppAgentSendOptions = {
+  delayMs?: number;
+  readChat?: boolean;
+  readMessages?: boolean;
+};
+
+export type WhatsAppAgentChatPresence = "composing" | "recording" | "paused";
+export type WhatsAppAgentInstancePresence = "available" | "unavailable";
 
 function cleanString(value: unknown, fallback = "") {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
@@ -109,6 +119,33 @@ function maskSecret(value: string) {
 
 function preview(text: string, limit = 500) {
   return text.length > limit ? `${text.slice(0, limit)}...` : text;
+}
+
+function clampDelayMs(value: unknown) {
+  const numeric = typeof value === "number" ? value : Number(value || 0);
+  if (!Number.isFinite(numeric) || numeric <= 0) return 0;
+  return Math.max(0, Math.min(300000, Math.round(numeric)));
+}
+
+function optionalSendFields(options?: WhatsAppAgentSendOptions) {
+  const delay = clampDelayMs(options?.delayMs);
+  return {
+    ...(delay > 0 ? { delay } : {}),
+    readchat: options?.readChat !== false,
+    readmessages: options?.readMessages === true,
+  };
+}
+
+function shouldFallbackToLegacySend(error: unknown) {
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error || "").toLowerCase();
+  return (
+    message.includes("http 400") ||
+    message.includes("http 404") ||
+    message.includes("invalid payload") ||
+    message.includes("cannot post") ||
+    message.includes("not found") ||
+    message.includes("rota")
+  );
 }
 
 function clampLabel(value: string, fallback: string, limit = 32) {
@@ -915,10 +952,12 @@ async function sendConnectyHubWhatsAppMessage(input: {
   trackId: string;
   idempotencyKey?: string;
   actionButton?: WhatsAppActionButtonInput;
+  sendOptions?: WhatsAppAgentSendOptions;
   timeoutMs?: number;
 }): Promise<ConnectyHubWhatsAppMessageResult> {
   const button = normalizeActionButton(input.actionButton, input.text);
   const timeoutMs = input.timeoutMs || 15000;
+  const sendFields = optionalSendFields(input.sendOptions);
 
   if (button) {
     const buttonText = button.explicit ? input.text.trim() : removeButtonUrlFromText(input.text, button.url);
@@ -934,29 +973,183 @@ async function sendConnectyHubWhatsAppMessage(input: {
           footerText: button.footerText,
           track_source: "betel_ai",
           track_id: input.trackId,
-          readchat: true,
+          ...sendFields,
         },
       },
       idempotencyKey: input.idempotencyKey || input.trackId,
       timeoutMs,
     });
 
-    return { payload, usedIdempotencyKey, sentAsButton: true };
+    return { payload, usedIdempotencyKey, sentAsButton: true, endpoint: "provider" };
   }
 
-  const { payload, usedIdempotencyKey } = await connectyhubRequestWithIdempotencyFallback("/messages/text", {
-    body: {
-      instanceId: input.instanceId,
-      number: input.number,
-      text: input.text,
-      linkPreview: true,
-      trackId: input.trackId,
-    },
-    idempotencyKey: input.idempotencyKey || input.trackId,
-    timeoutMs,
-  });
+  try {
+    const { payload, usedIdempotencyKey } = await connectyhubRequestWithIdempotencyFallback("/provider/send/text", {
+      body: {
+        instanceId: input.instanceId,
+        payload: {
+          number: input.number,
+          text: input.text,
+          linkPreview: true,
+          track_source: "betel_ai",
+          track_id: input.trackId,
+          ...sendFields,
+        },
+      },
+      idempotencyKey: input.idempotencyKey || input.trackId,
+      timeoutMs,
+    });
 
-  return { payload, usedIdempotencyKey, sentAsButton: false };
+    return { payload, usedIdempotencyKey, sentAsButton: false, endpoint: "provider" };
+  } catch (error) {
+    if (!shouldFallbackToLegacySend(error)) throw error;
+
+    const { payload, usedIdempotencyKey } = await connectyhubRequestWithIdempotencyFallback("/messages/text", {
+      body: {
+        instanceId: input.instanceId,
+        number: input.number,
+        text: input.text,
+        linkPreview: true,
+        trackId: input.trackId,
+        delay: sendFields.delay,
+        readchat: sendFields.readchat,
+        readmessages: sendFields.readmessages,
+      },
+      idempotencyKey: input.idempotencyKey || input.trackId,
+      timeoutMs,
+    });
+
+    return { payload, usedIdempotencyKey, sentAsButton: false, endpoint: "legacy" };
+  }
+}
+
+async function resolveAgentProviderInstanceId(agentKey: string, explicitInstanceId = "") {
+  const config = await getWillianConfig();
+  const cleanExplicit = cleanString(explicitInstanceId);
+  if (cleanExplicit) return { config, instanceId: cleanExplicit };
+
+  if (!agentKey || agentKey === WILLIAN_AGENT_KEY) {
+    return {
+      config,
+      instanceId: config.apiToken ? await resolveConnectyHubInstanceId(config).catch(() => "") : "",
+    };
+  }
+
+  const persisted = await findPersistedWhatsappInstance(agentKey);
+  return { config, instanceId: cleanString(persisted?.provider_instance_id) };
+}
+
+export async function sendWhatsAppAgentChatPresence(input: {
+  agentKey: string;
+  instanceId?: string;
+  number: string;
+  presence: WhatsAppAgentChatPresence;
+  delayMs?: number;
+}): Promise<ConnectyHubDeliveryResult> {
+  const startedMs = Date.now();
+  const processedAt = new Date().toISOString();
+  const phone = normalizeWhatsAppNumber(input.number);
+  const { config, instanceId } = await resolveAgentProviderInstanceId(input.agentKey, input.instanceId);
+
+  if (!config.apiToken || !instanceId || !phone || !input.presence) {
+    return {
+      ok: false,
+      providerStatus: !config.apiToken
+        ? "missing_connectyhub_token"
+        : !instanceId
+          ? "missing_connectyhub_instance"
+          : !phone
+            ? "missing_recipient_phone"
+            : "missing_presence",
+      endpointConfigured: Boolean(config.apiToken && instanceId),
+      latencyMs: Math.max(Date.now() - startedMs, 1),
+      processedAt,
+      errorMessage: "Presenca WhatsApp incompleta para envio.",
+    };
+  }
+
+  try {
+    const payload = await connectyhubRequest("/provider/message/presence", {
+      body: {
+        instanceId,
+        payload: {
+          number: phone,
+          presence: input.presence,
+          ...(clampDelayMs(input.delayMs) > 0 ? { delay: clampDelayMs(input.delayMs) } : {}),
+        },
+      },
+      timeoutMs: 10000,
+    });
+
+    return {
+      ok: true,
+      providerStatus: `connectyhub_presence_${input.presence}_accepted`,
+      endpointConfigured: true,
+      latencyMs: Math.max(Date.now() - startedMs, 1),
+      processedAt,
+      responsePreview: preview(JSON.stringify(sanitizePayload(payload))),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      providerStatus: "connectyhub_presence_error",
+      endpointConfigured: true,
+      latencyMs: Math.max(Date.now() - startedMs, 1),
+      processedAt,
+      errorMessage: error instanceof Error ? error.message : "Erro desconhecido ao enviar presenca WhatsApp.",
+    };
+  }
+}
+
+export async function setWhatsAppAgentInstancePresence(input: {
+  agentKey: string;
+  instanceId?: string;
+  presence: WhatsAppAgentInstancePresence;
+}): Promise<ConnectyHubDeliveryResult> {
+  const startedMs = Date.now();
+  const processedAt = new Date().toISOString();
+  const { config, instanceId } = await resolveAgentProviderInstanceId(input.agentKey, input.instanceId);
+
+  if (!config.apiToken || !instanceId || !input.presence) {
+    return {
+      ok: false,
+      providerStatus: !config.apiToken ? "missing_connectyhub_token" : !instanceId ? "missing_connectyhub_instance" : "missing_presence",
+      endpointConfigured: Boolean(config.apiToken && instanceId),
+      latencyMs: Math.max(Date.now() - startedMs, 1),
+      processedAt,
+      errorMessage: "Presenca da instancia WhatsApp incompleta.",
+    };
+  }
+
+  try {
+    const payload = await connectyhubRequest("/provider/instance/presence", {
+      body: {
+        instanceId,
+        payload: {
+          presence: input.presence,
+        },
+      },
+      timeoutMs: 10000,
+    });
+
+    return {
+      ok: true,
+      providerStatus: `connectyhub_instance_presence_${input.presence}_accepted`,
+      endpointConfigured: true,
+      latencyMs: Math.max(Date.now() - startedMs, 1),
+      processedAt,
+      responsePreview: preview(JSON.stringify(sanitizePayload(payload))),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      providerStatus: "connectyhub_instance_presence_error",
+      endpointConfigured: true,
+      latencyMs: Math.max(Date.now() - startedMs, 1),
+      processedAt,
+      errorMessage: error instanceof Error ? error.message : "Erro desconhecido ao alterar presenca da instancia WhatsApp.",
+    };
+  }
 }
 
 function extractInstanceId(payload: unknown) {
@@ -2496,6 +2689,7 @@ export type GlobalWhatsAppTextInput = {
   guardrailSummary: string;
   payload: Record<string, unknown>;
   actionButton?: WhatsAppActionButtonInput;
+  sendOptions?: WhatsAppAgentSendOptions;
 };
 
 export async function sendGlobalWhatsAppText(input: GlobalWhatsAppTextInput): Promise<ConnectyHubDeliveryResult> {
@@ -2544,6 +2738,7 @@ export async function sendGlobalWhatsAppText(input: GlobalWhatsAppTextInput): Pr
       trackId: input.messageCode,
       idempotencyKey: input.messageCode || input.runCode,
       actionButton: input.actionButton,
+      sendOptions: input.sendOptions,
       timeoutMs: 15000,
     });
     return {
@@ -2581,6 +2776,7 @@ export async function sendWillianWhatsAppReply(input: {
   number: string;
   text: string;
   trackId: string;
+  sendOptions?: WhatsAppAgentSendOptions;
 }): Promise<ConnectyHubDeliveryResult> {
   const startedMs = Date.now();
   const processedAt = new Date().toISOString();
@@ -2612,6 +2808,7 @@ export async function sendWillianWhatsAppReply(input: {
       text: input.text.trim(),
       trackId: input.trackId,
       idempotencyKey: input.trackId,
+      sendOptions: input.sendOptions,
       timeoutMs: 15000,
     });
 
@@ -2648,6 +2845,7 @@ export async function sendWhatsAppAgentReply(input: {
   number: string;
   text: string;
   trackId: string;
+  sendOptions?: WhatsAppAgentSendOptions;
 }): Promise<ConnectyHubDeliveryResult> {
   if (!input.agentKey || input.agentKey === WILLIAN_AGENT_KEY) {
     return sendWillianWhatsAppReply(input);
@@ -2684,6 +2882,7 @@ export async function sendWhatsAppAgentReply(input: {
       text: input.text.trim(),
       trackId: input.trackId,
       idempotencyKey: input.trackId,
+      sendOptions: input.sendOptions,
       timeoutMs: 15000,
     });
 
@@ -2828,6 +3027,7 @@ export async function sendWillianWhatsAppMedia(input: {
   text?: string;
   docName?: string;
   trackId: string;
+  sendOptions?: WhatsAppAgentSendOptions;
 }) {
   const config = await getWillianConfig();
   const instanceId = config.apiToken ? await resolveConnectyHubInstanceId(config).catch(() => "") : "";
@@ -2836,19 +3036,47 @@ export async function sendWillianWhatsAppMedia(input: {
     throw new Error("Envio de midia WhatsApp incompleto.");
   }
 
-  const { payload } = await connectyhubRequestWithIdempotencyFallback("/messages/media", {
-    body: {
-      instanceId,
-      number,
-      type: input.type,
-      file: input.file,
-      text: input.text,
-      docName: input.docName,
-      trackId: input.trackId,
-    },
-    idempotencyKey: input.trackId,
-    timeoutMs: 20000,
-  });
+  const sendFields = optionalSendFields(input.sendOptions);
+  let payload: unknown;
+
+  try {
+    ({ payload } = await connectyhubRequestWithIdempotencyFallback("/provider/send/media", {
+      body: {
+        instanceId,
+        payload: {
+          number,
+          type: input.type,
+          file: input.file,
+          text: input.text,
+          docName: input.docName,
+          track_source: "betel_ai",
+          track_id: input.trackId,
+          ...sendFields,
+        },
+      },
+      idempotencyKey: input.trackId,
+      timeoutMs: 20000,
+    }));
+  } catch (error) {
+    if (!shouldFallbackToLegacySend(error)) throw error;
+
+    ({ payload } = await connectyhubRequestWithIdempotencyFallback("/messages/media", {
+      body: {
+        instanceId,
+        number,
+        type: input.type,
+        file: input.file,
+        text: input.text,
+        docName: input.docName,
+        trackId: input.trackId,
+        delay: sendFields.delay,
+        readchat: sendFields.readchat,
+        readmessages: sendFields.readmessages,
+      },
+      idempotencyKey: input.trackId,
+      timeoutMs: 20000,
+    }));
+  }
 
   return { payload: sanitizePayload(payload), externalDeliveryId: extractDeliveryId(payload) };
 }
@@ -2862,6 +3090,7 @@ export async function sendWhatsAppAgentMediaReply(input: {
   text?: string;
   docName?: string;
   trackId: string;
+  sendOptions?: WhatsAppAgentSendOptions;
 }) {
   if (!input.agentKey || input.agentKey === WILLIAN_AGENT_KEY) {
     return sendWillianWhatsAppMedia(input);
@@ -2875,19 +3104,47 @@ export async function sendWhatsAppAgentMediaReply(input: {
     throw new Error("Envio de midia WhatsApp incompleto.");
   }
 
-  const { payload } = await connectyhubRequestWithIdempotencyFallback("/messages/media", {
-    body: {
-      instanceId,
-      number,
-      type: input.type,
-      file: input.file,
-      text: input.text,
-      docName: input.docName,
-      trackId: input.trackId,
-    },
-    idempotencyKey: input.trackId,
-    timeoutMs: 20000,
-  });
+  const sendFields = optionalSendFields(input.sendOptions);
+  let payload: unknown;
+
+  try {
+    ({ payload } = await connectyhubRequestWithIdempotencyFallback("/provider/send/media", {
+      body: {
+        instanceId,
+        payload: {
+          number,
+          type: input.type,
+          file: input.file,
+          text: input.text,
+          docName: input.docName,
+          track_source: "betel_ai",
+          track_id: input.trackId,
+          ...sendFields,
+        },
+      },
+      idempotencyKey: input.trackId,
+      timeoutMs: 20000,
+    }));
+  } catch (error) {
+    if (!shouldFallbackToLegacySend(error)) throw error;
+
+    ({ payload } = await connectyhubRequestWithIdempotencyFallback("/messages/media", {
+      body: {
+        instanceId,
+        number,
+        type: input.type,
+        file: input.file,
+        text: input.text,
+        docName: input.docName,
+        trackId: input.trackId,
+        delay: sendFields.delay,
+        readchat: sendFields.readchat,
+        readmessages: sendFields.readmessages,
+      },
+      idempotencyKey: input.trackId,
+      timeoutMs: 20000,
+    }));
+  }
 
   return { payload: sanitizePayload(payload), externalDeliveryId: extractDeliveryId(payload) };
 }
