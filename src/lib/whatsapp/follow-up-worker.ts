@@ -27,6 +27,11 @@ import {
   buildWhatsAppHumanizationPlan,
   type WhatsAppHumanizationPlan,
 } from "@/lib/whatsapp/humanization-runtime";
+import {
+  describeFollowUpWindow,
+  isInsideFollowUpWindow,
+  nextFollowUpWindowDate,
+} from "@/lib/whatsapp/follow-up-window";
 
 type DbRow = Record<string, unknown>;
 
@@ -231,17 +236,6 @@ async function generateFollowUpText(input: {
   }
 }
 
-function isQuietHoursBlocked(now = new Date()) {
-  const parts = new Intl.DateTimeFormat("pt-BR", {
-    hour: "2-digit",
-    hour12: false,
-    minute: "2-digit",
-    timeZone: "America/Sao_Paulo",
-  }).formatToParts(now);
-  const hour = Number(parts.find((part) => part.type === "hour")?.value || "0");
-  return hour < 8 || hour >= 20;
-}
-
 async function insertRuntimeEvent(input: {
   agentKey: string;
   eventType: string;
@@ -358,18 +352,6 @@ export async function processWhatsAppFollowUps(input: {
     };
   }
 
-  if (!input.allowQuietHours && isQuietHoursBlocked()) {
-    return {
-      ok: true,
-      dryRun,
-      requested: limit,
-      processed: [],
-      skipped: [],
-      failed: [],
-      errors: ["Fora da janela padrao de follow-up: 08:00-20:00 America/Sao_Paulo."],
-    };
-  }
-
   const now = new Date().toISOString();
   const { data, error } = await supabase
     .from("whatsapp_follow_ups")
@@ -472,6 +454,30 @@ export async function processWhatsAppFollowUps(input: {
       continue;
     }
 
+    const config = await getWhatsAppAgentConfig(agentKey);
+    const followUpWindow = describeFollowUpWindow({
+      start: config.behavior.followUpWindowStart,
+      end: config.behavior.followUpWindowEnd,
+      timezone: config.behavior.timezone,
+    });
+
+    if (!input.allowQuietHours && !isInsideFollowUpWindow(new Date(), followUpWindow)) {
+      const nextScheduledFor = nextFollowUpWindowDate(new Date(Date.now() + 10 * 60_000), followUpWindow).toISOString();
+      await supabase
+        .from("whatsapp_follow_ups")
+        .update({
+          status: "scheduled",
+          scheduled_for: nextScheduledFor,
+          error_message: null,
+        })
+        .eq("id", followUpId);
+      skipped.push({
+        ...skippedItem(followUp, "outside_followup_window"),
+        error: `Reagendado para ${nextScheduledFor}; janela ${followUpWindow.start}-${followUpWindow.end} ${followUpWindow.timezone}.`,
+      });
+      continue;
+    }
+
     const score = asNumber(profile.lead_score, asNumber(lead.qualification_score, 0));
     const generated = await generateFollowUpText({
       lead,
@@ -501,7 +507,6 @@ export async function processWhatsAppFollowUps(input: {
       .eq("id", followUpId);
 
     const trackId = `wa-fup-${followUpId}`;
-    const config = await getWhatsAppAgentConfig(agentKey);
     const responseMode = cleanString(followUp.response_mode, "text");
     const voiceDecision = await resolveWhatsAppVoiceResponse({
       config,
@@ -657,7 +662,9 @@ export async function processWhatsAppFollowUps(input: {
         .update({
           status: failedFinal ? "failed" : "queued",
           error_message: delivery.errorMessage || delivery.providerStatus,
-          scheduled_for: failedFinal ? cleanString(followUp.scheduled_for, now) : new Date(Date.now() + 45 * 60_000).toISOString(),
+          scheduled_for: failedFinal
+            ? cleanString(followUp.scheduled_for, now)
+            : nextFollowUpWindowDate(new Date(Date.now() + 45 * 60_000), followUpWindow).toISOString(),
         })
         .eq("id", followUpId);
 

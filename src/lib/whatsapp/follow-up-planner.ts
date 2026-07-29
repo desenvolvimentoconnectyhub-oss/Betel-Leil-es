@@ -3,6 +3,7 @@ import "server-only";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getConnectyHubWhatsappAgentControlStatus } from "@/lib/communication/connectyhub-client";
 import { getWhatsAppAgentConfig } from "@/lib/communication/willian-agent-config";
+import { describeFollowUpWindow, nextFollowUpWindowDate } from "@/lib/whatsapp/follow-up-window";
 
 type DbRow = Record<string, unknown>;
 
@@ -252,6 +253,12 @@ export async function planWhatsAppFollowUps(input: {
       continue;
     }
 
+    const followUpWindow = describeFollowUpWindow({
+      start: config.behavior.followUpWindowStart,
+      end: config.behavior.followUpWindowEnd,
+      timezone: config.behavior.timezone,
+    });
+    const scheduledFor = nextFollowUpWindowDate(new Date(Date.now() + 5 * 60_000), followUpWindow).toISOString();
     const score = Math.round(asNumber(lead.qualification_score, 0));
     candidates.push({
       conversationId,
@@ -261,7 +268,7 @@ export async function planWhatsAppFollowUps(input: {
       phone: cleanString(lead.phone),
       score,
       reason: normalizeFollowUpReason(score),
-      scheduledFor: new Date(Date.now() + 5 * 60_000).toISOString(),
+      scheduledFor,
       lastOutboundAt,
       followUpCount,
     });
@@ -296,6 +303,13 @@ export async function planWhatsAppFollowUps(input: {
           lastOutboundAt: candidate.lastOutboundAt,
           previousFollowUpCount: candidate.followUpCount,
           score: candidate.score,
+          followUpWindow: configByAgent.has(candidate.agentKey)
+            ? describeFollowUpWindow({
+                start: configByAgent.get(candidate.agentKey)?.behavior.followUpWindowStart,
+                end: configByAgent.get(candidate.agentKey)?.behavior.followUpWindowEnd,
+                timezone: configByAgent.get(candidate.agentKey)?.behavior.timezone,
+              })
+            : null,
         },
       }))
     )
@@ -310,7 +324,7 @@ export async function planWhatsAppFollowUps(input: {
       skippedCount,
       candidates,
       queuedIds: [],
-    errors: [...errors, insertError.message].filter(isPresentString),
+      errors: [...errors, insertError.message].filter(isPresentString),
     };
   }
 
