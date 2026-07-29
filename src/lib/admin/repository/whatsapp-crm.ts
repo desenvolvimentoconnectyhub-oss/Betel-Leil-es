@@ -345,6 +345,31 @@ function computeSla(input: {
   return { dueAt, status: "ok" as const };
 }
 
+function normalizedLeadScore(card: WhatsAppCrmLeadCard) {
+  return Math.max(0, Math.min(100, Math.round(card.score || 0)));
+}
+
+function operationalTieBreaker(card: WhatsAppCrmLeadCard) {
+  const slaWeight = card.slaStatus === "vencido" ? 40 : card.slaStatus === "urgente" ? 25 : 0;
+  return (
+    slaWeight +
+    (card.humanInterventionActive ? 35 : 0) +
+    (card.waitingForReply ? 20 : 0) +
+    (card.nextFollowUpAt ? 8 : 0) +
+    (card.followUpCount > 0 ? 4 : 0)
+  );
+}
+
+function compareLeadQueuePriority(left: WhatsAppCrmLeadCard, right: WhatsAppCrmLeadCard) {
+  const scoreDiff = normalizedLeadScore(right) - normalizedLeadScore(left);
+  if (scoreDiff) return scoreDiff;
+
+  const operationalDiff = operationalTieBreaker(right) - operationalTieBreaker(left);
+  if (operationalDiff) return operationalDiff;
+
+  return timestamp(right.lastMessageAt) - timestamp(left.lastMessageAt);
+}
+
 function normalizeCrmStage(input: {
   profileStage: string;
   status: string;
@@ -845,13 +870,7 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
     });
   }
 
-  leadCards.sort((left, right) => {
-    const priority = (item: WhatsAppCrmLeadCard) =>
-      (item.slaStatus === "vencido" ? 300 : item.slaStatus === "urgente" ? 200 : 0) +
-      (item.humanInterventionActive ? 120 : 0) +
-      item.score;
-    return priority(right) - priority(left) || timestamp(right.lastMessageAt) - timestamp(left.lastMessageAt);
-  });
+  leadCards.sort(compareLeadQueuePriority);
 
   const agentConversations = new Map<string, WhatsAppCrmLeadCard[]>();
   for (const card of leadCards) {
