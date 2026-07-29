@@ -963,7 +963,7 @@ export function WillianAgentPanel({
   const changeLabel = config.status === "saved" ? "Salvo" : "Revisar";
   const selectedAgentPaused = isWhatsappAgentPaused(selectedWhatsappAgent);
   const selectedAgentConnected = !selectedAgentPaused && selectedWhatsappAgent?.agentKey === state.agentKey
-    ? connected
+    ? connected || whatsappAgentLooksConnected(selectedWhatsappAgent)
     : !selectedAgentPaused && whatsappAgentLooksConnected(selectedWhatsappAgent);
 
   function cloneWhatsappAgent(agent: WhatsAppAgentInstanceSummary) {
@@ -1651,7 +1651,7 @@ function ConnectionTab({
   const selectedIsPrimary = !selectedAgent || selectedAgent.agentKey === state.agentKey;
   const paused = isWhatsappAgentPaused(selectedAgent);
   const connected = !paused && selectedIsPrimary
-    ? whatsappStateLooksConnected(state)
+    ? whatsappStateLooksConnected(state) || whatsappAgentLooksConnected(selectedAgent)
     : !paused && whatsappAgentLooksConnected(selectedAgent);
   const connectyHubKeyReady = state.adminTokenConfigured && state.adminTokenLooksValid;
   const canGenerateQr = connectyHubKeyReady && Boolean(state.webhookUrl) && state.whatsappProviderReleased;
@@ -1692,6 +1692,78 @@ function ConnectionTab({
   const rawDisconnectReason = pairingConnection?.lastDisconnectReason || state.lastDisconnectReason || state.lastError;
   const disconnectReason = friendlyDisconnectReason(rawDisconnectReason);
   const passkeyBlocked = connectionHasPasskeyBlock(pairingConnection, rawDisconnectReason);
+
+  if (connected) {
+    return (
+      <Panel
+        title="Conexao do WhatsApp"
+        eyebrow="Numero / agente / status"
+        action={<StatusPill ok label={paused ? "Pausado" : "Online"} />}
+      >
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
+          <div className="rounded-lg border border-[rgba(34,197,94,0.24)] bg-[rgba(34,197,94,0.06)] p-4">
+            <div className="flex items-start gap-3">
+              <span className="grid size-10 shrink-0 place-items-center rounded-md border border-[rgba(34,197,94,0.24)] bg-white text-[var(--admin-green)]">
+                <Phone size={17} />
+              </span>
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-green)]">
+                  WhatsApp conectado
+                </p>
+                <h3 className="mt-1 truncate text-lg font-semibold text-[var(--admin-foreground)]">
+                  {whatsappLabel}
+                </h3>
+                <div className="mt-3 grid gap-1 text-xs text-[var(--admin-muted)]">
+                  {phoneNumber && (
+                    <p className="truncate">
+                      <span className="font-semibold text-[var(--admin-foreground)]">Numero:</span> {phoneNumber}
+                    </p>
+                  )}
+                  {displayName && (
+                    <p className="truncate">
+                      <span className="font-semibold text-[var(--admin-foreground)]">Perfil:</span> {displayName}
+                    </p>
+                  )}
+                  {profileImageSyncedAt && (
+                    <p className="truncate">
+                      <span className="font-semibold text-[var(--admin-foreground)]">Ultima leitura:</span> {formatDateTime(profileImageSyncedAt)}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2 xl:min-w-[390px] xl:justify-end">
+            <ActionButton
+              icon={<RefreshCw size={14} />}
+              label="Status"
+              loading={loading === "status"}
+              onClick={() => runInstanceAction("status", { agentKey: selectedAgentKey })}
+            />
+            <ActionButton
+              disabled={!canGenerateQr}
+              icon={<QrCode size={14} />}
+              label="Gerar QR Code"
+              loading={loading === "generateQr"}
+              onClick={() => runInstanceAction("generateQr", connectionPayload)}
+            />
+            <ActionButton
+              icon={<Power size={14} />}
+              label="Desconectar"
+              loading={loading === "disconnectWhatsappAgent"}
+              onClick={() =>
+                runInstanceAction("disconnectWhatsappAgent", {
+                  agentKey: selectedAgentKey,
+                })
+              }
+              tone="danger"
+            />
+          </div>
+        </div>
+      </Panel>
+    );
+  }
 
   return (
     <Panel
