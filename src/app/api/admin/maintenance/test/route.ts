@@ -3,6 +3,7 @@ import { HeadBucketCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getGeminiApiKey, getGeminiModel } from "@/lib/ai/config";
 import { testMetaWhatsAppConnection } from "@/lib/meta-whatsapp/official";
+import { TRAFFIC_CONFIG_DEFAULTS } from "@/lib/traffic-ai/dashboard";
 import { testElevenLabsConnection } from "@/lib/voice/elevenlabs";
 
 export const dynamic = "force-dynamic";
@@ -32,6 +33,7 @@ const DEFAULT_CONFIG_VALUES: Record<string, string> = {
   meta_default_language: "pt_BR",
   meta_rate_limit_per_minute: "60",
   meta_daily_limit_per_number: "1000",
+  ...TRAFFIC_CONFIG_DEFAULTS,
 };
 
 function cleanConfigValue(value: unknown) {
@@ -209,6 +211,192 @@ async function testResend(): Promise<TestResult> {
   }
 }
 
+async function testMetaAds(): Promise<TestResult> {
+  const start = Date.now();
+  const appConfig = await readMaintenanceAppConfig();
+  const token = resolveConfigValue(appConfig, "META_SYSTEM_USER_TOKEN");
+  const adAccountId = resolveConfigValue(appConfig, "META_AD_ACCOUNT_ID").replace(/^act_/, "");
+  const apiVersion = resolveConfigValue(appConfig, "META_GRAPH_API_VERSION") || "v26.0";
+
+  if (!token || !adAccountId) {
+    return {
+      success: false,
+      integration: "meta_ads",
+      message: "Informe META_SYSTEM_USER_TOKEN e META_AD_ACCOUNT_ID para testar Meta Ads.",
+      latencyMs: Date.now() - start,
+    };
+  }
+
+  try {
+    const url = new URL(`https://graph.facebook.com/${apiVersion}/act_${adAccountId}`);
+    url.searchParams.set("fields", "id,name,account_status,currency,timezone_name");
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(15000),
+    });
+    const latencyMs = Date.now() - start;
+    const data = await res.json().catch(() => ({})) as { name?: string; error?: { message?: string } };
+
+    if (!res.ok) {
+      return {
+        success: false,
+        integration: "meta_ads",
+        message: data.error?.message || `Meta Ads retornou ${res.status}.`,
+        latencyMs,
+      };
+    }
+
+    return {
+      success: true,
+      integration: "meta_ads",
+      message: `Meta Ads respondeu para ${data.name || `act_${adAccountId}`}. Resposta em ${latencyMs}ms.`,
+      latencyMs,
+    };
+  } catch (error: unknown) {
+    return {
+      success: false,
+      integration: "meta_ads",
+      message: error instanceof Error ? error.message : "Falha ao conectar Meta Ads.",
+      latencyMs: Date.now() - start,
+    };
+  }
+}
+
+async function testMetaSocial(): Promise<TestResult> {
+  const start = Date.now();
+  const appConfig = await readMaintenanceAppConfig();
+  const token = resolveConfigValue(appConfig, "META_SYSTEM_USER_TOKEN");
+  const pageId = resolveConfigValue(appConfig, "META_FACEBOOK_PAGE_ID");
+  const instagramId = resolveConfigValue(appConfig, "META_INSTAGRAM_BUSINESS_ACCOUNT_ID");
+  const apiVersion = resolveConfigValue(appConfig, "META_GRAPH_API_VERSION") || "v26.0";
+
+  if (!token || !pageId || !instagramId) {
+    return {
+      success: false,
+      integration: "meta_social",
+      message: "Informe token, Facebook Page ID e Instagram Business Account ID.",
+      latencyMs: Date.now() - start,
+    };
+  }
+
+  try {
+    const pageUrl = new URL(`https://graph.facebook.com/${apiVersion}/${pageId}`);
+    pageUrl.searchParams.set("fields", "id,name,instagram_business_account");
+    const igUrl = new URL(`https://graph.facebook.com/${apiVersion}/${instagramId}`);
+    igUrl.searchParams.set("fields", "id,username,name");
+    const [pageRes, igRes] = await Promise.all([
+      fetch(pageUrl, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15000) }),
+      fetch(igUrl, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15000) }),
+    ]);
+    const latencyMs = Date.now() - start;
+    const pageData = await pageRes.json().catch(() => ({})) as { name?: string; error?: { message?: string } };
+    const igData = await igRes.json().catch(() => ({})) as { username?: string; error?: { message?: string } };
+
+    if (!pageRes.ok || !igRes.ok) {
+      return {
+        success: false,
+        integration: "meta_social",
+        message: pageData.error?.message || igData.error?.message || `Meta Social retornou ${pageRes.status}/${igRes.status}.`,
+        latencyMs,
+      };
+    }
+
+    return {
+      success: true,
+      integration: "meta_social",
+      message: `Meta Social respondeu: ${pageData.name || pageId} / ${igData.username || instagramId}.`,
+      latencyMs,
+    };
+  } catch (error: unknown) {
+    return {
+      success: false,
+      integration: "meta_social",
+      message: error instanceof Error ? error.message : "Falha ao conectar Meta Social.",
+      latencyMs: Date.now() - start,
+    };
+  }
+}
+
+async function testGoogleOAuth(
+  integration: string,
+  label: string,
+  requiredVars: string[]
+): Promise<TestResult> {
+  const start = Date.now();
+  const appConfig = await readMaintenanceAppConfig();
+  const missing = requiredVars.filter((name) => !resolveConfigValue(appConfig, name));
+
+  if (missing.length > 0) {
+    return {
+      success: false,
+      integration,
+      message: `Variavel(is) ausente(s): ${missing.join(", ")}`,
+      latencyMs: Date.now() - start,
+    };
+  }
+
+  const clientId = resolveConfigValue(appConfig, "GOOGLE_ADS_CLIENT_ID");
+  const clientSecret = resolveConfigValue(appConfig, "GOOGLE_ADS_CLIENT_SECRET");
+  const refreshToken = resolveConfigValue(appConfig, "GOOGLE_ADS_REFRESH_TOKEN");
+
+  try {
+    const params = new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: refreshToken,
+      grant_type: "refresh_token",
+    });
+    const res = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params.toString(),
+      signal: AbortSignal.timeout(15000),
+    });
+    const latencyMs = Date.now() - start;
+    const data = await res.json().catch(() => ({})) as { error_description?: string; error?: string; expires_in?: number };
+
+    if (!res.ok) {
+      return {
+        success: false,
+        integration,
+        message: data.error_description || data.error || `Google OAuth retornou ${res.status}.`,
+        latencyMs,
+      };
+    }
+
+    return {
+      success: true,
+      integration,
+      message: `${label}: OAuth respondeu e gerou access token temporario (${data.expires_in || "-"}s).`,
+      latencyMs,
+    };
+  } catch (error: unknown) {
+    return {
+      success: false,
+      integration,
+      message: error instanceof Error ? error.message : `Falha ao conectar ${label}.`,
+      latencyMs: Date.now() - start,
+    };
+  }
+}
+
+function testTrafficGovernance(): () => Promise<TestResult> {
+  return async () => {
+    const start = Date.now();
+    const appConfig = await readMaintenanceAppConfig();
+    const readOnly = resolveConfigValue(appConfig, "TRAFFIC_AI_READ_ONLY_MODE");
+    const approval = resolveConfigValue(appConfig, "TRAFFIC_AI_REQUIRE_HUMAN_APPROVAL");
+    const interval = resolveConfigValue(appConfig, "TRAFFIC_AI_SYNC_INTERVAL_MINUTES");
+
+    return {
+      success: true,
+      integration: "traffic_ai_governance",
+      message: `Governanca configurada: modo leitura=${readOnly || "true"}, aprovacao humana=${approval || "true"}, sync=${interval || "60"}min.`,
+      latencyMs: Date.now() - start,
+    };
+  };
+}
+
 async function testElevenLabs(): Promise<TestResult> {
   const start = Date.now();
   try {
@@ -367,6 +555,35 @@ const testMap: Record<string, () => Promise<TestResult>> = {
   inngest: testInngest,
   connectyhub: testConnectyHub,
   meta_whatsapp: testMetaWhatsAppConnection,
+  meta_ads: testMetaAds,
+  meta_social: testMetaSocial,
+  google_ads: () => testGoogleOAuth("google_ads", "Google Ads", [
+    "GOOGLE_ADS_DEVELOPER_TOKEN",
+    "GOOGLE_ADS_CLIENT_ID",
+    "GOOGLE_ADS_CLIENT_SECRET",
+    "GOOGLE_ADS_REFRESH_TOKEN",
+    "GOOGLE_ADS_CUSTOMER_ID",
+  ]),
+  google_analytics: () => testGoogleOAuth("google_analytics", "Google Analytics", [
+    "GOOGLE_ADS_CLIENT_ID",
+    "GOOGLE_ADS_CLIENT_SECRET",
+    "GOOGLE_ADS_REFRESH_TOKEN",
+    "GOOGLE_ANALYTICS_PROPERTY_ID",
+  ]),
+  google_search_console: () => testGoogleOAuth("google_search_console", "Google Search Console", [
+    "GOOGLE_ADS_CLIENT_ID",
+    "GOOGLE_ADS_CLIENT_SECRET",
+    "GOOGLE_ADS_REFRESH_TOKEN",
+    "GOOGLE_SEARCH_CONSOLE_SITE_URL",
+  ]),
+  google_business_profile: () => testGoogleOAuth("google_business_profile", "Google Business Profile", [
+    "GOOGLE_ADS_CLIENT_ID",
+    "GOOGLE_ADS_CLIENT_SECRET",
+    "GOOGLE_ADS_REFRESH_TOKEN",
+    "GOOGLE_BUSINESS_PROFILE_ACCOUNT_ID",
+    "GOOGLE_BUSINESS_PROFILE_LOCATION_ID",
+  ]),
+  traffic_ai_governance: testTrafficGovernance(),
   gemini: testGemini,
   resend: testResend,
   elevenlabs: testElevenLabs,

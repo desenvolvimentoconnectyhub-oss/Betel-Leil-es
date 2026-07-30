@@ -2,6 +2,11 @@ import { HeadBucketCommand, S3Client } from "@aws-sdk/client-s3";
 import { getGeminiApiKey, getGeminiModel } from "@/lib/ai/config";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getElevenLabsConfig } from "@/lib/voice/elevenlabs";
+import {
+  TRAFFIC_CONFIG_DEFAULTS,
+  TRAFFIC_CONNECTION_DEFINITIONS,
+  type TrafficConnectionDefinition,
+} from "@/lib/traffic-ai/dashboard";
 
 export type MaintenanceStatusValue = "ok" | "warning" | "missing" | "error";
 
@@ -53,6 +58,7 @@ const DEFAULT_CONFIG_VALUES: Record<string, string> = {
   meta_default_language: "pt_BR",
   meta_rate_limit_per_minute: "60",
   meta_daily_limit_per_number: "1000",
+  ...TRAFFIC_CONFIG_DEFAULTS,
 };
 
 type MaintenanceAppConfig = Map<string, string>;
@@ -343,6 +349,41 @@ function checkMetaWhatsApp(appConfig: MaintenanceAppConfig): MaintenanceIntegrat
   };
 }
 
+function checkTrafficConnection(
+  definition: TrafficConnectionDefinition,
+  appConfig: MaintenanceAppConfig
+): MaintenanceIntegration {
+  const items = definition.credentials.map((credential) =>
+    envItem(
+      credential.envName,
+      credential.label,
+      Boolean(credential.secret),
+      appConfig,
+      credential.configKey
+    )
+  );
+  const requiredKeys = new Set(
+    definition.credentials
+      .filter((credential) => credential.required)
+      .map((credential) => credential.configKey)
+  );
+  const missing = items.filter((item) => requiredKeys.has(item.configKey || "") && !item.configured);
+  const configuredRequired = requiredKeys.size - missing.length;
+
+  return {
+    id: definition.id,
+    title: definition.title,
+    status: missing.length ? (configuredRequired > 0 ? "warning" : "missing") : "ok",
+    message: missing.length
+      ? `Campos obrigatorios pendentes: ${missing.map((item) => item.label).join(", ")}.`
+      : "Credenciais obrigatorias preenchidas.",
+    items,
+    group: "Trafego IA",
+    usedBy: definition.usedBy,
+    site: definition.site,
+  };
+}
+
 function staticCheck(
   id: string,
   title: string,
@@ -462,6 +503,10 @@ export async function getMaintenanceStatus(): Promise<MaintenancePayload> {
     ], { group: "Essenciais para Operacao", usedBy: "Notificacoes do sistema e agentes WhatsApp", site: "connectyhub.com.br" }, appConfig),
 
     checkMetaWhatsApp(appConfig),
+
+    ...TRAFFIC_CONNECTION_DEFINITIONS.map((definition) =>
+      checkTrafficConnection(definition, appConfig)
+    ),
 
     staticCheck("resend", "Resend (Email)", "Email transacional configurado.", [
       "RESEND_API_KEY",
