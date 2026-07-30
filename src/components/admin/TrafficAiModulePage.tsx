@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { DashboardCard } from "@/components/admin/DashboardCard";
 import { StatusBadge } from "@/components/admin/StatusBadge";
 import { AdminIcon } from "@/components/admin/AdminIcons";
+import { TrafficAiSyncButton } from "@/components/admin/TrafficAiSyncButton";
 import { cn } from "@/lib/utils";
 
 const toneText: Record<TrafficTone, string> = {
@@ -175,6 +176,7 @@ export function TrafficAiModulePage({
             <StatusBadge tone={data.config.readOnlyMode ? "green" : "red"}>
               {data.config.readOnlyMode ? "modo leitura" : "modo escrita"}
             </StatusBadge>
+            <TrafficAiSyncButton moduleSlug={module.slug} />
             <Button
               asChild
               variant="outline"
