@@ -46,6 +46,18 @@ function configuredVoiceId(config: WillianAgentConfig, fallback = "") {
   return voiceId === "clone-willian" ? cleanString(fallback) : voiceId;
 }
 
+function isUnconfirmedDeliveryError(error: unknown) {
+  const message = (error instanceof Error ? `${error.name} ${error.message}` : String(error || "")).toLowerCase();
+  return (
+    message.includes("abort") ||
+    message.includes("timeout") ||
+    message.includes("timed out") ||
+    message.includes("fetch failed") ||
+    message.includes("socket") ||
+    message.includes("network")
+  );
+}
+
 async function resolveConfiguredVoiceId(config: WillianAgentConfig) {
   const selectedVoiceId = configuredVoiceId(config);
   if (selectedVoiceId) return selectedVoiceId;
@@ -148,13 +160,29 @@ export async function sendWhatsAppAgentVoiceReply(input: {
     };
   }
 
+  let audio: Awaited<ReturnType<typeof synthesizeElevenLabsPreview>>;
+
   try {
-    const audio = await synthesizeElevenLabsPreview({
+    audio = await synthesizeElevenLabsPreview({
       voiceId: input.decision.voiceId,
       modelId: input.decision.modelId,
       text: input.text,
       maxChars: input.decision.maxAudioChars,
     });
+  } catch (error) {
+    return {
+      ok: false,
+      providerStatus: "audio_synthesis_failed",
+      endpointConfigured: true,
+      latencyMs: Math.max(Date.now() - startedMs, 1),
+      processedAt,
+      errorMessage: error instanceof Error ? error.message : "Falha ao gerar audio.",
+      voiceId: input.decision.voiceId,
+      modelId: input.decision.modelId,
+    };
+  }
+
+  try {
     const delivery = await sendWhatsAppAgentMediaReply({
       agentKey: input.agentKey,
       instanceId: input.instanceId,
@@ -178,15 +206,18 @@ export async function sendWhatsAppAgentVoiceReply(input: {
       contentType: audio.contentType,
     };
   } catch (error) {
+    const deliveryUnconfirmed = isUnconfirmedDeliveryError(error);
     return {
       ok: false,
-      providerStatus: "audio_delivery_failed",
+      providerStatus: deliveryUnconfirmed ? "audio_delivery_unconfirmed" : "audio_delivery_failed",
       endpointConfigured: true,
       latencyMs: Math.max(Date.now() - startedMs, 1),
       processedAt,
-      errorMessage: error instanceof Error ? error.message : "Falha ao gerar ou enviar audio.",
+      deliveryUnconfirmed,
+      errorMessage: error instanceof Error ? error.message : "Falha ao enviar audio.",
       voiceId: input.decision.voiceId,
       modelId: input.decision.modelId,
+      contentType: audio.contentType,
     };
   }
 }

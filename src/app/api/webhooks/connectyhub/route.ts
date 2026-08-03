@@ -950,50 +950,191 @@ function eventHash(payload: Record<string, unknown>) {
   return createHash("sha256").update(base).digest("hex");
 }
 
+function normalizePhoneCandidate(value: unknown) {
+  const clean = cleanString(value).replace(/@.+$/, "");
+  const phone = normalizeWhatsAppNumber(clean);
+  return phone && phone.length >= 10 ? phone : "";
+}
+
+function phoneFromMessageId(value: unknown) {
+  const clean = cleanString(value);
+  if (!clean.includes(":")) return "";
+  return normalizePhoneCandidate(clean.split(":")[0]);
+}
+
+function firstPhoneCandidate(...values: unknown[]) {
+  for (const value of values) {
+    const phone = normalizePhoneCandidate(value);
+    if (phone) return phone;
+  }
+  return "";
+}
+
+function firstCleanString(...values: unknown[]) {
+  for (const value of values) {
+    const clean = cleanString(value);
+    if (clean) return clean;
+  }
+  return "";
+}
+
+function isProviderContactLabel(value: string) {
+  const normalized = value.toLowerCase();
+  return (
+    !normalized ||
+    normalized === "connectyhub" ||
+    normalized === "connecty hub" ||
+    normalized.includes("@s.whatsapp.net") ||
+    normalized.includes("@lid")
+  );
+}
+
+function firstLeadName(...values: unknown[]) {
+  for (const value of values) {
+    const clean = cleanString(value);
+    if (clean && !isProviderContactLabel(clean)) return clean;
+  }
+  return "";
+}
+
 function extractWebhookMessage(payload: Record<string, unknown>) {
   const data = eventPayload(payload);
+  const message = providerMessageRecord(data);
+  const chat = asRecord(data.chat);
+  const content = asRecord(message.content);
   const providerMessageId = extractProviderMessageId(data);
-  const chatId = findFirstString(data, ["chatid", "chatId", "wa_chatid", "remoteJid"]);
-  const rawPhone =
-    findFirstString(data, [
-      "from",
-      "fromPhone",
-      "phone",
-      "sender",
-      "senderPhone",
-      "participant",
-      "chatid",
-      "chatId",
-      "wa_chatid",
-      "remoteJid",
-    ]) || chatId;
-  const phone = normalizeWhatsAppNumber(rawPhone.replace(/@.+$/, ""));
-  const name = findFirstString(data, ["pushName", "senderName", "name", "notifyName", "wa_name", "wa_contactName"]);
-  const text = findFirstString(data, ["text", "body", "conversation", "caption", "message", "content"]);
-  const messageType = findFirstString(data, ["messageType", "type", "mediaType"]) || (text ? "text" : "unknown");
-  const mediaUrl = findFirstString(data, [
-    "mediaUrl",
-    "media_url",
-    "downloadUrl",
-    "download_url",
-    "fileUrl",
-    "file_url",
-    "fileURL",
-    "url",
-    "URL",
-    "file",
-    "media",
-  ]);
-  const mediaMimeType = findFirstString(data, ["mimeType", "mimetype", "mediaMimeType", "media_mime_type", "contentType", "content_type"]);
-  const transcript = findFirstString(data, ["transcript", "transcription", "audioTranscript", "audio_transcript"]);
-  const profileImageUrl = extractLeadProfileImageUrl(data);
   const fromApi = findFirstBoolean(data, ["wasSentByApi", "fromMe", "isFromMe", "fromApi"]);
-  const isGroup = findFirstBoolean(data, ["isGroup", "isGroupYes"]);
+  const isGroup = findFirstBoolean(data, ["isGroup", "isGroupYes", "wa_isGroup"]);
+  const chatId = firstCleanString(
+    message.chatid,
+    message.chatId,
+    chat.wa_chatid,
+    chat.chatid,
+    data.chatid,
+    data.chatId,
+    data.wa_chatid,
+    data.remoteJid,
+    findFirstString(data, ["remoteJid"])
+  );
+  const accountPhone = firstPhoneCandidate(message.owner, data.owner, chat.owner, payload.owner, phoneFromMessageId(message.id));
+  const chatIdPhone = normalizePhoneCandidate(chatId);
+  const chatPhone = firstPhoneCandidate(chat.phone, data.phone);
+  const senderPhone = firstPhoneCandidate(message.sender_pn, message.senderPhone, message.sender, data.senderPhone, data.sender);
+  const fallbackPhone = firstPhoneCandidate(data.from, data.fromPhone);
+  const phone = isGroup
+    ? chatIdPhone || chatPhone || senderPhone || fallbackPhone
+    : chatPhone || senderPhone || chatIdPhone || fallbackPhone;
+  const identitySource = isGroup
+    ? chatIdPhone
+      ? "group_chat_id"
+      : chatPhone
+        ? "group_chat_phone"
+        : senderPhone
+          ? "group_sender"
+        : "group_fallback"
+    : chatPhone
+      ? "chat_phone"
+      : senderPhone
+        ? "sender"
+        : chatIdPhone
+          ? "chat_id"
+          : fallbackPhone
+            ? "from"
+            : accountPhone
+              ? "account_owner_only"
+              : "missing";
+  const identityWarnings = [
+    !phone ? "missing_phone" : "",
+    accountPhone && phone && accountPhone === phone ? "phone_matches_account_owner" : "",
+    !isGroup && isProviderContactLabel(firstCleanString(chat.name, chat.wa_name, message.senderName)) ? "provider_label_ignored" : "",
+  ].filter(Boolean);
+  const identityReliable = Boolean(phone && (fromApi || isGroup || ["chat_phone", "sender", "chat_id", "from"].includes(identitySource)));
+  const name = firstLeadName(
+    chat.lead_fullName,
+    chat.lead_name,
+    chat.wa_contactName,
+    message.pushName,
+    message.notifyName,
+    message.senderName,
+    data.pushName,
+    data.senderName,
+    data.name,
+    chat.name,
+    chat.wa_name
+  );
+  const text = firstCleanString(
+    message.text,
+    message.body,
+    message.conversation,
+    message.caption,
+    data.text,
+    data.body,
+    data.conversation,
+    data.caption,
+    findFirstString(data, ["text", "body", "conversation", "caption"])
+  );
+  const messageType =
+    firstCleanString(message.messageType, message.mediaType, message.type, chat.wa_lastMessageType, data.messageType, data.mediaType, data.type) ||
+    (text ? "text" : "unknown");
+  const mediaUrl = firstCleanString(
+    message.mediaUrl,
+    message.media_url,
+    message.downloadUrl,
+    message.download_url,
+    message.fileUrl,
+    message.file_url,
+    content.URL,
+    content.url,
+    content.fileUrl,
+    content.file_url,
+    findFirstString(data, [
+      "mediaUrl",
+      "media_url",
+      "downloadUrl",
+      "download_url",
+      "fileUrl",
+      "file_url",
+      "fileURL",
+      "url",
+      "URL",
+      "file",
+      "media",
+    ])
+  );
+  const mediaMimeType = firstCleanString(
+    message.mimeType,
+    message.mimetype,
+    message.mediaMimeType,
+    content.mimetype,
+    content.mimeType,
+    data.mimeType,
+    data.mimetype,
+    findFirstString(data, ["mimeType", "mimetype", "mediaMimeType", "media_mime_type", "contentType", "content_type"])
+  );
+  const transcript = firstCleanString(
+    message.transcript,
+    message.transcription,
+    data.transcript,
+    data.transcription,
+    findFirstString(data, ["transcript", "transcription", "audioTranscript", "audio_transcript"])
+  );
+  const profileImageUrl = extractLeadProfileImageUrl(data);
   const participantJid = isGroup
-    ? findFirstString(data, ["participant", "participantJid", "participant_jid", "author", "sender", "senderJid", "sender_jid"])
+    ? firstCleanString(
+        message.participant,
+        message.participantJid,
+        message.sender,
+        message.senderJid,
+        data.participant,
+        data.participantJid,
+        data.sender,
+        findFirstString(data, ["participant", "participantJid", "participant_jid", "author", "sender", "senderJid", "sender_jid"])
+      )
     : "";
-  const participantPhone = isGroup ? normalizeWhatsAppNumber(participantJid.replace(/@.+$/, "") || rawPhone.replace(/@.+$/, "")) : phone;
-  const groupName = isGroup ? findFirstString(data, ["groupName", "group_name", "subject", "chatName", "chat_name", "title"]) : "";
+  const participantPhone = isGroup ? normalizePhoneCandidate(participantJid) || senderPhone || chatPhone : phone;
+  const groupName = isGroup
+    ? firstCleanString(message.groupName, data.groupName, chat.name, findFirstString(data, ["groupName", "group_name", "subject", "chatName", "chat_name", "title"]))
+    : "";
 
   return {
     providerMessageId,
@@ -1011,6 +1152,9 @@ function extractWebhookMessage(payload: Record<string, unknown>) {
     participantJid,
     participantPhone,
     groupName,
+    identitySource,
+    identityReliable,
+    identityWarnings,
   };
 }
 
@@ -1458,6 +1602,20 @@ async function persistWebhookCrm(
     };
   }
 
+  if (!message.identityReliable) {
+    await markEventProcessed(supabase, eventId, "skipped", "ambiguous_identity");
+    return {
+      ok: true,
+      eventId,
+      skipped: true,
+      reason: "ambiguous_identity",
+      instanceId,
+      providerInstanceId,
+      agentKey,
+      inbound: message,
+    };
+  }
+
   const agentConfig = await getWhatsAppAgentConfig(agentKey).catch(() => null);
   const audioResolution =
     !message.text && !message.transcript && agentConfig?.behavior.transcribeAudio
@@ -1679,6 +1837,58 @@ async function persistWebhookCrm(
   }
 
   const leadId = cleanString(leadRow.id);
+  const identityLookup = {
+    provider: CONNECTYHUB_PROVIDER,
+    channel: "whatsapp",
+    external_account_id: providerInstanceId || instanceId || null,
+    external_user_id: message.phone,
+  };
+  const identityQuery = supabase
+    .from("lead_channel_identities")
+    .select("id,metadata")
+    .eq("provider", identityLookup.provider)
+    .eq("channel", identityLookup.channel)
+    .eq("external_user_id", identityLookup.external_user_id);
+  const { data: existingIdentity } = identityLookup.external_account_id
+    ? await identityQuery.eq("external_account_id", identityLookup.external_account_id).maybeSingle()
+    : await identityQuery.is("external_account_id", null).maybeSingle();
+  const identityMetadata = {
+    ...asRecord(existingIdentity?.metadata),
+    source: "connectyhub_webhook",
+    chatId: message.chatId || null,
+    providerMessageId: message.providerMessageId || null,
+    identitySource: message.identitySource,
+    identityWarnings: message.identityWarnings,
+    lastSeenAt: receivedAt,
+  };
+
+  if (existingIdentity?.id) {
+    await supabase
+      .from("lead_channel_identities")
+      .update({
+        lead_id: leadId,
+        agent_key: agentKey || null,
+        display_name: leadDisplayName || null,
+        profile_image_url: leadProfileImageUrl || null,
+        metadata: identityMetadata,
+        updated_at: receivedAt,
+      })
+      .eq("id", existingIdentity.id);
+  } else {
+    await supabase.from("lead_channel_identities").insert({
+      lead_id: leadId,
+      agent_key: agentKey || null,
+      provider: identityLookup.provider,
+      channel: identityLookup.channel,
+      external_account_id: identityLookup.external_account_id,
+      external_user_id: identityLookup.external_user_id,
+      display_name: leadDisplayName || null,
+      profile_image_url: leadProfileImageUrl || null,
+      metadata: identityMetadata,
+      updated_at: receivedAt,
+    });
+  }
+
   const mediaAnalysis =
     agentConfig && detectedMediaKind
       ? await maybeAnalyzeInboundMedia({
@@ -1709,12 +1919,19 @@ async function persistWebhookCrm(
     mediaAnalysis?.runtimeText ||
     preliminaryInboundText ||
     (hardMediaFallback ? "Midia recebida sem analise automatica." : "");
-  const messagePayload = mediaMetadata
-    ? {
-        ...payload,
-        betel_media_analysis: mediaMetadata,
-      }
-    : payload;
+  const messagePayload = {
+    ...payload,
+    betel_identity: {
+      phone: message.phone || null,
+      name: message.name || null,
+      chatId: message.chatId || null,
+      participantPhone: message.participantPhone || null,
+      identitySource: message.identitySource,
+      identityReliable: message.identityReliable,
+      identityWarnings: message.identityWarnings,
+    },
+    ...(mediaMetadata ? { betel_media_analysis: mediaMetadata } : {}),
+  };
 
   const { data: messageRow, error: messageError } = await supabase
     .from("whatsapp_conversation_messages")
@@ -1994,7 +2211,9 @@ async function insertOutboundMessages(
 ) {
   if (!input.texts.length) return;
   const sentAt = new Date().toISOString();
-  const hasAcceptedDelivery = input.deliveries.some((delivery) => asBoolean(delivery.ok));
+  const hasAcceptedDelivery = input.deliveries.some(
+    (delivery) => asBoolean(delivery.ok) || asBoolean(delivery.deliveryUnconfirmed)
+  );
   await supabase.from("whatsapp_conversation_messages").insert(
     input.texts.map((text, index) => ({
       conversation_id: input.conversationId,
@@ -2464,16 +2683,18 @@ async function processWhatsappAgentRuntime(
         sendOptions: humanizationPlan.parts[0]?.sendOptions,
       })
     : null;
-  const replyParts = audioDelivery?.ok
+  const audioDeliveryUnconfirmed = Boolean(audioDelivery?.deliveryUnconfirmed);
+  const audioDeliveryAccepted = Boolean(audioDelivery && (audioDelivery.ok || audioDeliveryUnconfirmed));
+  const replyParts = audioDeliveryAccepted
     ? [generated.text]
     : wantsAudio
       ? config.behavior.splitReplies
         ? splitWhatsAppReply(generated.text)
         : [generated.text]
       : plannedReplyParts;
-  const deliveries = [];
+  const deliveries: ConnectyHubDeliveryResult[] = [];
 
-  if (audioDelivery?.ok) {
+  if (audioDeliveryAccepted && audioDelivery) {
     deliveries.push(audioDelivery);
   } else {
     const textHumanizationPlan = wantsAudio
@@ -2522,11 +2743,12 @@ async function processWhatsappAgentRuntime(
     agentKey,
     texts: replyParts,
     deliveries: deliveries as unknown as Record<string, unknown>[],
-    messageType: audioDelivery?.ok ? "audio" : "text",
+    messageType: audioDeliveryAccepted ? "audio" : "text",
     metadata: {
       voice_decision: voiceDecision,
       audio_requested: voiceDecision.audioRequested,
       audio_delivered: Boolean(audioDelivery?.ok),
+      audio_delivery_unconfirmed: audioDeliveryUnconfirmed,
       audio_fallback_reason:
         audioDelivery && !audioDelivery.ok
           ? audioDelivery.errorMessage || audioDelivery.providerStatus
@@ -2535,12 +2757,12 @@ async function processWhatsappAgentRuntime(
         ...humanizationPlan.summary,
         mode: humanizationPlan.mode,
         enabled: humanizationPlan.enabled,
-        fallback_to_text: wantsAudio && !audioDelivery?.ok,
+        fallback_to_text: wantsAudio && !audioDelivery?.ok && !audioDeliveryUnconfirmed,
       },
     },
   });
 
-  if (audioDelivery?.ok) {
+  if (audioDeliveryAccepted && audioDelivery) {
     await supabase.from("generated_media").insert({
       agent_key: agentKey,
       lead_id: leadId,
@@ -2567,14 +2789,25 @@ async function processWhatsappAgentRuntime(
     eventId,
   });
 
-  const deliveryOk = deliveries.length > 0 && deliveries.every((delivery) => delivery.ok);
+  const deliveryPending = deliveries.some((delivery) => delivery.deliveryUnconfirmed);
+  const deliveryOk =
+    deliveries.length > 0 && deliveries.every((delivery) => delivery.ok || delivery.deliveryUnconfirmed);
   const providerStatus = deliveries.map((delivery) => delivery.providerStatus).filter(Boolean).join(",") || "not_sent";
+  const runtimeEventType = deliveryOk
+    ? deliveryPending
+      ? "whatsapp_agent_runtime_delivery_pending"
+      : "whatsapp_agent_runtime_replied"
+    : "whatsapp_agent_runtime_delivery_failed";
 
   await insertRuntimeEvent(supabase, {
     agentKey,
-    eventType: deliveryOk ? "whatsapp_agent_runtime_replied" : "whatsapp_agent_runtime_delivery_failed",
+    eventType: runtimeEventType,
     status: providerStatus,
-    message: deliveryOk ? "Agente respondeu automaticamente pelo WhatsApp." : "Falha ao enviar uma ou mais partes da resposta.",
+    message: deliveryOk
+      ? deliveryPending
+        ? "Agente enviou audio, mas a confirmacao do provedor ficou pendente; fallback de texto bloqueado."
+        : "Agente respondeu automaticamente pelo WhatsApp."
+      : "Falha ao enviar uma ou mais partes da resposta.",
     model: generated.model,
     payload: {
       eventId,
@@ -2586,6 +2819,7 @@ async function processWhatsappAgentRuntime(
       voiceDecision,
       audioRequested: voiceDecision.audioRequested,
       audioDelivered: Boolean(audioDelivery?.ok),
+      audioDeliveryUnconfirmed,
       audioDecisionReason: voiceDecision.reason,
       audioFallbackReason:
         audioDelivery && !audioDelivery.ok

@@ -63,6 +63,7 @@ export type ConnectyHubDeliveryResult = {
   endpointConfigured: boolean;
   latencyMs: number;
   processedAt: string;
+  deliveryUnconfirmed?: boolean;
   externalDeliveryId?: string;
   responsePreview?: string;
   errorMessage?: string;

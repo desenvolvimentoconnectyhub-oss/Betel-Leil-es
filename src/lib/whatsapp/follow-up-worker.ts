@@ -542,12 +542,15 @@ export async function processWhatsAppFollowUps(input: {
           sendOptions: humanizationPlan.parts[0]?.sendOptions,
         })
       : null;
-    const delivery = audioDelivery?.ok
+    const audioDeliveryUnconfirmed = Boolean(audioDelivery?.deliveryUnconfirmed);
+    const audioDeliveryAccepted = Boolean(audioDelivery && (audioDelivery.ok || audioDeliveryUnconfirmed));
+    const delivery = audioDeliveryAccepted && audioDelivery
       ? {
           ok: true,
           providerStatus: audioDelivery.providerStatus,
           externalDeliveryId: audioDelivery.externalDeliveryId,
-          errorMessage: "",
+          errorMessage: audioDeliveryUnconfirmed ? audioDelivery.errorMessage || "Confirmacao de audio pendente." : "",
+          deliveryUnconfirmed: audioDeliveryUnconfirmed,
         }
       : await sendWhatsAppAgentReply({
           agentKey,
@@ -557,7 +560,7 @@ export async function processWhatsAppFollowUps(input: {
           trackId,
           sendOptions: humanizationPlan.parts[0]?.sendOptions,
         });
-    const deliveryMode = audioDelivery?.ok ? "audio" : "text";
+    const deliveryMode = audioDeliveryAccepted ? "audio" : "text";
     const sentAt = new Date().toISOString();
 
     await supabase.from("whatsapp_conversation_messages").insert({
@@ -581,6 +584,7 @@ export async function processWhatsAppFollowUps(input: {
         deliveryMode,
         voiceDecision,
         audioRequested: voiceDecision.audioRequested,
+        audioDeliveryUnconfirmed,
         audioFallbackReason:
           audioDelivery && !audioDelivery.ok
             ? audioDelivery.errorMessage || audioDelivery.providerStatus
@@ -591,7 +595,7 @@ export async function processWhatsAppFollowUps(input: {
           ...humanizationPlan.summary,
           mode: humanizationPlan.mode,
           enabled: humanizationPlan.enabled,
-          fallbackToText: voiceDecision.mode === "audio" && !audioDelivery?.ok,
+          fallbackToText: voiceDecision.mode === "audio" && !audioDelivery?.ok && !audioDeliveryUnconfirmed,
         },
       },
     });
