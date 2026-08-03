@@ -102,8 +102,42 @@ function currentMinutesInTimezone(timezone: string) {
   return hour * 60 + minute;
 }
 
-function isInsideAgentWindow(config: WillianAgentConfig) {
+function phoneAliases(value: string) {
+  const normalized = normalizeWhatsAppNumber(value);
+  const aliases = new Set<string>();
+  if (!normalized) return aliases;
+  aliases.add(normalized);
+
+  const brMobile = normalized.match(/^55(\d{2})(\d{8,9})$/);
+  if (brMobile) {
+    const areaCode = brMobile[1];
+    const localNumber = brMobile[2];
+    if (localNumber.length === 9 && localNumber.startsWith("9")) {
+      aliases.add(`55${areaCode}${localNumber.slice(1)}`);
+    }
+    if (localNumber.length === 8) {
+      aliases.add(`55${areaCode}9${localNumber}`);
+    }
+  }
+
+  return aliases;
+}
+
+function isResponsibleTestNumber(config: WillianAgentConfig, phone: string) {
+  const inboundAliases = phoneAliases(phone);
+  if (!inboundAliases.size) return false;
+
+  return asStringList(config.behavior.responsibleNumbers).some((configuredNumber) => {
+    for (const alias of phoneAliases(configuredNumber)) {
+      if (inboundAliases.has(alias)) return true;
+    }
+    return false;
+  });
+}
+
+function isInsideAgentWindow(config: WillianAgentConfig, phone = "") {
   if (config.behavior.availability === "always") return true;
+  if (isResponsibleTestNumber(config, phone)) return true;
   const start = parseClock(config.behavior.quietHoursStart, 8 * 60);
   const end = parseClock(config.behavior.quietHoursEnd, 20 * 60);
   const now = currentMinutesInTimezone(config.behavior.timezone);
@@ -2567,7 +2601,7 @@ async function processWhatsappAgentRuntime(
     return { ok: true, skipped: true, reason: "human_intervention" };
   }
 
-  if (!isInsideAgentWindow(config)) {
+  if (!isInsideAgentWindow(config, phone)) {
     await insertRuntimeEvent(supabase, {
       agentKey,
       eventType: "whatsapp_agent_runtime_skipped",
