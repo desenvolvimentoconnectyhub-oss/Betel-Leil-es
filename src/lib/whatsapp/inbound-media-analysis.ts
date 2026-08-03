@@ -77,37 +77,16 @@ function normalizeSearch(value: string) {
     .toLowerCase();
 }
 
-function payloadSignature(value: unknown, depth = 0): string {
-  if (!value || depth > 3) return "";
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-    return String(value);
-  }
-  if (Array.isArray(value)) {
-    return value.slice(0, 8).map((item) => payloadSignature(item, depth + 1)).join(" ");
-  }
-  if (typeof value !== "object") return "";
-
-  const parts: string[] = [];
-  for (const [key, item] of Object.entries(value as Record<string, unknown>).slice(0, 80)) {
-    parts.push(key);
-    if (typeof item === "string" || typeof item === "number" || typeof item === "boolean") {
-      parts.push(String(item));
-    } else {
-      parts.push(payloadSignature(item, depth + 1));
-    }
-  }
-  return parts.join(" ");
-}
-
 export function detectWhatsAppInboundMediaKind(input: MediaDetectionInput): InboundMediaKind | null {
   const signature = normalizeSearch(
     [
       input.messageType,
       input.mediaMimeType,
       input.mediaUrl,
-      payloadSignature(input.payload),
     ].filter(Boolean).join(" ")
   );
+
+  if (!signature) return null;
 
   if (
     signature.includes("audio") ||

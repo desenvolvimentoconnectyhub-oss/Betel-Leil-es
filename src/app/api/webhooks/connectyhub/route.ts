@@ -2314,6 +2314,38 @@ async function updateLeadRuntimeMemory(
   });
 }
 
+function fallbackWhatsappAgentReply(input: {
+  text: string;
+  promptInjection: boolean;
+  reason?: string;
+}) {
+  const text = input.text.toLowerCase();
+
+  if (input.promptInjection) {
+    return "Nao consigo mexer com instrucoes internas por aqui. Me fala o que voce precisa sobre leiloes que eu te ajudo.";
+  }
+
+  if (text.includes("audio recebido sem transcricao") || text.includes("sem transcricao")) {
+    return [
+      "Opa, recebi teu audio, mas aqui ele nao abriu direito pra eu entender com seguranca.",
+      "Me manda em texto rapidinho o ponto principal? Ai eu sigo te ajudando sem chutar.",
+    ].join("\n\n");
+  }
+
+  if (text.includes("midia recebida") || text.includes("sem analise confiavel")) {
+    return [
+      "Recebi aqui, mas a midia nao abriu do meu lado.",
+      "Me descreve rapidinho o que era, ou reenvia de novo? Ai eu continuo certinho.",
+    ].join("\n\n");
+  }
+
+  if (text.length <= 12) {
+    return "Opa, vi sua mensagem. Me fala rapidinho o que voce quer resolver agora que eu te ajudo.";
+  }
+
+  return "Vi sua mensagem. Pra eu te ajudar certinho, me manda em uma frase o ponto principal do que voce precisa agora?";
+}
+
 async function generateWhatsappAgentReply(
   config: WillianAgentConfig,
   input: {
@@ -2330,7 +2362,13 @@ async function generateWhatsappAgentReply(
   const apiKey = await getGeminiApiKey();
   const modelName = await getGeminiModel();
   if (!apiKey) {
-    return { ok: false, reason: "missing_gemini_api_key", model: modelName, text: "" };
+    return {
+      ok: true,
+      reason: "template_fallback_missing_gemini_api_key",
+      model: "template-fallback",
+      text: fallbackWhatsappAgentReply({ text: input.text, promptInjection: input.promptInjection }),
+      fallback: true,
+    };
   }
 
   try {
@@ -2435,11 +2473,13 @@ async function generateWhatsappAgentReply(
     const text = clampText(result.response.text(), 1200);
     return { ok: Boolean(text), reason: text ? "generated" : "empty_reply", model: modelName, text };
   } catch (error) {
+    const reason = error instanceof Error ? error.message : "gemini_error";
     return {
-      ok: false,
-      reason: error instanceof Error ? error.message : "gemini_error",
-      model: modelName,
-      text: "",
+      ok: true,
+      reason: `template_fallback_after_gemini_error: ${clampText(reason, 400)}`,
+      model: "template-fallback",
+      text: fallbackWhatsappAgentReply({ text: input.text, promptInjection: input.promptInjection, reason }),
+      fallback: true,
     };
   }
 }
@@ -2745,6 +2785,9 @@ async function processWhatsappAgentRuntime(
     deliveries: deliveries as unknown as Record<string, unknown>[],
     messageType: audioDeliveryAccepted ? "audio" : "text",
     metadata: {
+      generation_model: generated.model,
+      generation_reason: generated.reason,
+      generation_fallback: Boolean(generated.fallback),
       voice_decision: voiceDecision,
       audio_requested: voiceDecision.audioRequested,
       audio_delivered: Boolean(audioDelivery?.ok),
@@ -2816,6 +2859,8 @@ async function processWhatsappAgentRuntime(
       deliveries,
       replyParts,
       promptInjection,
+      generationFallback: Boolean(generated.fallback),
+      generationReason: generated.reason,
       voiceDecision,
       audioRequested: voiceDecision.audioRequested,
       audioDelivered: Boolean(audioDelivery?.ok),
