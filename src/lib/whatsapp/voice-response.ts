@@ -84,11 +84,14 @@ export async function resolveWhatsAppVoiceResponse(input: {
   forceAudio?: boolean;
   source?: WhatsAppVoiceResponseSource;
   maxAudioChars?: number;
+  allowSplitAudio?: boolean;
+  maxAudioParts?: number;
 }): Promise<WhatsAppVoiceDecision> {
   const { config } = input;
   const behavior = config.behavior;
   const generatedText = cleanString(input.generatedText);
   const maxAudioChars = Math.max(160, Math.min(input.maxAudioChars || 900, 1800));
+  const maxAudioParts = Math.max(1, Math.min(input.maxAudioParts || 1, 4));
   const modelId = cleanString(behavior.audioModelId, "eleven_multilingual_v2");
 
   const textDecision = (reason: string, fallbackReason?: string): WhatsAppVoiceDecision => ({
@@ -106,7 +109,7 @@ export async function resolveWhatsAppVoiceResponse(input: {
   if (behavior.voiceCloneStatus === "inactive") return textDecision("voice_clone_inactive");
   const voiceId = await resolveConfiguredVoiceId(config);
   if (!voiceId) return textDecision("missing_voice_id", "Selecione ou clone uma voz antes de usar audio.");
-  if (generatedText.length > maxAudioChars) {
+  if (generatedText.length > maxAudioChars && (!input.allowSplitAudio || generatedText.length > maxAudioChars * maxAudioParts)) {
     return textDecision("reply_too_long_for_audio", `Resposta com ${generatedText.length} caracteres.`);
   }
 

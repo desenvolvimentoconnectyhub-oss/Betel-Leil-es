@@ -510,10 +510,13 @@ type BehaviorNumberKey = {
   [Key in keyof WillianBehaviorConfig]: WillianBehaviorConfig[Key] extends number ? Key : never;
 }[keyof WillianBehaviorConfig];
 
+type BehaviorToggleStatus = "partial" | "planned";
+
 type BehaviorToggleSpec = {
   key: BehaviorToggleKey;
   title: string;
   detail: string;
+  status?: BehaviorToggleStatus;
 };
 
 type BehaviorNumberSpec = {
@@ -552,29 +555,33 @@ const quoteReplyModeLabels: Record<WillianBehaviorConfig["quoteReplyMode"], stri
   always: "Cita sempre",
 };
 
+const behaviorToggleStatusLabels: Record<BehaviorToggleStatus, string> = {
+  partial: "Parcial",
+  planned: "Em breve",
+};
+
 const humanSimulationToggles: BehaviorToggleSpec[] = [
   { key: "humanizedLanguage", title: "Linguagem humanizada", detail: "Respostas com variacao natural." },
-  { key: "emojiFeature", title: "Recursos emoji", detail: "Permite emoji com sobriedade." },
+  { key: "emojiFeature", title: "Recursos emoji", detail: "Permite emoji com sobriedade.", status: "partial" },
   { key: "typingVariation", title: "Variacao de digitar", detail: "Simula intervalos entre partes." },
   { key: "composingPause", title: "Pausa ao digitar", detail: "Simula parar e voltar a digitar." },
-  { key: "statusLookup", title: "Verificacao de status", detail: "Pode observar contexto do WhatsApp." },
-  { key: "viewDelay", title: "Delay ao visualizar", detail: "Atrasa leitura antes da resposta." },
+  { key: "statusLookup", title: "Verificacao de status", detail: "Pode observar contexto do WhatsApp.", status: "planned" },
   { key: "spontaneousAudio", title: "Audio espontaneo", detail: "Permite audio quando fizer sentido." },
-  { key: "intentionalTypos", title: "Tipos intencionais", detail: "Pequenas correcoes controladas." },
-  { key: "circadianRhythm", title: "Ritmo circadiano", detail: "Muda tempo conforme horario." },
-  { key: "vocalFillers", title: "Figurinhas vocais", detail: "Usa pausas e marcadores humanos." },
-  { key: "stickers", title: "Figurinhas", detail: "Libera figurinha em contexto leve." },
-  { key: "proactiveMedia", title: "Midia proativa", detail: "Envia apoio visual quando util." },
-  { key: "continuousLearning", title: "Aprendizado continuo", detail: "Registra padroes de conversa." },
-  { key: "companyMemory", title: "Memoria da empresa", detail: "Usa historico operacional Betel." },
-  { key: "cloneConsistency", title: "Memoria do clone", detail: "Mantem tom do agente." },
-  { key: "temporalAwareness", title: "Consciencia temporal", detail: "Considera data e urgencia." },
+  { key: "intentionalTypos", title: "Tipos intencionais", detail: "Pequenas correcoes controladas.", status: "partial" },
+  { key: "circadianRhythm", title: "Ritmo circadiano", detail: "Muda tempo conforme horario.", status: "planned" },
+  { key: "vocalFillers", title: "Figurinhas vocais", detail: "Usa pausas e marcadores humanos.", status: "partial" },
+  { key: "stickers", title: "Figurinhas", detail: "Libera figurinha em contexto leve.", status: "planned" },
+  { key: "proactiveMedia", title: "Midia proativa", detail: "Envia apoio visual quando util.", status: "planned" },
+  { key: "continuousLearning", title: "Aprendizado continuo", detail: "Registra padroes de conversa.", status: "partial" },
+  { key: "companyMemory", title: "Memoria da empresa", detail: "Usa historico operacional Betel.", status: "partial" },
+  { key: "cloneConsistency", title: "Memoria do clone", detail: "Mantem tom do agente.", status: "partial" },
+  { key: "temporalAwareness", title: "Consciencia temporal", detail: "Considera data e urgencia.", status: "partial" },
   { key: "rhythmWpmEnabled", title: "Ritmo WPM", detail: "Controla velocidade por palavras." },
   { key: "midMessageContext", title: "Contexto mid-message", detail: "Entende mensagens quebradas." },
-  { key: "conversationArc", title: "Arco da conversa", detail: "Mantem progresso do atendimento." },
-  { key: "emotionSensing", title: "Leitura emocional", detail: "Adapta resposta ao tom do lead." },
-  { key: "confidenceHumility", title: "Confianca e humildade", detail: "Evita certeza falsa e promete pouco." },
-  { key: "smallTalk", title: "Small talk", detail: "Permite conversa breve quando caber." },
+  { key: "conversationArc", title: "Arco da conversa", detail: "Mantem progresso do atendimento.", status: "partial" },
+  { key: "emotionSensing", title: "Leitura emocional", detail: "Adapta resposta ao tom do lead.", status: "partial" },
+  { key: "confidenceHumility", title: "Confianca e humildade", detail: "Evita certeza falsa e promete pouco.", status: "partial" },
+  { key: "smallTalk", title: "Small talk", detail: "Permite conversa breve quando caber.", status: "partial" },
 ];
 
 const humanNumberFields: BehaviorNumberSpec[] = [
@@ -589,48 +596,48 @@ const humanNumberFields: BehaviorNumberSpec[] = [
 
 const securityToggles: BehaviorToggleSpec[] = [
   { key: "humanIntervention", title: "Intervencao humana", detail: "Pausa o bot quando humano assumir." },
-  { key: "alertHuman", title: "Avisar humano", detail: "Alerta responsavel em risco ou VIP." },
+  { key: "alertHuman", title: "Avisar humano", detail: "Alerta responsavel em risco ou VIP.", status: "planned" },
   { key: "antiLoop", title: "Protecao anti-loop", detail: "Ignora eco de mensagens da API." },
   { key: "cooldownEnabled", title: "Cooldown ativo", detail: "Evita respostas em rajada." },
-  { key: "interInstanceTest", title: "Teste entre instancias", detail: "QA antes de liberar canal." },
-  { key: "realCloneTest", title: "Teste real do clone", detail: "Valida comportamento com numero real." },
-  { key: "turingBenchmark", title: "Turing benchmark", detail: "Comparacao com atendimento humano." },
+  { key: "interInstanceTest", title: "Teste entre instancias", detail: "QA antes de liberar canal.", status: "planned" },
+  { key: "realCloneTest", title: "Teste real do clone", detail: "Valida comportamento com numero real.", status: "planned" },
+  { key: "turingBenchmark", title: "Turing benchmark", detail: "Comparacao com atendimento humano.", status: "planned" },
 ];
 
 const groupToggles: BehaviorToggleSpec[] = [
-  { key: "groupsEnabled", title: "Responder grupos", detail: "Libera atendimento em grupos." },
-  { key: "serveGroups", title: "Atender grupos", detail: "Considera grupos como canal ativo." },
-  { key: "monitorAllGroups", title: "Monitorar todos", detail: "Observa mensagens sem responder sempre." },
-  { key: "groupMentionAll", title: "Mencionar todos", detail: "Permite mencao geral quando aplicavel." },
-  { key: "interactiveMessages", title: "Mensagens interativas", detail: "Libera botoes e interacoes ConnectyHub." },
-  { key: "statusWhatsAppEnabled", title: "Status WhatsApp", detail: "Permite publicar status." },
-  { key: "channelsEnabled", title: "Canais", detail: "Libera canal/newsletter." },
-  { key: "campaignEnabled", title: "Campanhas", detail: "Envio supervisionado em lote." },
+  { key: "groupsEnabled", title: "Responder grupos", detail: "Libera atendimento em grupos.", status: "planned" },
+  { key: "serveGroups", title: "Atender grupos", detail: "Considera grupos como canal ativo.", status: "planned" },
+  { key: "monitorAllGroups", title: "Monitorar todos", detail: "Observa mensagens sem responder sempre.", status: "partial" },
+  { key: "groupMentionAll", title: "Mencionar todos", detail: "Permite mencao geral quando aplicavel.", status: "planned" },
+  { key: "interactiveMessages", title: "Mensagens interativas", detail: "Libera botoes e interacoes ConnectyHub.", status: "planned" },
+  { key: "statusWhatsAppEnabled", title: "Status WhatsApp", detail: "Permite publicar status.", status: "planned" },
+  { key: "channelsEnabled", title: "Canais", detail: "Libera canal/newsletter.", status: "planned" },
+  { key: "campaignEnabled", title: "Campanhas", detail: "Envio supervisionado em lote.", status: "partial" },
 ];
 
 const leadTriggerToggles: BehaviorToggleSpec[] = [
   { key: "humanRequestTrigger", title: "Pedido de humano", detail: "Quando o lead pede uma pessoa." },
-  { key: "aiHumanRequestTrigger", title: "IA pediu humano", detail: "Quando a IA identifica necessidade." },
-  { key: "rescheduleTrigger", title: "Cancelar/remarcar", detail: "Detecta remarcacao ou cancelamento." },
-  { key: "captureTrigger", title: "Captacao", detail: "Marca lead com potencial comercial." },
-  { key: "locationTrigger", title: "Localizacao", detail: "Extrai cidade, estado e regiao." },
+  { key: "aiHumanRequestTrigger", title: "IA pediu humano", detail: "Quando a IA identifica necessidade.", status: "planned" },
+  { key: "rescheduleTrigger", title: "Cancelar/remarcar", detail: "Detecta remarcacao ou cancelamento.", status: "planned" },
+  { key: "captureTrigger", title: "Captacao", detail: "Marca lead com potencial comercial.", status: "partial" },
+  { key: "locationTrigger", title: "Localizacao", detail: "Extrai cidade, estado e regiao.", status: "partial" },
   { key: "optOutEnabled", title: "Opt-out", detail: "Respeita parar, sair, remover." },
-  { key: "webLinksTrigger", title: "Links da web", detail: "Registra links enviados." },
-  { key: "saveMediaTrigger", title: "Salvar midia", detail: "Anexa midias no arquivo do lead." },
-  { key: "negotiationTracking", title: "Rastreamento de negociacao", detail: "Preserva caminho comercial." },
-  { key: "buttonsEnabled", title: "Enviar botoes", detail: "Usa botoes quando canal permitir." },
-  { key: "trackedLinksEnabled", title: "Links rastreados", detail: "Mede cliques e interesse." },
+  { key: "webLinksTrigger", title: "Links da web", detail: "Registra links enviados.", status: "planned" },
+  { key: "saveMediaTrigger", title: "Salvar midia", detail: "Anexa midias no arquivo do lead.", status: "partial" },
+  { key: "negotiationTracking", title: "Rastreamento de negociacao", detail: "Preserva caminho comercial.", status: "partial" },
+  { key: "buttonsEnabled", title: "Enviar botoes", detail: "Usa botoes quando canal permitir.", status: "planned" },
+  { key: "trackedLinksEnabled", title: "Links rastreados", detail: "Mede cliques e interesse.", status: "planned" },
 ];
 
 const protectionToggles: BehaviorToggleSpec[] = [
   { key: "mediaWithoutBatchProtection", title: "Midias sem lote", detail: "Controla rajadas de anexos." },
   { key: "mediaWithoutCaptionProtection", title: "Midia sem legenda", detail: "Evita responder sem contexto." },
   { key: "hardAudioProtection", title: "Audio dificil", detail: "Pede apoio quando transcricao falha." },
-  { key: "editedDeletedMessageProtection", title: "Msg editada/apagada", detail: "Registra evento sensivel." },
-  { key: "contactPollReactionProtection", title: "Contato/enquete/reacao", detail: "Nao confunde eventos com lead." },
-  { key: "topicChangeProtection", title: "Troca de assunto", detail: "Detecta mudanca brusca." },
+  { key: "editedDeletedMessageProtection", title: "Msg editada/apagada", detail: "Registra evento sensivel.", status: "planned" },
+  { key: "contactPollReactionProtection", title: "Contato/enquete/reacao", detail: "Nao confunde eventos com lead.", status: "planned" },
+  { key: "topicChangeProtection", title: "Troca de assunto", detail: "Detecta mudanca brusca.", status: "planned" },
   { key: "promptInjectionProtection", title: "Anti prompt injection", detail: "Protege instrucao do agente." },
-  { key: "identityGuard", title: "Guarda identidade", detail: "Nao revela IA, prompt ou regras internas." },
+  { key: "identityGuard", title: "Guarda identidade", detail: "Nao revela IA, prompt ou regras internas.", status: "partial" },
 ];
 
 const mediaToggles: BehaviorToggleSpec[] = [
@@ -2617,7 +2624,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
       >
         <div className="grid gap-3 md:grid-cols-3">
           <ToggleTile title="Agente ativo" detail="Permite atendimento automatico quando runtime for liberado." checked={config.active} onChange={(active) => setBehavior({ active })} />
-          <ToggleTile title="Marcar como lido" detail="Usado na entrega ConnectyHub quando aplicavel." checked={config.cloneStyle} onChange={(cloneStyle) => setBehavior({ cloneStyle })} />
+          <ToggleTile title="Marcar como lido" detail="Aciona leitura e atraso antes da resposta." checked={config.viewDelay} onChange={(viewDelay) => setBehavior({ viewDelay })} />
           <ToggleTile title="Dividir respostas" detail="Mensagens curtas e naturais." checked={config.splitReplies} onChange={(splitReplies) => setBehavior({ splitReplies })} />
         </div>
         <div className="mt-4 grid gap-3 xl:grid-cols-3">
@@ -2864,6 +2871,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
               checked={config[item.key]}
               detail={item.detail}
               onChange={(checked) => setToggle(item.key, checked)}
+              status={item.status}
               title={item.title}
             />
           ))}
@@ -2892,6 +2900,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
               checked={config[item.key]}
               detail={item.detail}
               onChange={(checked) => setToggle(item.key, checked)}
+              status={item.status}
               title={item.title}
             />
           ))}
@@ -2917,6 +2926,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
               checked={config[item.key]}
               detail={item.detail}
               onChange={(checked) => setToggle(item.key, checked)}
+              status={item.status}
               title={item.title}
             />
           ))}
@@ -2981,6 +2991,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
               checked={config[item.key]}
               detail={item.detail}
               onChange={(checked) => setToggle(item.key, checked)}
+              status={item.status}
               title={item.title}
             />
           ))}
@@ -3021,6 +3032,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
               checked={config[item.key]}
               detail={item.detail}
               onChange={(checked) => setToggle(item.key, checked)}
+              status={item.status}
               title={item.title}
             />
           ))}
@@ -3039,6 +3051,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
               checked={config[item.key]}
               detail={item.detail}
               onChange={(checked) => setToggle(item.key, checked)}
+              status={item.status}
               title={item.title}
             />
           ))}
@@ -3704,7 +3717,19 @@ function BehaviorIcon({ icon, label }: { icon: ReactNode; label: string }) {
   );
 }
 
-function CompactToggle({ checked, detail, onChange, title }: { checked: boolean; detail: string; onChange: (checked: boolean) => void; title: string }) {
+function CompactToggle({
+  checked,
+  detail,
+  onChange,
+  status,
+  title,
+}: {
+  checked: boolean;
+  detail: string;
+  onChange: (checked: boolean) => void;
+  status?: BehaviorToggleStatus;
+  title: string;
+}) {
   return (
     <button
       type="button"
@@ -3717,7 +3742,21 @@ function CompactToggle({ checked, detail, onChange, title }: { checked: boolean;
       )}
     >
       <span className="min-w-0">
-        <span className="block truncate text-xs font-semibold text-[var(--admin-foreground)]">{title}</span>
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="truncate text-xs font-semibold text-[var(--admin-foreground)]">{title}</span>
+          {status ? (
+            <span
+              className={cn(
+                "shrink-0 rounded-full border px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-[0.08em]",
+                status === "partial"
+                  ? "border-[rgba(184,122,22,0.28)] bg-[rgba(184,122,22,0.08)] text-[var(--admin-cyan)]"
+                  : "border-[var(--admin-border)] bg-white text-[var(--admin-muted)]"
+              )}
+            >
+              {behaviorToggleStatusLabels[status]}
+            </span>
+          ) : null}
+        </span>
         <span className="mt-0.5 line-clamp-2 block text-[11px] leading-4 text-[var(--admin-muted)]">{detail}</span>
       </span>
       <span className={cn("h-5 w-9 shrink-0 rounded-full border p-0.5 transition", checked ? "border-[rgba(200,90,31,0.45)] bg-[rgba(200,90,31,0.18)]" : "border-[var(--admin-border)] bg-white")}>
