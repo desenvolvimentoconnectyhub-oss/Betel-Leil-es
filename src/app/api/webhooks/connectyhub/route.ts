@@ -805,6 +805,39 @@ function buildBehaviorControlPrompt(config: WillianAgentConfig, inboundText = ""
   return lines.join("\n");
 }
 
+function buildHumanConsultantPromptContext(input: {
+  config: WillianAgentConfig;
+  lead: RuntimeLeadContext;
+  inboundText: string;
+  history: RuntimeMessageContext[];
+}) {
+  const betelQualification = normalizeBetelQualificationProfile(getStoredBetelQualification(input.lead.metadata));
+  const currentMood = input.config.behavior.emotionSensing ? detectLeadMood(input.inboundText) : "neutro";
+  const currentObjective = objectiveFromText(input.inboundText) || betelQualification.objective;
+  const currentPriority = priorityFromText(input.inboundText) || betelQualification.priority;
+  const currentBlocker = blockerFromText(input.inboundText) || betelQualification.blocker;
+  const recentAiOpenings = input.history
+    .filter((message) => message.direction === "outbound" && message.authorType === "ai" && cleanString(message.text))
+    .slice(-3)
+    .map((message) => firstMeaningfulSentence(message.text))
+    .filter(Boolean);
+
+  return [
+    "Modo consultor Betel:",
+    "Conduza como consultor experiente de leiloes: escuta curta, criterio pratico e uma pergunta boa.",
+    "Fale menos que o lead. Se ele mandou pouco, responda pouco.",
+    "Nunca soe como suporte generico: evite 'como posso ajudar', 'estou a disposicao', 'fique a vontade' e frases institucionais.",
+    "Nunca empolgue venda sem base. Troque entusiasmo por criterio: matricula, ocupacao, edital, margem e objetivo.",
+    "Quando ja houver contexto, mostre que ouviu com uma referencia curta, sem repetir a historia toda.",
+    "Se faltar dado, pergunte so o proximo dado mais importante.",
+    `Tom atual: ${currentMood}.`,
+    currentObjective ? `Objetivo percebido: ${currentObjective}.` : "Objetivo ainda nao claro.",
+    currentPriority ? `Prioridade percebida: ${currentPriority}.` : "Prioridade ainda nao clara.",
+    currentBlocker ? `Receio percebido: ${currentBlocker}.` : "Receio ainda nao claro.",
+    recentAiOpenings.length ? `Aberturas recentes para nao repetir: ${recentAiOpenings.join(" | ")}.` : "",
+  ].filter(Boolean).join("\n");
+}
+
 function firstDefined(...values: unknown[]) {
   return values.find((value) => value !== undefined && value !== null);
 }
@@ -3582,6 +3615,17 @@ async function updateLeadRuntimeMemory(
   const now = new Date().toISOString();
   const leadStatus = leadStatusFromScore(signalResult.score, input.config);
   const leadTemperature = temperatureFromScore(signalResult.score, input.config);
+  const humanConsultantMemory = {
+    mood: input.config.behavior.emotionSensing ? detectLeadMood(input.text) : "neutro",
+    objective: betelQualification.objective || crmSignals.investmentGoal || "",
+    priority: betelQualification.priority || crmSignals.urgency || "",
+    blocker: betelQualification.blocker || "",
+    capitalAmount: betelQualification.capitalAmount || crmSignals.budget || 0,
+    regions: crmSignals.regions,
+    propertyTypes: crmSignals.propertyTypes,
+    lastTextPreview: clampText(input.text, 180),
+    updatedAt: now,
+  };
   const triggerSnapshot = {
     capture:
       input.config.behavior.captureTrigger
@@ -3644,6 +3688,8 @@ async function updateLeadRuntimeMemory(
         last_ai_signal_at: now,
         last_ai_signal_score: signalResult.score,
         last_ai_signal_tags: signalResult.signals,
+        human_consultant_memory: humanConsultantMemory,
+        humanConsultantMemory,
         ...(rescheduleSignal
           ? {
               last_reschedule_intent: rescheduleSignal,
@@ -3692,6 +3738,7 @@ async function updateLeadRuntimeMemory(
       betelQualification,
       lastAiSignalEventId: input.eventId || null,
       lastAiSignalTags: signalResult.signals,
+      humanConsultantMemory,
       ...(rescheduleSignal ? { lastRescheduleIntent: rescheduleSignal } : {}),
       ...(webLinks.length ? { lastWebLinks: webLinks } : {}),
     },
@@ -3717,6 +3764,7 @@ async function updateLeadRuntimeMemory(
         score: signalResult.score,
         temperature: leadTemperature,
         triggers: triggerSnapshot,
+        humanConsultantMemory,
         signals: signalResult.signals,
       },
     });
@@ -3728,6 +3776,7 @@ async function updateLeadRuntimeMemory(
     status: leadStatus,
     signals: signalResult.signals,
     triggers: triggerSnapshot,
+    humanConsultantMemory,
   };
 }
 
@@ -3824,6 +3873,149 @@ function containsInternalLeak(text: string) {
   return /\b(prompt|system|developer|instrucoes internas|regras internas|codigo fonte|chave|token|api key|segredo)\b/i.test(text);
 }
 
+function removeRoboticSupportPhrases(text: string) {
+  return text
+    .replace(/\b(prezado cliente|caro cliente|estimado cliente)\b[,:]?\s*/gi, "")
+    .replace(/\b(estou aqui para ajudar|estou aqui pra ajudar|fico a disposicao|fique a vontade|permaneco a disposicao)\b[.!]?\s*/gi, "")
+    .replace(/\b(como posso ajuda(?:r|-\w+)?|em que posso ajudar|posso te auxiliar)\b[?!.]?\s*/gi, "")
+    .replace(/\b(sou\s+(?:(?:um|uma)\s+)?(?:assistente virtual|bot|robo|ia)(?:\s+(?:da|do)\s+[^.!?]+)?)[.!?]?\s*/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function softenOvereagerSalesTone(text: string) {
+  return text
+    .replace(/\bexcelente oportunidade\b/gi, "pode fazer sentido")
+    .replace(/\boportunidade imperdivel\b/gi, "oportunidade para analisar")
+    .replace(/\bmelhor oportunidade\b/gi, "oportunidade mais aderente")
+    .replace(/\bcom certeza vale a pena\b/gi, "vale analisar com criterio")
+    .replace(/\bsem duvida\b/gi, "pelo que voce trouxe");
+}
+
+function removeDuplicateSentences(text: string) {
+  const seen = new Set<string>();
+  const parts = text
+    .split(/(?<=[.!?])\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .filter((part) => {
+      const key = normalizeSearchText(part).replace(/[^a-z0-9]+/g, " ").trim();
+      if (!key) return false;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  return parts.join(" ").trim() || text;
+}
+
+function limitQuestionCount(text: string, maxQuestions = 1) {
+  let questionCount = 0;
+  const parts = text
+    .split(/(?<=[.!?])\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .filter((part) => {
+      if (!part.includes("?")) return true;
+      questionCount += 1;
+      return questionCount <= maxQuestions;
+    });
+  return parts.join(" ").trim() || text;
+}
+
+function countQuestions(text: string) {
+  return (text.match(/\?/g) || []).length;
+}
+
+function hasRoboticSupportTone(text: string) {
+  const normalized = normalizeSearchText(text);
+  return /\b(prezado cliente|caro cliente|estou aqui para ajudar|fico a disposicao|fique a vontade|como posso ajudar|posso te auxiliar|assistente virtual)\b/.test(
+    normalized
+  );
+}
+
+function hasOvereagerSalesTone(text: string) {
+  const normalized = normalizeSearchText(text);
+  return /\b(excelente oportunidade|imperdivel|melhor oportunidade|com certeza vale a pena|retorno garantido|lucro certo|sem risco)\b/.test(
+    normalized
+  );
+}
+
+function buildTuringBenchmarkReport(input: {
+  inboundText: string;
+  responseText: string;
+  replyParts: string[];
+  history: RuntimeMessageContext[];
+  messageMode: "text" | "audio";
+  guardCorrections: string[];
+  generatedModel: string;
+  generationFallback: boolean;
+}) {
+  const flags: string[] = [];
+  const recommendations: string[] = [];
+  const textLimit = input.messageMode === "text" ? TEXT_REPLY_PART_LIMIT : AUDIO_REPLY_PART_LIMIT;
+
+  if (input.messageMode === "text" && input.replyParts.some((part) => part.length > TEXT_REPLY_PART_LIMIT)) {
+    flags.push("text_bubble_over_150");
+    recommendations.push("Reduzir cada bolha para ate 150 caracteres.");
+  }
+  if (input.messageMode === "text" && input.replyParts.length > MAX_TEXT_REPLY_PARTS) {
+    flags.push("too_many_text_bubbles");
+    recommendations.push("Resolver em menos bolhas ou pedir para seguir no proximo ponto.");
+  }
+  if (input.messageMode === "audio" && input.replyParts.some((part) => part.length > AUDIO_REPLY_PART_LIMIT)) {
+    flags.push("audio_part_too_long");
+    recommendations.push("Dividir audio longo antes da sintese de voz.");
+  }
+  if (countQuestions(input.responseText) > 1) {
+    flags.push("multiple_questions");
+    recommendations.push("Manter uma pergunta por resposta.");
+  }
+  if (hasRoboticSupportTone(input.responseText)) {
+    flags.push("robotic_support_tone");
+    recommendations.push("Remover frases de suporte generico.");
+  }
+  if (hasOvereagerSalesTone(input.responseText)) {
+    flags.push("overeager_sales_tone");
+    recommendations.push("Trocar entusiasmo por criterio consultivo.");
+  }
+  if (removeRepeatedOpening(input.responseText, input.history) !== input.responseText) {
+    flags.push("repeated_opening");
+    recommendations.push("Variar abertura ou responder direto ao ponto.");
+  }
+  if (input.guardCorrections.length) {
+    flags.push("guardrail_adjusted_reply");
+  }
+  if (input.generationFallback) {
+    flags.push("template_fallback");
+    recommendations.push("Verificar Gemini/modelo se fallback ficar recorrente.");
+  }
+
+  const penalty =
+    flags.filter((flag) => ["text_bubble_over_150", "too_many_text_bubbles", "audio_part_too_long"].includes(flag)).length * 12 +
+    flags.filter((flag) => ["multiple_questions", "robotic_support_tone", "overeager_sales_tone", "repeated_opening"].includes(flag)).length * 10 +
+    (input.guardCorrections.length ? Math.min(12, input.guardCorrections.length * 3) : 0) +
+    (input.generationFallback ? 16 : 0);
+  const score = clampNumberValue(100 - penalty, 0, 100);
+  const status = score >= 88 ? "human_like" : score >= 72 ? "needs_review" : "robotic_risk";
+
+  return {
+    score,
+    status,
+    flags: uniqueStrings(flags),
+    recommendations: uniqueStrings(recommendations),
+    metrics: {
+      inboundLength: input.inboundText.length,
+      replyLength: input.responseText.length,
+      replyParts: input.replyParts.length,
+      longestPartLength: Math.max(0, ...input.replyParts.map((part) => part.length)),
+      partLimit: textLimit,
+      questionCount: countQuestions(input.responseText),
+      guardCorrectionCount: input.guardCorrections.length,
+      model: input.generatedModel,
+    },
+  };
+}
+
 function firstMeaningfulSentence(text: string) {
   const clean = compactWhatsAppReplyBubble(text);
   const sentence = clean.match(/^(.{8,180}?[.!?])(?:\s|$)/);
@@ -3855,6 +4047,12 @@ function enforceWhatsAppReplyBehavior(
   const corrections: string[] = [];
   let text = normalizeWhatsAppReplyText(input.text);
 
+  if (config.behavior.humanizedLanguage) {
+    const withoutRoboticPhrases = removeRoboticSupportPhrases(text);
+    if (withoutRoboticPhrases !== text) corrections.push("robotic_support_phrases_removed");
+    text = withoutRoboticPhrases;
+  }
+
   if (!config.behavior.emojiFeature) {
     const withoutEmoji = removeEmojiCharacters(text);
     if (withoutEmoji !== text) corrections.push("emoji_removed");
@@ -3881,12 +4079,26 @@ function enforceWhatsAppReplyBehavior(
     const softened = softenRiskyCommercialClaims(text);
     if (softened !== text) corrections.push("risky_claim_softened");
     text = softened;
+
+    const lessSalesy = softenOvereagerSalesTone(text);
+    if (lessSalesy !== text) corrections.push("overeager_sales_tone_softened");
+    text = lessSalesy;
   }
 
   if (config.behavior.conversationArc) {
     const withoutRepeatedOpening = removeRepeatedOpening(text, input.history);
     if (withoutRepeatedOpening !== text) corrections.push("repeated_opening_removed");
     text = withoutRepeatedOpening;
+
+    const withoutDuplicateSentences = removeDuplicateSentences(text);
+    if (withoutDuplicateSentences !== text) corrections.push("duplicate_sentences_removed");
+    text = withoutDuplicateSentences;
+  }
+
+  const oneQuestion = limitQuestionCount(text, 1);
+  if (oneQuestion !== text) {
+    corrections.push("extra_questions_removed");
+    text = oneQuestion;
   }
 
   if (config.behavior.identityGuard) {
@@ -3978,6 +4190,12 @@ async function generateWhatsappAgentReply(
     const leadPersonalName = cleanString(input.lead.name || input.name);
     const leadIdentityPrompt = buildLeadIdentityPromptContext(input.lead.metadata, leadPersonalName);
     const behaviorControlPrompt = buildBehaviorControlPrompt(config, input.text);
+    const humanConsultantPrompt = buildHumanConsultantPromptContext({
+      config,
+      lead: input.lead,
+      inboundText: input.text,
+      history: input.history,
+    });
     const prompt = [
       input.globalBehaviorPrompt,
       "",
@@ -4000,6 +4218,8 @@ async function generateWhatsappAgentReply(
       "",
       "Controles de comportamento ativos:",
       behaviorControlPrompt,
+      "",
+      humanConsultantPrompt,
       "",
       "Contexto do negocio:",
       `Empresa: ${config.companyName || "Betel Leiloes"}`,
@@ -4672,6 +4892,19 @@ async function processWhatsappAgentRuntime(
   const deliveryOk =
     deliveries.length > 0 && deliveries.every((delivery) => delivery.ok || delivery.deliveryUnconfirmed);
   const providerStatus = deliveries.map((delivery) => delivery.providerStatus).filter(Boolean).join(",") || "not_sent";
+  const messageMode = audioDeliveryPartiallyAccepted ? "audio" : "text";
+  const turingReport = config.behavior.turingBenchmark
+    ? buildTuringBenchmarkReport({
+        inboundText: runtimeText,
+        responseText,
+        replyParts,
+        history: runtimeContext.messages,
+        messageMode,
+        guardCorrections: guardedReply.corrections,
+        generatedModel: generated.model,
+        generationFallback: Boolean(generated.fallback),
+      })
+    : null;
   const runtimeEventType = deliveryOk
     ? deliveryPending
       ? "whatsapp_agent_runtime_delivery_pending"
@@ -4700,6 +4933,7 @@ async function processWhatsappAgentRuntime(
       behaviorGuardCorrections: guardedReply.corrections,
       behaviorGuardAdjusted: guardedReply.corrections.length > 0,
       actionButton: !wantsAudio || shouldFallbackToText ? replyActionButton || null : null,
+      turingBenchmark: turingReport,
       voiceDecision,
       audioRequested: voiceDecision.audioRequested,
       audioDelivered: audioDeliveryPartiallyAccepted,
@@ -4723,17 +4957,15 @@ async function processWhatsappAgentRuntime(
     await insertRuntimeEvent(supabase, {
       agentKey,
       eventType: "whatsapp_agent_runtime_turing_benchmark",
-      status: deliveryOk ? "sample_captured" : "delivery_failed",
+      status: deliveryOk ? turingReport?.status || "sample_captured" : "delivery_failed",
       message: "Amostra capturada para comparar naturalidade, concisao e comportamento com atendimento humano.",
       model: generated.model,
       payload: {
         eventId,
         leadId,
         conversationId,
-        inboundLength: runtimeText.length,
-        replyLength: responseText.length,
-        replyParts: replyParts.length,
-        messageMode: audioDeliveryPartiallyAccepted ? "audio" : "text",
+        report: turingReport,
+        messageMode,
         deliveryStatus: providerStatus,
         behaviorGuardCorrections: guardedReply.corrections,
         generationFallback: Boolean(generated.fallback),
