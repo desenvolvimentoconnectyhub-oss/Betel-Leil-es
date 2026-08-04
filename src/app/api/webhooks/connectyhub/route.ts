@@ -1974,6 +1974,7 @@ function mediaAnalysisMetadata(result: InboundMediaAnalysisResult | null) {
     temporary: result.temporary,
     expiresAt: result.expiresAt || null,
     retentionHours: result.retentionHours,
+    officialAvatarMatch: result.officialAvatarMatch,
     sizeBytes: result.sizeBytes,
     analysisText: result.analysisText || null,
     error: result.error || null,
@@ -3799,6 +3800,10 @@ function fallbackWhatsappAgentReply(input: {
       "Opa, recebi teu audio, mas aqui ele nao abriu direito pra eu entender com seguranca.",
       "Me manda em texto rapidinho o ponto principal? Ai eu sigo te ajudando sem chutar.",
     ].join("\n\n");
+  }
+
+  if (text.includes("imagem oficial do agente reconhecida") || text.includes("foto/avatar oficial autorizado")) {
+    return "kkkk essa parece minha foto de perfil. O que vc queria fazer com ela?";
   }
 
   if (text.includes("midia recebida") || text.includes("sem analise confiavel")) {

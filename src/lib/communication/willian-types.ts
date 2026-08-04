@@ -214,6 +214,9 @@ export type WillianBehaviorConfig = {
   analyzeImages: boolean;
   analyzeVideos: boolean;
   analyzeDocuments: boolean;
+  recognizeOfficialAvatar: boolean;
+  officialAvatarHumor: boolean;
+  officialAvatarConfidence: number;
   imageAnalysisLimit: number;
   videoAnalysisLimit: number;
   documentAnalysisLimit: number;
@@ -535,6 +538,9 @@ export const DEFAULT_WILLIAN_AGENT_CONFIG: WillianAgentConfig = {
     analyzeImages: true,
     analyzeVideos: true,
     analyzeDocuments: true,
+    recognizeOfficialAvatar: true,
+    officialAvatarHumor: true,
+    officialAvatarConfidence: 88,
     imageAnalysisLimit: 8,
     videoAnalysisLimit: 2,
     documentAnalysisLimit: 3,

@@ -9,6 +9,7 @@ import {
 } from "@/lib/communication/connectyhub-client";
 import type { WillianAgentConfig } from "@/lib/communication/willian-types";
 import { putPublicR2Object, type StoredR2Object } from "@/lib/storage/r2";
+import { detectOfficialAgentAvatarMatch, type OfficialAvatarMatchResult } from "./official-avatar-recognition";
 
 export type InboundMediaKind = "image" | "video" | "document";
 
@@ -27,6 +28,7 @@ export type InboundMediaAnalysisResult = {
   temporary: boolean;
   expiresAt: string;
   retentionHours: number;
+  officialAvatarMatch: OfficialAvatarMatchResult | null;
   sizeBytes: number | null;
   error: string;
   analyzedAt: string;
@@ -444,6 +446,7 @@ function buildMediaRuntimeText(input: {
   kind: InboundMediaKind;
   caption: string;
   analysisText: string;
+  officialAvatarMatch: OfficialAvatarMatchResult | null;
   disabled: boolean;
   error: string;
 }) {
@@ -452,11 +455,24 @@ function buildMediaRuntimeText(input: {
     : `O lead enviou ${formatMediaKind(input.kind).toLowerCase()} no WhatsApp.`;
 
   if (input.analysisText) {
+    const officialAvatarGuidance = input.officialAvatarMatch?.match
+      ? [
+          "",
+          "[IMAGEM OFICIAL DO AGENTE RECONHECIDA]",
+          "A imagem enviada parece ser a foto/avatar oficial autorizado deste atendimento.",
+          "Nao identifique pessoa real, nao diga nome civil e nao diga que reconheceu um terceiro.",
+          "Se o contexto estiver leve, responda como 'essa parece minha foto de perfil' e pergunte o que o lead quer fazer com ela.",
+          input.officialAvatarMatch.humorAllowed
+            ? "Pode usar humor discreto, curto e natural."
+            : "Mantenha resposta formal e objetiva, sem piada.",
+        ].join("\n")
+      : "";
     return [
       base,
       "",
       `[ANALISE AUTOMATICA DE ${formatMediaKind(input.kind).toUpperCase()}]`,
       input.analysisText,
+      officialAvatarGuidance,
       "",
       "[ORIENTACAO INTERNA]",
       "Use a analise da midia como contexto real da conversa.",
@@ -557,6 +573,7 @@ export async function maybeAnalyzeInboundMedia(input: AnalyzeInput): Promise<Inb
 
   let media: DownloadedInboundMedia | null = null;
   let storage: StoredR2Object | null = null;
+  let officialAvatarMatch: OfficialAvatarMatchResult | null = null;
   let analysisText = "";
   let error = "";
   let source: InboundMediaAnalysisResult["source"] = enabled ? "unavailable" : "disabled";
@@ -607,10 +624,20 @@ export async function maybeAnalyzeInboundMedia(input: AnalyzeInput): Promise<Inb
     }
   }
 
+  if (kind === "image" && media && input.config.behavior.recognizeOfficialAvatar) {
+    officialAvatarMatch = await detectOfficialAgentAvatarMatch({
+      agentKey: input.agentKey,
+      config: input.config,
+      inboundBuffer: media.buffer,
+      inboundMimeType: media.mimeType,
+    });
+  }
+
   const runtimeText = buildMediaRuntimeText({
     kind,
     caption,
     analysisText,
+    officialAvatarMatch,
     disabled: !enabled,
     error,
   });
@@ -630,6 +657,7 @@ export async function maybeAnalyzeInboundMedia(input: AnalyzeInput): Promise<Inb
     temporary,
     expiresAt,
     retentionHours,
+    officialAvatarMatch,
     sizeBytes: media?.buffer.length ?? null,
     error,
     analyzedAt,

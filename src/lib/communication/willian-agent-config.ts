@@ -276,6 +276,14 @@ export function normalizeWillianAgentConfig(input: unknown): WillianAgentConfig 
       analyzeImages: boolField(behavior.analyzeImages, defaults.behavior.analyzeImages),
       analyzeVideos: boolField(behavior.analyzeVideos, defaults.behavior.analyzeVideos),
       analyzeDocuments: boolField(behavior.analyzeDocuments, defaults.behavior.analyzeDocuments),
+      recognizeOfficialAvatar: boolField(behavior.recognizeOfficialAvatar, defaults.behavior.recognizeOfficialAvatar),
+      officialAvatarHumor: boolField(behavior.officialAvatarHumor, defaults.behavior.officialAvatarHumor),
+      officialAvatarConfidence: clampNumber(
+        behavior.officialAvatarConfidence,
+        defaults.behavior.officialAvatarConfidence,
+        50,
+        100
+      ),
       imageAnalysisLimit: clampNumber(behavior.imageAnalysisLimit, defaults.behavior.imageAnalysisLimit, 0, 100),
       videoAnalysisLimit: clampNumber(behavior.videoAnalysisLimit, defaults.behavior.videoAnalysisLimit, 0, 100),
       documentAnalysisLimit: clampNumber(

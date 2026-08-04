@@ -644,6 +644,8 @@ const mediaToggles: BehaviorToggleSpec[] = [
   { key: "analyzeImages", title: "Analisar imagens", detail: "Interpreta prints e fotos." },
   { key: "analyzeVideos", title: "Analisar videos", detail: "Permite leitura de video." },
   { key: "analyzeDocuments", title: "Analisar documentos", detail: "Editais e anexos entram no CRM." },
+  { key: "recognizeOfficialAvatar", title: "Reconhecer avatar", detail: "Detecta foto oficial do agente." },
+  { key: "officialAvatarHumor", title: "Humor com avatar", detail: "Permite brincadeira leve." },
   { key: "saveLeadFiles", title: "Salvar arquivos", detail: "Guarda midias no arquivo do lead." },
   { key: "temporaryMediaStorage", title: "Midia temporaria", detail: "R2 bruto expira apos a retencao." },
   { key: "mediaCleanupEnabled", title: "Limpeza automatica", detail: "Apaga midias vencidas do R2." },
@@ -3061,6 +3063,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
           <NumberField label="Limite imagens" value={config.imageAnalysisLimit} onChange={(imageAnalysisLimit) => setBehavior({ imageAnalysisLimit })} />
           <NumberField label="Limite videos" value={config.videoAnalysisLimit} onChange={(videoAnalysisLimit) => setBehavior({ videoAnalysisLimit })} />
           <NumberField label="Limite documentos" value={config.documentAnalysisLimit} onChange={(documentAnalysisLimit) => setBehavior({ documentAnalysisLimit })} />
+          <NumberField label="Confianca avatar (%)" value={config.officialAvatarConfidence} onChange={(officialAvatarConfidence) => setBehavior({ officialAvatarConfidence })} />
           <NumberField label="Retencao midia (h)" value={config.mediaRetentionHours} onChange={(mediaRetentionHours) => setBehavior({ mediaRetentionHours })} />
         </div>
       </Panel>
