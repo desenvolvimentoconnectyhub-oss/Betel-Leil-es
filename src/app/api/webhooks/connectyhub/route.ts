@@ -84,11 +84,12 @@ function clampText(value: string, limit = 2400) {
 const INBOUND_BATCH_MAX_WAIT_MS = 20000;
 const INBOUND_BATCH_HISTORY_MS = 5 * 60 * 1000;
 const INBOUND_BATCH_MAX_MESSAGES = 8;
-const TEXT_REPLY_SPLIT_THRESHOLD = 640;
-const TEXT_REPLY_PART_LIMIT = 760;
+const TEXT_REPLY_SPLIT_THRESHOLD = 150;
+const TEXT_REPLY_PART_LIMIT = 150;
 const AUDIO_REPLY_PART_LIMIT = 820;
-const MAX_TEXT_REPLY_PARTS = 2;
+const MAX_TEXT_REPLY_PARTS = 4;
 const MAX_AUDIO_REPLY_PARTS = 3;
+const TEXT_REPLY_CONTINUATION_NOTE = "Se quiser, sigo no proximo ponto.";
 
 function clampNumberValue(value: number, min: number, max: number) {
   if (!Number.isFinite(value)) return min;
@@ -206,6 +207,17 @@ function hardSplitReplyUnit(text: string, limit: number) {
   let current = "";
 
   for (const word of words) {
+    if (word.length > limit) {
+      if (current) {
+        parts.push(current);
+        current = "";
+      }
+      for (let index = 0; index < word.length; index += limit) {
+        parts.push(word.slice(index, index + limit));
+      }
+      continue;
+    }
+
     if (current && `${current} ${word}`.length > limit) {
       parts.push(current);
       current = word;
@@ -248,9 +260,28 @@ function replySplitUnits(text: string, limit: number) {
   return units;
 }
 
-function limitReplyParts(parts: string[], maxParts: number) {
+function trimReplyPartToLimit(part: string, limit: number) {
+  const clean = compactWhatsAppReplyBubble(part);
+  if (clean.length <= limit) return clean;
+  return hardSplitReplyUnit(clean, limit)[0] || clean.slice(0, Math.max(1, limit - 3)).trim();
+}
+
+function limitReplyParts(parts: string[], maxParts: number, maxPartLength: number, mode: "text" | "audio") {
   const cleanParts = parts.map((part) => compactWhatsAppReplyBubble(part)).filter(Boolean);
-  if (cleanParts.length <= maxParts) return cleanParts;
+  if (cleanParts.length <= maxParts) {
+    return mode === "text" ? cleanParts.map((part) => trimReplyPartToLimit(part, maxPartLength)) : cleanParts;
+  }
+
+  if (mode === "text") {
+    const capped = cleanParts.slice(0, maxParts).map((part) => trimReplyPartToLimit(part, maxPartLength));
+    const lastIndex = capped.length - 1;
+    const lastWithContinuation = `${capped[lastIndex]} ${TEXT_REPLY_CONTINUATION_NOTE}`.trim();
+    capped[lastIndex] =
+      lastWithContinuation.length <= maxPartLength
+        ? lastWithContinuation
+        : TEXT_REPLY_CONTINUATION_NOTE;
+    return capped;
+  }
 
   const head = cleanParts.slice(0, Math.max(1, maxParts - 1));
   const tail = cleanParts.slice(Math.max(1, maxParts - 1)).join(" ");
@@ -269,9 +300,10 @@ function splitWhatsAppReply(
   const maxPartLength = options.maxPartLength || (mode === "audio" ? AUDIO_REPLY_PART_LIMIT : TEXT_REPLY_PART_LIMIT);
   const maxParts = options.maxParts || (mode === "audio" ? MAX_AUDIO_REPLY_PARTS : MAX_TEXT_REPLY_PARTS);
   const splitThreshold = mode === "audio" ? Math.min(maxPartLength, AUDIO_REPLY_PART_LIMIT) : TEXT_REPLY_SPLIT_THRESHOLD;
+  const shouldForceMobileTextSplit = mode === "text" && normalized.length > TEXT_REPLY_SPLIT_THRESHOLD;
 
-  if (!enabled || normalized.length <= splitThreshold) {
-    return [compactWhatsAppReplyBubble(normalized)];
+  if ((!enabled && !shouldForceMobileTextSplit) || normalized.length <= splitThreshold) {
+    return [trimReplyPartToLimit(normalized, maxPartLength)];
   }
 
   const units = replySplitUnits(normalized, maxPartLength);
@@ -288,7 +320,7 @@ function splitWhatsAppReply(
   }
 
   if (current) parts.push(current);
-  return limitReplyParts(parts, maxParts);
+  return limitReplyParts(parts, maxParts, maxPartLength, mode);
 }
 
 async function startWhatsAppHumanizationSignals(
@@ -3953,9 +3985,10 @@ async function generateWhatsappAgentReply(
       "Responda somente com a mensagem final para o lead.",
       "Nao use JSON, markdown, bullets, numeracao, titulo ou texto tecnico.",
       "Escreva como WhatsApp brasileiro real, direto e natural.",
-      "Padrao: uma unica bolha curta de WhatsApp, boa para celular.",
-      "No inicio do atendimento, responda em ate 350 caracteres sempre que possivel.",
-      "Nao separe em varios blocos quando a resposta couber em poucas linhas.",
+      "Padrao: uma unica bolha curta de WhatsApp, boa para celular, com ate 150 caracteres.",
+      "No inicio do atendimento, responda em ate 150 caracteres sempre que possivel.",
+      "Se precisar passar de 150 caracteres, divida em blocos curtos de ate 150 caracteres cada.",
+      "Nao separe em varios blocos quando a resposta couber em uma bolha de 150 caracteres.",
       "Se o lead enviou varias mensagens em sequencia, responda ao conjunto uma unica vez.",
       "Faca no maximo uma pergunta por resposta.",
       "Evite repetir a mesma abertura em mensagens seguidas, como 'show', 'com certeza' ou 'bem-vindo'.",
