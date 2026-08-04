@@ -9,6 +9,7 @@ import {
   type ConnectyHubWhatsAppGroupSummary,
 } from "@/lib/communication/connectyhub-client";
 import { getWhatsAppAgentConfig } from "@/lib/communication/willian-agent-config";
+import type { WillianAgentConfig } from "@/lib/communication/willian-types";
 
 type SupabaseAdmin = NonNullable<ReturnType<typeof getSupabaseAdminClient>>;
 
@@ -119,6 +120,13 @@ function asBoolean(value: unknown) {
   return value === true || value === "true" || value === "1" || value === 1;
 }
 
+function normalizeSearchText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
 function asIso(value: unknown) {
   return cleanString(value);
 }
@@ -131,6 +139,125 @@ function destinationTypeFromJid(jid: string): WhatsAppCommunityDestination["dest
   if (jid.includes("@newsletter")) return "channel";
   if (jid === "status" || jid.includes("status@broadcast")) return "status";
   return "group";
+}
+
+function shouldGroupMessageMentionAgent(input: {
+  text: string;
+  agentKey: string;
+  destinationName: string;
+  config: WillianAgentConfig;
+}) {
+  const text = normalizeSearchText(input.text);
+  const agentName = normalizeSearchText(input.config.agentName || input.agentKey);
+  const companyName = normalizeSearchText(input.config.companyName || "Betel Leiloes");
+  const destinationName = normalizeSearchText(input.destinationName);
+  return Boolean(
+    text.includes("@") ||
+      text.includes("willian") ||
+      text.includes("betel") ||
+      (agentName.length >= 4 && text.includes(agentName)) ||
+      (companyName.length >= 4 && text.includes(companyName)) ||
+      (destinationName.length >= 5 && text.includes(destinationName))
+  );
+}
+
+function isRelevantGroupMessage(text: string) {
+  const normalized = normalizeSearchText(text);
+  return /\b(leilao|leiloes|imovel|imoveis|matricula|edital|arremat|invest|oportunidade|betel|juridic|desocup|ocupad)\b/.test(
+    normalized
+  );
+}
+
+function groupAutoReplyDecision(input: {
+  destination: WhatsAppCommunityDestination;
+  config: WillianAgentConfig;
+  text: string;
+  agentKey: string;
+}) {
+  const destination = input.destination;
+  const destinationActive = destination.status === "active" || input.config.behavior.serveGroups;
+  if (!input.config.behavior.groupsEnabled || !input.config.behavior.serveGroups) {
+    return { shouldReply: false, status: "observed", reason: "group_reply_disabled" };
+  }
+  if (destination.destinationType === "channel" && !input.config.behavior.channelsEnabled) {
+    return { shouldReply: false, status: "channel_disabled", reason: "channels_disabled" };
+  }
+  if (destination.destinationType === "status" && !input.config.behavior.statusWhatsAppEnabled) {
+    return { shouldReply: false, status: "status_disabled", reason: "status_whatsapp_disabled" };
+  }
+  if (!destinationActive || destination.status === "blocked" || destination.status === "archived") {
+    return { shouldReply: false, status: "observed", reason: "destination_inactive" };
+  }
+  if (destination.replyMode === "approval" || destination.humanApprovalRequired) {
+    return { shouldReply: false, status: "needs_approval", reason: "human_approval_required" };
+  }
+
+  const mode = destination.replyMode !== "off" ? destination.replyMode : input.config.behavior.groupReplyMode;
+  if (mode === "observer") return { shouldReply: false, status: "observed", reason: "observer_mode" };
+  if (mode === "admins") return { shouldReply: false, status: "needs_approval", reason: "admin_mode_requires_review" };
+  if (mode === "all") return { shouldReply: true, status: "auto_reply", reason: "reply_mode_all" };
+  if (mode === "relevant" && isRelevantGroupMessage(input.text)) {
+    return { shouldReply: true, status: "auto_reply", reason: "relevant_message" };
+  }
+  if (
+    mode === "mentions" &&
+    shouldGroupMessageMentionAgent({
+      text: input.text,
+      agentKey: input.agentKey,
+      destinationName: destination.name,
+      config: input.config,
+    })
+  ) {
+    return { shouldReply: true, status: "auto_reply", reason: "agent_mentioned" };
+  }
+
+  return { shouldReply: false, status: "observed", reason: "not_targeted" };
+}
+
+function buildGroupAutoReply(input: {
+  destination: WhatsAppCommunityDestination;
+  participantName: string;
+  text: string;
+}) {
+  const name = cleanString(input.participantName).split(/\s+/)[0];
+  const prefix = name ? `${name}, vi aqui.` : "Vi aqui.";
+  const relevant = isRelevantGroupMessage(input.text);
+  if (input.destination.destinationType === "channel") {
+    return "Recebi aqui no canal da Betel. Para atendimento individual e envio de oportunidade, me chama no privado que eu sigo certinho.";
+  }
+  if (relevant) {
+    return `${prefix} Para eu ajudar sem baguncar o grupo, me chama no privado com a regiao ou oportunidade que voce quer analisar.`;
+  }
+  return `${prefix} Para atendimento da Betel, me chama no privado e me fala o ponto principal.`;
+}
+
+function withTrackingParams(url: string, trackId: string, source: string) {
+  const clean = cleanString(url);
+  if (!clean || !/^https?:\/\//i.test(clean)) return "";
+
+  try {
+    const parsed = new URL(clean);
+    parsed.searchParams.set("utm_source", "whatsapp_agent");
+    parsed.searchParams.set("utm_medium", source);
+    parsed.searchParams.set("betel_track_id", trackId);
+    return parsed.toString();
+  } catch {
+    return clean;
+  }
+}
+
+function groupActionButton(config: WillianAgentConfig, trackId: string) {
+  if (!config.behavior.interactiveMessages || !config.behavior.buttonsEnabled || !config.prompt.sendButton) return undefined;
+  const url = config.behavior.trackedLinksEnabled
+    ? withTrackingParams(config.prompt.buttonUrl || config.prompt.productLink, trackId, "group")
+    : cleanString(config.prompt.buttonUrl || config.prompt.productLink);
+  if (!url) return undefined;
+
+  return {
+    label: cleanString(config.prompt.buttonLabel, "Ver oportunidade"),
+    url,
+    footerText: "Betel Leiloes",
+  };
 }
 
 function migrationMissing(error: unknown) {
@@ -535,6 +662,11 @@ export async function createWhatsAppCommunityCampaign(input: {
     throw new Error("Mencionar todos exige confirmacao extra antes de agendar.");
   }
 
+  const config = await getWhatsAppAgentConfig(agentKey).catch(() => null);
+  if (input.mentionAllRequested && !config?.behavior.groupMentionAll) {
+    throw new Error("Mencionar todos esta desligado no comportamento do agente.");
+  }
+
   const selectedIds = [...new Set((input.destinationIds || []).map((value) => cleanString(value)).filter(Boolean))];
   const selectedJids = [...new Set((input.destinationJids || []).map((value) => cleanString(value)).filter(Boolean))];
   let destinationRows: Array<Record<string, unknown>> = [];
@@ -555,6 +687,15 @@ export async function createWhatsAppCommunityCampaign(input: {
   }
 
   if (!destinationRows.length) throw new Error("Escolha pelo menos um grupo ou canal.");
+  if (destinationRows.some((row) => cleanString(row.destination_type) === "channel") && !config?.behavior.channelsEnabled) {
+    throw new Error("Canais/newsletter estao desligados no comportamento do agente.");
+  }
+  if (destinationRows.some((row) => cleanString(row.destination_type) === "status") && !config?.behavior.statusWhatsAppEnabled) {
+    throw new Error("Publicacao em status esta desligada no comportamento do agente.");
+  }
+  if (destinationRows.some((row) => cleanString(row.destination_type, "group") === "group") && !config?.behavior.groupsEnabled) {
+    throw new Error("Envio para grupos esta desligado no comportamento do agente.");
+  }
 
   const scheduledFor = cleanString(input.scheduledFor) || new Date(Date.now() + 5 * 60 * 1000).toISOString();
   const { data: campaign, error: campaignError } = await supabase
@@ -670,6 +811,23 @@ export async function processWhatsAppCommunityCampaigns(input: { limit?: number;
         });
       continue;
     }
+    if (asBoolean(campaignRow.mention_all_requested) && !config.behavior.groupMentionAll) {
+      await supabase
+        .from("agent_runtime_events")
+        .insert({
+          run_id: null,
+          run_code: `WHATSAPP-CAMPAIGN-${Date.now().toString(36).toUpperCase()}`,
+          agent_key: agentKey,
+          event_type: "whatsapp_group_campaign_skipped",
+          status: "mention_all_disabled",
+          provider: CONNECTYHUB_PROVIDER,
+          model: "campaign-worker",
+          attempt: 1,
+          message: "Campanha WhatsApp ignorada porque groupMentionAll esta desligado no agente.",
+          payload: { campaignId },
+        });
+      continue;
+    }
 
     const bodyText = cleanString(campaignRow.body_text);
     const campaignType = cleanString(campaignRow.campaign_type, "single");
@@ -693,6 +851,25 @@ export async function processWhatsAppCommunityCampaigns(input: { limit?: number;
     for (const targetRow of (targetsResult.data || []) as Array<Record<string, unknown>>) {
       const targetId = cleanString(targetRow.id);
       const destinationJid = cleanString(targetRow.destination_jid);
+      const destinationType = cleanString(targetRow.destination_type, destinationTypeFromJid(destinationJid));
+      const disabledReason =
+        destinationType === "channel" && !config.behavior.channelsEnabled
+          ? "channels_disabled"
+          : destinationType === "status" && !config.behavior.statusWhatsAppEnabled
+            ? "status_whatsapp_disabled"
+            : destinationType === "group" && !config.behavior.groupsEnabled
+              ? "groups_disabled"
+              : "";
+      if (disabledReason) {
+        await supabase
+          .from("whatsapp_group_campaign_targets")
+          .update({
+            status: "skipped",
+            last_error: disabledReason,
+          })
+          .eq("id", targetId);
+        continue;
+      }
       const trackId = `betel-group-campaign-${campaignId}-${targetId}-${Date.now()}`;
       let deliveryPayload: Record<string, unknown> = {};
       let deliveryStatus = "sent";
@@ -827,9 +1004,45 @@ export async function recordWhatsAppGroupMessageEvent(input: {
       return { ok: true, skipped: true, reason: "duplicate_group_event", destinationId: destination.id };
     }
 
-    const shouldQueueApproval = destination.status === "active" && (destination.replyMode === "approval" || destination.humanApprovalRequired);
-    const decisionStatus = shouldQueueApproval ? "needs_approval" : "observed";
+    const config = await getWhatsAppAgentConfig(agentKey).catch(() => null);
+    const autoDecision = config
+      ? groupAutoReplyDecision({
+          destination,
+          config,
+          text: cleanString(input.text),
+          agentKey,
+        })
+      : { shouldReply: false, status: "observed", reason: "missing_agent_config" };
+    const shouldQueueApproval = autoDecision.status === "needs_approval";
     const occurredAt = input.occurredAt || new Date().toISOString();
+    const trackId = `betel-group-auto-${cleanString(input.webhookEventId) || cleanString(input.providerMessageId) || Date.now().toString(36)}`;
+    let deliveryPayload: Record<string, unknown> = {};
+    let finalDecisionStatus = autoDecision.status;
+
+    if (config && autoDecision.shouldReply) {
+      const delivery = await sendWhatsAppDestinationText({
+        agentKey,
+        instanceId: cleanString(input.instanceId),
+        destinationJid,
+        text: buildGroupAutoReply({
+          destination,
+          participantName: cleanString(input.participantName),
+          text: cleanString(input.text),
+        }),
+        trackId,
+        mentions: destination.respondWithMention && cleanString(input.participantPhone) ? [cleanString(input.participantPhone)] : undefined,
+        replyId: cleanString(input.providerMessageId),
+        actionButton: groupActionButton(config, trackId),
+        sendOptions: {
+          delayMs: Math.max(1200, Math.min(9000, config.behavior.responseDelaySeconds * 1000 || 2400)),
+          readChat: true,
+          readMessages: config.behavior.viewDelay,
+        },
+      });
+      deliveryPayload = delivery as unknown as Record<string, unknown>;
+      finalDecisionStatus = delivery.ok || delivery.deliveryUnconfirmed ? "auto_replied" : "auto_reply_failed";
+    }
+
     const eventResult = await supabase
       .from("whatsapp_group_message_events")
       .insert({
@@ -847,7 +1060,7 @@ export async function recordWhatsAppGroupMessageEvent(input: {
         text: cleanString(input.text) || null,
         media_url: cleanString(input.mediaUrl) || null,
         media_mime_type: cleanString(input.mediaMimeType) || null,
-        decision_status: decisionStatus,
+        decision_status: finalDecisionStatus,
         response_due_at: shouldQueueApproval ? new Date(Date.now() + Math.max(destination.cooldownMinutes, 3) * 60 * 1000).toISOString() : null,
         occurred_at: occurredAt,
         metadata: {
@@ -855,7 +1068,14 @@ export async function recordWhatsAppGroupMessageEvent(input: {
           observer: {
             replyMode: destination.replyMode,
             destinationStatus: destination.status,
-            automaticReplyEnabled: false,
+            automaticReplyEnabled: Boolean(autoDecision.shouldReply),
+            automaticReplyReason: autoDecision.reason,
+            behaviorGroupsEnabled: Boolean(config?.behavior.groupsEnabled),
+            behaviorServeGroups: Boolean(config?.behavior.serveGroups),
+            behaviorInteractiveMessages: Boolean(config?.behavior.interactiveMessages),
+            behaviorChannelsEnabled: Boolean(config?.behavior.channelsEnabled),
+            behaviorStatusEnabled: Boolean(config?.behavior.statusWhatsAppEnabled),
+            delivery: deliveryPayload,
           },
         },
       })
@@ -872,7 +1092,9 @@ export async function recordWhatsAppGroupMessageEvent(input: {
       ok: true,
       destinationId: destination.id,
       eventId: cleanString((eventResult.data as Record<string, unknown> | null)?.id),
-      decisionStatus,
+      decisionStatus: finalDecisionStatus,
+      replyAttempted: Boolean(autoDecision.shouldReply),
+      delivery: deliveryPayload,
     };
   } catch (error) {
     return {

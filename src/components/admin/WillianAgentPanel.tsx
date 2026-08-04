@@ -510,7 +510,7 @@ type BehaviorNumberKey = {
   [Key in keyof WillianBehaviorConfig]: WillianBehaviorConfig[Key] extends number ? Key : never;
 }[keyof WillianBehaviorConfig];
 
-type BehaviorToggleStatus = "partial" | "planned";
+type BehaviorToggleStatus = "partial";
 
 type BehaviorToggleSpec = {
   key: BehaviorToggleKey;
@@ -557,7 +557,6 @@ const quoteReplyModeLabels: Record<WillianBehaviorConfig["quoteReplyMode"], stri
 
 const behaviorToggleStatusLabels: Record<BehaviorToggleStatus, string> = {
   partial: "Parcial",
-  planned: "Em breve",
 };
 
 const humanSimulationToggles: BehaviorToggleSpec[] = [
@@ -565,13 +564,13 @@ const humanSimulationToggles: BehaviorToggleSpec[] = [
   { key: "emojiFeature", title: "Recursos emoji", detail: "Permite emoji com sobriedade." },
   { key: "typingVariation", title: "Variacao de digitar", detail: "Simula intervalos entre partes." },
   { key: "composingPause", title: "Pausa ao digitar", detail: "Simula parar e voltar a digitar." },
-  { key: "statusLookup", title: "Verificacao de status", detail: "Pode observar contexto do WhatsApp.", status: "planned" },
+  { key: "statusLookup", title: "Verificacao de status", detail: "Pode observar contexto do WhatsApp." },
   { key: "spontaneousAudio", title: "Audio espontaneo", detail: "Permite audio quando fizer sentido." },
   { key: "intentionalTypos", title: "Tipos intencionais", detail: "Pequenas correcoes controladas.", status: "partial" },
-  { key: "circadianRhythm", title: "Ritmo circadiano", detail: "Muda tempo conforme horario.", status: "planned" },
+  { key: "circadianRhythm", title: "Ritmo circadiano", detail: "Muda tempo conforme horario." },
   { key: "vocalFillers", title: "Figurinhas vocais", detail: "Usa pausas e marcadores humanos." },
-  { key: "stickers", title: "Figurinhas", detail: "Libera figurinha em contexto leve.", status: "planned" },
-  { key: "proactiveMedia", title: "Midia proativa", detail: "Envia apoio visual quando util.", status: "planned" },
+  { key: "stickers", title: "Figurinhas", detail: "Libera figurinha em contexto leve." },
+  { key: "proactiveMedia", title: "Midia proativa", detail: "Envia apoio visual quando util." },
   { key: "continuousLearning", title: "Aprendizado continuo", detail: "Registra padroes de conversa." },
   { key: "companyMemory", title: "Memoria da empresa", detail: "Usa historico operacional Betel." },
   { key: "cloneConsistency", title: "Memoria do clone", detail: "Mantem tom do agente." },
@@ -596,46 +595,46 @@ const humanNumberFields: BehaviorNumberSpec[] = [
 
 const securityToggles: BehaviorToggleSpec[] = [
   { key: "humanIntervention", title: "Intervencao humana", detail: "Pausa o bot quando humano assumir." },
-  { key: "alertHuman", title: "Avisar humano", detail: "Alerta responsavel em risco ou VIP.", status: "planned" },
+  { key: "alertHuman", title: "Avisar humano", detail: "Alerta responsavel em risco ou VIP." },
   { key: "antiLoop", title: "Protecao anti-loop", detail: "Ignora eco de mensagens da API." },
   { key: "cooldownEnabled", title: "Cooldown ativo", detail: "Evita respostas em rajada." },
-  { key: "interInstanceTest", title: "Teste entre instancias", detail: "QA antes de liberar canal.", status: "planned" },
-  { key: "realCloneTest", title: "Teste real do clone", detail: "Valida comportamento com numero real.", status: "planned" },
-  { key: "turingBenchmark", title: "Turing benchmark", detail: "Comparacao com atendimento humano.", status: "planned" },
+  { key: "interInstanceTest", title: "Teste entre instancias", detail: "QA antes de liberar canal." },
+  { key: "realCloneTest", title: "Teste real do clone", detail: "Valida comportamento com numero real." },
+  { key: "turingBenchmark", title: "Turing benchmark", detail: "Comparacao com atendimento humano." },
 ];
 
 const groupToggles: BehaviorToggleSpec[] = [
-  { key: "groupsEnabled", title: "Responder grupos", detail: "Libera atendimento em grupos.", status: "planned" },
-  { key: "serveGroups", title: "Atender grupos", detail: "Considera grupos como canal ativo.", status: "planned" },
+  { key: "groupsEnabled", title: "Responder grupos", detail: "Libera atendimento em grupos." },
+  { key: "serveGroups", title: "Atender grupos", detail: "Considera grupos como canal ativo." },
   { key: "monitorAllGroups", title: "Monitorar todos", detail: "Observa mensagens sem responder sempre." },
-  { key: "groupMentionAll", title: "Mencionar todos", detail: "Permite mencao geral quando aplicavel.", status: "planned" },
-  { key: "interactiveMessages", title: "Mensagens interativas", detail: "Libera botoes e interacoes ConnectyHub.", status: "planned" },
-  { key: "statusWhatsAppEnabled", title: "Status WhatsApp", detail: "Permite publicar status.", status: "planned" },
-  { key: "channelsEnabled", title: "Canais", detail: "Libera canal/newsletter.", status: "planned" },
+  { key: "groupMentionAll", title: "Mencionar todos", detail: "Permite mencao geral quando aplicavel." },
+  { key: "interactiveMessages", title: "Mensagens interativas", detail: "Libera botoes e interacoes ConnectyHub." },
+  { key: "statusWhatsAppEnabled", title: "Status WhatsApp", detail: "Permite publicar status." },
+  { key: "channelsEnabled", title: "Canais", detail: "Libera canal/newsletter." },
   { key: "campaignEnabled", title: "Campanhas", detail: "Envio supervisionado em lote." },
 ];
 
 const leadTriggerToggles: BehaviorToggleSpec[] = [
   { key: "humanRequestTrigger", title: "Pedido de humano", detail: "Quando o lead pede uma pessoa." },
-  { key: "aiHumanRequestTrigger", title: "IA pediu humano", detail: "Quando a IA identifica necessidade.", status: "planned" },
-  { key: "rescheduleTrigger", title: "Cancelar/remarcar", detail: "Detecta remarcacao ou cancelamento.", status: "planned" },
+  { key: "aiHumanRequestTrigger", title: "IA pediu humano", detail: "Quando a IA identifica necessidade." },
+  { key: "rescheduleTrigger", title: "Cancelar/remarcar", detail: "Detecta remarcacao ou cancelamento." },
   { key: "captureTrigger", title: "Captacao", detail: "Marca lead com potencial comercial." },
   { key: "locationTrigger", title: "Localizacao", detail: "Extrai cidade, estado e regiao." },
   { key: "optOutEnabled", title: "Opt-out", detail: "Respeita parar, sair, remover." },
-  { key: "webLinksTrigger", title: "Links da web", detail: "Registra links enviados.", status: "planned" },
+  { key: "webLinksTrigger", title: "Links da web", detail: "Registra links enviados." },
   { key: "saveMediaTrigger", title: "Salvar midia", detail: "Anexa midias no arquivo do lead." },
   { key: "negotiationTracking", title: "Rastreamento de negociacao", detail: "Preserva caminho comercial." },
-  { key: "buttonsEnabled", title: "Enviar botoes", detail: "Usa botoes quando canal permitir.", status: "planned" },
-  { key: "trackedLinksEnabled", title: "Links rastreados", detail: "Mede cliques e interesse.", status: "planned" },
+  { key: "buttonsEnabled", title: "Enviar botoes", detail: "Usa botoes quando canal permitir." },
+  { key: "trackedLinksEnabled", title: "Links rastreados", detail: "Mede cliques e interesse." },
 ];
 
 const protectionToggles: BehaviorToggleSpec[] = [
   { key: "mediaWithoutBatchProtection", title: "Midias sem lote", detail: "Controla rajadas de anexos." },
   { key: "mediaWithoutCaptionProtection", title: "Midia sem legenda", detail: "Evita responder sem contexto." },
   { key: "hardAudioProtection", title: "Audio dificil", detail: "Pede apoio quando transcricao falha." },
-  { key: "editedDeletedMessageProtection", title: "Msg editada/apagada", detail: "Registra evento sensivel.", status: "planned" },
-  { key: "contactPollReactionProtection", title: "Contato/enquete/reacao", detail: "Nao confunde eventos com lead.", status: "planned" },
-  { key: "topicChangeProtection", title: "Troca de assunto", detail: "Detecta mudanca brusca.", status: "planned" },
+  { key: "editedDeletedMessageProtection", title: "Msg editada/apagada", detail: "Registra evento sensivel." },
+  { key: "contactPollReactionProtection", title: "Contato/enquete/reacao", detail: "Nao confunde eventos com lead." },
+  { key: "topicChangeProtection", title: "Troca de assunto", detail: "Detecta mudanca brusca." },
   { key: "promptInjectionProtection", title: "Anti prompt injection", detail: "Protege instrucao do agente." },
   { key: "identityGuard", title: "Guarda identidade", detail: "Nao revela IA, prompt ou regras internas." },
 ];

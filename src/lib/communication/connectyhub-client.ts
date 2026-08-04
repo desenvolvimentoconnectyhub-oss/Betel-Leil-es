@@ -1204,6 +1204,7 @@ export async function sendWhatsAppDestinationText(input: {
   destinationJid: string;
   text: string;
   trackId: string;
+  actionButton?: WhatsAppActionButtonInput;
   mentions?: string[];
   replyId?: string;
   sendOptions?: WhatsAppAgentSendOptions;
@@ -1237,6 +1238,7 @@ export async function sendWhatsAppDestinationText(input: {
       text: input.text.trim(),
       trackId: input.trackId,
       idempotencyKey: input.trackId,
+      actionButton: input.actionButton,
       mentions: input.mentions?.map(normalizeWhatsAppNumber).filter(Boolean),
       replyId: cleanString(input.replyId),
       sendOptions: input.sendOptions,
@@ -3100,6 +3102,7 @@ export async function sendWillianWhatsAppReply(input: {
   number: string;
   text: string;
   trackId: string;
+  actionButton?: WhatsAppActionButtonInput;
   sendOptions?: WhatsAppAgentSendOptions;
 }): Promise<ConnectyHubDeliveryResult> {
   const startedMs = Date.now();
@@ -3132,6 +3135,7 @@ export async function sendWillianWhatsAppReply(input: {
       text: input.text.trim(),
       trackId: input.trackId,
       idempotencyKey: input.trackId,
+      actionButton: input.actionButton,
       sendOptions: input.sendOptions,
       timeoutMs: 15000,
     });
@@ -3169,6 +3173,7 @@ export async function sendWhatsAppAgentReply(input: {
   number: string;
   text: string;
   trackId: string;
+  actionButton?: WhatsAppActionButtonInput;
   sendOptions?: WhatsAppAgentSendOptions;
 }): Promise<ConnectyHubDeliveryResult> {
   if (!input.agentKey || input.agentKey === WILLIAN_AGENT_KEY) {
@@ -3206,6 +3211,7 @@ export async function sendWhatsAppAgentReply(input: {
       text: input.text.trim(),
       trackId: input.trackId,
       idempotencyKey: input.trackId,
+      actionButton: input.actionButton,
       sendOptions: input.sendOptions,
       timeoutMs: 15000,
     });

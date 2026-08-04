@@ -57,6 +57,34 @@ function jitter(value: number, seed: string, strength = 0.22) {
   return Math.round(value * multiplier);
 }
 
+function localHourInTimezone(timezone: string) {
+  try {
+    const hour = new Intl.DateTimeFormat("en-US", {
+      hour: "2-digit",
+      hour12: false,
+      timeZone: timezone || "America/Sao_Paulo",
+    }).format(new Date());
+    const parsed = Number(hour);
+    return Number.isFinite(parsed) ? parsed : new Date().getHours();
+  } catch {
+    return new Date().getHours();
+  }
+}
+
+function circadianDelayMultiplier(config: WillianAgentConfig) {
+  if (!config.behavior.circadianRhythm) return 1;
+
+  const hour = localHourInTimezone(config.behavior.timezone);
+  if (hour >= 0 && hour < 7) return 1.25;
+  if (hour >= 7 && hour < 10) return 0.9;
+  if (hour >= 18 && hour < 23) return 1.12;
+  return 1;
+}
+
+function applyCircadianDelay(config: WillianAgentConfig, value: number) {
+  return Math.round(value * circadianDelayMultiplier(config));
+}
+
 function wordCount(text: string) {
   return text.trim().split(/\s+/).filter(Boolean).length;
 }
@@ -67,19 +95,19 @@ function readDelayMs(config: WillianAgentConfig, inboundText: string, seed: stri
   const min = secondsToMs(config.behavior.minReadSeconds);
   const max = Math.max(min, secondsToMs(config.behavior.maxReadSeconds));
   const estimated = Math.ceil(clamp(inboundText.length / 32, 1, 90)) * 1000;
-  return jitter(clamp(estimated, min, max || 12000), `${seed}:read`, 0.25);
+  return jitter(applyCircadianDelay(config, clamp(estimated, min, max || 12000)), `${seed}:read`, 0.25);
 }
 
 function baseResponseDelayMs(config: WillianAgentConfig, index: number, seed: string) {
   if (index > 0) {
     const configured = secondsToMs(config.behavior.textFollowupDelaySeconds);
     const fallback = config.behavior.composingPause ? 2600 : 1400;
-    return jitter(configured || fallback, `${seed}:part:${index}:pause`, 0.35);
+    return jitter(applyCircadianDelay(config, configured || fallback), `${seed}:part:${index}:pause`, 0.35);
   }
 
   const configured = secondsToMs(config.behavior.responseDelaySeconds);
   const fallback = config.behavior.smartTiming ? 4500 : 1800;
-  return jitter(configured || fallback, `${seed}:first-response`, 0.3);
+  return jitter(applyCircadianDelay(config, configured || fallback), `${seed}:first-response`, 0.3);
 }
 
 function textTypingDelayMs(config: WillianAgentConfig, text: string, index: number, seed: string) {
@@ -88,7 +116,7 @@ function textTypingDelayMs(config: WillianAgentConfig, text: string, index: numb
   const rhythmWpm = clamp(config.behavior.rhythmWpm, 20, 120);
   const byRhythm = config.behavior.rhythmWpmEnabled ? (words / rhythmWpm) * 60000 : 0;
   const fallback = Math.max(1800, Math.min(6500, text.length * 18));
-  const base = Math.max(configured, byRhythm, fallback);
+  const base = applyCircadianDelay(config, Math.max(configured, byRhythm, fallback));
   const capped = clamp(base, index === 0 ? 1800 : 1300, MAX_TEXT_TYPING_MS);
   return jitter(capped, `${seed}:typing:${index}`, config.behavior.typingVariation ? 0.36 : 0.12);
 }
@@ -97,7 +125,7 @@ function audioRecordingDelayMs(config: WillianAgentConfig, text: string, seed: s
   const configured = secondsToMs(config.behavior.audioDelaySeconds);
   const words = Math.max(1, wordCount(text));
   const spoken = clamp((words / 120) * 60000, 5500, MAX_AUDIO_RECORDING_MS);
-  const base = Math.max(configured, spoken);
+  const base = applyCircadianDelay(config, Math.max(configured, spoken));
   return jitter(base, `${seed}:audio-recording`, 0.24);
 }
 
@@ -110,6 +138,7 @@ function isHumanizationEnabled(config: WillianAgentConfig) {
       behavior.viewDelay ||
       behavior.smartTiming ||
       behavior.rhythmWpmEnabled ||
+      behavior.circadianRhythm ||
       behavior.spontaneousAudio
   );
 }

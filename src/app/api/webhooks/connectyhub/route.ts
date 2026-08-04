@@ -751,9 +751,21 @@ function buildBehaviorControlPrompt(config: WillianAgentConfig, inboundText = ""
     lines.push("Use rapport suave: uma validacao curta antes da orientacao quando fizer sentido.");
   }
 
-  if (!behavior.stickers) lines.push("Nao prometa enviar figurinhas.");
-  if (!behavior.proactiveMedia) lines.push("Nao diga que enviou imagem, documento ou material extra sem ter arquivo real no contexto.");
-  if (!behavior.statusLookup) lines.push("Nao afirme que viu status do WhatsApp ou atividade externa do lead.");
+  if (behavior.stickers) {
+    lines.push("Se o lead enviar figurinha ou conversa leve, responda naturalmente; nao invente envio de figurinha sem arquivo real autorizado.");
+  } else {
+    lines.push("Nao prometa enviar figurinhas.");
+  }
+  if (behavior.proactiveMedia) {
+    lines.push("Pode oferecer link, botao ou material de apoio quando existir URL/arquivo real no contexto; nao diga que anexou algo sem entrega real.");
+  } else {
+    lines.push("Nao diga que enviou imagem, documento ou material extra sem ter arquivo real no contexto.");
+  }
+  if (behavior.statusLookup) {
+    lines.push("Pode usar contexto de status/atividade do WhatsApp apenas quando ele existir explicitamente na memoria ou no evento.");
+  } else {
+    lines.push("Nao afirme que viu status do WhatsApp ou atividade externa do lead.");
+  }
   if (behavior.identityGuard) {
     lines.push("Se perguntarem se voce e IA, seja transparente em uma frase curta e continue ajudando.");
   }
@@ -982,6 +994,102 @@ function extractLeadCrmSignals(text: string) {
     investmentGoal,
     experienceLevel,
     urgency,
+  };
+}
+
+function extractWebLinks(text: string) {
+  const matches = text.match(/https?:\/\/[^\s<>)\]]+/gi) || [];
+  return uniqueStrings(matches.map((url) => url.replace(/[.,;!?]+$/g, ""))).slice(0, 10);
+}
+
+function detectRescheduleIntent(text: string) {
+  const normalized = normalizeSearchText(text);
+  if (!normalized) return null;
+  if (/\b(cancelar|cancela|desmarcar|remarcar|remarca|reagendar|reagenda|mudar horario|trocar horario|outro horario)\b/.test(normalized)) {
+    return {
+      intent: normalized.includes("cancel") || normalized.includes("desmarcar") ? "cancelar" : "remarcar",
+      textPreview: clampText(text, 220),
+    };
+  }
+  return null;
+}
+
+function topicFromText(text: string) {
+  const normalized = normalizeSearchText(text);
+  const topics = [
+    { key: "juridico", pattern: /\b(juridic|matricula|edital|processo|advogado|documentacao|risco)\b/ },
+    { key: "imovel", pattern: /\b(imovel|apartamento|casa|terreno|galpao|regiao|cidade|bairro)\b/ },
+    { key: "capital", pattern: /\b(capital|dinheiro|orcamento|valor|lance|entrada|financiamento|pagamento)\b/ },
+    { key: "agenda", pattern: /\b(reuniao|ligacao|agenda|marcar|remarcar|cancelar|horario)\b/ },
+    { key: "atendimento", pattern: /\b(humano|pessoa|consultor|corretor|diretor|atendente)\b/ },
+    { key: "midia", pattern: /\b(audio|foto|imagem|video|documento|arquivo|print)\b/ },
+  ];
+  return topics.find((topic) => topic.pattern.test(normalized))?.key || "";
+}
+
+function detectTopicChange(text: string, history: RuntimeMessageContext[]) {
+  const currentTopic = topicFromText(text);
+  if (!currentTopic) return null;
+
+  const previousInbound = [...history]
+    .reverse()
+    .filter((message) => message.direction === "inbound" && cleanString(message.text))
+    .find((message) => normalizeSearchText(message.text) !== normalizeSearchText(text));
+  const previousTopic = previousInbound ? topicFromText(previousInbound.text) : "";
+  if (!previousTopic || previousTopic === currentTopic) return null;
+
+  return {
+    from: previousTopic,
+    to: currentTopic,
+    previousTextPreview: clampText(previousInbound?.text || "", 180),
+    currentTextPreview: clampText(text, 180),
+  };
+}
+
+function detectAiHumanNeed(input: {
+  text: string;
+  lead: RuntimeLeadContext;
+  config: WillianAgentConfig;
+}) {
+  const normalized = normalizeSearchText(input.text);
+  if (input.lead.qualificationScore >= input.config.qualification.vipScore) return "vip_score";
+  if (/\b(procon|processar|processo judicial|acao judicial|advogado|juridico|golpe|fraude|denuncia|reclamacao|ameaca|policia)\b/.test(normalized)) {
+    return "risk_or_complaint";
+  }
+  if (/\b(assinar contrato|contrato|pix|deposito|sinal|pagamento agora|dados bancarios)\b/.test(normalized)) {
+    return "financial_or_contract_sensitive";
+  }
+  if (/\b(tenho mais de|capital de|tenho capital|posso investir)\b/.test(normalized) && budgetFromText(input.text) >= 500000) {
+    return "high_capital";
+  }
+  return "";
+}
+
+function withTrackedParams(url: string, trackId: string, source: string) {
+  const clean = cleanString(url);
+  if (!clean || !/^https?:\/\//i.test(clean)) return "";
+
+  try {
+    const parsed = new URL(clean);
+    parsed.searchParams.set("utm_source", "whatsapp_agent");
+    parsed.searchParams.set("utm_medium", source);
+    parsed.searchParams.set("betel_track_id", trackId);
+    return parsed.toString();
+  } catch {
+    return clean;
+  }
+}
+
+function runtimeActionButton(config: WillianAgentConfig, trackId: string) {
+  if (!config.behavior.interactiveMessages || !config.behavior.buttonsEnabled || !config.prompt.sendButton) return undefined;
+  const rawUrl = cleanString(config.prompt.buttonUrl || config.prompt.productLink);
+  const url = config.behavior.trackedLinksEnabled ? withTrackedParams(rawUrl, trackId, "agent_reply") : rawUrl;
+  if (!url) return undefined;
+
+  return {
+    label: cleanString(config.prompt.buttonLabel, "Ver oportunidade"),
+    url,
+    footerText: "Betel Leiloes",
   };
 }
 
@@ -1566,6 +1674,70 @@ function extractWebhookMessage(payload: Record<string, unknown>) {
   };
 }
 
+function whatsappControlEvent(payload: Record<string, unknown>, message: ReturnType<typeof extractWebhookMessage>) {
+  const data = eventPayload(payload);
+  const chatId = cleanString(message.chatId).toLowerCase();
+  const messageType = cleanString(message.messageType).toLowerCase();
+  const providerMessageId = cleanString(message.providerMessageId);
+  const technicalSignature = normalizeSearchText(
+    [
+      eventName(payload),
+      messageType,
+      chatId,
+      findFirstString(data, ["status", "type", "messageType", "mediaType", "event", "operation", "updateType"]),
+    ].join(" ")
+  );
+
+  if (
+    /\b(edit|edited|delete|deleted|apagada|apagado|revoked|revoke|protocolmessage|messages_update|message_update)\b/.test(technicalSignature)
+  ) {
+    return {
+      kind: "edited_deleted",
+      status: "edited_deleted_protected",
+      reason: "Mensagem editada/apagada registrada sem resposta automatica.",
+      metadata: { providerMessageId, messageType },
+    };
+  }
+
+  if (/\b(reaction|reacao|poll|enquete|contact|contacts|vcard)\b/.test(`${technicalSignature} ${messageType}`)) {
+    return {
+      kind: "interaction_payload",
+      status: "interaction_payload_protected",
+      reason: "Contato, enquete ou reacao registrados sem confundir o lead.",
+      metadata: { providerMessageId, messageType },
+    };
+  }
+
+  if (chatId.includes("status@broadcast") || /\b(statuses|story|whatsapp_status|status_broadcast)\b/.test(technicalSignature)) {
+    return {
+      kind: "status",
+      status: "status_observed",
+      reason: "Status WhatsApp observado pelo webhook.",
+      metadata: {
+        providerMessageId,
+        messageType,
+        textPreview: clampText(message.text || message.transcript || "", 220),
+        mediaUrl: message.mediaUrl || null,
+      },
+    };
+  }
+
+  if (chatId.includes("@newsletter") || /\b(newsletter|channel)\b/.test(technicalSignature)) {
+    return {
+      kind: "channel",
+      status: "channel_observed",
+      reason: "Evento de canal/newsletter observado pelo webhook.",
+      metadata: {
+        providerMessageId,
+        messageType,
+        textPreview: clampText(message.text || message.transcript || "", 220),
+      },
+    };
+  }
+
+  return null;
+}
+
 function isAudioMessage(messageType: string, mimeType: string) {
   return isWhatsAppAudioMessage(messageType, mimeType);
 }
@@ -1960,9 +2132,161 @@ async function persistWebhookCrm(
     };
   }
 
+  const agentConfig = await getWhatsAppAgentConfig(agentKey).catch(() => null);
+  const controlEvent = whatsappControlEvent(payload, message);
+
+  if (
+    controlEvent?.kind === "edited_deleted" &&
+    (agentConfig?.behavior.editedDeletedMessageProtection ?? true)
+  ) {
+    await insertRuntimeEvent(supabase, {
+      agentKey,
+      eventType: "whatsapp_agent_runtime_protection",
+      status: controlEvent.status,
+      message: controlEvent.reason,
+      payload: {
+        eventId,
+        instanceId,
+        providerInstanceId,
+        ...controlEvent.metadata,
+      },
+    });
+    await markEventProcessed(supabase, eventId, "skipped", controlEvent.status);
+    return {
+      ok: true,
+      eventId,
+      skipped: true,
+      reason: controlEvent.status,
+      instanceId,
+      providerInstanceId,
+      agentKey,
+      inbound: message,
+    };
+  }
+
+  if (
+    controlEvent?.kind === "interaction_payload" &&
+    (agentConfig?.behavior.contactPollReactionProtection ?? true)
+  ) {
+    await insertRuntimeEvent(supabase, {
+      agentKey,
+      eventType: "whatsapp_agent_runtime_protection",
+      status: controlEvent.status,
+      message: controlEvent.reason,
+      payload: {
+        eventId,
+        instanceId,
+        providerInstanceId,
+        ...controlEvent.metadata,
+      },
+    });
+    await markEventProcessed(supabase, eventId, "skipped", controlEvent.status);
+    return {
+      ok: true,
+      eventId,
+      skipped: true,
+      reason: controlEvent.status,
+      instanceId,
+      providerInstanceId,
+      agentKey,
+      inbound: message,
+    };
+  }
+
+  if (controlEvent?.kind === "status") {
+    const statusEnabled = Boolean(agentConfig?.behavior.statusWhatsAppEnabled || agentConfig?.behavior.statusLookup);
+    await insertRuntimeEvent(supabase, {
+      agentKey,
+      eventType: "whatsapp_agent_runtime_status",
+      status: statusEnabled ? "status_observed" : "status_disabled",
+      message: statusEnabled
+        ? "Status WhatsApp observado e registrado para auditoria."
+        : "Status WhatsApp recebido, mas o recurso esta desligado no agente.",
+      payload: {
+        eventId,
+        instanceId,
+        providerInstanceId,
+        enabled: statusEnabled,
+        ...controlEvent.metadata,
+      },
+    });
+    await markEventProcessed(supabase, eventId, "skipped", statusEnabled ? "status_observed" : "status_disabled");
+    return {
+      ok: true,
+      eventId,
+      skipped: true,
+      reason: statusEnabled ? "status_observed" : "status_disabled",
+      instanceId,
+      providerInstanceId,
+      agentKey,
+      inbound: message,
+    };
+  }
+
+  if (controlEvent?.kind === "channel") {
+    if (!agentConfig?.behavior.channelsEnabled) {
+      await insertRuntimeEvent(supabase, {
+        agentKey,
+        eventType: "whatsapp_agent_runtime_channel",
+        status: "channels_disabled",
+        message: "Evento de canal/newsletter recebido, mas canais estao desligados no agente.",
+        payload: {
+          eventId,
+          instanceId,
+          providerInstanceId,
+          ...controlEvent.metadata,
+        },
+      });
+      await markEventProcessed(supabase, eventId, "skipped", "channels_disabled");
+      return {
+        ok: true,
+        eventId,
+        skipped: true,
+        reason: "channels_disabled",
+        instanceId,
+        providerInstanceId,
+        agentKey,
+        inbound: message,
+      };
+    }
+
+    const channelResult = await recordWhatsAppGroupMessageEvent({
+      agentKey,
+      instanceId,
+      webhookEventId: eventId,
+      destinationJid: message.chatId,
+      destinationName: message.groupName || "Canal WhatsApp",
+      providerMessageId: message.providerMessageId,
+      participantJid: message.participantJid,
+      participantPhone: message.participantPhone || message.phone,
+      participantName: message.name,
+      messageType: message.messageType,
+      text: message.text || message.transcript,
+      mediaUrl: message.mediaUrl,
+      mediaMimeType: message.mediaMimeType,
+      payload,
+    });
+    await markEventProcessed(
+      supabase,
+      eventId,
+      channelResult.ok ? "processed" : "skipped",
+      channelResult.ok ? undefined : channelResult.reason
+    );
+    return {
+      ok: true,
+      eventId,
+      skipped: true,
+      reason: channelResult.ok ? "channel_observed" : "channel_observe_failed",
+      channelResult,
+      instanceId,
+      providerInstanceId,
+      agentKey,
+      inbound: message,
+    };
+  }
+
   if (message.isGroup) {
-    const groupConfig = await getWhatsAppAgentConfig(agentKey).catch(() => null);
-    const groupBehavior = groupConfig?.behavior;
+    const groupBehavior = agentConfig?.behavior;
     const shouldMonitorGroup = Boolean(
       groupBehavior?.monitorAllGroups ||
         groupBehavior?.groupsEnabled ||
@@ -2046,7 +2370,6 @@ async function persistWebhookCrm(
     };
   }
 
-  const agentConfig = await getWhatsAppAgentConfig(agentKey).catch(() => null);
   const audioResolution =
     !message.text && !message.transcript && agentConfig?.behavior.transcribeAudio
       ? await maybeTranscribeInboundAudio({
@@ -2414,13 +2737,18 @@ async function persistWebhookCrm(
   const mediaMetadata = mediaAnalysisMetadata(mediaAnalysis);
   const inboundMediaUrl = mediaAnalysis?.mediaUrl || initialInboundMediaUrl;
   const inboundMediaMimeType = mediaAnalysis?.mimeType || initialInboundMediaMimeType;
+  const inboundStickerContext =
+    agentConfig?.behavior.stickers && /\b(sticker|figurinha)\b/i.test(message.messageType)
+      ? "Figurinha recebida no WhatsApp. Responda de forma leve, curta e sem fingir enviar figurinha."
+      : "";
   const hardMediaFallback =
-    !preliminaryInboundText && detectedMediaKind && !mediaAnalysis?.runtimeText
+    !preliminaryInboundText && detectedMediaKind && !mediaAnalysis?.runtimeText && !inboundStickerContext
       ? "Midia recebida sem analise automatica. Responda de forma curta pedindo uma descricao ou reenvio legivel."
       : "";
   const inboundText =
     mediaAnalysis?.runtimeText ||
     preliminaryInboundText ||
+    inboundStickerContext ||
     (hardMediaFallback ? "Midia recebida sem analise automatica." : "");
   const messagePayload = {
     ...payload,
@@ -3044,6 +3372,98 @@ async function markHumanIntervention(
   });
 }
 
+function samePhoneNumber(left: string, right: string) {
+  const leftAliases = phoneAliases(left);
+  if (!leftAliases.size) return false;
+  for (const alias of phoneAliases(right)) {
+    if (leftAliases.has(alias)) return true;
+  }
+  return false;
+}
+
+function responsibleNotificationNumbers(config: WillianAgentConfig, leadPhone: string) {
+  return uniqueStrings(
+    asStringList(config.behavior.responsibleNumbers.replace(/\r?\n/g, ","))
+      .map((number) => normalizeWhatsAppNumber(number))
+      .filter((number) => number && !samePhoneNumber(number, leadPhone))
+  );
+}
+
+async function notifyResponsibleHumans(
+  supabase: NonNullable<ReturnType<typeof getSupabaseAdminClient>>,
+  input: {
+    config: WillianAgentConfig;
+    agentKey: string;
+    instanceId: string;
+    leadId: string;
+    conversationId: string;
+    eventId: string;
+    leadPhone: string;
+    reason: string;
+    textPreview: string;
+  }
+) {
+  if (!input.config.behavior.alertHuman) return [];
+
+  const numbers = responsibleNotificationNumbers(input.config, input.leadPhone);
+  if (!numbers.length) {
+    await insertRuntimeEvent(supabase, {
+      agentKey: input.agentKey,
+      eventType: "whatsapp_agent_runtime_human_alert",
+      status: "missing_responsible_numbers",
+      message: "Alerta humano solicitado, mas nao ha numeros responsaveis configurados.",
+      payload: {
+        leadId: input.leadId,
+        conversationId: input.conversationId,
+        eventId: input.eventId,
+        reason: input.reason,
+      },
+    });
+    return [];
+  }
+
+  const alertText = [
+    "Alerta Betel WhatsApp",
+    `Motivo: ${input.reason}`,
+    `Lead: +${input.leadPhone}`,
+    `Resumo: ${clampText(input.textPreview, 260)}`,
+  ].join("\n");
+
+  const deliveries = await Promise.all(
+    numbers.map((number, index) =>
+      sendWhatsAppAgentReply({
+        agentKey: input.agentKey,
+        instanceId: input.instanceId,
+        number,
+        text: alertText,
+        trackId: `${input.agentKey}-${input.eventId || Date.now().toString(36)}-human-alert-${index + 1}`,
+        sendOptions: {
+          delayMs: 500,
+          readChat: false,
+          readMessages: false,
+        },
+      })
+    )
+  );
+
+  await insertRuntimeEvent(supabase, {
+    agentKey: input.agentKey,
+    eventType: "whatsapp_agent_runtime_human_alert",
+    status: deliveries.every((delivery) => delivery.ok || delivery.deliveryUnconfirmed) ? "sent" : "partial",
+    message: "Responsaveis humanos avisados sobre conversa que exige atencao.",
+    payload: {
+      leadId: input.leadId,
+      conversationId: input.conversationId,
+      eventId: input.eventId,
+      reason: input.reason,
+      targetCount: numbers.length,
+      deliveries,
+    },
+  });
+
+  return deliveries;
+}
+
 async function insertOutboundMessages(
   supabase: NonNullable<ReturnType<typeof getSupabaseAdminClient>>,
   input: {
@@ -3125,6 +3545,8 @@ async function updateLeadRuntimeMemory(
   const betelQualification = mergeBetelQualificationProfile(input.lead.metadata, input.text);
   const signalResult = scoreLeadFromText(input.text, input.lead.qualificationScore, betelQualification);
   const crmSignals = extractLeadCrmSignals(input.text);
+  const webLinks = input.config.behavior.webLinksTrigger ? extractWebLinks(input.text) : [];
+  const rescheduleSignal = input.config.behavior.rescheduleTrigger ? detectRescheduleIntent(input.text) : null;
   const now = new Date().toISOString();
   const leadStatus = leadStatusFromScore(signalResult.score, input.config);
   const leadTemperature = temperatureFromScore(signalResult.score, input.config);
@@ -3163,6 +3585,18 @@ async function updateLeadRuntimeMemory(
             capturedAt: now,
           }
         : null,
+    reschedule: rescheduleSignal
+      ? {
+          ...rescheduleSignal,
+          capturedAt: now,
+        }
+      : null,
+    webLinks: webLinks.length
+      ? {
+          urls: webLinks,
+          capturedAt: now,
+        }
+      : null,
   };
   await supabase
     .from("whatsapp_leads")
@@ -3178,6 +3612,18 @@ async function updateLeadRuntimeMemory(
         last_ai_signal_at: now,
         last_ai_signal_score: signalResult.score,
         last_ai_signal_tags: signalResult.signals,
+        ...(rescheduleSignal
+          ? {
+              last_reschedule_intent: rescheduleSignal,
+              lastRescheduleIntent: rescheduleSignal,
+            }
+          : {}),
+        ...(webLinks.length
+          ? {
+              last_web_links: webLinks,
+              lastWebLinks: webLinks,
+            }
+          : {}),
         crm_trigger_snapshot: triggerSnapshot,
         crmTriggerSnapshot: triggerSnapshot,
         ...(input.config.behavior.continuousLearning
@@ -3214,6 +3660,8 @@ async function updateLeadRuntimeMemory(
       betelQualification,
       lastAiSignalEventId: input.eventId || null,
       lastAiSignalTags: signalResult.signals,
+      ...(rescheduleSignal ? { lastRescheduleIntent: rescheduleSignal } : {}),
+      ...(webLinks.length ? { lastWebLinks: webLinks } : {}),
     },
     config: input.config,
   });
@@ -3222,7 +3670,9 @@ async function updateLeadRuntimeMemory(
     input.config.behavior.captureTrigger ||
     input.config.behavior.locationTrigger ||
     input.config.behavior.negotiationTracking ||
-    input.config.behavior.continuousLearning
+    input.config.behavior.continuousLearning ||
+    input.config.behavior.rescheduleTrigger ||
+    input.config.behavior.webLinksTrigger
   ) {
     await insertRuntimeEvent(supabase, {
       agentKey: input.agentKey,
@@ -3239,6 +3689,14 @@ async function updateLeadRuntimeMemory(
       },
     });
   }
+
+  return {
+    score: signalResult.score,
+    temperature: leadTemperature,
+    status: leadStatus,
+    signals: signalResult.signals,
+    triggers: triggerSnapshot,
+  };
 }
 
 function fallbackWhatsappAgentReply(input: {
@@ -3715,6 +4173,46 @@ async function processWhatsappAgentRuntime(
   }
 
   const runtimeContext = await loadRuntimePromptContext(supabase, conversationId, leadId);
+  const promptInjection = config.behavior.promptInjectionProtection && looksLikePromptInjection(runtimeText);
+  const topicChange = config.behavior.topicChangeProtection
+    ? detectTopicChange(runtimeText, runtimeContext.messages)
+    : null;
+  if (topicChange) {
+    runtimeContext.lead.metadata = {
+      ...runtimeContext.lead.metadata,
+      last_topic_change: topicChange,
+      lastTopicChange: topicChange,
+    };
+    await insertRuntimeEvent(supabase, {
+      agentKey,
+      eventType: "whatsapp_agent_runtime_protection",
+      status: "topic_change_detected",
+      message: "Troca brusca de assunto detectada e enviada ao contexto da IA.",
+      payload: {
+        eventId,
+        leadId,
+        conversationId,
+        topicChange,
+      },
+    });
+  }
+
+  if ((config.behavior.interInstanceTest || config.behavior.realCloneTest) && isResponsibleTestNumber(config, phone)) {
+    await insertRuntimeEvent(supabase, {
+      agentKey,
+      eventType: "whatsapp_agent_runtime_test_mode",
+      status: "responsible_number_test",
+      message: "Mensagem de numero responsavel processada como teste operacional do agente.",
+      payload: {
+        eventId,
+        leadId,
+        conversationId,
+        interInstanceTest: config.behavior.interInstanceTest,
+        realCloneTest: config.behavior.realCloneTest,
+      },
+    });
+  }
+
   const outboundAiCount = runtimeContext.messages.filter(
     (message) => message.direction === "outbound" && message.authorType === "ai"
   ).length;
@@ -3725,6 +4223,17 @@ async function processWhatsappAgentRuntime(
       agentKey,
       eventId,
       reason: "anti_loop_max_messages",
+    });
+    await notifyResponsibleHumans(supabase, {
+      config,
+      agentKey,
+      instanceId: providerInstanceId,
+      leadId,
+      conversationId,
+      eventId,
+      leadPhone: phone,
+      reason: "anti_loop_max_messages",
+      textPreview: runtimeText,
     });
     await insertRuntimeEvent(supabase, {
       agentKey,
@@ -3737,6 +4246,72 @@ async function processWhatsappAgentRuntime(
   }
 
   const trackId = `${agentKey}-${eventId || Date.now().toString(36)}`;
+  const aiHumanNeedReason = config.behavior.aiHumanRequestTrigger
+    ? detectAiHumanNeed({ text: runtimeText, lead: runtimeContext.lead, config })
+    : "";
+  if (aiHumanNeedReason) {
+    await markHumanIntervention(supabase, {
+      conversationId,
+      leadId,
+      agentKey,
+      eventId,
+      reason: `ai_detected_${aiHumanNeedReason}`,
+    });
+    await notifyResponsibleHumans(supabase, {
+      config,
+      agentKey,
+      instanceId: providerInstanceId,
+      leadId,
+      conversationId,
+      eventId,
+      leadPhone: phone,
+      reason: `ai_detected_${aiHumanNeedReason}`,
+      textPreview: runtimeText,
+    });
+    const reply = handoffReply();
+    const aiHandoffPlan = buildWhatsAppHumanizationPlan({
+      config: humanizationConfig,
+      inboundText: runtimeText,
+      replyParts: [reply],
+      mode: "text",
+      seed: `${trackId}-ai-handoff:${phone}:${reply}`,
+    });
+    await startWhatsAppHumanizationSignals(supabase, {
+      agentKey,
+      instanceId: providerInstanceId,
+      number: phone,
+      eventId,
+      leadId,
+      conversationId,
+      plan: aiHandoffPlan,
+    });
+    const delivery = await sendWhatsAppAgentReply({
+      agentKey,
+      instanceId: providerInstanceId,
+      number: phone,
+      text: reply,
+      trackId: `${trackId}-ai-handoff`,
+      sendOptions: aiHandoffPlan.parts[0]?.sendOptions,
+    });
+    await insertOutboundMessages(supabase, {
+      conversationId,
+      leadId,
+      instanceId,
+      eventId,
+      agentKey,
+      texts: [reply],
+      deliveries: [delivery as unknown as Record<string, unknown>],
+    });
+    await insertRuntimeEvent(supabase, {
+      agentKey,
+      eventType: "whatsapp_agent_runtime_ai_handoff",
+      status: delivery.providerStatus,
+      message: "IA detectou necessidade de humano; conversa pausada e encaminhada.",
+      payload: { eventId, leadId, conversationId, reason: aiHumanNeedReason, delivery },
+    });
+    return { ok: delivery.ok, replied: delivery.ok, handoff: true, providerStatus: delivery.providerStatus };
+  }
+
   if (config.behavior.humanRequestTrigger && hasHumanRequest(runtimeText)) {
     await markHumanIntervention(supabase, {
       conversationId,
@@ -3744,6 +4319,17 @@ async function processWhatsappAgentRuntime(
       agentKey,
       eventId,
       reason: "lead_requested_human",
+    });
+    await notifyResponsibleHumans(supabase, {
+      config,
+      agentKey,
+      instanceId: providerInstanceId,
+      leadId,
+      conversationId,
+      eventId,
+      leadPhone: phone,
+      reason: "lead_requested_human",
+      textPreview: runtimeText,
     });
     const reply = handoffReply();
     const handoffPlan = buildWhatsAppHumanizationPlan({
@@ -3801,7 +4387,6 @@ async function processWhatsappAgentRuntime(
     return { ok: true, skipped: true, reason: "cooldown_duplicate_outbound" };
   }
 
-  const promptInjection = config.behavior.promptInjectionProtection && looksLikePromptInjection(runtimeText);
   const globalBehavior = await getWhatsAppGlobalBehaviorConfig();
   const globalBehaviorPrompt = buildWhatsAppGlobalRuntimePrompt(globalBehavior, config.globalPrompt);
   const opportunitiesContext = await loadWhatsAppOpportunityContext(supabase, {
@@ -3836,6 +4421,7 @@ async function processWhatsappAgentRuntime(
     history: runtimeContext.messages,
   });
   const responseText = guardedReply.text;
+  const replyActionButton = runtimeActionButton(config, trackId);
   if (guardedReply.corrections.length) {
     await insertRuntimeEvent(supabase, {
       agentKey,
@@ -3959,6 +4545,7 @@ async function processWhatsappAgentRuntime(
             number: phone,
             text: part,
             trackId: `${trackId}-${index + 1}`,
+            actionButton: index === replyParts.length - 1 ? replyActionButton : undefined,
             sendOptions: textHumanizationPlan.parts[index]?.sendOptions,
           })
         )
@@ -3980,6 +4567,7 @@ async function processWhatsappAgentRuntime(
       generation_reason: generated.reason,
       generation_fallback: Boolean(generated.fallback),
       behavior_guard_corrections: guardedReply.corrections,
+      action_button: !wantsAudio || shouldFallbackToText ? replyActionButton || null : null,
       behavior_guard_original_text:
         guardedReply.corrections.length ? clampText(generated.text, 1000) : null,
       voice_decision: voiceDecision,
@@ -4024,7 +4612,7 @@ async function processWhatsappAgentRuntime(
     );
   }
 
-  await updateLeadRuntimeMemory(supabase, {
+  const memoryUpdate = await updateLeadRuntimeMemory(supabase, {
     leadId,
     agentKey,
     lead: runtimeContext.lead,
@@ -4032,6 +4620,20 @@ async function processWhatsappAgentRuntime(
     config,
     eventId,
   });
+
+  if (memoryUpdate?.temperature === "vip" && runtimeContext.lead.temperature !== "vip") {
+    await notifyResponsibleHumans(supabase, {
+      config,
+      agentKey,
+      instanceId: providerInstanceId,
+      leadId,
+      conversationId,
+      eventId,
+      leadPhone: phone,
+      reason: "lead_became_vip",
+      textPreview: runtimeText,
+    });
+  }
 
   const deliveryPending = deliveries.some((delivery) => delivery.deliveryUnconfirmed);
   const deliveryOk =
@@ -4064,6 +4666,7 @@ async function processWhatsappAgentRuntime(
       generationReason: generated.reason,
       behaviorGuardCorrections: guardedReply.corrections,
       behaviorGuardAdjusted: guardedReply.corrections.length > 0,
+      actionButton: !wantsAudio || shouldFallbackToText ? replyActionButton || null : null,
       voiceDecision,
       audioRequested: voiceDecision.audioRequested,
       audioDelivered: audioDeliveryPartiallyAccepted,
@@ -4082,6 +4685,29 @@ async function processWhatsappAgentRuntime(
       },
     },
   });
+
+  if (config.behavior.turingBenchmark) {
+    await insertRuntimeEvent(supabase, {
+      agentKey,
+      eventType: "whatsapp_agent_runtime_turing_benchmark",
+      status: deliveryOk ? "sample_captured" : "delivery_failed",
+      message: "Amostra capturada para comparar naturalidade, concisao e comportamento com atendimento humano.",
+      model: generated.model,
+      payload: {
+        eventId,
+        leadId,
+        conversationId,
+        inboundLength: runtimeText.length,
+        replyLength: responseText.length,
+        replyParts: replyParts.length,
+        messageMode: audioDeliveryPartiallyAccepted ? "audio" : "text",
+        deliveryStatus: providerStatus,
+        behaviorGuardCorrections: guardedReply.corrections,
+        generationFallback: Boolean(generated.fallback),
+        humanization: humanizationPlan.summary,
+      },
+    });
+  }
 
   return { ok: deliveryOk, replied: deliveryOk, providerStatus, parts: replyParts.length };
 }
