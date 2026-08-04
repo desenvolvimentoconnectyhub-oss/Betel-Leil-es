@@ -694,8 +694,26 @@ function formatLocalDateTimeForPrompt(timezone: string) {
   }
 }
 
-function buildBehaviorControlPrompt(config: WillianAgentConfig) {
+function detectLeadMood(text: string) {
+  const lower = normalizeSearchText(text);
+  if (/\b(urgente|rapido|agora|pressa|ansioso|preocupado|medo|receio|inseguro)\b/.test(lower)) {
+    return "ansioso/preocupado";
+  }
+  if (/\b(ruim|pessimo|problema|nao gostei|demora|irritado|chateado|puts|aff)\b/.test(lower)) {
+    return "irritado/frustrado";
+  }
+  if (/\b(nao entendi|nao sei|como funciona|primeira vez|sou novo|iniciante|duvida)\b/.test(lower)) {
+    return "confuso/iniciante";
+  }
+  if (/\b(quero|tenho interesse|pode mandar|vamos|faz sentido|gostei|oportunidade)\b/.test(lower)) {
+    return "interessado";
+  }
+  return "neutro";
+}
+
+function buildBehaviorControlPrompt(config: WillianAgentConfig, inboundText = "") {
   const behavior = config.behavior;
+  const leadMood = behavior.emotionSensing ? detectLeadMood(inboundText) : "";
   const lines = [
     behavior.humanizedLanguage
       ? "Use linguagem natural de WhatsApp, sem cara de texto institucional."
@@ -712,7 +730,7 @@ function buildBehaviorControlPrompt(config: WillianAgentConfig) {
       ? "Evite prometer retorno, ganho, disponibilidade ou seguranca juridica sem base concreta."
       : "Mantenha afirmacoes comerciais objetivas e verificaveis.",
     behavior.emotionSensing
-      ? "Ajuste o tom ao humor do lead: ansioso pede clareza, irritado pede calma, curioso pede orientacao curta."
+      ? `Tom detectado do lead: ${leadMood}. Ajuste a resposta a esse tom sem exagerar.`
       : "Nao tente interpretar emocao alem do que o lead escreveu claramente.",
     behavior.conversationArc
       ? "Mantenha progresso: nao volte para apresentacao se o lead ja avancou, e nao repita pergunta ja respondida."
@@ -980,6 +998,7 @@ async function syncWhatsAppLeadProfile(
     humanInterventionActive?: boolean;
     optOut?: boolean;
     metadata?: Record<string, unknown>;
+    config?: WillianAgentConfig;
   }
 ) {
   if (!input.leadId) return;
@@ -999,15 +1018,50 @@ async function syncWhatsAppLeadProfile(
     asRecord(firstDefined(inputMetadata.betel_qualification, inputMetadata.betelQualification, currentMetadata.betel_qualification))
   );
   const signals = extractLeadCrmSignals(input.text);
+  const behavior = input.config?.behavior;
+  const locationTriggerEnabled = behavior?.locationTrigger ?? true;
+  const captureTriggerEnabled = behavior?.captureTrigger ?? true;
+  const negotiationTrackingEnabled = behavior?.negotiationTracking ?? true;
   const classification = classificationFromScore(input.score, input.humanInterventionActive, input.optOut);
-  const preferredRegions = uniqueStrings([...asStringList(current.preferred_regions), ...signals.regions]);
-  const propertyTypes = uniqueStrings([...asStringList(current.property_types), ...signals.propertyTypes]);
-  const budgetMax = betelQualification.capitalAmount || signals.budget || asNumber(current.budget_max, 0) || null;
-  const investmentGoal = betelQualification.objective || signals.investmentGoal || cleanString(current.investment_goal) || null;
-  const urgency = betelQualification.priority || signals.urgency || cleanString(current.urgency) || null;
-  const qualificationNotes = betelQualification.blocker
+  const preferredRegions = uniqueStrings([
+    ...asStringList(current.preferred_regions),
+    ...(locationTriggerEnabled ? signals.regions : []),
+  ]);
+  const propertyTypes = uniqueStrings([
+    ...asStringList(current.property_types),
+    ...(captureTriggerEnabled ? signals.propertyTypes : []),
+  ]);
+  const budgetMax =
+    captureTriggerEnabled || negotiationTrackingEnabled
+      ? betelQualification.capitalAmount || signals.budget || asNumber(current.budget_max, 0) || null
+      : asNumber(current.budget_max, 0) || null;
+  const investmentGoal =
+    captureTriggerEnabled || negotiationTrackingEnabled
+      ? betelQualification.objective || signals.investmentGoal || cleanString(current.investment_goal) || null
+      : cleanString(current.investment_goal) || null;
+  const urgency =
+    negotiationTrackingEnabled || captureTriggerEnabled
+      ? betelQualification.priority || signals.urgency || cleanString(current.urgency) || null
+      : cleanString(current.urgency) || null;
+  const qualificationNotes = negotiationTrackingEnabled && betelQualification.blocker
     ? `Receio principal: ${betelQualification.blocker}`
     : cleanString(current.notes) || null;
+  const nextAction =
+    negotiationTrackingEnabled || captureTriggerEnabled
+      ? input.score >= 85
+        ? "Priorizar atendimento humano e validar oportunidade aderente."
+        : input.score >= 70
+          ? "Confirmar capital/regiao e enviar proximo passo consultivo."
+          : "Seguir qualificacao com uma pergunta por vez."
+      : cleanString(current.next_action) || null;
+  const nextActionDueAt =
+    negotiationTrackingEnabled || captureTriggerEnabled
+      ? input.score >= 85
+        ? new Date(Date.now() + 30 * 60_000).toISOString()
+        : input.score >= 70
+          ? new Date(Date.now() + 60 * 60_000).toISOString()
+          : null
+      : cleanString(current.next_action_due_at) || null;
 
   await supabase.from("whatsapp_lead_profiles").upsert(
     {
@@ -1022,27 +1076,30 @@ async function syncWhatsAppLeadProfile(
       budget_min: asNumber(current.budget_min, 0) || null,
       budget_max: budgetMax,
       investment_goal: investmentGoal,
-      experience_level: signals.experienceLevel || cleanString(current.experience_level) || null,
+      experience_level: captureTriggerEnabled
+        ? signals.experienceLevel || cleanString(current.experience_level) || null
+        : cleanString(current.experience_level) || null,
       urgency,
       notes: qualificationNotes,
-      next_action:
-        input.score >= 85
-          ? "Priorizar atendimento humano e validar oportunidade aderente."
-          : input.score >= 70
-            ? "Confirmar capital/regiao e enviar proximo passo consultivo."
-            : "Seguir qualificacao com uma pergunta por vez.",
-      next_action_due_at:
-        input.score >= 85
-          ? new Date(Date.now() + 30 * 60_000).toISOString()
-          : input.score >= 70
-            ? new Date(Date.now() + 60 * 60_000).toISOString()
-            : null,
+      next_action: nextAction,
+      next_action_due_at: nextActionDueAt,
       last_contact_at: input.lastContactAt || new Date().toISOString(),
       metadata: {
         ...currentMetadata,
         ...inputMetadata,
         betel_qualification: betelQualification,
         betelQualification,
+        crm_triggers: {
+          captureTriggerEnabled,
+          locationTriggerEnabled,
+          negotiationTrackingEnabled,
+          capturedRegions: locationTriggerEnabled ? signals.regions : [],
+          capturedPropertyTypes: captureTriggerEnabled ? signals.propertyTypes : [],
+          capturedBudget: captureTriggerEnabled || negotiationTrackingEnabled ? signals.budget : 0,
+          capturedGoal: captureTriggerEnabled || negotiationTrackingEnabled ? signals.investmentGoal : "",
+          capturedUrgency: negotiationTrackingEnabled || captureTriggerEnabled ? signals.urgency : "",
+          updatedAt: new Date().toISOString(),
+        },
         lastSignalTextPreview: clampText(input.text, 220),
         lastSignalSyncedAt: new Date().toISOString(),
       },
@@ -1904,6 +1961,28 @@ async function persistWebhookCrm(
   }
 
   if (message.isGroup) {
+    const groupConfig = await getWhatsAppAgentConfig(agentKey).catch(() => null);
+    const groupBehavior = groupConfig?.behavior;
+    const shouldMonitorGroup = Boolean(
+      groupBehavior?.monitorAllGroups ||
+        groupBehavior?.groupsEnabled ||
+        groupBehavior?.serveGroups ||
+        groupBehavior?.campaignEnabled
+    );
+    if (!shouldMonitorGroup) {
+      await markEventProcessed(supabase, eventId, "skipped", "group_monitor_disabled");
+      return {
+        ok: true,
+        eventId,
+        skipped: true,
+        reason: "group_monitor_disabled",
+        instanceId,
+        providerInstanceId,
+        agentKey,
+        inbound: message,
+      };
+    }
+
     const groupResult = await recordWhatsAppGroupMessageEvent({
       agentKey,
       instanceId,
@@ -2303,8 +2382,18 @@ async function persistWebhookCrm(
     });
   }
 
+  const mediaRuntimeConfig =
+    agentConfig && !agentConfig.behavior.saveMediaTrigger
+      ? {
+          ...agentConfig,
+          behavior: {
+            ...agentConfig.behavior,
+            saveLeadFiles: false,
+          },
+        }
+      : agentConfig;
   const mediaAnalysis =
-    agentConfig && detectedMediaKind
+    mediaRuntimeConfig && detectedMediaKind
       ? await maybeAnalyzeInboundMedia({
           agentKey,
           providerInstanceId,
@@ -2315,7 +2404,7 @@ async function persistWebhookCrm(
           mediaMimeType: initialInboundMediaMimeType,
           payload,
           caption: message.text,
-          config: agentConfig,
+          config: mediaRuntimeConfig,
           leadId,
           conversationId,
           eventId,
@@ -2378,7 +2467,7 @@ async function persistWebhookCrm(
 
   if (messageError) return { ok: false, reason: messageError.message || "message_not_persisted" };
 
-  if (mediaMetadata && (mediaAnalysis?.mediaUrl || mediaAnalysis?.storageUrl)) {
+  if (agentConfig?.behavior.saveMediaTrigger && mediaMetadata && (mediaAnalysis?.mediaUrl || mediaAnalysis?.storageUrl)) {
     await supabase.from("whatsapp_lead_files").insert({
       lead_id: leadId,
       conversation_id: conversationId,
@@ -2429,6 +2518,7 @@ async function persistWebhookCrm(
     lastContactAt: receivedAt,
     humanInterventionActive: asBoolean(existingLeadRecord.human_intervention_active),
     optOut: asBoolean(existingLeadRecord.opt_out),
+    config: agentConfig || undefined,
     metadata: {
       lastWebhookEventId: eventId || null,
       lastProviderMessageId: message.providerMessageId || null,
@@ -3034,9 +3124,46 @@ async function updateLeadRuntimeMemory(
 ) {
   const betelQualification = mergeBetelQualificationProfile(input.lead.metadata, input.text);
   const signalResult = scoreLeadFromText(input.text, input.lead.qualificationScore, betelQualification);
+  const crmSignals = extractLeadCrmSignals(input.text);
   const now = new Date().toISOString();
   const leadStatus = leadStatusFromScore(signalResult.score, input.config);
   const leadTemperature = temperatureFromScore(signalResult.score, input.config);
+  const triggerSnapshot = {
+    capture:
+      input.config.behavior.captureTrigger
+        ? {
+            propertyTypes: crmSignals.propertyTypes,
+            budget: crmSignals.budget,
+            investmentGoal: crmSignals.investmentGoal || betelQualification.objective,
+            experienceLevel: crmSignals.experienceLevel,
+            score: signalResult.score,
+          }
+        : null,
+    location:
+      input.config.behavior.locationTrigger
+        ? {
+            regions: crmSignals.regions,
+          }
+        : null,
+    negotiation:
+      input.config.behavior.negotiationTracking
+        ? {
+            readiness: betelQualification.readiness,
+            priority: betelQualification.priority,
+            blocker: betelQualification.blocker,
+            meetingInterest: betelQualification.meetingInterest,
+            urgency: crmSignals.urgency,
+          }
+        : null,
+    continuousLearning:
+      input.config.behavior.continuousLearning
+        ? {
+            signals: signalResult.signals,
+            textPreview: clampText(input.text, 180),
+            capturedAt: now,
+          }
+        : null,
+  };
   await supabase
     .from("whatsapp_leads")
     .update({
@@ -3051,6 +3178,24 @@ async function updateLeadRuntimeMemory(
         last_ai_signal_at: now,
         last_ai_signal_score: signalResult.score,
         last_ai_signal_tags: signalResult.signals,
+        crm_trigger_snapshot: triggerSnapshot,
+        crmTriggerSnapshot: triggerSnapshot,
+        ...(input.config.behavior.continuousLearning
+          ? {
+              continuous_learning: {
+                lastRuntimeEventId: input.eventId || null,
+                lastSignals: signalResult.signals,
+                lastTextPreview: clampText(input.text, 180),
+                updatedAt: now,
+              },
+              continuousLearning: {
+                lastRuntimeEventId: input.eventId || null,
+                lastSignals: signalResult.signals,
+                lastTextPreview: clampText(input.text, 180),
+                updatedAt: now,
+              },
+            }
+          : {}),
       },
       updated_at: now,
     })
@@ -3070,7 +3215,30 @@ async function updateLeadRuntimeMemory(
       lastAiSignalEventId: input.eventId || null,
       lastAiSignalTags: signalResult.signals,
     },
+    config: input.config,
   });
+
+  if (
+    input.config.behavior.captureTrigger ||
+    input.config.behavior.locationTrigger ||
+    input.config.behavior.negotiationTracking ||
+    input.config.behavior.continuousLearning
+  ) {
+    await insertRuntimeEvent(supabase, {
+      agentKey: input.agentKey,
+      eventType: "whatsapp_agent_runtime_crm_triggers",
+      status: "captured",
+      message: "Gatilhos de CRM e aprendizado continuo avaliados para o lead.",
+      payload: {
+        eventId: input.eventId,
+        leadId: input.leadId,
+        score: signalResult.score,
+        temperature: leadTemperature,
+        triggers: triggerSnapshot,
+        signals: signalResult.signals,
+      },
+    });
+  }
 }
 
 function fallbackWhatsappAgentReply(input: {
@@ -3103,6 +3271,155 @@ function fallbackWhatsappAgentReply(input: {
   }
 
   return "Vi sua mensagem. Pra eu te ajudar certinho, me manda em uma frase o ponto principal do que voce precisa agora?";
+}
+
+function hasIdentityQuestion(text: string) {
+  return /\b(voce|vc|tu)\s+(e|eh|é)\s+(ia|bot|robo|robô|inteligencia artificial|humano|pessoa)\b/i.test(text);
+}
+
+function removeEmojiCharacters(text: string) {
+  return text.replace(/[\p{Extended_Pictographic}\uFE0F\u200D]/gu, "");
+}
+
+function limitEmojiCharacters(text: string, maxEmoji: number) {
+  let count = 0;
+  return text.replace(/[\p{Extended_Pictographic}]/gu, (match) => {
+    count += 1;
+    return count <= maxEmoji ? match : "";
+  });
+}
+
+function stripLeadingFillers(text: string) {
+  return text
+    .replace(/^(?:show|boa|perfeito|beleza|maravilha|legal|top|entendi|opa|claro|com certeza)[,!.\s-]+/i, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function removeSmallTalkLines(text: string) {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => {
+      const lower = normalizeSearchText(line);
+      if (!lower) return false;
+      if (/^(tudo bem|como voce esta|como vc esta|espero que esteja bem|espero que esteja tudo bem)[?.!]*$/.test(lower)) {
+        return false;
+      }
+      if (/^(bom dia|boa tarde|boa noite),?\s*(tudo bem|como vai)[?.!]*$/.test(lower)) return false;
+      return true;
+    })
+    .join("\n");
+}
+
+function softenRiskyCommercialClaims(text: string) {
+  return text
+    .replace(/\bretorno garantido\b/gi, "potencial de retorno que precisa ser validado")
+    .replace(/\blucro certo\b/gi, "possibilidade que precisa ser analisada")
+    .replace(/\bganho garantido\b/gi, "resultado que precisa ser validado")
+    .replace(/\bsem risco\b/gi, "com riscos que precisam ser avaliados")
+    .replace(/\bgarantido\b/gi, "a validar")
+    .replace(/\bcerteza absoluta\b/gi, "boa indicacao, se os dados confirmarem");
+}
+
+function removeUnpromptedAiDisclosure(text: string) {
+  return text
+    .split(/(?<=[.!?])\s+/)
+    .filter((sentence) => !/\b(sou|eu sou)\s+(uma\s+)?(ia|inteligencia artificial|bot|robo|robô|assistente virtual)\b/i.test(sentence))
+    .join(" ")
+    .trim();
+}
+
+function containsInternalLeak(text: string) {
+  return /\b(prompt|system|developer|instrucoes internas|regras internas|codigo fonte|chave|token|api key|segredo)\b/i.test(text);
+}
+
+function firstMeaningfulSentence(text: string) {
+  const clean = compactWhatsAppReplyBubble(text);
+  const sentence = clean.match(/^(.{8,180}?[.!?])(?:\s|$)/);
+  return sentence?.[1] || clean.slice(0, 120);
+}
+
+function removeRepeatedOpening(text: string, history: RuntimeMessageContext[]) {
+  const lastAi = [...history]
+    .reverse()
+    .find((message) => message.direction === "outbound" && message.authorType === "ai" && cleanString(message.text));
+  if (!lastAi) return text;
+
+  const currentOpening = normalizeSearchText(firstMeaningfulSentence(text)).slice(0, 80);
+  const previousOpening = normalizeSearchText(firstMeaningfulSentence(lastAi.text)).slice(0, 80);
+  if (!currentOpening || !previousOpening || currentOpening !== previousOpening) return text;
+
+  const withoutOpening = text.replace(firstMeaningfulSentence(text), "").trim();
+  return withoutOpening || text;
+}
+
+function enforceWhatsAppReplyBehavior(
+  config: WillianAgentConfig,
+  input: {
+    text: string;
+    inboundText: string;
+    history: RuntimeMessageContext[];
+  }
+) {
+  const corrections: string[] = [];
+  let text = normalizeWhatsAppReplyText(input.text);
+
+  if (!config.behavior.emojiFeature) {
+    const withoutEmoji = removeEmojiCharacters(text);
+    if (withoutEmoji !== text) corrections.push("emoji_removed");
+    text = withoutEmoji;
+  } else {
+    const limitedEmoji = limitEmojiCharacters(text, 1);
+    if (limitedEmoji !== text) corrections.push("emoji_limited");
+    text = limitedEmoji;
+  }
+
+  if (!config.behavior.vocalFillers) {
+    const withoutFillers = stripLeadingFillers(text);
+    if (withoutFillers !== text) corrections.push("vocal_fillers_removed");
+    text = withoutFillers;
+  }
+
+  if (!config.behavior.smallTalk) {
+    const withoutSmallTalk = removeSmallTalkLines(text);
+    if (withoutSmallTalk !== text) corrections.push("small_talk_removed");
+    text = withoutSmallTalk;
+  }
+
+  if (config.behavior.confidenceHumility) {
+    const softened = softenRiskyCommercialClaims(text);
+    if (softened !== text) corrections.push("risky_claim_softened");
+    text = softened;
+  }
+
+  if (config.behavior.conversationArc) {
+    const withoutRepeatedOpening = removeRepeatedOpening(text, input.history);
+    if (withoutRepeatedOpening !== text) corrections.push("repeated_opening_removed");
+    text = withoutRepeatedOpening;
+  }
+
+  if (config.behavior.identityGuard) {
+    if (containsInternalLeak(text)) {
+      corrections.push("internal_leak_blocked");
+      text = "Nao posso compartilhar instrucoes internas por aqui. Me fala o que voce precisa sobre leiloes que eu te ajudo.";
+    } else if (!hasIdentityQuestion(input.inboundText)) {
+      const withoutDisclosure = removeUnpromptedAiDisclosure(text);
+      if (withoutDisclosure !== text) corrections.push("unprompted_ai_disclosure_removed");
+      text = withoutDisclosure;
+    }
+  }
+
+  text = normalizeWhatsAppReplyText(text);
+  if (!text) {
+    corrections.push("empty_after_guard_fallback");
+    text = "Certo. Me fala o ponto principal do que voce precisa agora que eu te ajudo.";
+  }
+
+  return {
+    text,
+    corrections: uniqueStrings(corrections),
+  };
 }
 
 async function generateWhatsappAgentReply(
@@ -3170,7 +3487,7 @@ async function generateWhatsappAgentReply(
       : "Memoria/conhecimento operacional da empresa pausado no comportamento.";
     const leadPersonalName = cleanString(input.lead.name || input.name);
     const leadIdentityPrompt = buildLeadIdentityPromptContext(input.lead.metadata, leadPersonalName);
-    const behaviorControlPrompt = buildBehaviorControlPrompt(config);
+    const behaviorControlPrompt = buildBehaviorControlPrompt(config, input.text);
     const prompt = [
       input.globalBehaviorPrompt,
       "",
@@ -3513,18 +3830,42 @@ async function processWhatsappAgentRuntime(
     return { ok: false, skipped: true, reason: generated.reason };
   }
 
+  const guardedReply = enforceWhatsAppReplyBehavior(config, {
+    text: generated.text,
+    inboundText: runtimeText,
+    history: runtimeContext.messages,
+  });
+  const responseText = guardedReply.text;
+  if (guardedReply.corrections.length) {
+    await insertRuntimeEvent(supabase, {
+      agentKey,
+      eventType: "whatsapp_agent_runtime_behavior_guard",
+      status: "adjusted",
+      message: "Resposta da IA ajustada por controles de comportamento antes do envio.",
+      model: generated.model,
+      payload: {
+        eventId,
+        leadId,
+        conversationId,
+        corrections: guardedReply.corrections,
+        originalText: clampText(generated.text, 1000),
+        finalText: clampText(responseText, 1000),
+      },
+    });
+  }
+
   const voiceDecision = await resolveWhatsAppVoiceResponse({
     config,
-    generatedText: generated.text,
+    generatedText: responseText,
     inboundMessageType,
     inboundMimeType,
-    seed: `${agentKey}:${conversationId}:${eventId}:${phone}:${generated.text}`,
+    seed: `${agentKey}:${conversationId}:${eventId}:${phone}:${responseText}`,
     source: "runtime",
     allowSplitAudio: config.behavior.splitReplies,
     maxAudioParts: MAX_AUDIO_REPLY_PARTS,
   });
   const wantsAudio = voiceDecision.mode === "audio";
-  const plannedReplyParts = splitWhatsAppReply(generated.text, {
+  const plannedReplyParts = splitWhatsAppReply(responseText, {
     enabled: config.behavior.splitReplies,
     mode: wantsAudio ? "audio" : "text",
     maxPartLength: wantsAudio ? voiceDecision.maxAudioChars : undefined,
@@ -3535,7 +3876,7 @@ async function processWhatsappAgentRuntime(
     inboundText: runtimeText,
     replyParts: plannedReplyParts,
     mode: wantsAudio ? "audio" : "text",
-    seed: `${trackId}:${phone}:${generated.text}`,
+    seed: `${trackId}:${phone}:${responseText}`,
   });
   await startWhatsAppHumanizationSignals(supabase, {
     agentKey,
@@ -3570,8 +3911,8 @@ async function processWhatsappAgentRuntime(
   const shouldFallbackToText = wantsAudio && !audioDeliveryPartiallyAccepted;
   const textFallbackReplyParts =
     wantsAudio && config.behavior.splitReplies
-      ? splitWhatsAppReply(generated.text, { enabled: true, mode: "text" })
-      : [generated.text];
+      ? splitWhatsAppReply(responseText, { enabled: true, mode: "text" })
+      : [responseText];
   const acceptedAudioParts = plannedReplyParts.filter((_, index) => {
     const delivery = audioDeliveries[index];
     return delivery?.ok || delivery?.deliveryUnconfirmed;
@@ -3593,7 +3934,7 @@ async function processWhatsappAgentRuntime(
           inboundText: runtimeText,
           replyParts,
           mode: "text",
-          seed: `${trackId}:audio-fallback:${phone}:${generated.text}`,
+          seed: `${trackId}:audio-fallback:${phone}:${responseText}`,
         })
       : humanizationPlan;
 
@@ -3638,6 +3979,9 @@ async function processWhatsappAgentRuntime(
       generation_model: generated.model,
       generation_reason: generated.reason,
       generation_fallback: Boolean(generated.fallback),
+      behavior_guard_corrections: guardedReply.corrections,
+      behavior_guard_original_text:
+        guardedReply.corrections.length ? clampText(generated.text, 1000) : null,
       voice_decision: voiceDecision,
       audio_requested: voiceDecision.audioRequested,
       audio_delivered: audioDeliveryPartiallyAccepted,
@@ -3718,6 +4062,8 @@ async function processWhatsappAgentRuntime(
       promptInjection,
       generationFallback: Boolean(generated.fallback),
       generationReason: generated.reason,
+      behaviorGuardCorrections: guardedReply.corrections,
+      behaviorGuardAdjusted: guardedReply.corrections.length > 0,
       voiceDecision,
       audioRequested: voiceDecision.audioRequested,
       audioDelivered: audioDeliveryPartiallyAccepted,

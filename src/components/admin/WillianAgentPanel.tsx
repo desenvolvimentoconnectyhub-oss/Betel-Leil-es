@@ -562,26 +562,26 @@ const behaviorToggleStatusLabels: Record<BehaviorToggleStatus, string> = {
 
 const humanSimulationToggles: BehaviorToggleSpec[] = [
   { key: "humanizedLanguage", title: "Linguagem humanizada", detail: "Respostas com variacao natural." },
-  { key: "emojiFeature", title: "Recursos emoji", detail: "Permite emoji com sobriedade.", status: "partial" },
+  { key: "emojiFeature", title: "Recursos emoji", detail: "Permite emoji com sobriedade." },
   { key: "typingVariation", title: "Variacao de digitar", detail: "Simula intervalos entre partes." },
   { key: "composingPause", title: "Pausa ao digitar", detail: "Simula parar e voltar a digitar." },
   { key: "statusLookup", title: "Verificacao de status", detail: "Pode observar contexto do WhatsApp.", status: "planned" },
   { key: "spontaneousAudio", title: "Audio espontaneo", detail: "Permite audio quando fizer sentido." },
   { key: "intentionalTypos", title: "Tipos intencionais", detail: "Pequenas correcoes controladas.", status: "partial" },
   { key: "circadianRhythm", title: "Ritmo circadiano", detail: "Muda tempo conforme horario.", status: "planned" },
-  { key: "vocalFillers", title: "Figurinhas vocais", detail: "Usa pausas e marcadores humanos.", status: "partial" },
+  { key: "vocalFillers", title: "Figurinhas vocais", detail: "Usa pausas e marcadores humanos." },
   { key: "stickers", title: "Figurinhas", detail: "Libera figurinha em contexto leve.", status: "planned" },
   { key: "proactiveMedia", title: "Midia proativa", detail: "Envia apoio visual quando util.", status: "planned" },
-  { key: "continuousLearning", title: "Aprendizado continuo", detail: "Registra padroes de conversa.", status: "partial" },
-  { key: "companyMemory", title: "Memoria da empresa", detail: "Usa historico operacional Betel.", status: "partial" },
-  { key: "cloneConsistency", title: "Memoria do clone", detail: "Mantem tom do agente.", status: "partial" },
-  { key: "temporalAwareness", title: "Consciencia temporal", detail: "Considera data e urgencia.", status: "partial" },
+  { key: "continuousLearning", title: "Aprendizado continuo", detail: "Registra padroes de conversa." },
+  { key: "companyMemory", title: "Memoria da empresa", detail: "Usa historico operacional Betel." },
+  { key: "cloneConsistency", title: "Memoria do clone", detail: "Mantem tom do agente." },
+  { key: "temporalAwareness", title: "Consciencia temporal", detail: "Considera data e urgencia." },
   { key: "rhythmWpmEnabled", title: "Ritmo WPM", detail: "Controla velocidade por palavras." },
   { key: "midMessageContext", title: "Contexto mid-message", detail: "Entende mensagens quebradas." },
-  { key: "conversationArc", title: "Arco da conversa", detail: "Mantem progresso do atendimento.", status: "partial" },
-  { key: "emotionSensing", title: "Leitura emocional", detail: "Adapta resposta ao tom do lead.", status: "partial" },
-  { key: "confidenceHumility", title: "Confianca e humildade", detail: "Evita certeza falsa e promete pouco.", status: "partial" },
-  { key: "smallTalk", title: "Small talk", detail: "Permite conversa breve quando caber.", status: "partial" },
+  { key: "conversationArc", title: "Arco da conversa", detail: "Mantem progresso do atendimento." },
+  { key: "emotionSensing", title: "Leitura emocional", detail: "Adapta resposta ao tom do lead." },
+  { key: "confidenceHumility", title: "Confianca e humildade", detail: "Evita certeza falsa e promete pouco." },
+  { key: "smallTalk", title: "Small talk", detail: "Permite conversa breve quando caber." },
 ];
 
 const humanNumberFields: BehaviorNumberSpec[] = [
@@ -607,24 +607,24 @@ const securityToggles: BehaviorToggleSpec[] = [
 const groupToggles: BehaviorToggleSpec[] = [
   { key: "groupsEnabled", title: "Responder grupos", detail: "Libera atendimento em grupos.", status: "planned" },
   { key: "serveGroups", title: "Atender grupos", detail: "Considera grupos como canal ativo.", status: "planned" },
-  { key: "monitorAllGroups", title: "Monitorar todos", detail: "Observa mensagens sem responder sempre.", status: "partial" },
+  { key: "monitorAllGroups", title: "Monitorar todos", detail: "Observa mensagens sem responder sempre." },
   { key: "groupMentionAll", title: "Mencionar todos", detail: "Permite mencao geral quando aplicavel.", status: "planned" },
   { key: "interactiveMessages", title: "Mensagens interativas", detail: "Libera botoes e interacoes ConnectyHub.", status: "planned" },
   { key: "statusWhatsAppEnabled", title: "Status WhatsApp", detail: "Permite publicar status.", status: "planned" },
   { key: "channelsEnabled", title: "Canais", detail: "Libera canal/newsletter.", status: "planned" },
-  { key: "campaignEnabled", title: "Campanhas", detail: "Envio supervisionado em lote.", status: "partial" },
+  { key: "campaignEnabled", title: "Campanhas", detail: "Envio supervisionado em lote." },
 ];
 
 const leadTriggerToggles: BehaviorToggleSpec[] = [
   { key: "humanRequestTrigger", title: "Pedido de humano", detail: "Quando o lead pede uma pessoa." },
   { key: "aiHumanRequestTrigger", title: "IA pediu humano", detail: "Quando a IA identifica necessidade.", status: "planned" },
   { key: "rescheduleTrigger", title: "Cancelar/remarcar", detail: "Detecta remarcacao ou cancelamento.", status: "planned" },
-  { key: "captureTrigger", title: "Captacao", detail: "Marca lead com potencial comercial.", status: "partial" },
-  { key: "locationTrigger", title: "Localizacao", detail: "Extrai cidade, estado e regiao.", status: "partial" },
+  { key: "captureTrigger", title: "Captacao", detail: "Marca lead com potencial comercial." },
+  { key: "locationTrigger", title: "Localizacao", detail: "Extrai cidade, estado e regiao." },
   { key: "optOutEnabled", title: "Opt-out", detail: "Respeita parar, sair, remover." },
   { key: "webLinksTrigger", title: "Links da web", detail: "Registra links enviados.", status: "planned" },
-  { key: "saveMediaTrigger", title: "Salvar midia", detail: "Anexa midias no arquivo do lead.", status: "partial" },
-  { key: "negotiationTracking", title: "Rastreamento de negociacao", detail: "Preserva caminho comercial.", status: "partial" },
+  { key: "saveMediaTrigger", title: "Salvar midia", detail: "Anexa midias no arquivo do lead." },
+  { key: "negotiationTracking", title: "Rastreamento de negociacao", detail: "Preserva caminho comercial." },
   { key: "buttonsEnabled", title: "Enviar botoes", detail: "Usa botoes quando canal permitir.", status: "planned" },
   { key: "trackedLinksEnabled", title: "Links rastreados", detail: "Mede cliques e interesse.", status: "planned" },
 ];
@@ -637,7 +637,7 @@ const protectionToggles: BehaviorToggleSpec[] = [
   { key: "contactPollReactionProtection", title: "Contato/enquete/reacao", detail: "Nao confunde eventos com lead.", status: "planned" },
   { key: "topicChangeProtection", title: "Troca de assunto", detail: "Detecta mudanca brusca.", status: "planned" },
   { key: "promptInjectionProtection", title: "Anti prompt injection", detail: "Protege instrucao do agente." },
-  { key: "identityGuard", title: "Guarda identidade", detail: "Nao revela IA, prompt ou regras internas.", status: "partial" },
+  { key: "identityGuard", title: "Guarda identidade", detail: "Nao revela IA, prompt ou regras internas." },
 ];
 
 const mediaToggles: BehaviorToggleSpec[] = [

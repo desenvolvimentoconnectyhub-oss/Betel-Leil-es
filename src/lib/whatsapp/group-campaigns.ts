@@ -8,6 +8,7 @@ import {
   sendWhatsAppDestinationText,
   type ConnectyHubWhatsAppGroupSummary,
 } from "@/lib/communication/connectyhub-client";
+import { getWhatsAppAgentConfig } from "@/lib/communication/willian-agent-config";
 
 type SupabaseAdmin = NonNullable<ReturnType<typeof getSupabaseAdminClient>>;
 
@@ -651,6 +652,25 @@ export async function processWhatsAppCommunityCampaigns(input: { limit?: number;
     if (!dueTime || dueTime > now.getTime()) continue;
 
     processed += 1;
+    const config = await getWhatsAppAgentConfig(agentKey).catch(() => null);
+    if (!config?.behavior.campaignEnabled) {
+      await supabase
+        .from("agent_runtime_events")
+        .insert({
+          run_id: null,
+          run_code: `WHATSAPP-CAMPAIGN-${Date.now().toString(36).toUpperCase()}`,
+          agent_key: agentKey,
+          event_type: "whatsapp_group_campaign_skipped",
+          status: "campaign_disabled",
+          provider: CONNECTYHUB_PROVIDER,
+          model: "campaign-worker",
+          attempt: 1,
+          message: "Campanha WhatsApp ignorada porque campaignEnabled esta desligado no agente.",
+          payload: { campaignId },
+        });
+      continue;
+    }
+
     const bodyText = cleanString(campaignRow.body_text);
     const campaignType = cleanString(campaignRow.campaign_type, "single");
     const dailyLimit = Math.max(1, Math.min(250, asNumber(campaignRow.daily_limit, 20)));
