@@ -285,6 +285,9 @@ export function normalizeWillianAgentConfig(input: unknown): WillianAgentConfig 
         100
       ),
       saveLeadFiles: boolField(behavior.saveLeadFiles, defaults.behavior.saveLeadFiles),
+      temporaryMediaStorage: boolField(behavior.temporaryMediaStorage, defaults.behavior.temporaryMediaStorage),
+      mediaCleanupEnabled: boolField(behavior.mediaCleanupEnabled, defaults.behavior.mediaCleanupEnabled),
+      mediaRetentionHours: clampNumber(behavior.mediaRetentionHours, defaults.behavior.mediaRetentionHours, 1, 168),
       leadMemory: boolField(behavior.leadMemory, defaults.behavior.leadMemory),
       cloneMemory: boolField(behavior.cloneMemory, defaults.behavior.cloneMemory),
       smartTiming: boolField(behavior.smartTiming, defaults.behavior.smartTiming),

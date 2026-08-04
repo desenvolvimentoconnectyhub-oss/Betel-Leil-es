@@ -7,6 +7,7 @@ import { whatsappQualityFunction } from "@/inngest/functions/whatsapp-quality";
 import { whatsappGroupCampaignsFunction } from "@/inngest/functions/whatsapp-group-campaigns";
 import { metaWhatsAppCampaignsFunction } from "@/inngest/functions/meta-whatsapp-campaigns";
 import { trafficAiSyncFunction } from "@/inngest/functions/traffic-ai-sync";
+import { whatsappTempMediaCleanupFunction } from "@/inngest/functions/whatsapp-temp-media-cleanup";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
@@ -18,5 +19,6 @@ export const { GET, POST, PUT } = serve({
     whatsappQualityFunction,
     metaWhatsAppCampaignsFunction,
     trafficAiSyncFunction,
+    whatsappTempMediaCleanupFunction,
   ],
 });

@@ -218,6 +218,9 @@ export type WillianBehaviorConfig = {
   videoAnalysisLimit: number;
   documentAnalysisLimit: number;
   saveLeadFiles: boolean;
+  temporaryMediaStorage: boolean;
+  mediaCleanupEnabled: boolean;
+  mediaRetentionHours: number;
   leadMemory: boolean;
   cloneMemory: boolean;
   smartTiming: boolean;
@@ -536,6 +539,9 @@ export const DEFAULT_WILLIAN_AGENT_CONFIG: WillianAgentConfig = {
     videoAnalysisLimit: 2,
     documentAnalysisLimit: 3,
     saveLeadFiles: true,
+    temporaryMediaStorage: true,
+    mediaCleanupEnabled: true,
+    mediaRetentionHours: 24,
     leadMemory: true,
     cloneMemory: true,
     smartTiming: true,

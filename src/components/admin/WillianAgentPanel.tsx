@@ -645,6 +645,8 @@ const mediaToggles: BehaviorToggleSpec[] = [
   { key: "analyzeVideos", title: "Analisar videos", detail: "Permite leitura de video." },
   { key: "analyzeDocuments", title: "Analisar documentos", detail: "Editais e anexos entram no CRM." },
   { key: "saveLeadFiles", title: "Salvar arquivos", detail: "Guarda midias no arquivo do lead." },
+  { key: "temporaryMediaStorage", title: "Midia temporaria", detail: "R2 bruto expira apos a retencao." },
+  { key: "mediaCleanupEnabled", title: "Limpeza automatica", detail: "Apaga midias vencidas do R2." },
 ];
 
 const timingFields: BehaviorNumberSpec[] = [
@@ -3041,7 +3043,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
       <Panel
         title="Audio e midia com IA"
         eyebrow="Analise / anexos / arquivos"
-        action={<BehaviorIcon icon={<ImageIcon size={15} />} label={`${config.imageAnalysisLimit} imgs`} />}
+        action={<BehaviorIcon icon={<ImageIcon size={15} />} label={config.temporaryMediaStorage ? `${config.mediaRetentionHours}h` : `${config.imageAnalysisLimit} imgs`} />}
       >
         <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-5">
           {mediaToggles.map((item) => (
@@ -3059,6 +3061,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
           <NumberField label="Limite imagens" value={config.imageAnalysisLimit} onChange={(imageAnalysisLimit) => setBehavior({ imageAnalysisLimit })} />
           <NumberField label="Limite videos" value={config.videoAnalysisLimit} onChange={(videoAnalysisLimit) => setBehavior({ videoAnalysisLimit })} />
           <NumberField label="Limite documentos" value={config.documentAnalysisLimit} onChange={(documentAnalysisLimit) => setBehavior({ documentAnalysisLimit })} />
+          <NumberField label="Retencao midia (h)" value={config.mediaRetentionHours} onChange={(mediaRetentionHours) => setBehavior({ mediaRetentionHours })} />
         </div>
       </Panel>
 

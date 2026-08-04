@@ -1,7 +1,7 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
-import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { isLikelyPropertyImageUrl } from "@/lib/scraper/quality";
 
@@ -27,6 +27,14 @@ export type StoredR2Object = {
   sizeBytes?: number;
   error?: string;
   storedAt: string;
+  expiresAt?: string;
+};
+
+export type DeletedR2Object = {
+  storageKey: string;
+  status: "deleted" | "unavailable" | "failed" | "skipped";
+  error?: string;
+  deletedAt: string;
 };
 
 type R2Config = {
@@ -97,6 +105,8 @@ export async function putPublicR2Object(input: {
   body: Buffer | Uint8Array;
   contentType?: string;
   cacheControl?: string;
+  metadata?: Record<string, string>;
+  expiresAt?: string;
 }): Promise<StoredR2Object> {
   const storedAt = new Date().toISOString();
   const storageKey = input.storageKey.replace(/^\/+/, "").trim();
@@ -145,6 +155,8 @@ export async function putPublicR2Object(input: {
         Body: body,
         ContentType: contentType,
         CacheControl: input.cacheControl || "public, max-age=31536000, immutable",
+        Metadata: input.metadata,
+        Expires: input.expiresAt ? new Date(input.expiresAt) : undefined,
       })
     );
 
@@ -155,6 +167,7 @@ export async function putPublicR2Object(input: {
       contentType,
       sizeBytes: body.length,
       storedAt,
+      expiresAt: input.expiresAt,
     };
   } catch (error) {
     return {
@@ -165,6 +178,62 @@ export async function putPublicR2Object(input: {
       sizeBytes: body.length,
       error: error instanceof Error ? error.message : "Falha ao gravar objeto no R2.",
       storedAt,
+      expiresAt: input.expiresAt,
+    };
+  }
+}
+
+export async function deletePublicR2Object(storageKeyInput: string): Promise<DeletedR2Object> {
+  const deletedAt = new Date().toISOString();
+  const storageKey = storageKeyInput.replace(/^\/+/, "").trim();
+
+  if (!storageKey) {
+    return {
+      storageKey,
+      status: "skipped",
+      error: "Objeto R2 sem chave para excluir.",
+      deletedAt,
+    };
+  }
+
+  const config = await getR2Config();
+  if (!config) {
+    return {
+      storageKey,
+      status: "unavailable",
+      error: "R2 publico nao configurado.",
+      deletedAt,
+    };
+  }
+
+  try {
+    const client = new S3Client({
+      region: "auto",
+      endpoint: config.endpoint,
+      credentials: {
+        accessKeyId: config.accessKeyId,
+        secretAccessKey: config.secretAccessKey,
+      },
+    });
+
+    await client.send(
+      new DeleteObjectCommand({
+        Bucket: config.publicBucket,
+        Key: storageKey,
+      })
+    );
+
+    return {
+      storageKey,
+      status: "deleted",
+      deletedAt,
+    };
+  } catch (error) {
+    return {
+      storageKey,
+      status: "failed",
+      error: error instanceof Error ? error.message : "Falha ao excluir objeto no R2.",
+      deletedAt,
     };
   }
 }

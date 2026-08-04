@@ -2,6 +2,7 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { getGeminiApiKey, getGeminiModel } from "@/lib/ai/config";
+import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   downloadWhatsAppAgentMessageMedia,
   type ConnectyHubMediaDownloadResult,
@@ -19,10 +20,13 @@ export type InboundMediaAnalysisResult = {
   mimeType: string;
   analysisText: string;
   runtimeText: string;
-  source: "gemini" | "disabled" | "failed" | "unavailable";
+  source: "gemini" | "disabled" | "failed" | "limited" | "unavailable";
   storageUrl: string;
   storageKey: string;
   storageStatus: StoredR2Object["status"] | "skipped";
+  temporary: boolean;
+  expiresAt: string;
+  retentionHours: number;
   sizeBytes: number | null;
   error: string;
   analyzedAt: string;
@@ -60,6 +64,8 @@ const MAX_BYTES_BY_KIND: Record<InboundMediaKind, number> = {
   video: 20 * 1024 * 1024,
   document: 12 * 1024 * 1024,
 };
+const DEFAULT_MEDIA_RETENTION_HOURS = 24;
+const MAX_MEDIA_RETENTION_HOURS = 168;
 
 function cleanString(value: unknown, fallback = "") {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
@@ -68,6 +74,12 @@ function cleanString(value: unknown, fallback = "") {
 function clampText(value: string, limit = 2600) {
   const clean = value.replace(/\r/g, "").replace(/\n{3,}/g, "\n\n").trim();
   return clean.length > limit ? `${clean.slice(0, limit - 3)}...` : clean;
+}
+
+function clampNumber(value: unknown, fallback: number, min: number, max: number) {
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(min, Math.min(Math.trunc(numeric), max));
 }
 
 function normalizeSearch(value: string) {
@@ -156,6 +168,41 @@ function fallbackMimeType(kind: InboundMediaKind, mimeType?: string) {
   const clean = cleanString(mimeType).split(";")[0]?.trim().toLowerCase();
   if (clean && clean !== "application/octet-stream") return clean;
   return defaultMimeType(kind);
+}
+
+function mediaAnalysisLimit(config: WillianAgentConfig, kind: InboundMediaKind) {
+  if (kind === "image") return clampNumber(config.behavior.imageAnalysisLimit, 8, 0, 100);
+  if (kind === "video") return clampNumber(config.behavior.videoAnalysisLimit, 2, 0, 100);
+  return clampNumber(config.behavior.documentAnalysisLimit, 3, 0, 100);
+}
+
+async function countConversationMediaAnalyses(conversationId: string, kind: InboundMediaKind) {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase || !conversationId) return 0;
+
+  const { count, error } = await supabase
+    .from("whatsapp_conversation_messages")
+    .select("id", { count: "exact", head: true })
+    .eq("conversation_id", conversationId)
+    .eq("direction", "inbound")
+    .eq("payload->betel_media_analysis->>kind", kind)
+    .eq("payload->betel_media_analysis->>source", "gemini");
+
+  if (error) return 0;
+  return count || 0;
+}
+
+function mediaRetentionHours(config: WillianAgentConfig) {
+  return clampNumber(
+    config.behavior.mediaRetentionHours,
+    DEFAULT_MEDIA_RETENTION_HOURS,
+    1,
+    MAX_MEDIA_RETENTION_HOURS
+  );
+}
+
+function buildMediaExpiresAt(analyzedAt: string, retentionHours: number) {
+  return new Date(new Date(analyzedAt).getTime() + retentionHours * 60 * 60 * 1000).toISOString();
 }
 
 function extensionForMime(mimeType: string, sourceUrl: string, kind: InboundMediaKind) {
@@ -345,8 +392,10 @@ function buildMediaAnalysisPrompt(kind: InboundMediaKind, caption: string) {
 
   if (kind === "image") {
     lines.push("Se for print de imovel, edital, site, conversa, comprovante ou documento, identifique o tipo e os dados mais importantes.");
+    lines.push("Se for foto/print de imovel, descreva o padrao do imovel: tipo, aparencia, acabamento, tamanho aparente, localizacao visivel, faixa de valor se aparecer e sinais de leilao.");
   } else if (kind === "video") {
     lines.push("Se for video, descreva o que aparece, telas, movimentos, textos e sinais uteis para responder o lead. Nao tente vender se o conteudo for incerto.");
+    lines.push("Se for video de imovel, extraia padrao, ambiente, conservacao, tipo, localizacao visivel, valor se aparecer e qualquer pista para comparar com oportunidades da Betel.");
   } else {
     lines.push("Se for documento, resuma o tipo do documento e pontos comerciais/juridicos legiveis, sem dar parecer juridico definitivo.");
   }
@@ -412,7 +461,18 @@ function buildMediaRuntimeText(input: {
       "[ORIENTACAO INTERNA]",
       "Use a analise da midia como contexto real da conversa.",
       "Responda uma unica vez, de forma curta e natural, com no maximo uma pergunta.",
+      "Se o lead perguntar se temos algo nesse nivel, compare a midia com os imoveis reais captados no contexto. Nao invente estoque; diga que vai validar se nao houver oportunidade clara.",
       "Se algum dado estiver incerto, peca confirmacao em vez de chutar.",
+    ].join("\n");
+  }
+
+  if (input.error.toLowerCase().includes("limite de analise")) {
+    return [
+      base,
+      "",
+      `[MIDIA RECEBIDA - LIMITE DE ANALISE DE ${formatMediaKind(input.kind).toUpperCase()} ATINGIDO]`,
+      input.error,
+      "Nao chute o conteudo. Se precisar, peca uma descricao curta do ponto principal.",
     ].join("\n");
   }
 
@@ -442,6 +502,9 @@ async function storeLeadMedia(input: {
   eventId: string;
   providerMessageId: string;
   phone?: string;
+  temporary: boolean;
+  expiresAt: string;
+  retentionHours: number;
 }) {
   const leadSegment = safeKeySegment(input.leadId || input.phone || "lead", "lead");
   const conversationSegment = safeKeySegment(input.conversationId || "conversation", "conversation");
@@ -454,12 +517,24 @@ async function storeLeadMedia(input: {
   ].filter(Boolean).join(":");
   const hash = createHash("sha1").update(seed).digest("hex").slice(0, 12);
   const extension = extensionForMime(input.media.mimeType, input.media.mediaUrl, input.kind);
-  const storageKey = `whatsapp-leads/${leadSegment}/${conversationSegment}/${hash}.${extension}`;
+  const storageKey = input.temporary
+    ? `whatsapp-temp/${leadSegment}/${conversationSegment}/${hash}.${extension}`
+    : `whatsapp-leads/${leadSegment}/${conversationSegment}/${hash}.${extension}`;
 
   return putPublicR2Object({
     storageKey,
     body: input.media.buffer,
     contentType: input.media.mimeType,
+    cacheControl: input.temporary ? "public, max-age=300, must-revalidate" : undefined,
+    metadata: input.temporary
+      ? {
+          temporary: "true",
+          expiresAt: input.expiresAt,
+          retentionHours: String(input.retentionHours),
+          source: "whatsapp_lead_media",
+        }
+      : undefined,
+    expiresAt: input.temporary ? input.expiresAt : undefined,
   });
 }
 
@@ -470,7 +545,13 @@ export async function maybeAnalyzeInboundMedia(input: AnalyzeInput): Promise<Inb
   const analyzedAt = new Date().toISOString();
   const caption = clampText(cleanString(input.caption), 900);
   const enabled = isMediaAnalysisEnabled(input.config, kind);
+  const analysisLimit = mediaAnalysisLimit(input.config, kind);
+  const previousAnalyses = enabled ? await countConversationMediaAnalyses(input.conversationId, kind) : 0;
+  const limitReached = enabled && previousAnalyses >= analysisLimit;
   const saveLeadFiles = input.config.behavior.saveLeadFiles;
+  const temporary = input.config.behavior.temporaryMediaStorage !== false;
+  const retentionHours = temporary ? mediaRetentionHours(input.config) : 0;
+  const expiresAt = temporary ? buildMediaExpiresAt(analyzedAt, retentionHours) : "";
   const fallbackUrl = cleanString(input.mediaUrl);
   const fallbackMime = fallbackMimeType(kind, input.mediaMimeType);
 
@@ -480,10 +561,17 @@ export async function maybeAnalyzeInboundMedia(input: AnalyzeInput): Promise<Inb
   let error = "";
   let source: InboundMediaAnalysisResult["source"] = enabled ? "unavailable" : "disabled";
 
-  try {
-    media = await loadInboundMedia(input, kind);
-  } catch (downloadError) {
-    error = downloadError instanceof Error ? downloadError.message : "Falha ao baixar midia.";
+  if (limitReached) {
+    error = `Limite de analise de ${formatMediaKind(kind).toLowerCase()} atingido nesta conversa (${analysisLimit}).`;
+    source = "limited";
+  }
+
+  if (!limitReached) {
+    try {
+      media = await loadInboundMedia(input, kind);
+    } catch (downloadError) {
+      error = downloadError instanceof Error ? downloadError.message : "Falha ao baixar midia.";
+    }
   }
 
   if (media && saveLeadFiles) {
@@ -495,13 +583,16 @@ export async function maybeAnalyzeInboundMedia(input: AnalyzeInput): Promise<Inb
       eventId: input.eventId,
       providerMessageId: input.providerMessageId,
       phone: input.phone,
+      temporary,
+      expiresAt,
+      retentionHours,
     });
     if (storage.status !== "stored" && storage.error) {
       error = error || storage.error;
     }
   }
 
-  if (enabled && media) {
+  if (enabled && !limitReached && media) {
     try {
       analysisText = await analyzeWithGemini({
         kind,
@@ -536,6 +627,9 @@ export async function maybeAnalyzeInboundMedia(input: AnalyzeInput): Promise<Inb
     storageUrl: storage?.url || "",
     storageKey: storage?.storageKey || "",
     storageStatus: storage?.status || (saveLeadFiles ? "unavailable" : "skipped"),
+    temporary,
+    expiresAt,
+    retentionHours,
     sizeBytes: media?.buffer.length ?? null,
     error,
     analyzedAt,
