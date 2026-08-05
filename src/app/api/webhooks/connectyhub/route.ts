@@ -180,6 +180,34 @@ function hasHumanRequest(text: string) {
   return /\b(humano|pessoa|atendente|consultor|corretor|vendedor|falar com alguem|me liga|ligacao)\b/i.test(text);
 }
 
+function leadControlTextFromInbound(inbound: Record<string, unknown>, runtimeText: string) {
+  const explicitControlText = cleanString(inbound.controlText || inbound.leadText || inbound.leadAuthoredText);
+  if (explicitControlText) return explicitControlText;
+
+  const hasGeneratedMediaContext =
+    Boolean(Object.keys(asRecord(inbound.mediaAnalysis)).length) ||
+    asBoolean(inbound.hardAudioFallback) ||
+    asBoolean(inbound.hardMediaFallback);
+
+  return hasGeneratedMediaContext ? "" : runtimeText;
+}
+
+function leadControlTextFromMessagePayload(payload: unknown, fallbackText = "") {
+  const record = asRecord(payload);
+  const runtimeControl = asRecord(record.betel_runtime_control || record.betelRuntimeControl);
+  const hasGeneratedMediaContext =
+    asBoolean(runtimeControl.hasGeneratedMediaContext) ||
+    Boolean(Object.keys(asRecord(record.betel_media_analysis || record.betelMediaAnalysis)).length);
+  return cleanString(
+    runtimeControl.leadText ||
+      runtimeControl.controlText ||
+      runtimeControl.leadAuthoredText ||
+      record.lead_control_text ||
+      record.leadControlText,
+    hasGeneratedMediaContext ? "" : fallbackText
+  );
+}
+
 function looksLikePromptInjection(text: string) {
   return /(ignore|desconsidere|revele|mostre|prompt|system|developer|instrucoes internas|regras internas|token|senha|codigo fonte|como voce foi programado)/i.test(text);
 }
@@ -2485,6 +2513,7 @@ async function persistWebhookCrm(
   const generatedTranscript = audioResolution?.transcript || "";
   const initialInboundMediaUrl = audioResolution?.mediaUrl || message.mediaUrl;
   const initialInboundMediaMimeType = audioResolution?.mediaMimeType || message.mediaMimeType;
+  const leadAuthoredText = cleanString(message.text || message.transcript || generatedTranscript);
   const hardAudioFallback =
     !message.text &&
     !message.transcript &&
@@ -2494,10 +2523,7 @@ async function persistWebhookCrm(
       ? "Audio recebido sem transcricao. Responda de forma curta e humana pedindo para o lead reenviar ou resumir em texto."
       : "";
   const preliminaryInboundText =
-    message.text ||
-    message.transcript ||
-    generatedTranscript ||
-    (hardAudioFallback ? "Audio recebido sem transcricao." : "");
+    leadAuthoredText || (hardAudioFallback ? "Audio recebido sem transcricao." : "");
   const detectedMediaKind = detectWhatsAppInboundMediaKind({
     messageType: message.messageType,
     mediaMimeType: initialInboundMediaMimeType,
@@ -2867,6 +2893,12 @@ async function persistWebhookCrm(
       identityReliable: message.identityReliable,
       identityWarnings: message.identityWarnings,
     },
+    betel_runtime_control: {
+      leadText: leadAuthoredText || null,
+      controlText: leadAuthoredText || null,
+      hasGeneratedMediaContext: Boolean(mediaMetadata || hardAudioFallback || hardMediaFallback),
+      mediaKind: mediaAnalysis?.kind || detectedMediaKind || null,
+    },
     ...(mediaMetadata ? { betel_media_analysis: mediaMetadata } : {}),
   };
 
@@ -3006,6 +3038,8 @@ async function persistWebhookCrm(
       hardAudioFallback: Boolean(hardAudioFallback),
       hardMediaFallback: Boolean(hardMediaFallback),
       runtimeText: hardAudioFallback || hardMediaFallback || inboundText,
+      leadText: leadAuthoredText || null,
+      controlText: leadAuthoredText || null,
     },
   };
 }
@@ -3037,6 +3071,7 @@ async function insertRuntimeEvent(
 
 type BatchedInboundMessage = {
   text: string;
+  controlText: string;
   webhookEventId: string;
   occurredAt: string;
   messageType: string;
@@ -3157,6 +3192,13 @@ function formatBatchedInboundText(messages: BatchedInboundMessage[], fallback: s
   return texts.map((text, index) => `Mensagem ${index + 1}: ${text}`).join("\n");
 }
 
+function formatBatchedControlText(messages: BatchedInboundMessage[], fallback: string) {
+  const texts = messages.map((message) => message.controlText.trim()).filter(Boolean);
+  if (texts.length <= 1) return texts[0] || fallback;
+
+  return texts.map((text, index) => `Mensagem ${index + 1}: ${text}`).join("\n");
+}
+
 function configAfterInboundBatchDelay(config: WillianAgentConfig, delayAppliedMs: number) {
   if (delayAppliedMs <= 0 || config.behavior.responseDelaySeconds <= 0) return config;
   return {
@@ -3174,6 +3216,7 @@ async function loadRecentInboundBatch(
     conversationId: string;
     currentEventId: string;
     fallbackText: string;
+    fallbackControlText: string;
   }
 ) {
   const { data: lastOutbound } = await supabase
@@ -3192,7 +3235,7 @@ async function loadRecentInboundBatch(
 
   let query = supabase
     .from("whatsapp_conversation_messages")
-    .select("text,webhook_event_id,occurred_at,created_at,message_type,media_mime_type")
+    .select("text,payload,webhook_event_id,occurred_at,created_at,message_type,media_mime_type")
     .eq("conversation_id", input.conversationId)
     .eq("direction", "inbound")
     .order("occurred_at", { ascending: true })
@@ -3204,6 +3247,7 @@ async function loadRecentInboundBatch(
   const messages = ((data || []) as Record<string, unknown>[])
     .map((message): BatchedInboundMessage => ({
       text: cleanString(message.text),
+      controlText: leadControlTextFromMessagePayload(message.payload, cleanString(message.text)),
       webhookEventId: cleanString(message.webhook_event_id),
       occurredAt: cleanString(message.occurred_at || message.created_at),
       messageType: cleanString(message.message_type, "text"),
@@ -3215,6 +3259,7 @@ async function loadRecentInboundBatch(
     return [
       {
         text: input.fallbackText,
+        controlText: input.fallbackControlText,
         webhookEventId: input.currentEventId,
         occurredAt: new Date().toISOString(),
         messageType: "text",
@@ -3235,20 +3280,23 @@ async function waitForInboundBatchWindow(
     leadId: string;
     conversationId: string;
     text: string;
+    controlText: string;
     messageType: string;
     mimeType: string;
   }
 ) {
+  const timingText = cleanString(input.controlText);
   const delayMs = inboundBatchDelayMs(input.config, {
     messageType: input.messageType,
     mimeType: input.mimeType,
-    text: input.text,
+    text: timingText,
   });
   if (delayMs <= 0 || !input.eventId || !input.conversationId) {
     return {
       skipped: false,
       delayAppliedMs: 0,
       text: input.text,
+      controlText: input.controlText,
       messages: [] as BatchedInboundMessage[],
     };
   }
@@ -3265,7 +3313,7 @@ async function waitForInboundBatchWindow(
       delayMs,
       messageType: input.messageType,
       mimeType: input.mimeType,
-      timingKind: inboundBatchTimingKind({ messageType: input.messageType, mimeType: input.mimeType, text: input.text }),
+      timingKind: inboundBatchTimingKind({ messageType: input.messageType, mimeType: input.mimeType, text: timingText }),
     },
   });
 
@@ -3302,6 +3350,7 @@ async function waitForInboundBatchWindow(
       latestEventId,
       delayAppliedMs: delayMs,
       text: input.text,
+      controlText: input.controlText,
       messages: [] as BatchedInboundMessage[],
     };
   }
@@ -3310,12 +3359,16 @@ async function waitForInboundBatchWindow(
     conversationId: input.conversationId,
     currentEventId: input.eventId,
     fallbackText: input.text,
+    fallbackControlText: input.controlText,
   });
 
   return {
     skipped: false,
     delayAppliedMs: delayMs,
     text: input.config.behavior.midMessageContext ? formatBatchedInboundText(messages, input.text) : input.text,
+    controlText: input.config.behavior.midMessageContext
+      ? formatBatchedControlText(messages, input.controlText)
+      : input.controlText,
     messages,
   };
 }
@@ -4343,6 +4396,7 @@ async function processWhatsappAgentRuntime(
 ) {
   const inbound = asRecord(crmResult.inbound);
   const text = cleanString(inbound.runtimeText || inbound.text);
+  const controlText = leadControlTextFromInbound(inbound, text);
   const phone = cleanString(inbound.phone);
   const inboundName = cleanString(inbound.name);
   const name = looksLikeBusinessName(inboundName) ? "" : inboundName;
@@ -4392,14 +4446,14 @@ async function processWhatsappAgentRuntime(
     return { ok: true, skipped: true, reason: "agent_inactive" };
   }
 
-  if (config.behavior.optOutEnabled && hasStopWord(text, config.memory.stopWords)) {
+  if (config.behavior.optOutEnabled && controlText && hasStopWord(controlText, config.memory.stopWords)) {
     await supabase.from("whatsapp_leads").update({ opt_out: true, updated_at: new Date().toISOString() }).eq("id", leadId);
     await insertRuntimeEvent(supabase, {
       agentKey,
       eventType: "whatsapp_agent_runtime_skipped",
       status: "opt_out",
       message: "Lead usou palavra de parada; agente pausou resposta automatica.",
-      payload: { eventId, leadId, conversationId },
+      payload: { eventId, leadId, conversationId, controlPreview: clampText(controlText, 160) },
     });
     return { ok: true, skipped: true, reason: "opt_out" };
   }
@@ -4438,6 +4492,7 @@ async function processWhatsappAgentRuntime(
     leadId,
     conversationId,
     text,
+    controlText,
     messageType: inboundMessageType,
     mimeType: inboundMimeType,
   });
@@ -4452,22 +4507,31 @@ async function processWhatsappAgentRuntime(
   }
 
   const runtimeText = inboundBatch.text || text;
+  const runtimeControlText = cleanString(inboundBatch.controlText || controlText);
   const humanizationConfig = configAfterInboundBatchDelay(config, inboundBatch.delayAppliedMs);
 
-  if (config.behavior.optOutEnabled && runtimeText !== text && hasStopWord(runtimeText, config.memory.stopWords)) {
+  if (config.behavior.optOutEnabled && runtimeControlText && hasStopWord(runtimeControlText, config.memory.stopWords)) {
     await supabase.from("whatsapp_leads").update({ opt_out: true, updated_at: new Date().toISOString() }).eq("id", leadId);
     await insertRuntimeEvent(supabase, {
       agentKey,
       eventType: "whatsapp_agent_runtime_skipped",
       status: "opt_out",
       message: "Lead usou palavra de parada no lote de mensagens; agente pausou resposta automatica.",
-      payload: { eventId, leadId, conversationId, batchMessages: inboundBatch.messages.length },
+      payload: {
+        eventId,
+        leadId,
+        conversationId,
+        batchMessages: inboundBatch.messages.length,
+        controlPreview: clampText(runtimeControlText, 160),
+      },
     });
     return { ok: true, skipped: true, reason: "opt_out" };
   }
 
   const runtimeContext = await loadRuntimePromptContext(supabase, conversationId, leadId);
-  const promptInjection = config.behavior.promptInjectionProtection && looksLikePromptInjection(runtimeText);
+  const promptInjection =
+    config.behavior.promptInjectionProtection &&
+    Boolean(runtimeControlText && looksLikePromptInjection(runtimeControlText));
   const topicChange = config.behavior.topicChangeProtection
     ? detectTopicChange(runtimeText, runtimeContext.messages)
     : null;
@@ -4541,7 +4605,7 @@ async function processWhatsappAgentRuntime(
 
   const trackId = `${agentKey}-${eventId || Date.now().toString(36)}`;
   const aiHumanNeedReason = config.behavior.aiHumanRequestTrigger
-    ? detectAiHumanNeed({ text: runtimeText, lead: runtimeContext.lead, config })
+    ? detectAiHumanNeed({ text: runtimeControlText, lead: runtimeContext.lead, config })
     : "";
   const aiHumanNeedAlertOnly = Boolean(aiHumanNeedReason && !aiHumanNeedPausesConversation(aiHumanNeedReason));
   if (aiHumanNeedReason) {
@@ -4628,7 +4692,7 @@ async function processWhatsappAgentRuntime(
     }
   }
 
-  if (config.behavior.humanRequestTrigger && hasHumanRequest(runtimeText)) {
+  if (config.behavior.humanRequestTrigger && runtimeControlText && hasHumanRequest(runtimeControlText)) {
     await markHumanIntervention(supabase, {
       conversationId,
       leadId,
@@ -4645,12 +4709,12 @@ async function processWhatsappAgentRuntime(
       eventId,
       leadPhone: phone,
       reason: "lead_requested_human",
-      textPreview: runtimeText,
+      textPreview: runtimeControlText,
     });
     const reply = handoffReply();
     const handoffPlan = buildWhatsAppHumanizationPlan({
       config: humanizationConfig,
-      inboundText: runtimeText,
+      inboundText: runtimeControlText,
       replyParts: [reply],
       mode: "text",
       seed: `${trackId}-handoff:${phone}:${reply}`,
@@ -4686,7 +4750,13 @@ async function processWhatsappAgentRuntime(
       eventType: "whatsapp_agent_runtime_handoff",
       status: delivery.providerStatus,
       message: "Lead pediu atendimento humano; IA confirmou e pausou a conversa.",
-      payload: { eventId, leadId, conversationId, delivery },
+      payload: {
+        eventId,
+        leadId,
+        conversationId,
+        delivery,
+        controlPreview: clampText(runtimeControlText, 160),
+      },
     });
     return { ok: delivery.ok, replied: delivery.ok, handoff: true, providerStatus: delivery.providerStatus };
   }

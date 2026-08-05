@@ -11,6 +11,7 @@ export const GLOBAL_WHATSAPP_AGENT_NAME = "WhatsApp Global";
 export const GLOBAL_WHATSAPP_DEFAULT_INSTANCE_NAME = WILLIAN_DEFAULT_INSTANCE_NAME;
 export const CONNECTYHUB_PROVIDER = "connectyhub";
 const CONNECTYHUB_CONNECT_SYSTEM_NAME = "ViralCheck";
+const CONNECTYHUB_TEXT_SEND_TIMEOUT_MS = 30000;
 export const CONNECTYHUB_WEBHOOK_EVENTS = [
   "messages",
   "messages_update",
@@ -984,7 +985,7 @@ async function sendConnectyHubWhatsAppMessage(input: {
   timeoutMs?: number;
 }): Promise<ConnectyHubWhatsAppMessageResult> {
   const button = normalizeActionButton(input.actionButton, input.text);
-  const timeoutMs = input.timeoutMs || 15000;
+  const timeoutMs = input.timeoutMs || CONNECTYHUB_TEXT_SEND_TIMEOUT_MS;
   const sendFields = optionalSendFields(input.sendOptions);
 
   if (button) {
@@ -3065,7 +3066,7 @@ export async function sendGlobalWhatsAppText(input: GlobalWhatsAppTextInput): Pr
       idempotencyKey: input.messageCode || input.runCode,
       actionButton: input.actionButton,
       sendOptions: input.sendOptions,
-      timeoutMs: 15000,
+      timeoutMs: CONNECTYHUB_TEXT_SEND_TIMEOUT_MS,
     });
     return {
       ok: true,
@@ -3137,7 +3138,7 @@ export async function sendWillianWhatsAppReply(input: {
       idempotencyKey: input.trackId,
       actionButton: input.actionButton,
       sendOptions: input.sendOptions,
-      timeoutMs: 15000,
+      timeoutMs: CONNECTYHUB_TEXT_SEND_TIMEOUT_MS,
     });
 
     return {
@@ -3213,7 +3214,7 @@ export async function sendWhatsAppAgentReply(input: {
       idempotencyKey: input.trackId,
       actionButton: input.actionButton,
       sendOptions: input.sendOptions,
-      timeoutMs: 15000,
+      timeoutMs: CONNECTYHUB_TEXT_SEND_TIMEOUT_MS,
     });
 
     return {
