@@ -55,7 +55,7 @@ export async function POST(request: Request) {
     dryRun: asBoolean(body.dryRun),
     limit: asNumber(body.limit, 12),
     agentKey: cleanString(body.agentKey),
-    autoHandoff: body.autoHandoff !== false,
+    autoHandoff: asBoolean(body.autoHandoff),
   });
 
   if (!result.dryRun) revalidateWhatsAppPaths();

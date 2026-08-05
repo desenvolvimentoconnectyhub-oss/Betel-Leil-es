@@ -11,7 +11,7 @@ export const whatsappQualityFunction = inngest.createFunction(
     const result = await reviewWhatsAppConversations({
       dryRun: false,
       limit: 12,
-      autoHandoff: true,
+      autoHandoff: false,
     });
 
     return {

@@ -1170,7 +1170,7 @@ export function WhatsAppCrmPage({
       const result = await postJson("/api/admin/whatsapp/reviews", {
         dryRun: false,
         limit: 12,
-        autoHandoff: true,
+        autoHandoff: false,
       });
       const reviewed = typeof result.reviewedCount === "number" ? result.reviewedCount : 0;
       const handoff = typeof result.handoffCount === "number" ? result.handoffCount : 0;
