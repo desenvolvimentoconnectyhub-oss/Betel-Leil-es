@@ -1144,7 +1144,6 @@ function detectAiHumanNeed(input: {
   config: WillianAgentConfig;
 }) {
   const normalized = normalizeSearchText(input.text);
-  if (input.lead.qualificationScore >= input.config.qualification.vipScore) return "vip_score";
   if (/\b(procon|processar|processo judicial|acao judicial|advogado|juridico|golpe|fraude|denuncia|reclamacao|ameaca|policia)\b/.test(normalized)) {
     return "risk_or_complaint";
   }
@@ -1154,7 +1153,12 @@ function detectAiHumanNeed(input: {
   if (/\b(tenho mais de|capital de|tenho capital|posso investir)\b/.test(normalized) && budgetFromText(input.text) >= 500000) {
     return "high_capital";
   }
+  if (input.lead.qualificationScore >= input.config.qualification.vipScore) return "vip_score";
   return "";
+}
+
+function aiHumanNeedPausesConversation(reason: string) {
+  return !["vip_score", "high_capital"].includes(reason);
 }
 
 function withTrackedParams(url: string, trackId: string, source: string) {
@@ -4539,67 +4543,89 @@ async function processWhatsappAgentRuntime(
   const aiHumanNeedReason = config.behavior.aiHumanRequestTrigger
     ? detectAiHumanNeed({ text: runtimeText, lead: runtimeContext.lead, config })
     : "";
+  const aiHumanNeedAlertOnly = Boolean(aiHumanNeedReason && !aiHumanNeedPausesConversation(aiHumanNeedReason));
   if (aiHumanNeedReason) {
-    await markHumanIntervention(supabase, {
-      conversationId,
-      leadId,
-      agentKey,
-      eventId,
-      reason: `ai_detected_${aiHumanNeedReason}`,
-    });
-    await notifyResponsibleHumans(supabase, {
-      config,
-      agentKey,
-      instanceId: providerInstanceId,
-      leadId,
-      conversationId,
-      eventId,
-      leadPhone: phone,
-      reason: `ai_detected_${aiHumanNeedReason}`,
-      textPreview: runtimeText,
-    });
-    const reply = handoffReply();
-    const aiHandoffPlan = buildWhatsAppHumanizationPlan({
-      config: humanizationConfig,
-      inboundText: runtimeText,
-      replyParts: [reply],
-      mode: "text",
-      seed: `${trackId}-ai-handoff:${phone}:${reply}`,
-    });
-    await startWhatsAppHumanizationSignals(supabase, {
-      agentKey,
-      instanceId: providerInstanceId,
-      number: phone,
-      eventId,
-      leadId,
-      conversationId,
-      plan: aiHandoffPlan,
-    });
-    const delivery = await sendWhatsAppAgentReply({
-      agentKey,
-      instanceId: providerInstanceId,
-      number: phone,
-      text: reply,
-      trackId: `${trackId}-ai-handoff`,
-      sendOptions: aiHandoffPlan.parts[0]?.sendOptions,
-    });
-    await insertOutboundMessages(supabase, {
-      conversationId,
-      leadId,
-      instanceId,
-      eventId,
-      agentKey,
-      texts: [reply],
-      deliveries: [delivery as unknown as Record<string, unknown>],
-    });
-    await insertRuntimeEvent(supabase, {
-      agentKey,
-      eventType: "whatsapp_agent_runtime_ai_handoff",
-      status: delivery.providerStatus,
-      message: "IA detectou necessidade de humano; conversa pausada e encaminhada.",
-      payload: { eventId, leadId, conversationId, reason: aiHumanNeedReason, delivery },
-    });
-    return { ok: delivery.ok, replied: delivery.ok, handoff: true, providerStatus: delivery.providerStatus };
+    if (aiHumanNeedAlertOnly) {
+      await notifyResponsibleHumans(supabase, {
+        config,
+        agentKey,
+        instanceId: providerInstanceId,
+        leadId,
+        conversationId,
+        eventId,
+        leadPhone: phone,
+        reason: `ai_detected_${aiHumanNeedReason}`,
+        textPreview: runtimeText,
+      });
+      await insertRuntimeEvent(supabase, {
+        agentKey,
+        eventType: "whatsapp_agent_runtime_human_alert_continued",
+        status: "continued",
+        message: "Lead quente avisado ao humano sem pausar o atendimento automatico.",
+        payload: { eventId, leadId, conversationId, reason: aiHumanNeedReason },
+      });
+    } else {
+      await markHumanIntervention(supabase, {
+        conversationId,
+        leadId,
+        agentKey,
+        eventId,
+        reason: `ai_detected_${aiHumanNeedReason}`,
+      });
+      await notifyResponsibleHumans(supabase, {
+        config,
+        agentKey,
+        instanceId: providerInstanceId,
+        leadId,
+        conversationId,
+        eventId,
+        leadPhone: phone,
+        reason: `ai_detected_${aiHumanNeedReason}`,
+        textPreview: runtimeText,
+      });
+      const reply = handoffReply();
+      const aiHandoffPlan = buildWhatsAppHumanizationPlan({
+        config: humanizationConfig,
+        inboundText: runtimeText,
+        replyParts: [reply],
+        mode: "text",
+        seed: `${trackId}-ai-handoff:${phone}:${reply}`,
+      });
+      await startWhatsAppHumanizationSignals(supabase, {
+        agentKey,
+        instanceId: providerInstanceId,
+        number: phone,
+        eventId,
+        leadId,
+        conversationId,
+        plan: aiHandoffPlan,
+      });
+      const delivery = await sendWhatsAppAgentReply({
+        agentKey,
+        instanceId: providerInstanceId,
+        number: phone,
+        text: reply,
+        trackId: `${trackId}-ai-handoff`,
+        sendOptions: aiHandoffPlan.parts[0]?.sendOptions,
+      });
+      await insertOutboundMessages(supabase, {
+        conversationId,
+        leadId,
+        instanceId,
+        eventId,
+        agentKey,
+        texts: [reply],
+        deliveries: [delivery as unknown as Record<string, unknown>],
+      });
+      await insertRuntimeEvent(supabase, {
+        agentKey,
+        eventType: "whatsapp_agent_runtime_ai_handoff",
+        status: delivery.providerStatus,
+        message: "IA detectou necessidade de humano; conversa pausada e encaminhada.",
+        payload: { eventId, leadId, conversationId, reason: aiHumanNeedReason, delivery },
+      });
+      return { ok: delivery.ok, replied: delivery.ok, handoff: true, providerStatus: delivery.providerStatus };
+    }
   }
 
   if (config.behavior.humanRequestTrigger && hasHumanRequest(runtimeText)) {
@@ -4930,7 +4956,7 @@ async function processWhatsappAgentRuntime(
     eventId,
   });
 
-  if (memoryUpdate?.temperature === "vip" && runtimeContext.lead.temperature !== "vip") {
+  if (memoryUpdate?.temperature === "vip" && runtimeContext.lead.temperature !== "vip" && !aiHumanNeedAlertOnly) {
     await notifyResponsibleHumans(supabase, {
       config,
       agentKey,
