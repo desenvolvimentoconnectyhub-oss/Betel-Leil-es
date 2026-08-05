@@ -169,10 +169,10 @@ function isInsideAgentWindow(config: WillianAgentConfig, phone = "") {
 }
 
 function hasStopWord(text: string, stopWords: string[]) {
-  const lower = text.toLowerCase();
+  const normalizedText = ` ${normalizeSearchText(text).replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim()} `;
   return stopWords.some((word) => {
-    const clean = word.trim().toLowerCase();
-    return clean.length >= 3 && lower.includes(clean);
+    const clean = normalizeSearchText(word).replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+    return clean.length >= 3 && normalizedText.includes(` ${clean} `);
   });
 }
 
