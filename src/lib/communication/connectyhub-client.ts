@@ -3350,6 +3350,11 @@ export async function downloadWhatsAppAgentMessageMedia(input: {
   throw new Error(`Nao foi possivel baixar a midia da mensagem ${messageId}: ${lastError}`);
 }
 
+function mediaSendTimeoutMs(type: string) {
+  const normalized = cleanString(type).toLowerCase();
+  return normalized.includes("audio") || normalized.includes("myaudio") || normalized.includes("ptt") ? 30000 : 20000;
+}
+
 export async function sendWillianWhatsAppMedia(input: {
   number: string;
   type: "image" | "video" | "videoplay" | "document" | "audio" | "myaudio" | "ptt" | "ptv" | "sticker";
@@ -3367,6 +3372,7 @@ export async function sendWillianWhatsAppMedia(input: {
   }
 
   const sendFields = optionalSendFields(input.sendOptions);
+  const timeoutMs = mediaSendTimeoutMs(input.type);
   let payload: unknown;
 
   try {
@@ -3385,7 +3391,7 @@ export async function sendWillianWhatsAppMedia(input: {
         },
       },
       idempotencyKey: input.trackId,
-      timeoutMs: 20000,
+      timeoutMs,
     }));
   } catch (error) {
     if (!shouldFallbackToLegacySend(error)) throw error;
@@ -3404,7 +3410,7 @@ export async function sendWillianWhatsAppMedia(input: {
         readmessages: sendFields.readmessages,
       },
       idempotencyKey: input.trackId,
-      timeoutMs: 20000,
+      timeoutMs,
     }));
   }
 
@@ -3435,6 +3441,7 @@ export async function sendWhatsAppAgentMediaReply(input: {
   }
 
   const sendFields = optionalSendFields(input.sendOptions);
+  const timeoutMs = mediaSendTimeoutMs(input.type);
   let payload: unknown;
 
   try {
@@ -3453,7 +3460,7 @@ export async function sendWhatsAppAgentMediaReply(input: {
         },
       },
       idempotencyKey: input.trackId,
-      timeoutMs: 20000,
+      timeoutMs,
     }));
   } catch (error) {
     if (!shouldFallbackToLegacySend(error)) throw error;
@@ -3472,7 +3479,7 @@ export async function sendWhatsAppAgentMediaReply(input: {
         readmessages: sendFields.readmessages,
       },
       idempotencyKey: input.trackId,
-      timeoutMs: 20000,
+      timeoutMs,
     }));
   }
 

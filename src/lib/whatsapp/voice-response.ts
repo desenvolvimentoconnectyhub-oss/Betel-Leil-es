@@ -90,7 +90,7 @@ export async function resolveWhatsAppVoiceResponse(input: {
   const { config } = input;
   const behavior = config.behavior;
   const generatedText = cleanString(input.generatedText);
-  const maxAudioChars = Math.max(160, Math.min(input.maxAudioChars || 900, 1800));
+  const maxAudioChars = Math.max(1200, Math.min(input.maxAudioChars || 2000, 2000));
   const maxAudioParts = Math.max(1, Math.min(input.maxAudioParts || 1, 4));
   const modelId = cleanString(behavior.audioModelId, "eleven_multilingual_v2");
 

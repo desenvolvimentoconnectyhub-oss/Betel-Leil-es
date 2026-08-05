@@ -333,7 +333,7 @@ export async function synthesizeElevenLabsPreview(input: {
   const config = await getElevenLabsConfig();
   const voiceId = cleanString(input.voiceId || config.willianVoiceId.value || config.defaultVoiceId.value);
   const modelId = cleanString(input.modelId || config.defaultModelId.value, DEFAULT_MODEL_ID);
-  const maxChars = Math.max(80, Math.min(input.maxChars || 900, 2500));
+  const maxChars = Math.max(80, Math.min(input.maxChars || 2000, 2500));
   const text = cleanString(
     input.text,
     "Ola, aqui e a Betel. Estou validando a voz de atendimento."
