@@ -29,6 +29,7 @@ import {
 } from "@/lib/whatsapp/humanization-runtime";
 import {
   isWhatsAppAudioMessage,
+  leadRequestedWhatsAppAudioReply,
   resolveWhatsAppVoiceResponse,
   sendWhatsAppAgentVoiceReply,
 } from "@/lib/whatsapp/voice-response";
@@ -3961,6 +3962,26 @@ function removeUnpromptedAiDisclosure(text: string) {
     .trim();
 }
 
+function removeFalseAudioLimitation(text: string) {
+  const filtered = text
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean)
+    .filter(
+      (sentence) =>
+        !/\b(nao|não)\s+consigo\s+(?:gerar|enviar|mandar|gravar|fazer)\s+(?:um\s+)?(?:audio|áudio|voz)\b/i.test(
+          sentence
+        ) &&
+        !/\b(?:nao|não)\s+(?:tenho|posso)\s+(?:como\s+)?(?:enviar|mandar|gerar|gravar)\s+(?:audio|áudio|voz)\b/i.test(
+          sentence
+        )
+    )
+    .join(" ")
+    .trim();
+
+  return filtered || text;
+}
+
 function containsInternalLeak(text: string) {
   return /\b(prompt|system|developer|instrucoes internas|regras internas|codigo fonte|chave|token|api key|segredo)\b/i.test(text);
 }
@@ -4134,6 +4155,7 @@ function enforceWhatsAppReplyBehavior(
     text: string;
     inboundText: string;
     history: RuntimeMessageContext[];
+    audioReplyRequested?: boolean;
   }
 ) {
   const corrections: string[] = [];
@@ -4204,6 +4226,12 @@ function enforceWhatsAppReplyBehavior(
     }
   }
 
+  if (input.audioReplyRequested) {
+    const withoutFalseAudioLimitation = removeFalseAudioLimitation(text);
+    if (withoutFalseAudioLimitation !== text) corrections.push("false_audio_limitation_removed");
+    text = withoutFalseAudioLimitation;
+  }
+
   text = normalizeWhatsAppReplyText(text);
   if (!text) {
     corrections.push("empty_after_guard_fallback");
@@ -4225,6 +4253,7 @@ async function generateWhatsappAgentReply(
     lead: RuntimeLeadContext;
     history: RuntimeMessageContext[];
     promptInjection: boolean;
+    audioReplyRequested?: boolean;
     opportunitiesContext: string;
     globalBehaviorPrompt: string;
   }
@@ -4301,6 +4330,9 @@ async function generateWhatsappAgentReply(
       "Nao separe em varios blocos quando a resposta couber em uma bolha de 150 caracteres.",
       "Se o lead enviou varias mensagens em sequencia, responda ao conjunto uma unica vez.",
       "Faca no maximo uma pergunta por resposta.",
+      input.audioReplyRequested
+        ? "O lead pediu resposta em audio. Escreva apenas o conteudo que sera falado; pode ser uma fala natural de ate 2000 caracteres. Nao diga que nao consegue mandar audio."
+        : "",
       "Se a mensagem for apenas cumprimento curto, tipo 'oi', 'e ai', 'blz' ou 'tudo bem', responda no mesmo tom e nao pergunte ainda sobre CRM, capital, regiao, imovel ou objetivo.",
       "So puxe qualificacao quando o lead trouxer necessidade, duvida, interesse em leilao, imovel, investimento ou pedir ajuda.",
       "Evite repetir a mesma abertura em mensagens seguidas, como 'show', 'com certeza' ou 'bem-vindo'.",
@@ -4375,7 +4407,7 @@ async function generateWhatsappAgentReply(
     ].join("\n");
 
     const result = await model.generateContent(prompt);
-    const text = clampText(result.response.text(), 1200);
+    const text = clampText(result.response.text(), input.audioReplyRequested ? AUDIO_REPLY_PART_LIMIT : 1200);
     return { ok: Boolean(text), reason: text ? "generated" : "empty_reply", model: modelName, text };
   } catch (error) {
     const reason = error instanceof Error ? error.message : "gemini_error";
@@ -4508,6 +4540,7 @@ async function processWhatsappAgentRuntime(
 
   const runtimeText = inboundBatch.text || text;
   const runtimeControlText = cleanString(inboundBatch.controlText || controlText);
+  const audioReplyRequested = leadRequestedWhatsAppAudioReply(runtimeControlText);
   const humanizationConfig = configAfterInboundBatchDelay(config, inboundBatch.delayAppliedMs);
 
   if (config.behavior.optOutEnabled && runtimeControlText && hasStopWord(runtimeControlText, config.memory.stopWords)) {
@@ -4795,6 +4828,7 @@ async function processWhatsappAgentRuntime(
         lead: runtimeContext.lead,
         history: runtimeContext.messages,
         promptInjection,
+        audioReplyRequested,
         opportunitiesContext,
         globalBehaviorPrompt,
       });
@@ -4824,6 +4858,7 @@ async function processWhatsappAgentRuntime(
     text: generated.text,
     inboundText: runtimeText,
     history: runtimeContext.messages,
+    audioReplyRequested,
   });
   const responseText = guardedReply.text;
   const replyActionButton = runtimeActionButton(config, trackId);
@@ -4848,6 +4883,7 @@ async function processWhatsappAgentRuntime(
   const voiceDecision = await resolveWhatsAppVoiceResponse({
     config,
     generatedText: responseText,
+    inboundText: runtimeControlText,
     inboundMessageType,
     inboundMimeType,
     seed: `${agentKey}:${conversationId}:${eventId}:${phone}:${responseText}`,

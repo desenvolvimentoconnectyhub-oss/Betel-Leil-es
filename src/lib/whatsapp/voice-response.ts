@@ -75,9 +75,36 @@ export function isWhatsAppAudioMessage(messageType: string, mimeType = "") {
   return type.includes("audio") || type.includes("ptt") || type.includes("myaudio") || type.includes("ogg");
 }
 
+function normalizeVoiceRequestText(text: string) {
+  return cleanString(text)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function leadRequestedWhatsAppAudioReply(text: string) {
+  const normalized = normalizeVoiceRequestText(text);
+  if (!normalized || !/\b(audio|voz|falado|gravacao)\b/.test(normalized)) return false;
+  if (/\b(nao|sem)\s+(me\s+)?(manda|envia|responde|grave|grava|faca)\b.{0,50}\b(audio|voz)\b/.test(normalized)) {
+    return false;
+  }
+
+  return [
+    /\b(me\s+)?(manda|mande|envia|envie|responde|responda|explica|explique|fala|grave|grava|gravar)\b.{0,80}\b(audio|voz)\b/,
+    /\b(pode|consegue|da\s+pra|tem\s+como)\b.{0,80}\b(mandar|enviar|responder|explicar|falar|gravar)\b.{0,80}\b(audio|voz)\b/,
+    /\b(quero|queria|prefiro|preciso|gostaria)\b.{0,80}\b(audio|voz)\b/,
+    /\b(em|por|via)\s+(audio|voz)\b/,
+    /\b(nao\s+consigo|nao\s+vou\s+conseguir|dificil)\b.{0,80}\bler\b.{0,80}\b(audio|ouvir|escutar)\b/,
+  ].some((pattern) => pattern.test(normalized));
+}
+
 export async function resolveWhatsAppVoiceResponse(input: {
   config: WillianAgentConfig;
   generatedText: string;
+  inboundText?: string;
   inboundMessageType?: string;
   inboundMimeType?: string;
   seed?: string;
@@ -93,6 +120,7 @@ export async function resolveWhatsAppVoiceResponse(input: {
   const maxAudioChars = Math.max(1200, Math.min(input.maxAudioChars || 2000, 2000));
   const maxAudioParts = Math.max(1, Math.min(input.maxAudioParts || 1, 4));
   const modelId = cleanString(behavior.audioModelId, "eleven_multilingual_v2");
+  const leadAudioRequested = leadRequestedWhatsAppAudioReply(input.inboundText || "");
 
   const textDecision = (reason: string, fallbackReason?: string): WhatsAppVoiceDecision => ({
     mode: "text",
@@ -124,6 +152,7 @@ export async function resolveWhatsAppVoiceResponse(input: {
 
   if (input.forceAudio) return audioDecision("forced_audio");
   if (behavior.conversationMode === "always_audio") return audioDecision("conversation_mode_audio");
+  if (leadAudioRequested) return audioDecision("lead_requested_audio");
   if (
     behavior.conversationMode === "mirror" &&
     isWhatsAppAudioMessage(input.inboundMessageType || "", input.inboundMimeType || "")
