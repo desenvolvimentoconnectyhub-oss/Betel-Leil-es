@@ -97,7 +97,13 @@ export async function listAuctionOpportunities(limit = 50): Promise<DataResult<A
     .limit(limit);
 
   if (error) return fallbackOpportunities(error.message, limit);
-  if (!data?.length) return fallbackOpportunities("Tabela auction_opportunities vazia.", limit);
+  if (!data?.length) {
+    return {
+      data: [],
+      source: "supabase",
+      reason: "Nenhum imovel cadastrado apos a limpeza da fase antiga.",
+    };
+  }
 
   const visibleRows = ((data || []) as OpportunityDbRow[]).filter(shouldShowInPortfolio);
 
