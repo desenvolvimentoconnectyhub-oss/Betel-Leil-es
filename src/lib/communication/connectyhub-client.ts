@@ -1648,6 +1648,7 @@ async function persistConnectyHubInstance(input: {
       );
     }
     await upsertAppConfig(records);
+    await setPrimaryWhatsappAgentArchived(false);
   }
 
   const supabase = getSupabaseAdminClient();
