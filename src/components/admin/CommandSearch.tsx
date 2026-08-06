@@ -81,8 +81,15 @@ export function CommandSearch() {
                   "flex items-center justify-between rounded-md px-2 py-2 text-sm text-[var(--admin-soft)] hover:bg-[rgba(184,122,22,0.08)] hover:text-[var(--admin-foreground)]"
                 )}
               >
-                <span>{item.label}</span>
-                <span className="font-mono text-[10px] uppercase text-[var(--admin-muted)]">{item.group}</span>
+                <span className="min-w-0 truncate">{item.label}</span>
+                <span className="ml-3 flex shrink-0 items-center gap-2">
+                  {item.badge && (
+                    <span className="rounded-md border border-[var(--admin-border)] bg-[rgba(184,122,22,0.08)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--admin-muted)]">
+                      {item.badge}
+                    </span>
+                  )}
+                  <span className="font-mono text-[10px] uppercase text-[var(--admin-muted)]">{item.group}</span>
+                </span>
               </Link>
             ))}
           </div>

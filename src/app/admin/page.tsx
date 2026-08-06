@@ -189,7 +189,7 @@ export default async function AdminDashboard() {
 
         <DashboardPanel
           title="Eficiencia do lote"
-          eyebrow="scraper"
+          eyebrow="analise"
           subtitle="Percentual pronto nos ultimos lotes"
           contentClassName="p-3"
         >
@@ -231,7 +231,7 @@ export default async function AdminDashboard() {
       </section>
 
       <section className="mt-3 grid gap-3 md:grid-cols-2">
-        <DashboardPanel title="Scraper por links" eyebrow="lotes">
+        <DashboardPanel title="Analise de mercado" eyebrow="lotes">
           <ScraperSummary
             latestBatch={latestBatch}
             failedBatches={failedBatches}
@@ -548,7 +548,7 @@ function ScraperSummary({
         href="/admin/scraper"
         className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-[var(--admin-border)] text-xs font-semibold text-[var(--admin-soft)] transition hover:border-[var(--admin-cyan)] hover:text-white"
       >
-        Abrir scraper
+        Abrir analise
         <ArrowUpRight size={14} />
       </Link>
     </div>

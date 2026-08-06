@@ -2339,7 +2339,7 @@ function PromptTab({
             {charCount.toLocaleString("pt-BR")} / 8.000 caracteres
           </p>
           <p className="mt-2 text-xs leading-5 text-[var(--admin-muted)]">
-            O prompt acima fica salvo no agente. Imoveis reais captados pelo scraper entram automaticamente no runtime quando o atendimento ou follow-up roda.
+            O prompt acima fica salvo no agente. Imoveis reais da analise de mercado entram automaticamente no runtime quando o atendimento ou follow-up roda.
           </p>
         </div>
 

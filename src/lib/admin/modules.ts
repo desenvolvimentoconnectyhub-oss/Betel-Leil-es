@@ -545,14 +545,14 @@ export const adminModules: AdminModule[] = [
     statusLabel: "Templates",
     metrics: [
       { label: "Templates", value: "7", detail: "defaults + Supabase" },
-      { label: "Rotas", value: "1", detail: "relatorio scraper" },
+      { label: "Rotas", value: "1", detail: "relatorio de analise" },
       { label: "Outbox", value: "fila", detail: "entrega auditavel" },
     ],
     workflow: ["Editar template", "Escolher destinatarios", "Pre-visualizar", "Criar outbox", "Processar entrega"],
     focus: ["Texto final", "Usuario especifico", "Segmentos", "Auditoria"],
     records: [
       {
-        title: "Relatorio do scraper",
+        title: "Relatorio da analise de mercado",
         meta: "Rota decide quais administradores recebem o resumo operacional",
         status: "Ativo",
         owner: "Operacao",
@@ -811,11 +811,11 @@ export const adminModules: AdminModule[] = [
     slug: "scraper",
     legacySlugs: ["scrapers", "crawlers"],
     group: "Dados",
-    label: "Scraper",
-    title: "Scraper de Leiloes",
+    label: "Analise de mercado",
+    title: "Analise de mercado",
     eyebrow: "Links importados",
     description:
-      "Motor de scraping por lotes de links enviados pela equipe, com captura de imagens, extracao Gemini, analise preliminar e aviso WhatsApp.",
+      "Mesa para importar links de imoveis, capturar dados e imagens, gerar analise preliminar e avisar o setor responsavel por WhatsApp.",
     icon: "Globe",
     accent: "cyan",
     status: "build",
@@ -1128,7 +1128,7 @@ export const adminNavGroups: AdminNavGroup[] = [
     items: [
       { href: "/admin/oportunidades", label: "Imóveis captados", icon: "Gavel" },
       { href: "/admin/investidores", label: "Investidores", icon: "Users" },
-      { href: "/admin/scraper", label: "Scraper", icon: "Globe" },
+      { href: "/admin/scraper", label: "Analise de mercado", icon: "Globe" },
     ],
   },
   {
@@ -1142,21 +1142,21 @@ export const adminNavGroups: AdminNavGroup[] = [
   {
     label: "Trafego IA",
     items: [
-      { href: "/admin/meta-ads", label: "Meta Ads", icon: "BarChart3" },
+      { href: "/admin/meta-ads", label: "Meta Ads", icon: "BarChart3", badge: "Em breve" },
       { href: "/admin/meta-whatsapp", label: "Campanhas Meta WhatsApp", icon: "MessageSquareText" },
-      { href: "/admin/meta-whatsapp-chat", label: "Chat Meta WhatsApp", icon: "MessageCircle" },
+      { href: "/admin/meta-whatsapp-chat", label: "Chat Meta WhatsApp", icon: "MessageCircle", badge: "Em breve" },
       { href: "/admin/meta-whatsapp-templates", label: "Templates Meta", icon: "Files" },
-      { href: "/admin/google-ads", label: "Google Ads", icon: "BadgeDollarSign" },
-      { href: "/admin/google-analytics", label: "Google Analytics", icon: "MonitorDot" },
-      { href: "/admin/trafego-organico", label: "Trafego Organico", icon: "RadioTower" },
-      { href: "/admin/caixa-meta", label: "Caixa Meta", icon: "Database" },
-      { href: "/admin/criativos", label: "Criativos", icon: "Puzzle" },
+      { href: "/admin/google-ads", label: "Google Ads", icon: "BadgeDollarSign", badge: "Em breve" },
+      { href: "/admin/google-analytics", label: "Google Analytics", icon: "MonitorDot", badge: "Em breve" },
+      { href: "/admin/trafego-organico", label: "Trafego Organico", icon: "RadioTower", badge: "Em breve" },
+      { href: "/admin/caixa-meta", label: "Caixa Meta", icon: "Database", badge: "Em breve" },
+      { href: "/admin/criativos", label: "Criativos", icon: "Puzzle", badge: "Em breve" },
     ],
   },
   {
     label: "Conteudo",
     items: [
-      { href: "/admin/conteudo", label: "Conteudo", icon: "PenTool" },
+      { href: "/admin/conteudo", label: "Conteudo", icon: "PenTool", badge: "Em breve" },
     ],
   },
   {

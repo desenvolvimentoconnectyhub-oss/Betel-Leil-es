@@ -815,7 +815,7 @@ export function OpportunityWorkspacePage({
             >
               <Link href="/admin/scraper">
                 <TimerReset size={15} />
-                Scraper
+                Analise de mercado
               </Link>
             </Button>
             <form action={backfillOpportunityImagesAction}>

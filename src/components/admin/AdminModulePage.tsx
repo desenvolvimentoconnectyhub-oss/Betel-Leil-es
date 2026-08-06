@@ -247,6 +247,7 @@ export default function AdminModulePage({
     investidores: "/admin/investidores/novo",
   };
   const createHref = createHrefBySlug[module.slug] || null;
+  const isComingSoon = module.status === "build" && !createHref;
 
   return (
     <div className="mx-auto max-w-[1600px] px-4 py-4 lg:px-5">
@@ -283,10 +284,11 @@ export default function AdminModulePage({
             ) : (
               <Button
                 variant="outline"
-                className="h-9 border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] text-white"
+                disabled
+                className="h-9 border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] text-white disabled:cursor-not-allowed disabled:opacity-70"
               >
                 <Plus size={15} />
-                Novo registro
+                Em breve
               </Button>
             )}
             {module.slug === "fontes" && (
@@ -310,6 +312,20 @@ export default function AdminModulePage({
           </div>
         </div>
       </section>
+
+      {isComingSoon && (
+        <section className="mb-4 rounded-lg border border-[var(--admin-border)] bg-[rgba(184,122,22,0.08)] px-4 py-3">
+          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-sm font-semibold text-white">Em breve</p>
+              <p className="mt-1 text-sm leading-6 text-[var(--admin-muted)]">
+                Esta area ja esta mapeada no sistema, mas ainda nao foi liberada para operacao. A equipe pode acompanhar o escopo aqui enquanto a funcionalidade final e preparada.
+              </p>
+            </div>
+            <StatusBadge tone="yellow">em preparacao</StatusBadge>
+          </div>
+        </section>
+      )}
 
       <section className="mb-4 grid gap-3 md:grid-cols-3">
         {module.metrics.map((metric) => (

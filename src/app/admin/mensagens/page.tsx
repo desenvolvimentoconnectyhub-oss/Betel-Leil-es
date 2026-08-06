@@ -291,10 +291,10 @@ export default async function AdminMessagesPage({
             </form>
           </DashboardCard>
 
-          <DashboardCard title="Rota do scraper" eyebrow="quem recebe relatorio" action={<Route size={18} className="text-[var(--admin-cyan)]" />}>
+          <DashboardCard title="Rota da analise de mercado" eyebrow="quem recebe relatorio" action={<Route size={18} className="text-[var(--admin-cyan)]" />}>
             <form action={saveMessageRouteAction} className="grid gap-3">
               <input type="hidden" name="routeKey" value={route?.routeKey || "scraper.report.admin"} />
-              <Field label="Nome" name="name" defaultValue={route?.name || "Relatorio do scraper"} />
+              <Field label="Nome" name="name" defaultValue={route?.name || "Relatorio da analise de mercado"} />
               <TextArea label="Descricao" name="description" defaultValue={route?.description || ""} rows={2} />
               <div className="grid gap-3 md:grid-cols-2">
                 <SelectField label="Template" name="templateKey" defaultValue={route?.templateKey || "scraper.report.admin"} options={templateOptions} />

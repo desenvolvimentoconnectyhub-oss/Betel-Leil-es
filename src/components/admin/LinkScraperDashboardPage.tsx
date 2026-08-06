@@ -240,9 +240,9 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
           <p className="font-mono text-xs uppercase tracking-[0.24em] text-[var(--admin-muted)]">{module.label}</p>
-          <h1 className="mt-1 text-2xl font-semibold text-white">Scraper por links importados</h1>
+          <h1 className="mt-1 text-2xl font-semibold text-white">Analise de mercado</h1>
           <p className="mt-2 max-w-3xl text-sm text-[var(--admin-muted)]">
-            A busca automatica por fontes foi congelada. Agora o processo nasce do arquivo enviado pela equipe e so inicia com confirmacao humana.
+            Importe os links escolhidos pela equipe, capture dados e imagens dos imoveis e gere uma analise preliminar para revisao humana.
           </p>
         </div>
         <button
@@ -272,7 +272,7 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
         <Metric label="Lotes" value={dashboard.metrics.totalBatches} detail="Importacoes recentes" />
         <Metric label="Links" value={dashboard.metrics.totalRows} detail="Linhas nos lotes" />
         <Metric label="Prontos" value={dashboard.metrics.readyRows} detail="Para revisao humana" />
-        <Metric label="Falhas" value={dashboard.metrics.failedRows} detail="Requerem retry/adaptador" />
+        <Metric label="Falhas" value={dashboard.metrics.failedRows} detail="Requerem nova tentativa" />
         <Metric label="Legado" value={dashboard.metrics.legacyCandidates} detail="Candidatos da fase antiga" />
       </section>
 
@@ -282,7 +282,7 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
             <div className="rounded-lg border border-yellow-400/20 bg-yellow-400/10 p-3 text-yellow-50">
               <p className="font-semibold">Nada sera deletado aqui.</p>
               <p className="mt-1 text-yellow-100/80">
-                O dry-run identifica oportunidades do scraper antigo por `collectionMode=scraper_target`, `targetCode` ou owner legado.
+                A pre-analise identifica oportunidades da fase antiga por origem tecnica, codigo de alvo ou responsavel legado.
               </p>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">

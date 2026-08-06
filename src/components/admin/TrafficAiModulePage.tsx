@@ -196,6 +196,16 @@ export function TrafficAiModulePage({
             <span>{data.reason}</span>
           </div>
         )}
+
+        <div className="mt-4 flex flex-col gap-2 rounded-lg border border-[rgba(183,121,17,0.26)] bg-[rgba(183,121,17,0.08)] px-3 py-3 text-sm md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="font-semibold text-[var(--admin-foreground)]">Em breve</p>
+            <p className="mt-1 leading-6 text-[var(--admin-muted)]">
+              Este modulo esta preparado para a proxima fase. As conexoes e leituras reais entram depois da validacao das credenciais e dos testes de integracao.
+            </p>
+          </div>
+          <StatusBadge tone="yellow">em preparacao</StatusBadge>
+        </div>
       </section>
 
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
