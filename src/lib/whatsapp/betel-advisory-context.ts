@@ -201,7 +201,7 @@ export async function loadWhatsAppOpportunityContext(
       .order("updated_at", { ascending: false })
       .limit(40);
 
-    if (error) return `Nao foi possivel carregar imoveis captados agora: ${error.message}.`;
+    if (error) return `Nao foi possivel carregar imoveis analisados agora: ${error.message}.`;
 
     const rows = ((data || []) as DbRow[])
       .filter(isUsableOpportunity)
@@ -211,7 +211,7 @@ export async function loadWhatsAppOpportunityContext(
       .map((item) => item.row);
 
     if (!rows.length) {
-      return "Nenhum imovel captado elegivel apareceu no contexto agora. Se o lead pedir oportunidade, qualifique perfil e diga que a equipe vai validar a base.";
+      return "Nenhum imovel analisado elegivel apareceu no contexto agora. Se o lead pedir oportunidade, qualifique perfil e diga que a equipe vai validar a base.";
     }
 
     const filterLine = [
@@ -222,12 +222,12 @@ export async function loadWhatsAppOpportunityContext(
 
     return [
       `Perfil usado para filtrar oportunidades: ${filterLine}.`,
-      "Oportunidades reais captadas no sistema para orientar a conversa. Use como contexto comercial, nao como recomendacao juridica final:",
+      "Oportunidades reais analisadas no sistema para orientar a conversa. Use como contexto comercial, nao como recomendacao juridica final:",
       rows.map(formatOpportunity).join("\n"),
       "Regra: antes de orientar lance, prometer margem, falar de posse ou enviar como recomendacao final, confirme com a equipe humana/curadoria.",
     ].join("\n");
   } catch (error) {
     const message = error instanceof Error ? error.message : "erro inesperado";
-    return `Nao foi possivel carregar imoveis captados agora: ${message}.`;
+    return `Nao foi possivel carregar imoveis analisados agora: ${message}.`;
   }
 }

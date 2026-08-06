@@ -105,7 +105,7 @@ export default async function NewOpportunityPage({
               <StatusBadge tone="cyan">Novo registro</StatusBadge>
               <StatusBadge tone="yellow">Revisao obrigatoria</StatusBadge>
             </div>
-            <h1 className="text-2xl font-semibold tracking-tight text-white">Novo imóvel captado</h1>
+            <h1 className="text-2xl font-semibold tracking-tight text-white">Novo imóvel analisado</h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--admin-muted)]">
               Cadastro operacional de imóvel para entrada na curadoria, score, compliance e revisão jurídica.
             </p>
@@ -118,7 +118,7 @@ export default async function NewOpportunityPage({
           >
             <Link href="/admin/oportunidades">
               <ArrowLeft size={15} />
-              Imóveis captados
+              Imóveis analisados
             </Link>
           </Button>
         </div>

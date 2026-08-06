@@ -213,7 +213,7 @@ async function generateFollowUpText(input: {
       "Base de conhecimento do agente:",
       agentKnowledge.knowledge,
       "",
-      "Imoveis reais captados:",
+      "Imoveis reais analisados:",
       opportunitiesContext,
       "",
       `Lead: ${cleanString(input.lead.name, "Lead WhatsApp")}`,

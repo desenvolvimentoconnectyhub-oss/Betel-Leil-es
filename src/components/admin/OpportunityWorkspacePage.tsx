@@ -550,7 +550,7 @@ function EmptyState() {
     <div className="grid min-h-80 place-items-center rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] px-4 py-10 text-center">
       <div>
         <Database className="mx-auto mb-3 text-[var(--admin-muted)]" size={28} />
-        <h2 className="text-lg font-semibold text-white">Nenhum imóvel captado</h2>
+        <h2 className="text-lg font-semibold text-white">Nenhum imóvel analisado</h2>
         <p className="mt-2 max-w-md text-sm leading-6 text-[var(--admin-muted)]">
           A vitrine aparece assim que a Renata ou a entrada manual criar o primeiro imóvel.
         </p>
@@ -855,7 +855,7 @@ export function OpportunityWorkspacePage({
       </section>
 
       <DashboardCard
-        title="Vitrine de imóveis captados"
+        title="Vitrine de imóveis analisados"
         eyebrow="foto / descrição / valor"
         action={
           <div className="relative w-56 sm:w-80">

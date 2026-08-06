@@ -64,7 +64,7 @@ export default async function OpportunityDetailPage({
           >
             <Link href="/admin/oportunidades">
               <ArrowLeft size={15} />
-              Imóveis captados
+              Imóveis analisados
             </Link>
           </Button>
 

@@ -4386,7 +4386,7 @@ async function generateWhatsappAgentReply(
       "Conhecimento e arquivos:",
       knowledgeContext,
       "",
-      "Imoveis reais captados:",
+      "Imoveis reais analisados:",
       input.opportunitiesContext,
       "",
       "Lead no CRM:",

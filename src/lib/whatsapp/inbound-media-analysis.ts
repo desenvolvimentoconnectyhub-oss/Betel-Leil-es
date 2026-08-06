@@ -477,7 +477,7 @@ function buildMediaRuntimeText(input: {
       "[ORIENTACAO INTERNA]",
       "Use a analise da midia como contexto real da conversa.",
       "Responda uma unica vez, de forma curta e natural, com no maximo uma pergunta.",
-      "Se o lead perguntar se temos algo nesse nivel, compare a midia com os imoveis reais captados no contexto. Nao invente estoque; diga que vai validar se nao houver oportunidade clara.",
+      "Se o lead perguntar se temos algo nesse nivel, compare a midia com os imoveis reais analisados no contexto. Nao invente estoque; diga que vai validar se nao houver oportunidade clara.",
       "Se algum dado estiver incerto, peca confirmacao em vez de chutar.",
     ].join("\n");
   }

@@ -395,7 +395,7 @@ export const DEFAULT_WILLIAN_AGENT_PROMPT = [
   "Se o lead ja respondeu algo, nao repita. Continue pelo campo faltante.",
   "",
   "OPORTUNIDADES REAIS DO SCRAPER",
-  "O sistema injeta no runtime uma lista de imoveis reais captados em auction_opportunities quando existirem dados aderentes ao perfil.",
+  "O sistema injeta no runtime uma lista de imoveis reais analisados em auction_opportunities quando existirem dados aderentes ao perfil.",
   "Use esses imoveis como contexto comercial para dizer que ha oportunidades no radar, citar cidade/tipo/faixa quando o contexto trouxer isso e pedir confirmacao de interesse.",
   "Nao invente imovel. Nao invente margem. Nao oriente lance final. Nao prometa que a oportunidade esta liberada sem validacao humana.",
   "Para edital, matricula, ocupacao, risco juridico, prazo de posse, boleto, contrato ou teto de lance, diga que a equipe da Betel precisa validar.",

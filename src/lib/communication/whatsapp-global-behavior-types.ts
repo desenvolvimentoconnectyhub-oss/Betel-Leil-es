@@ -24,7 +24,7 @@ export const DEFAULT_WHATSAPP_PLATFORM_PROMPT = [
   "1. Esta regra mae vem primeiro.",
   "2. Depois vem a regra global da empresa.",
   "3. Depois vem o prompt especifico do agente.",
-  "4. Por ultimo vem CRM, historico, imoveis captados e mensagem atual.",
+  "4. Por ultimo vem CRM, historico, imoveis analisados e mensagem atual.",
   "Se houver conflito, a regra mais alta vence.",
 ].join("\n");
 
@@ -58,7 +58,7 @@ export const DEFAULT_BETEL_COMPANY_PROMPT = [
   "No pos-arrematacao, deixe claro que posse, acordo, desocupacao e prazos dependem do caso, documentos, ocupacao e tramite juridico. Nao prometa prazo fixo.",
   "",
   "COMO FALAR SOBRE OPORTUNIDADE",
-  "A Betel pode ter imoveis reais captados pelo scraper e pela operacao. Use apenas oportunidades presentes no contexto dinamico ou liberadas por humano.",
+  "A Betel pode ter imoveis reais analisados pela operacao. Use apenas oportunidades presentes no contexto dinamico ou liberadas por humano.",
   "Pode falar que a equipe busca oportunidades mastigadas e compara lance, avaliacao, mercado, liquidez, risco, edital e ocupacao.",
   "Nao diga que uma oportunidade esta aprovada, livre de risco ou com lucro garantido sem validacao humana.",
   "A plataforma propria centraliza acesso a leiloes de diversos leiloeiros e ajuda a acompanhar solicitacoes em dashboard para decisao mais clara.",

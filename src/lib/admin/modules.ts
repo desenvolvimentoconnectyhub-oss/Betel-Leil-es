@@ -44,11 +44,11 @@ export const adminModules: AdminModule[] = [
     slug: "oportunidades",
     legacySlugs: ["opportunities", "financial", "matching"],
     group: "Operacao",
-    label: "Imóveis captados",
-    title: "Imóveis captados",
+    label: "Imóveis analisados",
+    title: "Imóveis analisados",
     eyebrow: "Vitrine operacional",
     description:
-      "Catálogo dos imóveis captados pela Renata, com fotos, descrição, valores, score, risco e ficha completa.",
+      "Catálogo dos imóveis analisados pela operação, com fotos, descrição, valores, score, risco e ficha completa.",
     icon: "Gavel",
     accent: "cyan",
     status: "build",
@@ -1126,7 +1126,7 @@ export const adminNavGroups: AdminNavGroup[] = [
   {
     label: "Operacao",
     items: [
-      { href: "/admin/oportunidades", label: "Imóveis captados", icon: "Gavel" },
+      { href: "/admin/oportunidades", label: "Imóveis analisados", icon: "Gavel" },
       { href: "/admin/investidores", label: "Investidores", icon: "Users" },
       { href: "/admin/scraper", label: "Analise de mercado", icon: "Globe" },
     ],
