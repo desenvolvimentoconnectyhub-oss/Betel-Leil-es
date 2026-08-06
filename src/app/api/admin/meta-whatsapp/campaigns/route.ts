@@ -6,6 +6,9 @@ import { createMetaWhatsAppCampaign, getMetaWhatsAppDashboardData } from "@/lib/
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+const META_WHATSAPP_CAMPAIGNS_COMING_SOON = true;
+const META_WHATSAPP_COMING_SOON_MESSAGE = "Campanhas Meta WhatsApp estao em breve. Criacao e disparo ainda nao estao liberados.";
+
 function cleanString(value: unknown, fallback = "") {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
@@ -37,6 +40,13 @@ export async function GET() {
 export async function POST(request: Request) {
   const authorization = await requireAdminApi();
   if (authorization.response) return authorization.response;
+
+  if (META_WHATSAPP_CAMPAIGNS_COMING_SOON) {
+    return NextResponse.json(
+      { ok: false, error: META_WHATSAPP_COMING_SOON_MESSAGE },
+      { status: 503 }
+    );
+  }
 
   try {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;

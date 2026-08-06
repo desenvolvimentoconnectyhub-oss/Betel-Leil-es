@@ -357,7 +357,7 @@ export const adminModules: AdminModule[] = [
     icon: "MessageSquareText",
     accent: "green",
     status: "build",
-    statusLabel: "Fundacao",
+    statusLabel: "Em breve",
     metrics: [
       { label: "API", value: "Oficial", detail: "WhatsApp Cloud" },
       { label: "Opt-in", value: "Obrigatorio", detail: "listas autorizadas" },
@@ -368,8 +368,8 @@ export const adminModules: AdminModule[] = [
     records: [
       {
         title: "Campanhas oficiais",
-        meta: "Envios ativos ficam na API oficial da Meta, separados dos agentes WhatsApp.",
-        status: "Em base",
+        meta: "Envios ativos ficarao na API oficial da Meta, separados dos agentes WhatsApp.",
+        status: "Planejado",
         owner: "Trafego",
       },
     ],
@@ -1143,7 +1143,7 @@ export const adminNavGroups: AdminNavGroup[] = [
     label: "Trafego IA",
     items: [
       { href: "/admin/meta-ads", label: "Meta Ads", icon: "BarChart3", badge: "Em breve" },
-      { href: "/admin/meta-whatsapp", label: "Campanhas Meta WhatsApp", icon: "MessageSquareText" },
+      { href: "/admin/meta-whatsapp", label: "Campanhas Meta WhatsApp", icon: "MessageSquareText", badge: "Em breve" },
       { href: "/admin/meta-whatsapp-chat", label: "Chat Meta WhatsApp", icon: "MessageCircle", badge: "Em breve" },
       { href: "/admin/meta-whatsapp-templates", label: "Templates Meta", icon: "Files" },
       { href: "/admin/google-ads", label: "Google Ads", icon: "BadgeDollarSign", badge: "Em breve" },

@@ -47,6 +47,9 @@ const campaignTypes = [
 
 const sampleCsv =
   "Nome,WhatsApp,Email,Cidade,Tags,var1,var2\nWillian,+55 47 99999-9999,lead@exemplo.com,Itajai,\"vip,leilao\",Willian,Imoveis abaixo do mercado\n";
+const campaignsComingSoon = true;
+const comingSoonMessage =
+  "Em breve: o envio de campanhas Meta WhatsApp ainda nao esta liberado. Estamos mantendo credenciais, templates e preparacao visiveis, mas listas, criacao e disparo ficam bloqueados por enquanto.";
 
 function defaultCampaignDraft(data: MetaWhatsAppDashboardData): CampaignDraft {
   const approvedTemplate = data.templates.find((template) => template.status === "approved");
@@ -121,7 +124,7 @@ export function MetaWhatsAppCampaignsClient({
   const selectedList = data.contactLists.find((list) => list.id === campaign.contactListId);
   const selectedSender = data.senders.find((sender) => sender.id === campaign.senderId);
   const eligiblePreview = campaign.requireOptIn ? selectedList?.optInCount || 0 : selectedList?.validCount || 0;
-  const canCreate = Boolean(campaign.name.trim() && selectedTemplate && selectedList && selectedSender && eligiblePreview > 0);
+  const canCreate = !campaignsComingSoon && Boolean(campaign.name.trim() && selectedTemplate && selectedList && selectedSender && eligiblePreview > 0);
 
   async function refresh() {
     const response = await fetch("/api/admin/meta-whatsapp/campaigns", { cache: "no-store" });
@@ -153,6 +156,10 @@ export function MetaWhatsAppCampaignsClient({
 
   async function handleImportList(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (campaignsComingSoon) {
+      setFeedback({ type: "err", message: "Importacao de listas para campanhas Meta WhatsApp esta em breve." });
+      return;
+    }
     if (!file) {
       setFeedback({ type: "err", message: "Selecione um arquivo .csv, .txt ou .xlsx." });
       return;
@@ -185,6 +192,10 @@ export function MetaWhatsAppCampaignsClient({
   }
 
   async function handleCreateCampaign() {
+    if (campaignsComingSoon) {
+      setFeedback({ type: "err", message: "Criacao e envio de campanhas Meta WhatsApp estao em breve." });
+      return;
+    }
     if (!canCreate) return;
     setLoading("campaign");
     setFeedback(null);
@@ -209,6 +220,10 @@ export function MetaWhatsAppCampaignsClient({
   }
 
   async function handleStartCampaign(campaignId: string) {
+    if (campaignsComingSoon) {
+      setFeedback({ type: "err", message: "Aprovacao e disparo de campanhas Meta WhatsApp estao em breve." });
+      return;
+    }
     setLoading(`start:${campaignId}`);
     setFeedback(null);
     try {
@@ -237,9 +252,14 @@ export function MetaWhatsAppCampaignsClient({
             <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--admin-muted)]">
               Trafego IA / WhatsApp Cloud API Oficial
             </p>
-            <h1 className="mt-1 text-2xl font-semibold tracking-tight text-[var(--admin-foreground)]">Campanhas Meta WhatsApp</h1>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <h1 className="text-2xl font-semibold tracking-tight text-[var(--admin-foreground)]">Campanhas Meta WhatsApp</h1>
+              <span className="inline-flex h-6 items-center rounded-full border border-[rgba(184,122,22,0.28)] bg-[rgba(184,122,22,0.08)] px-2.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--admin-yellow)]">
+                Em breve
+              </span>
+            </div>
             <p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--admin-muted)]">
-              Crie campanhas oficiais com templates aprovados, listas com opt-in e revisao humana antes do disparo.
+              Preparacao para campanhas oficiais com templates aprovados, listas com opt-in e revisao humana antes do disparo.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -278,6 +298,7 @@ export function MetaWhatsAppCampaignsClient({
         </div>
 
         {data.source === "migration_pending" && <Notice tone="warn" message={data.reason || "Migration pendente."} />}
+        {campaignsComingSoon && <Notice tone="warn" message={comingSoonMessage} />}
         {!data.config.configured && <Notice tone="warn" message="Configure token, WABA ID, Phone Number ID e webhook na Sala de Manutencao." />}
         {feedback && <Notice tone={feedback.type === "ok" ? "ok" : "err"} message={feedback.message} />}
       </section>
@@ -358,7 +379,7 @@ export function MetaWhatsAppCampaignsClient({
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
             <p className="text-xs leading-5 text-[var(--admin-muted)]">
-              Esta fase cria a campanha e os destinatarios. O disparo automatico entra pela Inngest na proxima fase.
+              Esta fase ficara responsavel por listas, revisao humana e disparo pela fila Inngest.
             </p>
             <button
               type="button"
@@ -367,7 +388,7 @@ export function MetaWhatsAppCampaignsClient({
               className="inline-flex h-9 items-center gap-2 rounded-md bg-[var(--admin-cyan)] px-3 text-xs font-semibold text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loading === "campaign" ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-              Criar campanha
+              {campaignsComingSoon ? "Em breve" : "Criar campanha"}
             </button>
           </div>
         </DashboardCard>
@@ -381,12 +402,13 @@ export function MetaWhatsAppCampaignsClient({
                 ref={fileInputRef}
                 type="file"
                 accept=".csv,.txt,.xlsx"
+                disabled={campaignsComingSoon}
                 onChange={(event) => {
                   const nextFile = event.currentTarget.files?.[0] || null;
                   setFile(nextFile);
                   if (nextFile && !listDraft.name) updateListDraft({ name: nextFile.name.replace(/\.[^.]+$/, "") });
                 }}
-                className="mt-1 w-full rounded-md border border-[var(--admin-border)] bg-white px-3 py-2 text-sm text-[var(--admin-foreground)]"
+                className="mt-1 w-full rounded-md border border-[var(--admin-border)] bg-white px-3 py-2 text-sm text-[var(--admin-foreground)] disabled:cursor-not-allowed disabled:opacity-60"
               />
             </label>
             <Field label="Fonte do opt-in" value={listDraft.optInSource} onChange={(optInSource) => updateListDraft({ optInSource })} />
@@ -411,11 +433,11 @@ export function MetaWhatsAppCampaignsClient({
               </a>
               <button
                 type="submit"
-                disabled={!file || loading === "import"}
+                disabled={campaignsComingSoon || !file || loading === "import"}
                 className="inline-flex h-9 items-center gap-2 rounded-md border border-[rgba(200,90,31,0.28)] bg-[rgba(200,90,31,0.08)] px-3 text-xs font-semibold text-[var(--admin-cyan)] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {loading === "import" ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
-                Salvar lista
+                {campaignsComingSoon ? "Em breve" : "Salvar lista"}
               </button>
             </div>
           </form>
@@ -453,11 +475,11 @@ export function MetaWhatsAppCampaignsClient({
                       <button
                         type="button"
                         onClick={() => handleStartCampaign(item.id)}
-                        disabled={loading === `start:${item.id}`}
+                        disabled={campaignsComingSoon || loading === `start:${item.id}`}
                         className="inline-flex h-8 items-center gap-2 rounded-md border border-[rgba(22,163,74,0.28)] bg-[rgba(22,163,74,0.08)] px-3 text-xs font-semibold text-[var(--admin-green)] disabled:opacity-60"
                       >
                         {loading === `start:${item.id}` ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle2 size={13} />}
-                        Aprovar e enfileirar
+                        {campaignsComingSoon ? "Em breve" : "Aprovar e enfileirar"}
                       </button>
                     </div>
                   )}
