@@ -1,0 +1,601 @@
+"use client";
+
+import { useMemo, useState, type ChangeEvent, type FormEvent, type ReactNode } from "react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Database,
+  FileSpreadsheet,
+  Loader2,
+  Play,
+  RefreshCw,
+  Send,
+  ShieldAlert,
+  Upload,
+} from "lucide-react";
+import type { AdminModule } from "@/lib/admin/modules";
+import type {
+  LinkScraperBatch,
+  LinkScraperDashboardData,
+  ParsedLinkImportFile,
+  ScraperNotificationRecipient,
+  WhatsappAgentOption,
+} from "@/lib/scraper";
+import type { DataResult } from "@/lib/admin/repository";
+import { DashboardCard } from "./DashboardCard";
+import { cn } from "@/lib/utils";
+
+type Props = {
+  module: AdminModule;
+  data: DataResult<LinkScraperDashboardData>;
+};
+
+const inputClass =
+  "h-9 w-full rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.04)] px-3 text-sm text-white placeholder:text-[var(--admin-muted)] outline-none transition focus:border-[var(--admin-cyan)]";
+
+const selectClass =
+  "h-9 w-full rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.04)] px-2 text-sm text-white outline-none transition focus:border-[var(--admin-cyan)]";
+
+function statusTone(status: string) {
+  if (["concluido", "pronto_para_revisao", "sent"].includes(status)) return "text-emerald-300 border-emerald-400/25 bg-emerald-400/10";
+  if (["processando", "scraping", "aguardando_scraper"].includes(status)) return "text-cyan-200 border-cyan-400/25 bg-cyan-400/10";
+  if (["falha", "url_invalida", "failed"].includes(status)) return "text-red-200 border-red-400/25 bg-red-400/10";
+  return "text-yellow-100 border-yellow-400/25 bg-yellow-400/10";
+}
+
+function Pill({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <span className={cn("inline-flex items-center rounded-full border px-2 py-1 text-[11px] font-semibold", className)}>
+      {children}
+    </span>
+  );
+}
+
+function Metric({ label, value, detail }: { label: string; value: string | number; detail: string }) {
+  return (
+    <DashboardCard>
+      <div className="space-y-1">
+        <p className="text-xs text-[var(--admin-muted)]">{label}</p>
+        <p className="text-2xl font-semibold text-white">{value}</p>
+        <p className="text-xs text-[var(--admin-muted)]">{detail}</p>
+      </div>
+    </DashboardCard>
+  );
+}
+
+function rowNeedsRetry(status: string) {
+  return status === "falha";
+}
+
+function agentLabel(agent: WhatsappAgentOption) {
+  return `${agent.instanceName || agent.agentKey || "Agente WhatsApp"}${agent.connected ? " - conectado" : " - indisponivel"}`;
+}
+
+function recipientLabel(recipient: ScraperNotificationRecipient) {
+  return `${recipient.sectorName}${recipient.recipientName ? ` - ${recipient.recipientName}` : ""}`;
+}
+
+function batchReadyToStart(batch: LinkScraperBatch) {
+  return batch.status === "aguardando_inicio" || batch.status === "draft" || batch.status === "falha";
+}
+
+export function LinkScraperDashboardPage({ module, data }: Props) {
+  const [dashboard, setDashboard] = useState(data.data);
+  const [feedback, setFeedback] = useState<{ type: "ok" | "err" | "info"; message: string } | null>(
+    data.reason ? { type: "info", message: data.reason } : null
+  );
+  const [busy, setBusy] = useState("");
+  const [selectedAgent, setSelectedAgent] = useState(dashboard.whatsappAgents[0]?.agentKey || "");
+  const [selectedInstance, setSelectedInstance] = useState(dashboard.whatsappAgents[0]?.id || "");
+  const [selectedRecipient, setSelectedRecipient] = useState(dashboard.recipients[0]?.id || "");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [filePreview, setFilePreview] = useState<ParsedLinkImportFile | null>(null);
+  const [archiveConfirmation, setArchiveConfirmation] = useState("");
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
+
+  const connectedAgents = useMemo(
+    () => dashboard.whatsappAgents.filter((agent) => agent.connected),
+    [dashboard.whatsappAgents]
+  );
+
+  async function refresh() {
+    const res = await fetch("/api/admin/scraper", { cache: "no-store" });
+    const json = await res.json();
+    if (json.data) setDashboard(json.data as LinkScraperDashboardData);
+  }
+
+  async function postJson(payload: Record<string, unknown>, success: string) {
+    setBusy(String(payload.action || "acao"));
+    setFeedback(null);
+    try {
+      const res = await fetch("/api/admin/scraper", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const json = await res.json();
+      if (!res.ok || json.ok === false) throw new Error(json.error || "Falha na acao.");
+      setFeedback({ type: "ok", message: success });
+      await refresh();
+    } catch (error) {
+      setFeedback({ type: "err", message: error instanceof Error ? error.message : "Falha inesperada." });
+    } finally {
+      setBusy("");
+    }
+  }
+
+  function onFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0] || null;
+    setSelectedFile(file);
+    setFilePreview(null);
+    if (file) setFeedback({ type: "info", message: "Arquivo selecionado. Gere a pre-visualizacao antes de salvar o lote." });
+  }
+
+  async function previewFile() {
+    if (!selectedFile) {
+      setFeedback({ type: "err", message: "Selecione um arquivo para pre-visualizar." });
+      return;
+    }
+
+    const formData = new FormData();
+    formData.set("action", "preview_file");
+    formData.set("file", selectedFile);
+    setBusy("preview_file");
+    setFeedback(null);
+
+    try {
+      const res = await fetch("/api/admin/scraper", { method: "POST", body: formData });
+      const json = await res.json();
+      if (!res.ok || json.ok === false) throw new Error(json.error || "Falha ao ler arquivo.");
+      const parsed = json.parsed as ParsedLinkImportFile;
+      setFilePreview(parsed);
+      setFeedback({
+        type: parsed.validRowCount ? "ok" : "err",
+        message: `${parsed.validRowCount} link(s) valido(s), ${parsed.invalidRowCount} invalido(s), ${parsed.ignoredRowCount} linha(s) ignorada(s).`,
+      });
+    } catch (error) {
+      setFilePreview(null);
+      setFeedback({ type: "err", message: error instanceof Error ? error.message : "Falha ao pre-visualizar arquivo." });
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function importFile(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    if (!selectedFile) {
+      setFeedback({ type: "err", message: "Selecione um arquivo para salvar o lote." });
+      return;
+    }
+    if (!filePreview) {
+      setFeedback({ type: "err", message: "Gere a pre-visualizacao antes de salvar o lote." });
+      return;
+    }
+
+    const formData = new FormData();
+    formData.set("action", "import_file");
+    formData.set("file", selectedFile);
+    formData.set("whatsappAgentKey", selectedAgent);
+    formData.set("whatsappInstanceId", selectedInstance);
+    formData.set("notificationRecipientId", selectedRecipient);
+    setBusy("import_file");
+    setFeedback(null);
+
+    try {
+      const res = await fetch("/api/admin/scraper", { method: "POST", body: formData });
+      const json = await res.json();
+      if (!res.ok || json.ok === false || json.result?.ok === false) {
+        throw new Error(json.error || json.result?.error || "Falha ao importar arquivo.");
+      }
+      form.reset();
+      setSelectedFile(null);
+      setFilePreview(null);
+      setFeedback({ type: "ok", message: `Lote criado com ${json.result?.data?.rowsCreated || 0} link(s).` });
+      await refresh();
+    } catch (error) {
+      setFeedback({ type: "err", message: error instanceof Error ? error.message : "Falha ao importar arquivo." });
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function createRecipient(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    await postJson(
+      {
+        action: "create_recipient",
+        sectorName: formData.get("sectorName"),
+        recipientName: formData.get("recipientName"),
+        whatsappNumber: formData.get("whatsappNumber"),
+        whatsappJid: formData.get("whatsappJid"),
+        isGroup: formData.get("isGroup") === "on",
+      },
+      "Destinatario cadastrado."
+    );
+    form.reset();
+  }
+
+  async function startBatch(batch: LinkScraperBatch) {
+    await postJson(
+      {
+        action: "start_batch",
+        batchId: batch.id,
+        whatsappAgentKey: selectedAgent || batch.whatsappAgentKey,
+        whatsappInstanceId: selectedInstance || batch.whatsappInstanceId,
+        notificationRecipientId: selectedRecipient || batch.notificationRecipientId,
+      },
+      "Processamento enfileirado. O WhatsApp sera enviado quando o lote terminar."
+    );
+  }
+
+  async function retryRow(rowId: string) {
+    await postJson({ action: "retry_row", rowId }, "Linha reprocessada.");
+  }
+
+  return (
+    <main className="space-y-6">
+      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+        <div>
+          <p className="font-mono text-xs uppercase tracking-[0.24em] text-[var(--admin-muted)]">{module.label}</p>
+          <h1 className="mt-1 text-2xl font-semibold text-white">Scraper por links importados</h1>
+          <p className="mt-2 max-w-3xl text-sm text-[var(--admin-muted)]">
+            A busca automatica por fontes foi congelada. Agora o processo nasce do arquivo enviado pela equipe e so inicia com confirmacao humana.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={refresh}
+          className="inline-flex h-9 items-center gap-2 rounded-lg border border-[var(--admin-border)] px-3 text-sm text-white hover:border-[var(--admin-cyan)]"
+        >
+          <RefreshCw size={16} />
+          Atualizar
+        </button>
+      </div>
+
+      {feedback && (
+        <div
+          className={cn(
+            "rounded-lg border px-4 py-3 text-sm",
+            feedback.type === "ok" && "border-emerald-400/30 bg-emerald-400/10 text-emerald-100",
+            feedback.type === "err" && "border-red-400/30 bg-red-400/10 text-red-100",
+            feedback.type === "info" && "border-cyan-400/30 bg-cyan-400/10 text-cyan-100"
+          )}
+        >
+          {feedback.message}
+        </div>
+      )}
+
+      <section className="grid gap-4 md:grid-cols-5">
+        <Metric label="Lotes" value={dashboard.metrics.totalBatches} detail="Importacoes recentes" />
+        <Metric label="Links" value={dashboard.metrics.totalRows} detail="Linhas nos lotes" />
+        <Metric label="Prontos" value={dashboard.metrics.readyRows} detail="Para revisao humana" />
+        <Metric label="Falhas" value={dashboard.metrics.failedRows} detail="Requerem retry/adaptador" />
+        <Metric label="Legado" value={dashboard.metrics.legacyCandidates} detail="Candidatos da fase antiga" />
+      </section>
+
+      <section className="grid gap-4 xl:grid-cols-[1fr_1.4fr]">
+        <DashboardCard title="Corte da fase antiga" eyebrow="dry-run" action={<ShieldAlert size={18} className="text-yellow-200" />}>
+          <div className="space-y-4 text-sm">
+            <div className="rounded-lg border border-yellow-400/20 bg-yellow-400/10 p-3 text-yellow-50">
+              <p className="font-semibold">Nada sera deletado aqui.</p>
+              <p className="mt-1 text-yellow-100/80">
+                O dry-run identifica oportunidades do scraper antigo por `collectionMode=scraper_target`, `targetCode` ou owner legado.
+              </p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <p className="text-xs text-[var(--admin-muted)]">Encontradas</p>
+                <p className="text-xl font-semibold text-white">{dashboard.legacyPreview.matchedOpportunities}</p>
+              </div>
+              <div>
+                <p className="text-xs text-[var(--admin-muted)]">Bloqueadas por uso</p>
+                <p className="text-xl font-semibold text-white">{dashboard.legacyPreview.blockedOpportunities}</p>
+              </div>
+              <div>
+                <p className="text-xs text-[var(--admin-muted)]">Prontas para arquivar</p>
+                <p className="text-xl font-semibold text-white">{dashboard.legacyPreview.readyToArchiveOpportunities}</p>
+              </div>
+              <div>
+                <p className="text-xs text-[var(--admin-muted)]">Arquivadas</p>
+                <p className="text-xl font-semibold text-white">{dashboard.legacyPreview.archivedOpportunities}</p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={busy === "legacy_cleanup_dry_run"}
+                onClick={() => postJson({ action: "legacy_cleanup_dry_run" }, "Dry-run registrado.")}
+                className="inline-flex h-9 items-center gap-2 rounded-lg bg-yellow-300 px-3 text-sm font-semibold text-slate-950 disabled:opacity-60"
+              >
+                {busy === "legacy_cleanup_dry_run" ? <Loader2 size={16} className="animate-spin" /> : <Database size={16} />}
+                Gerar dry-run
+              </button>
+              <button
+                type="button"
+                disabled={archiveConfirmation.toUpperCase() !== "ARQUIVAR LEGADO" || busy === "legacy_cleanup_archive"}
+                onClick={() => postJson({ action: "legacy_cleanup_archive", confirmation: archiveConfirmation }, "Legado arquivado com snapshot seguro.")}
+                className="inline-flex h-9 items-center gap-2 rounded-lg border border-[var(--admin-border)] px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {busy === "legacy_cleanup_archive" ? <Loader2 size={16} className="animate-spin" /> : <ShieldAlert size={16} />}
+                Arquivar legado
+              </button>
+            </div>
+            <div className="grid gap-2">
+              <input
+                className={inputClass}
+                value={archiveConfirmation}
+                onChange={(event) => setArchiveConfirmation(event.target.value)}
+                placeholder="Digite ARQUIVAR LEGADO"
+              />
+              <div className="rounded-lg border border-red-400/20 bg-red-400/10 p-3">
+                <p className="text-xs font-semibold text-red-100">Exclusao controlada</p>
+                <p className="mt-1 text-xs leading-5 text-red-100/80">
+                  So apaga registros ja arquivados e ainda reconhecidos como legado sem uso operacional.
+                  Prontos para deletar: {dashboard.legacyPreview.readyToDeleteOpportunities}.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <input
+                    className={inputClass}
+                    value={deleteConfirmation}
+                    onChange={(event) => setDeleteConfirmation(event.target.value)}
+                    placeholder="Digite DELETAR LEGADO ARQUIVADO"
+                  />
+                  <button
+                    type="button"
+                    disabled={deleteConfirmation.toUpperCase() !== "DELETAR LEGADO ARQUIVADO" || busy === "legacy_cleanup_delete_archived"}
+                    onClick={() => postJson({ action: "legacy_cleanup_delete_archived", confirmation: deleteConfirmation }, "Legado arquivado deletado.")}
+                    className="inline-flex h-9 items-center gap-2 rounded-lg bg-red-400 px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {busy === "legacy_cleanup_delete_archived" ? <Loader2 size={16} className="animate-spin" /> : <Database size={16} />}
+                    Deletar arquivados
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div className="space-y-2">
+              {dashboard.legacyPreview.sample.slice(0, 5).map((item) => (
+                <div key={item.id} className="rounded-lg border border-[var(--admin-border)] p-3">
+                  <p className="truncate text-sm font-semibold text-white">{item.code} - {item.title}</p>
+                  <p className="mt-1 text-xs text-[var(--admin-muted)]">{item.reason} | {item.stage || "sem etapa"}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </DashboardCard>
+
+        <DashboardCard title="Importar novo lote" eyebrow="xlsx / csv / txt" action={<FileSpreadsheet size={18} className="text-[var(--admin-cyan)]" />}>
+          <form onSubmit={importFile} className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-2">
+              <label className="space-y-1">
+                <span className="text-xs text-[var(--admin-muted)]">Agente WhatsApp</span>
+                <select className={selectClass} value={selectedAgent} onChange={(event) => {
+                  const agent = dashboard.whatsappAgents.find((item) => item.agentKey === event.target.value);
+                  setSelectedAgent(event.target.value);
+                  setSelectedInstance(agent?.id || "");
+                }}>
+                  <option value="">Selecione</option>
+                  {dashboard.whatsappAgents.map((agent) => (
+                    <option key={agent.id || agent.agentKey} value={agent.agentKey}>{agentLabel(agent)}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="space-y-1">
+                <span className="text-xs text-[var(--admin-muted)]">Setor que recebe aviso</span>
+                <select className={selectClass} value={selectedRecipient} onChange={(event) => setSelectedRecipient(event.target.value)}>
+                  <option value="">Selecione</option>
+                  {dashboard.recipients.map((recipient) => (
+                    <option key={recipient.id} value={recipient.id}>{recipientLabel(recipient)}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <label className="block rounded-lg border border-dashed border-[var(--admin-border)] p-4">
+              <span className="mb-2 flex items-center gap-2 text-sm font-semibold text-white">
+                <Upload size={16} />
+                Arquivo com links
+              </span>
+              <input
+                name="file"
+                type="file"
+                accept=".xlsx,.csv,.txt"
+                className="block w-full text-sm text-[var(--admin-muted)]"
+                onChange={onFileChange}
+                required
+              />
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={previewFile}
+                disabled={!selectedFile || busy === "preview_file"}
+                className="inline-flex h-9 items-center gap-2 rounded-lg border border-[var(--admin-border)] px-3 text-sm text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {busy === "preview_file" ? <Loader2 size={16} className="animate-spin" /> : <FileSpreadsheet size={16} />}
+                Pre-visualizar
+              </button>
+              <button
+                type="submit"
+                disabled={!filePreview || filePreview.validRowCount === 0 || busy === "import_file"}
+                className="inline-flex h-9 items-center gap-2 rounded-lg bg-[var(--admin-cyan)] px-3 text-sm font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {busy === "import_file" ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
+                Salvar lote
+              </button>
+            </div>
+            {filePreview && (
+              <div className="space-y-3 rounded-lg border border-[var(--admin-border)] p-3">
+                <div className="grid gap-3 text-sm sm:grid-cols-4">
+                  <div>
+                    <p className="text-xs text-[var(--admin-muted)]">Arquivo</p>
+                    <p className="truncate font-semibold text-white">{filePreview.filename}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-[var(--admin-muted)]">Validos</p>
+                    <p className="font-semibold text-emerald-200">{filePreview.validRowCount}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-[var(--admin-muted)]">Invalidos</p>
+                    <p className="font-semibold text-red-100">{filePreview.invalidRowCount}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-[var(--admin-muted)]">Ignorados</p>
+                    <p className="font-semibold text-yellow-100">{filePreview.ignoredRowCount}</p>
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[620px] text-left text-xs">
+                    <thead className="text-[var(--admin-muted)]">
+                      <tr>
+                        <th className="py-2 pr-3">Linha</th>
+                        <th className="py-2 pr-3">Codigo</th>
+                        <th className="py-2 pr-3">Cidade</th>
+                        <th className="py-2 pr-3">Data</th>
+                        <th className="py-2 pr-3">Dominio</th>
+                        <th className="py-2 pr-3">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filePreview.rows.slice(0, 8).map((row) => (
+                        <tr key={`${row.rowNumber}-${row.auctionUrl}`} className="border-t border-[var(--admin-border)]">
+                          <td className="py-2 pr-3 text-[var(--admin-muted)]">{row.rowNumber}</td>
+                          <td className="py-2 pr-3 text-white">{row.externalCode || "-"}</td>
+                          <td className="py-2 pr-3 text-[var(--admin-muted)]">{row.cityHint || "-"}</td>
+                          <td className="py-2 pr-3 text-[var(--admin-muted)]">{row.auctionDateHint || "-"}</td>
+                          <td className="py-2 pr-3 text-[var(--admin-muted)]">{row.sourceDomain || "-"}</td>
+                          <td className="py-2 pr-3">
+                            <Pill className={statusTone(row.status)}>{row.status}</Pill>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+            {connectedAgents.length === 0 && (
+              <p className="flex items-center gap-2 text-xs text-yellow-100">
+                <AlertTriangle size={14} />
+                Nenhum agente conectado foi detectado. O lote pode ser salvo, mas o aviso WhatsApp pode falhar.
+              </p>
+            )}
+          </form>
+        </DashboardCard>
+      </section>
+
+      <section className="grid gap-4 xl:grid-cols-[0.9fr_1.5fr]">
+        <DashboardCard title="Destinatario WhatsApp" eyebrow="setor responsavel" action={<Send size={18} className="text-[var(--admin-cyan)]" />}>
+          <form onSubmit={createRecipient} className="space-y-3">
+            <input className={inputClass} name="sectorName" placeholder="Setor, ex: Analise de Mercado" required />
+            <input className={inputClass} name="recipientName" placeholder="Responsavel ou grupo" />
+            <input className={inputClass} name="whatsappNumber" placeholder="Numero: 5548999999999" />
+            <input className={inputClass} name="whatsappJid" placeholder="JID de grupo opcional" />
+            <label className="flex items-center gap-2 text-sm text-[var(--admin-muted)]">
+              <input name="isGroup" type="checkbox" />
+              Destinatario e grupo
+            </label>
+            <button type="submit" disabled={busy === "create_recipient"} className="inline-flex h-9 items-center gap-2 rounded-lg border border-[var(--admin-border)] px-3 text-sm text-white disabled:opacity-60">
+              {busy === "create_recipient" ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
+              Cadastrar
+            </button>
+          </form>
+        </DashboardCard>
+
+        <DashboardCard title="Lotes importados" eyebrow="iniciar processo" action={<Play size={18} className="text-emerald-300" />}>
+          <div className="space-y-3">
+            {dashboard.batches.length === 0 && (
+              <p className="rounded-lg border border-[var(--admin-border)] p-4 text-sm text-[var(--admin-muted)]">
+                Nenhum lote importado ainda.
+              </p>
+            )}
+            {dashboard.batches.map((batch) => (
+              <article key={batch.id} className="rounded-lg border border-[var(--admin-border)] p-4">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="truncate text-sm font-semibold text-white">{batch.originalFilename || batch.id}</p>
+                      <Pill className={statusTone(batch.status)}>{batch.status}</Pill>
+                    </div>
+                    <p className="mt-1 text-xs text-[var(--admin-muted)]">
+                      {batch.validRowCount} link(s) validos | {batch.invalidRowCount} invalido(s) | criado em {batch.createdAt ? new Date(batch.createdAt).toLocaleString("pt-BR") : "-"}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={!batchReadyToStart(batch) || busy === "start_batch"}
+                    onClick={() => startBatch(batch)}
+                    className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-emerald-300 px-3 text-sm font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {busy === "start_batch" ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
+                    Iniciar processo
+                  </button>
+                </div>
+                <div className="mt-4 overflow-x-auto">
+                  <table className="w-full min-w-[920px] text-left text-xs">
+                    <thead className="text-[var(--admin-muted)]">
+                      <tr>
+                        <th className="py-2 pr-3">Linha</th>
+                        <th className="py-2 pr-3">Codigo</th>
+                        <th className="py-2 pr-3">Cidade</th>
+                        <th className="py-2 pr-3">Dominio</th>
+                        <th className="py-2 pr-3">Extracao</th>
+                        <th className="py-2 pr-3">Midia</th>
+                        <th className="py-2 pr-3">Status</th>
+                        <th className="py-2 pr-3">Erro</th>
+                        <th className="py-2 pr-3">Acao</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {batch.rows.slice(0, 8).map((row) => (
+                        <tr key={row.id} className="border-t border-[var(--admin-border)]">
+                          <td className="py-2 pr-3 text-[var(--admin-muted)]">{row.rowNumber}</td>
+                          <td className="py-2 pr-3 text-white">{row.externalCode || "-"}</td>
+                          <td className="py-2 pr-3 text-[var(--admin-muted)]">{row.cityHint || "-"}</td>
+                          <td className="py-2 pr-3 text-[var(--admin-muted)]">{row.sourceDomain || "-"}</td>
+                          <td className="max-w-[240px] py-2 pr-3">
+                            <p className="truncate text-white" title={row.extractionTitle || ""}>{row.extractionTitle || "-"}</p>
+                            {(row.extractionConfidence || row.missingFields?.length) ? (
+                              <p className="mt-1 truncate text-[11px] text-[var(--admin-muted)]">
+                                {row.extractionConfidence ? `${row.extractionConfidence}% confianca` : "sem score"}
+                                {row.missingFields?.length ? ` | pendente: ${row.missingFields.slice(0, 3).join(", ")}` : ""}
+                              </p>
+                            ) : null}
+                            {row.adapterName ? (
+                              <p className="mt-1 truncate text-[11px] text-cyan-100/80">{row.adapterName}</p>
+                            ) : null}
+                          </td>
+                          <td className="py-2 pr-3 text-[var(--admin-muted)]">
+                            {(row.imageCount ?? 0)} img | {(row.documentCount ?? 0)} doc
+                          </td>
+                          <td className="py-2 pr-3"><Pill className={statusTone(row.status)}>{row.status}</Pill></td>
+                          <td className="max-w-[220px] truncate py-2 pr-3 text-red-100">{row.errorMessage || "-"}</td>
+                          <td className="py-2 pr-3">
+                            {rowNeedsRetry(row.status) ? (
+                              <button
+                                type="button"
+                                onClick={() => retryRow(row.id)}
+                                disabled={busy === "retry_row"}
+                                className="inline-flex h-7 items-center gap-1 rounded-md border border-[var(--admin-border)] px-2 text-[11px] text-white disabled:opacity-50"
+                              >
+                                {busy === "retry_row" ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                                Retry
+                              </button>
+                            ) : (
+                              <span className="text-[var(--admin-muted)]">-</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </article>
+            ))}
+          </div>
+        </DashboardCard>
+      </section>
+    </main>
+  );
+}

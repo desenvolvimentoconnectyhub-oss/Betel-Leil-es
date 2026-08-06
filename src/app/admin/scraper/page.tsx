@@ -1,13 +1,13 @@
 import { getAdminModule } from "@/lib/admin/modules";
-import { getScraperDashboardData } from "@/lib/scraper";
-import { ScraperDashboardPage } from "@/components/admin/ScraperDashboardPage";
+import { getLinkScraperDashboardData } from "@/lib/scraper";
+import { LinkScraperDashboardPage } from "@/components/admin/LinkScraperDashboardPage";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export default async function ScraperRoute() {
   const section = getAdminModule("scraper")!;
-  const data = await getScraperDashboardData();
+  const data = await getLinkScraperDashboardData();
 
-  return <ScraperDashboardPage module={section} data={data} />;
+  return <LinkScraperDashboardPage module={section} data={data} />;
 }

@@ -3,10 +3,11 @@ import { notFound } from "next/navigation";
 import { ArrowLeft, FileCheck2, Gavel, Pencil, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DashboardCard } from "@/components/admin/DashboardCard";
+import { PropertyMarketAnalysisPanel } from "@/components/admin/PropertyMarketAnalysisPanel";
 import { RiskBadge } from "@/components/admin/RiskBadge";
 import { ScoreBadge } from "@/components/admin/ScoreBadge";
 import { StatusBadge, getStatusTone } from "@/components/admin/StatusBadge";
-import { getAuctionOpportunityByCode } from "@/lib/admin/repository";
+import { getAuctionOpportunityByCode, getPropertyMarketAnalysisByOpportunityCode } from "@/lib/admin/repository";
 import {
   formatCurrency,
   formatDate,
@@ -41,7 +42,10 @@ export default async function OpportunityDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const opportunityResult = await getAuctionOpportunityByCode(id);
+  const [opportunityResult, marketAnalysisResult] = await Promise.all([
+    getAuctionOpportunityByCode(id),
+    getPropertyMarketAnalysisByOpportunityCode(id),
+  ]);
   const opportunity = opportunityResult.data;
 
   if (!opportunity) notFound();
@@ -184,6 +188,13 @@ export default async function OpportunityDetailPage({
             </p>
           </div>
         </DashboardCard>
+      </section>
+
+      <section className="mb-4">
+        <PropertyMarketAnalysisPanel
+          analysis={marketAnalysisResult.data}
+          reason={marketAnalysisResult.reason}
+        />
       </section>
 
       <section className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(340px,0.8fr)]">

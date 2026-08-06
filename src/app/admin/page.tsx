@@ -13,7 +13,7 @@ import {
   type AuctionOpportunity,
   type ResourceTone,
 } from "@/lib/admin/repository";
-import { getScraperDashboardData, type ScraperRun } from "@/lib/scraper";
+import { getLinkScraperDashboardData, type LinkScraperBatch } from "@/lib/scraper";
 import { RiskBadge } from "@/components/admin/RiskBadge";
 import { ScoreBadge } from "@/components/admin/ScoreBadge";
 import { StatusBadge, getStatusTone } from "@/components/admin/StatusBadge";
@@ -73,7 +73,7 @@ export const runtime = "nodejs";
 export default async function AdminDashboard() {
   const [opportunitiesResult, scraperResult] = await Promise.all([
     listAuctionOpportunities(100),
-    getScraperDashboardData(),
+    getLinkScraperDashboardData(),
   ]);
 
   const opportunities = opportunitiesResult.data;
@@ -86,8 +86,8 @@ export default async function AdminDashboard() {
   const readyCandidates = opportunities.filter(isReadyCandidate);
   const pipelineValue = opportunities.reduce((sum, item) => sum + item.initialBid, 0);
   const appraisalValue = opportunities.reduce((sum, item) => sum + item.appraisalValue, 0);
-  const failedRuns = scraper.recentRuns.filter((run) => run.status === "failed").length;
-  const latestRun = scraper.recentRuns[0];
+  const failedBatches = scraper.batches.filter((batch) => batch.status === "falha" || batch.rows.some((row) => row.status === "falha")).length;
+  const latestBatch = scraper.batches[0];
   const avgDiscount = average(opportunities.map((item) => item.discountPct));
   const valueRatio = pipelineValue > 0 ? appraisalValue / pipelineValue : 0;
   const dataTone = opportunitiesResult.source === "supabase" || scraperResult.source === "supabase" ? "green" : "yellow";
@@ -137,7 +137,7 @@ export default async function AdminDashboard() {
     { label: "Prazo", values: buildDeadlineCurve(opportunities), color: chartColors[0], width: 2.4 },
   ];
   const efficiencySeries: ChartSeries[] = [
-    { label: "Eficiencia", values: buildScraperEfficiency(scraper.recentRuns), color: chartColors[0], width: 2.2 },
+    { label: "Eficiencia", values: buildScraperEfficiency(scraper.batches), color: chartColors[0], width: 2.2 },
   ];
   const priority = buildPriorityItems(readyCandidates.length, needsHuman.length, highRisk.length, urgent72h.length);
   const actionQueue = buildActionQueue(opportunities);
@@ -188,9 +188,9 @@ export default async function AdminDashboard() {
         </DashboardPanel>
 
         <DashboardPanel
-          title="Eficiencia Renata"
+          title="Eficiencia do lote"
           eyebrow="scraper"
-          subtitle="Percentual ingerido nas ultimas coletas"
+          subtitle="Percentual pronto nos ultimos lotes"
           contentClassName="p-3"
         >
           <LineChart series={efficiencySeries} labels={["Run 1", "Run 3", "Run 5", "Run 7", "Run 9"]} height={176} suffix="%" />
@@ -218,7 +218,7 @@ export default async function AdminDashboard() {
         <div className="grid gap-3">
           <DashboardPanel title="Resumo" eyebrow="operacao">
             <div className="grid gap-4">
-              <SideStat label="Fontes ativas" value={`${scraper.metrics.enabledTargets}/${scraper.metrics.totalTargets}`} detail="Renata monitorando" tone="cyan" />
+              <SideStat label="Lotes importados" value={String(scraper.metrics.totalBatches)} detail={`${scraper.metrics.readyRows} links prontos para revisao`} tone="cyan" />
               <SideStat label="Valor relativo" value={`${valueRatio.toFixed(2)}x`} detail="avaliacao / lance inicial" tone="green" />
               <SideStat label="Dados" value={dataTone === "green" ? "live" : "fallback"} detail={opportunitiesResult.source} tone={dataTone} />
             </div>
@@ -231,8 +231,13 @@ export default async function AdminDashboard() {
       </section>
 
       <section className="mt-3 grid gap-3 md:grid-cols-2">
-        <DashboardPanel title="Renata" eyebrow="coleta">
-          <ScraperSummary latestRun={latestRun} failedRuns={failedRuns} ingested={scraper.metrics.itemsIngested} />
+        <DashboardPanel title="Scraper por links" eyebrow="lotes">
+          <ScraperSummary
+            latestBatch={latestBatch}
+            failedBatches={failedBatches}
+            readyRows={scraper.metrics.readyRows}
+            totalRows={scraper.metrics.totalRows}
+          />
         </DashboardPanel>
 
         <DashboardPanel title="Breakdown" eyebrow="status">
@@ -509,31 +514,33 @@ function OpportunityQueue({ opportunities }: { opportunities: AuctionOpportunity
 }
 
 function ScraperSummary({
-  latestRun,
-  failedRuns,
-  ingested,
+  latestBatch,
+  failedBatches,
+  readyRows,
+  totalRows,
 }: {
-  latestRun?: ScraperRun;
-  failedRuns: number;
-  ingested: number;
+  latestBatch?: LinkScraperBatch;
+  failedBatches: number;
+  readyRows: number;
+  totalRows: number;
 }) {
   return (
     <div className="grid gap-4">
-      <SideStat label="Imoveis gravados" value={String(ingested)} detail="nas coletas recentes listadas" tone="cyan" />
-      <SideStat label="Falhas recentes" value={String(failedRuns)} detail={failedRuns ? "precisa revisar fonte" : "coletas estaveis"} tone={failedRuns ? "red" : "green"} />
+      <SideStat label="Links prontos" value={String(readyRows)} detail={`${totalRows} links nos lotes recentes`} tone="cyan" />
+      <SideStat label="Lotes com falha" value={String(failedBatches)} detail={failedBatches ? "precisa revisar dominio/adaptador" : "processamento estavel"} tone={failedBatches ? "red" : "green"} />
 
       <div className="rounded-lg border border-[var(--admin-border)] bg-black/20 p-3">
         <div className="mb-2 flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2">
             <Globe2 size={15} className="shrink-0 text-[var(--admin-cyan)]" />
-            <p className="truncate text-xs font-semibold text-white">{latestRun?.targetName || "Sem coleta recente"}</p>
+            <p className="truncate text-xs font-semibold text-white">{latestBatch?.originalFilename || "Sem lote recente"}</p>
           </div>
-          <StatusBadge tone={runTone(latestRun?.status)}>{latestRun?.status || "aguardando"}</StatusBadge>
+          <StatusBadge tone={runTone(latestBatch?.status)}>{latestBatch?.status || "aguardando"}</StatusBadge>
         </div>
         <p className="text-xs leading-5 text-[var(--admin-muted)]">
-          {latestRun
-            ? `${latestRun.itemsFound} encontrados, ${latestRun.itemsIngested} ingeridos.`
-            : "Quando Renata coletar uma fonte, o resumo aparece aqui."}
+          {latestBatch
+            ? `${latestBatch.validRowCount} links validos, ${latestBatch.rows.filter((row) => row.status === "pronto_para_revisao").length} prontos para revisao.`
+            : "Quando a equipe importar uma planilha, o resumo aparece aqui."}
         </p>
       </div>
 
@@ -583,14 +590,15 @@ function buildDeadlineCurve(opportunities: AuctionOpportunity[]) {
   return horizons.map((horizon) => opportunities.filter((item) => isWithinDays(item.auctionDate, horizon)).length);
 }
 
-function buildScraperEfficiency(runs: ScraperRun[]) {
-  const ordered = [...runs].slice(0, 10).reverse();
+function buildScraperEfficiency(batches: LinkScraperBatch[]) {
+  const ordered = [...batches].slice(0, 10).reverse();
 
   if (!ordered.length) return [0, 12, 26, 38, 44, 55, 62, 70, 78, 84];
 
-  return ordered.map((run) => {
-    if (run.itemsFound <= 0) return run.status === "completed" ? 100 : 0;
-    return Math.round((run.itemsIngested / run.itemsFound) * 100);
+  return ordered.map((batch) => {
+    const total = Math.max(batch.rows.length || batch.validRowCount, 1);
+    const ready = batch.rows.filter((row) => row.status === "pronto_para_revisao").length;
+    return Math.round((ready / total) * 100);
   });
 }
 

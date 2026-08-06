@@ -1,34 +1,16 @@
 import { inngest } from "../client";
-import { runScraperCron } from "@/lib/scraper";
-import { getScraperPauseState } from "@/lib/maintenance/operational-pauses";
-import { getScraperScheduleConfig, getScraperScheduleDecision } from "@/lib/scraper/schedule";
 
 export const scraperCronFunction = inngest.createFunction(
   {
     id: "scraper-cron",
-    name: "Renata — Coleta Automatizada",
+    name: "Scraper legado congelado",
     triggers: [{ cron: "* * * * *" }],
   },
-  async () => {
-    const pause = getScraperPauseState();
-    if (pause.paused) {
-      return {
-        ok: true,
-        skipped: true,
-        paused: true,
-        reason: pause.reason,
-        timestamp: new Date().toISOString(),
-      };
-    }
-
-    const schedule = await getScraperScheduleConfig();
-    const decision = getScraperScheduleDecision(schedule);
-
-    if (!decision.shouldRun) {
-      return { ok: true, skipped: true, reason: decision.reason, clock: decision.clock };
-    }
-
-    const result = await runScraperCron();
-    return { ok: true, ...result, clock: decision.clock, timestamp: new Date().toISOString() };
-  }
+  async () => ({
+    ok: true,
+    skipped: true,
+    paused: true,
+    reason: "Scraper antigo por fontes congelado. A nova fase processa apenas lotes de links iniciados manualmente.",
+    timestamp: new Date().toISOString(),
+  })
 );

@@ -6,10 +6,13 @@ import {
   createAuctionOpportunityRecord,
   ingestAuctionOpportunityRecord,
   refreshOpportunityValidationPipelinesRecord,
+  savePropertyMarketAnalysisRecord,
   updateAuctionOpportunityRecord,
   type CreateAuctionOpportunityInput,
+  type SavePropertyMarketAnalysisInput,
   type SourceIntakeInput,
 } from "@/lib/admin/repository";
+import type { MarketAnalysisDecision, MarketAnalysisStatus, MarketComparableQuality, MarketCostItem } from "@/lib/admin/market-analysis";
 import { backfillOpportunityImages } from "@/lib/scraper";
 
 function field(formData: FormData, name: string, fallback = "") {
@@ -28,6 +31,11 @@ function numberField(formData: FormData, name: string, fallback = 0) {
   const parsed = Number(normalized);
 
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function booleanField(formData: FormData, name: string) {
+  const value = formData.get(name);
+  return value === "on" || value === "true" || value === "1";
 }
 
 function clampScore(value: number) {
@@ -112,6 +120,118 @@ function parseRawPayload(formData: FormData, errorPath: string): Record<string, 
   } catch {
     errorRedirect(errorPath, "Payload bruto da fonte precisa ser um JSON valido.");
   }
+}
+
+function parseDecision(value: string): MarketAnalysisDecision {
+  if (["excellent", "good", "caution", "review", "reject"].includes(value)) {
+    return value as MarketAnalysisDecision;
+  }
+
+  return "review";
+}
+
+function parseComparableQuality(value: string): MarketComparableQuality {
+  if (["strong", "medium", "weak", "discarded"].includes(value)) {
+    return value as MarketComparableQuality;
+  }
+
+  return "medium";
+}
+
+function parseMarketStatus(value: string): MarketAnalysisStatus {
+  if (["pending", "in_analysis", "human_review", "approved", "approved_with_notes", "rejected", "insufficient_data"].includes(value)) {
+    return value as MarketAnalysisStatus;
+  }
+
+  return "human_review";
+}
+
+function costItem(formData: FormData, label: string, name: string, detail = ""): MarketCostItem {
+  return {
+    label,
+    value: numberField(formData, name),
+    detail,
+  };
+}
+
+function parseEstimatedCosts(formData: FormData): MarketCostItem[] {
+  return [
+    costItem(formData, "ITBI", "costItbi"),
+    costItem(formData, "Registro", "costRegistry"),
+    costItem(formData, "Comissao leiloeiro", "costCommission"),
+    costItem(formData, "Juridico", "costLegal"),
+    costItem(formData, "Condominio/IPTU", "costCondoIptu"),
+    costItem(formData, "Reforma", "costReform"),
+    costItem(formData, "Desocupacao", "costVacancy"),
+    costItem(formData, "Reserva", "costReserve"),
+  ].filter((item) => item.value > 0);
+}
+
+function parseMarketAnalysisForm(formData: FormData, errorPath: string): SavePropertyMarketAnalysisInput {
+  const opportunityCode = normalizeCode(field(formData, "opportunityCode"));
+  if (!opportunityCode) errorRedirect(errorPath, "Codigo da oportunidade ausente.");
+
+  const marketValueBase = numberField(formData, "marketValueBase");
+  if (!marketValueBase) errorRedirect(errorPath, "Informe o valor de mercado base.");
+
+  return {
+    opportunityCode,
+    status: parseMarketStatus(field(formData, "submitStatus", field(formData, "status", "human_review"))),
+    analystName: field(formData, "analystName", "Analise Betel"),
+    paymentCondition: field(formData, "paymentCondition", "A vista"),
+    paymentSimulation: {
+      paymentMode: field(formData, "paymentMode", "a_vista"),
+      downPaymentPct: numberField(formData, "downPaymentPct"),
+      downPaymentAmount: numberField(formData, "downPaymentAmount"),
+      installmentBalance: numberField(formData, "installmentBalance"),
+      installmentCount: numberField(formData, "installmentCount"),
+      installmentAmount: numberField(formData, "installmentAmount"),
+      correctionRule: field(formData, "installmentCorrectionRule"),
+      correctionWarning: field(formData, "installmentCorrectionWarning"),
+    },
+    landAreaM2: numberField(formData, "landAreaM2"),
+    builtAreaM2: numberField(formData, "builtAreaM2"),
+    privateAreaM2: numberField(formData, "privateAreaM2"),
+    bedrooms: numberField(formData, "bedrooms"),
+    parkingSpaces: numberField(formData, "parkingSpaces"),
+    marketValueLow: numberField(formData, "marketValueLow"),
+    marketValueBase,
+    marketValueHigh: numberField(formData, "marketValueHigh"),
+    rentalEstimate: {
+      monthlyRent: numberField(formData, "monthlyRent"),
+      referenceUrl: field(formData, "rentReferenceUrl"),
+      referenceFound: booleanField(formData, "rentReferenceFound"),
+      valueKnown: booleanField(formData, "rentValueKnown"),
+      notes: field(formData, "rentNotes"),
+    },
+    estimatedCosts: parseEstimatedCosts(formData),
+    liquidityScore: clampScore(numberField(formData, "liquidityScore", 60)),
+    confidenceScore: clampScore(numberField(formData, "confidenceScore", 50)),
+    legalSignal: field(formData, "legalSignal", "Validar juridico antes de liberar comunicacao ou lance."),
+    decision: parseDecision(field(formData, "decision", "review")),
+    decisionReason: field(formData, "decisionReason"),
+    summary: field(formData, "summary"),
+    cautionNotes: field(formData, "cautionNotes"),
+    auctionUrl: field(formData, "auctionUrl"),
+    referenceUrl: field(formData, "referenceUrl"),
+    comparable: {
+      sourceLabel: field(formData, "comparableSourceLabel", "Comparavel manual"),
+      sourceUrl: field(formData, "comparableSourceUrl"),
+      listingType: field(formData, "comparableListingType", "Oferta"),
+      propertyType: field(formData, "comparablePropertyType", "Imovel"),
+      address: field(formData, "comparableAddress"),
+      neighborhood: field(formData, "comparableNeighborhood"),
+      city: field(formData, "comparableCity"),
+      state: field(formData, "comparableState").toUpperCase(),
+      areaM2: numberField(formData, "comparableAreaM2"),
+      askingPrice: numberField(formData, "comparableAskingPrice"),
+      soldPrice: numberField(formData, "comparableSoldPrice"),
+      distanceKm: numberField(formData, "comparableDistanceKm"),
+      similarityScore: clampScore(numberField(formData, "comparableSimilarityScore", 60)),
+      quality: parseComparableQuality(field(formData, "comparableQuality", "medium")),
+      notes: field(formData, "comparableNotes"),
+    },
+  };
 }
 
 function hasSourceIntakeFields(formData: FormData) {
@@ -206,4 +326,21 @@ export async function refreshOpportunityValidationPipelineAction() {
   });
 
   redirect(`/admin/oportunidades?${params.toString()}`);
+}
+
+export async function savePropertyMarketAnalysisAction(formData: FormData) {
+  const currentCode = normalizeCode(field(formData, "opportunityCode"));
+  const detailPath = currentCode ? `/admin/oportunidades/${currentCode}` : "/admin/oportunidades";
+  const payload = parseMarketAnalysisForm(formData, detailPath);
+  const result = await savePropertyMarketAnalysisRecord(payload);
+
+  if (!result.data) {
+    errorRedirect(detailPath, result.reason || "Nao foi possivel salvar a analise de mercado.");
+  }
+
+  revalidatePath("/admin");
+  revalidatePath("/admin/oportunidades");
+  revalidatePath(detailPath);
+
+  redirect(`${detailPath}?market=salva`);
 }

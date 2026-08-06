@@ -5,5 +5,6 @@ export * from "./pipeline";
 export * from "./intelligence";
 export * from "./users";
 export * from "./validation-pipeline";
+export * from "./market-analysis";
 export * from "./messages";
 export * from "./whatsapp-crm";

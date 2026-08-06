@@ -64,6 +64,8 @@ type ValidationBuildResult = Omit<OpportunityValidationRun, "id" | "persisted" |
   rawPayload: Record<string, unknown>;
 };
 
+type MarketAnalysisDbRow = Record<string, unknown>;
+
 const VALIDATION_STEPS = [
   ["capture", "Captura"],
   ["normalization", "Dados basicos"],
@@ -136,7 +138,11 @@ function step(
   };
 }
 
-function buildSteps(opportunity: OpportunityDbRow, snapshot?: SourceSnapshotDbRow): OpportunityValidationStep[] {
+function buildSteps(
+  opportunity: OpportunityDbRow,
+  snapshot?: SourceSnapshotDbRow,
+  marketAnalysis?: MarketAnalysisDbRow
+): OpportunityValidationStep[] {
   const title = asString(opportunity.title);
   const propertyType = asString(opportunity.property_type);
   const address = asString(opportunity.address);
@@ -148,6 +154,11 @@ function buildSteps(opportunity: OpportunityDbRow, snapshot?: SourceSnapshotDbRo
   const hasCoreData = Boolean(title && propertyType && (city || state) && (hasPositiveNumber(opportunity.initial_bid) || hasPositiveNumber(opportunity.appraisal_value)));
   const hasAddress = Boolean(address && !normalizeText(address).includes("nao informado") && (city || state));
   const hasMarketValues = hasPositiveNumber(opportunity.initial_bid) && hasPositiveNumber(opportunity.appraisal_value);
+  const marketAnalysisCode = asString(marketAnalysis?.analysis_code);
+  const marketValueBase = asNumber(marketAnalysis?.market_value_base);
+  const realDiscountPct = asNumber(marketAnalysis?.real_discount_pct, asNumber(opportunity.discount_pct));
+  const marketConfidence = clampScore(marketAnalysis?.confidence_score, hasMarketValues ? clampScore(opportunity.opportunity_score, 70) : 45);
+  const hasStructuredMarketAnalysis = Boolean(marketAnalysisCode || marketValueBase > 0);
   const isDiscarded = stageText.includes("descart");
   const riskScore = clampScore(opportunity.risk_score, 50);
   const complianceScore = clampScore(opportunity.compliance_score, 60);
@@ -210,11 +221,22 @@ function buildSteps(opportunity: OpportunityDbRow, snapshot?: SourceSnapshotDbRo
     ),
     step(
       "market",
-      hasMarketValues ? "passed" : "warning",
-      hasMarketValues ? clampScore(opportunity.opportunity_score, 70) : 45,
-      hasMarketValues ? "Lance e avaliacao permitem estimar desconto e atratividade." : "Faltam lance ou avaliacao para validar preco real.",
-      "Mercado",
-      { initialBid: asNumber(opportunity.initial_bid), appraisalValue: asNumber(opportunity.appraisal_value), discountPct: asNumber(opportunity.discount_pct) }
+      hasStructuredMarketAnalysis ? (marketConfidence >= 60 ? "passed" : "warning") : hasMarketValues ? "warning" : "warning",
+      hasStructuredMarketAnalysis ? marketConfidence : hasMarketValues ? clampScore(opportunity.opportunity_score, 70) : 45,
+      hasStructuredMarketAnalysis
+        ? "Analise de mercado estruturada registrada com valor base, desconto real e confianca."
+        : hasMarketValues
+          ? "Lance e avaliacao permitem triagem, mas ainda faltam comparaveis estruturados."
+          : "Faltam lance ou avaliacao para validar preco real.",
+      hasStructuredMarketAnalysis ? "Analise de mercado" : "Mercado",
+      {
+        analysisCode: marketAnalysisCode,
+        initialBid: asNumber(opportunity.initial_bid),
+        appraisalValue: asNumber(opportunity.appraisal_value),
+        marketValueBase,
+        realDiscountPct,
+        confidenceScore: marketConfidence,
+      }
     ),
     step(
       "human_review",
@@ -227,8 +249,12 @@ function buildSteps(opportunity: OpportunityDbRow, snapshot?: SourceSnapshotDbRo
   ].map((item) => ({ ...item, finishedAt: item.finishedAt || "" }));
 }
 
-function summarizePipeline(opportunity: OpportunityDbRow, snapshot?: SourceSnapshotDbRow): ValidationBuildResult {
-  const steps = buildSteps(opportunity, snapshot);
+function summarizePipeline(
+  opportunity: OpportunityDbRow,
+  snapshot?: SourceSnapshotDbRow,
+  marketAnalysis?: MarketAnalysisDbRow
+): ValidationBuildResult {
+  const steps = buildSteps(opportunity, snapshot, marketAnalysis);
   const blocking = steps.find((item) => item.status === "blocked");
   const pending = steps.find((item) => item.status === "pending" || item.status === "warning");
   const passed = steps.filter((item) => item.status === "passed").length;
@@ -269,7 +295,14 @@ function summarizePipeline(opportunity: OpportunityDbRow, snapshot?: SourceSnaps
 
 async function fetchOpportunityRows(limit: number) {
   const supabase = getSupabaseAdminClient();
-  if (!supabase) return { opportunities: [] as OpportunityDbRow[], snapshots: [] as SourceSnapshotDbRow[], error: "Supabase admin nao configurado." };
+  if (!supabase) {
+    return {
+      opportunities: [] as OpportunityDbRow[],
+      snapshots: [] as SourceSnapshotDbRow[],
+      marketAnalyses: [] as MarketAnalysisDbRow[],
+      error: "Supabase admin nao configurado.",
+    };
+  }
 
   const [opportunitiesResult, snapshotsResult] = await Promise.all([
     supabase.from("auction_opportunities").select("*").order("updated_at", { ascending: false }).limit(limit),
@@ -283,14 +316,36 @@ async function fetchOpportunityRows(limit: number) {
   return {
     opportunities: (opportunitiesResult.data || []) as OpportunityDbRow[],
     snapshots: snapshotsResult.error ? [] : ((snapshotsResult.data || []) as SourceSnapshotDbRow[]),
+    marketAnalyses: [],
     error: snapshotsResult.error?.message,
   };
 }
 
-function buildPipelines(opportunities: OpportunityDbRow[], snapshots: SourceSnapshotDbRow[], persisted: boolean): OpportunityValidationRun[] {
+async function fetchMarketAnalyses(opportunities: OpportunityDbRow[]) {
+  const supabase = getSupabaseAdminClient();
+  const opportunityIds = opportunities.map((item) => asString(item.id)).filter(Boolean);
+  if (!supabase || !opportunityIds.length) return [] as MarketAnalysisDbRow[];
+
+  const { data, error } = await supabase
+    .from("property_market_analyses")
+    .select("*")
+    .in("opportunity_id", opportunityIds);
+
+  if (error) return [];
+  return (data || []) as MarketAnalysisDbRow[];
+}
+
+function buildPipelines(
+  opportunities: OpportunityDbRow[],
+  snapshots: SourceSnapshotDbRow[],
+  marketAnalyses: MarketAnalysisDbRow[],
+  persisted: boolean
+): OpportunityValidationRun[] {
+  const marketByOpportunity = new Map(marketAnalyses.map((item) => [asString(item.opportunity_id), item]));
+
   return opportunities.map((opportunity) => {
     const snapshot = latestSnapshotForOpportunity(snapshots, asString(opportunity.id));
-    const built = summarizePipeline(opportunity, snapshot);
+    const built = summarizePipeline(opportunity, snapshot, marketByOpportunity.get(asString(opportunity.id)));
     return {
       ...built,
       id: "",
@@ -354,7 +409,8 @@ export async function listOpportunityValidationPipelines(limit = 100): Promise<D
   }
 
   const fetched = await fetchOpportunityRows(safeLimit);
-  const pipelines = buildPipelines(fetched.opportunities, fetched.snapshots, false);
+  const marketAnalyses = await fetchMarketAnalyses(fetched.opportunities);
+  const pipelines = buildPipelines(fetched.opportunities, fetched.snapshots, marketAnalyses, false);
   return {
     data: pipelines,
     source: "supabase",
@@ -372,7 +428,8 @@ export async function refreshOpportunityValidationPipelinesRecord(
   const fetched = await fetchOpportunityRows(safeLimit);
   if (!fetched.opportunities.length) return { ok: false, error: fetched.error || "Nenhuma oportunidade encontrada." };
 
-  const builtPipelines = buildPipelines(fetched.opportunities, fetched.snapshots, true);
+  const marketAnalyses = await fetchMarketAnalyses(fetched.opportunities);
+  const builtPipelines = buildPipelines(fetched.opportunities, fetched.snapshots, marketAnalyses, true);
   const persistedPipelines: OpportunityValidationRun[] = [];
   let persisted = true;
 
