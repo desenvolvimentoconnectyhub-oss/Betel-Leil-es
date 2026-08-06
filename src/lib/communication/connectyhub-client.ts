@@ -915,7 +915,12 @@ function explainConnectyHubError(input: { code: string; message: string; path: s
   const codeSuffix = input.code ? ` (${input.code})` : "";
   const normalized = `${input.code} ${input.message}`.toLowerCase();
 
-  if (input.code === "invalid_api_key" || input.code === "missing_api_key" || input.code === "expired_api_key") {
+  if (
+    input.code === "invalid_api_key" ||
+    input.code === "missing_api_key" ||
+    input.code === "expired_api_key" ||
+    input.code === "api_client_inactive"
+  ) {
     return `Chave ConnectyHub recusada${codeSuffix}: ${input.message}. Salve uma API key ativa no formato ch_live_... em CONNECTYHUB_API_TOKEN.`;
   }
 

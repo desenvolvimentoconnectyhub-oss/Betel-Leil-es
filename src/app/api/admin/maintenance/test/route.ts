@@ -66,6 +66,35 @@ function resolveConfigValue(appConfig: MaintenanceAppConfig, name: string) {
   return appConfig.get(key) || cleanConfigValue(process.env[name]) || DEFAULT_CONFIG_VALUES[key] || "";
 }
 
+function asRecord(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+async function readJsonPayload(response: Response) {
+  const text = await response.text().catch(() => "");
+  if (!text) return {};
+
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return { response: text.slice(0, 240) };
+  }
+}
+
+function formatConnectyHubFailure(status: number, payload: unknown) {
+  const data = asRecord(payload);
+  const error = asRecord(data.error);
+  const code = cleanConfigValue(error.code || data.code);
+  const message = cleanConfigValue(error.message || data.message || data.error || data.response);
+  const detail = [code, message].filter(Boolean).join(": ");
+
+  return detail
+    ? `ConnectyHub retornou ${status} - ${detail}.`
+    : `ConnectyHub retornou ${status}.`;
+}
+
 async function testSupabase(): Promise<TestResult> {
   const start = Date.now();
   const supabase = getSupabaseAdminClient();
@@ -148,7 +177,8 @@ async function testConnectyHub(): Promise<TestResult> {
       return { success: true, integration: "connectyhub", message: `ConnectyHub respondeu. Resposta em ${latencyMs}ms.`, latencyMs };
     }
 
-    return { success: false, integration: "connectyhub", message: `ConnectyHub retornou ${res.status}.`, latencyMs };
+    const payload = await readJsonPayload(res);
+    return { success: false, integration: "connectyhub", message: formatConnectyHubFailure(res.status, payload), latencyMs };
   } catch (error: unknown) {
     return { success: false, integration: "connectyhub", message: error instanceof Error ? error.message : "Falha ao conectar ConnectyHub.", latencyMs: Date.now() - start };
   }
