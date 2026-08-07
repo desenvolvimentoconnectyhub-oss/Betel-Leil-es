@@ -181,12 +181,34 @@ const PROFILES: AdapterProfile[] = [
     areaLabels: COMMON_AREA_LABELS,
     documentSignals: [...COMMON_DOCUMENT_SIGNALS, "lote"],
   },
+  {
+    key: "sato-leiloes",
+    name: "Sato Leiloes",
+    domains: ["satoleiloes.com.br"],
+    initialBidLabels: ["proximo lance", "lance inicial", "valor do lance", ...COMMON_INITIAL_BID_LABELS],
+    appraisalLabels: ["avaliacao comitente", ...COMMON_APPRAISAL_LABELS],
+    auctionDateLabels: ["1 leilao", "2 leilao", "datahora pregao", ...COMMON_DATE_LABELS],
+    paymentLabels: COMMON_PAYMENT_LABELS,
+    occupancyLabels: COMMON_OCCUPANCY_LABELS,
+    legalLabels: COMMON_LEGAL_LABELS,
+    areaLabels: COMMON_AREA_LABELS,
+    documentSignals: [...COMMON_DOCUMENT_SIGNALS, "todos"],
+  },
 ];
 
 function cleanString(value: unknown, fallback = "") {
   if (typeof value === "string") return value.trim() || fallback;
   if (value === null || value === undefined) return fallback;
   return String(value).trim() || fallback;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
 }
 
 function normalizeText(value: string) {
@@ -204,6 +226,8 @@ function decodeHtml(value: string) {
     .replace(/&nbsp;/gi, " ")
     .replace(/&amp;/gi, "&")
     .replace(/&quot;/gi, "\"")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
     .replace(/&#039;/g, "'")
     .replace(/&apos;/gi, "'")
     .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
@@ -227,6 +251,18 @@ function moneyToNumber(value: string) {
   const normalized = cleanString(value).replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", ".");
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function numberFromUnknown(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const clean = cleanString(value);
+  if (!clean) return 0;
+  const numeric = clean.replace(/[^\d,.-]/g, "");
+  if (/^-?\d+(?:\.\d+)?$/.test(numeric)) {
+    const parsed = Number(numeric);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return moneyToNumber(clean);
 }
 
 function areaToNumber(value: string) {
@@ -259,6 +295,12 @@ function findAreaAfterLabels(text: string, labels: string[]) {
 
 function findDateAfterLabels(text: string, labels: string[]) {
   return findAfterLabels(text, labels, /(\d{1,2}\/\d{1,2}\/\d{2,4}(?:\s+\d{1,2}:\d{2})?|\d{4}-\d{2}-\d{2})/i);
+}
+
+function dateFromUnknown(value: unknown) {
+  const clean = cleanString(value);
+  if (!clean) return "";
+  return clean.match(/\d{4}-\d{2}-\d{2}/)?.[0] || clean.match(/\d{1,2}\/\d{1,2}\/\d{2,4}/)?.[0] || clean;
 }
 
 function findSentenceAfterLabels(text: string, labels: string[]) {
@@ -376,7 +418,140 @@ function scriptJsonBlocks(html: string) {
     if (parsed) blocks.push(parsed);
   }
 
+  const inertiaPattern = /<[^>]+\bdata-page=(["'])([\s\S]*?)\1[^>]*>/gi;
+  let inertiaMatch: RegExpExecArray | null;
+  while ((inertiaMatch = inertiaPattern.exec(html))) {
+    const parsed = safeJsonParse(decodeHtml(inertiaMatch[2]));
+    if (parsed) blocks.push(parsed);
+  }
+
   return blocks;
+}
+
+function firstCleanString(...values: unknown[]) {
+  for (const value of values) {
+    const clean = cleanString(value);
+    if (clean) return clean;
+  }
+  return "";
+}
+
+function findSatoLot(blocks: unknown[]) {
+  for (const block of blocks) {
+    const page = asRecord(block);
+    const props = asRecord(page?.props);
+    const lot = asRecord(props?.loteInit);
+    if (lot) return lot;
+  }
+  return null;
+}
+
+function extractAddressFromSatoText(text: string) {
+  const afterAddress = cleanString(text.split(/endere[cç]o:/i)[1] || "");
+  if (!afterAddress) return "";
+  return cleanString(
+    afterAddress
+      .replace(/\b(?:matr[ií]cula|observa[cç][aã]o|vistoria|consta|im[oó]vel\s+ser[aá])[\s\S]*$/i, "")
+      .replace(/\s+/g, " ")
+  ).slice(0, 240);
+}
+
+function extractSatoImageUrls(lot: Record<string, unknown>, baseUrl: string) {
+  return asArray(lot.imagens_lote)
+    .map((item) => {
+      const image = asRecord(item);
+      const file = asRecord(image?.arquivo);
+      const openUrls = asRecord(file?.leilaoAbertoUrl);
+      const closedUrls = asRecord(file?.leilaoFechadoUrl);
+      const url = firstCleanString(
+        openUrls?.x4,
+        openUrls?.x8,
+        openUrls?.x2,
+        openUrls?.x1,
+        closedUrls?.x4,
+        closedUrls?.x8,
+        closedUrls?.x2,
+        closedUrls?.x1,
+        file?.signedUrl,
+        file?.url
+      );
+      return resolveUrl(url, baseUrl);
+    })
+    .filter(Boolean);
+}
+
+function extractSatoDocuments(lot: Record<string, unknown>, baseUrl: string) {
+  const documents: AuctionSiteDocument[] = [];
+  const lotDocuments = asArray(lot.documentos_lote);
+  const auction = asRecord(lot.leilao);
+  const auctionDocuments = asArray(auction?.arquivos_do_leilao);
+
+  [...lotDocuments, ...auctionDocuments].forEach((item) => {
+    const document = asRecord(item);
+    const file = asRecord(document?.arquivo);
+    const label = firstCleanString(document?.descricao, file?.nome, file?.titulo, file?.name, "Documento");
+    const url = resolveUrl(firstCleanString(file?.viewerUrl, file?.signedUrl, file?.url), baseUrl);
+    if (!url) return;
+    documents.push({ label, url, kind: documentKind(label) });
+  });
+
+  const seen = new Set<string>();
+  return documents.filter((document) => {
+    if (seen.has(document.url)) return false;
+    seen.add(document.url);
+    return true;
+  });
+}
+
+function extractSatoInertiaContext(blocks: unknown[], baseUrl: string, domain: string) {
+  const cleanDomain = cleanString(domain).replace(/^www\./i, "").toLowerCase();
+  if (cleanDomain !== "satoleiloes.com.br" && !cleanDomain.endsWith(".satoleiloes.com.br")) {
+    return { extraction: {} as AuctionSiteExtractionPatch, imageUrls: [] as string[], documents: [] as AuctionSiteDocument[], text: "" };
+  }
+
+  const lot = findSatoLot(blocks);
+  if (!lot) return { extraction: {} as AuctionSiteExtractionPatch, imageUrls: [] as string[], documents: [] as AuctionSiteDocument[], text: "" };
+
+  const auction = asRecord(lot.leilao);
+  const sequence = firstCleanString(lot.sequencia);
+  const titleOnly = firstCleanString(lot.titulo);
+  const title = cleanString([sequence, titleOnly].filter(Boolean).join(" - "));
+  const descriptionText = htmlToText(firstCleanString(lot.descricao));
+  const cityState = inferCityState(`${title} ${descriptionText}`);
+  const firstAuctionDate = dateFromUnknown(firstCleanString(auction?.data_hora_inicio, lot.datahora_pregao));
+  const secondAuctionDate = dateFromUnknown(firstCleanString(auction?.data_hora_inicio_segundo_leilao, lot.datahora_pregao_segundo_leilao));
+  const secondAuctionBid = numberFromUnknown(firstCleanString(lot.lance_inicial_segundo_leilao, auction?.menorlanceInicialSegLeilao));
+  const initialBid = numberFromUnknown(firstCleanString(lot.proximoLance, lot.lance_minimo, lot.lance_inicial, auction?.menorlanceInicial));
+  const appraisalValue = numberFromUnknown(firstCleanString(lot.avaliacao_comitente, lot.avaliacao));
+  const address = extractAddressFromSatoText(descriptionText);
+  const auctionNotes = [
+    firstAuctionDate ? `1 leilao: ${firstAuctionDate}` : "",
+    secondAuctionDate ? `2 leilao: ${secondAuctionDate}` : "",
+    secondAuctionBid ? `lance inicial do 2 leilao: R$ ${secondAuctionBid.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}` : "",
+  ].filter(Boolean).join("; ");
+
+  const extraction: AuctionSiteExtractionPatch = {
+    title,
+    propertyType: inferPropertyType(`${title} ${descriptionText}`),
+    address,
+    city: cityState.city,
+    state: cityState.state,
+    initialBid: initialBid || undefined,
+    appraisalValue: appraisalValue || undefined,
+    auctionDate: firstAuctionDate || secondAuctionDate || undefined,
+    landAreaM2: findAreaAfterLabels(`${title} ${descriptionText}`, COMMON_AREA_LABELS.landAreaM2) || undefined,
+    builtAreaM2: findAreaAfterLabels(descriptionText, COMMON_AREA_LABELS.builtAreaM2) || undefined,
+    privateAreaM2: findAreaAfterLabels(descriptionText, COMMON_AREA_LABELS.privateAreaM2) || undefined,
+    summary: descriptionText.slice(0, 600),
+    cautionNotes: auctionNotes || undefined,
+  };
+
+  return {
+    extraction,
+    imageUrls: extractSatoImageUrls(lot, baseUrl),
+    documents: extractSatoDocuments(lot, baseUrl),
+    text: [title, descriptionText, auctionNotes].filter(Boolean).join("\n"),
+  };
 }
 
 function walkStructuredData(value: unknown, baseUrl: string, output: { extraction: AuctionSiteExtractionPatch; images: string[] }) {
@@ -485,9 +660,12 @@ export function extractAuctionSiteContext(input: {
     documentSignals: COMMON_DOCUMENT_SIGNALS,
   };
   const activeProfile = profile || fallbackProfile;
-  const text = cleanString(input.visibleText) || htmlToText(input.html);
   const structuredOutput = { extraction: {} as AuctionSiteExtractionPatch, images: [] as string[] };
-  scriptJsonBlocks(input.html).forEach((block) => walkStructuredData(block, input.sourceUrl, structuredOutput));
+  const structuredBlocks = scriptJsonBlocks(input.html);
+  const satoContext = extractSatoInertiaContext(structuredBlocks, input.sourceUrl, input.sourceDomain);
+  structuredBlocks.forEach((block) => walkStructuredData(block, input.sourceUrl, structuredOutput));
+  structuredOutput.extraction = { ...structuredOutput.extraction, ...satoContext.extraction };
+  const text = cleanString([input.visibleText, satoContext.text].filter(Boolean).join("\n\n")) || htmlToText(input.html);
 
   const title = titleFromHtml(input.html, structuredOutput.extraction.title || "");
   const cityState = inferCityState(`${title} ${text.slice(0, 1200)}`);
@@ -509,10 +687,13 @@ export function extractAuctionSiteContext(input: {
   };
 
   const imageUrls = sortLikelyPropertyImageUrls([
+    ...satoContext.imageUrls,
     ...extractImageUrlsFromHtml(input.html, input.sourceUrl),
     ...structuredOutput.images,
   ].filter(Boolean)).slice(0, 50);
-  const documents = extractDocuments(input.html, input.sourceUrl, activeProfile);
+  const documents = [...satoContext.documents, ...extractDocuments(input.html, input.sourceUrl, activeProfile)]
+    .filter((document, index, all) => all.findIndex((item) => item.url === document.url) === index)
+    .slice(0, 30);
   const foundSignals = [
     extraction.title,
     extraction.initialBid,

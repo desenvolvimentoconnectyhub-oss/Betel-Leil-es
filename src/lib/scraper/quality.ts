@@ -206,8 +206,11 @@ export function isLikelyPropertyImageUrl(url: string) {
   if (/\.svg(?:[?#].*)?$/i.test(url)) return false;
   if (NON_PROPERTY_IMAGE_SIGNALS.some((signal) => normalized.includes(signal))) return false;
 
+  const signedMediaImage = normalized.includes("/midia/") && normalized.includes("largura=") && normalized.includes("altura=");
+
   return (
     /\.(?:jpe?g|png|webp|avif)(?:[?#].*)?$/i.test(url) ||
+    signedMediaImage ||
     normalized.includes("imagem") ||
     normalized.includes("image") ||
     normalized.includes("foto") ||
@@ -223,6 +226,7 @@ export function propertyImageUrlScore(url: string) {
 
   if (/\.(?:jpe?g|webp|avif)(?:[?#].*)?$/i.test(url)) score += 12;
   if (/\.(?:png)(?:[?#].*)?$/i.test(url)) score += 4;
+  if (normalized.includes("/midia/") && normalized.includes("largura=") && normalized.includes("altura=")) score += 16;
   if (normalized.includes("foto") || normalized.includes("photo") || normalized.includes("galeria") || normalized.includes("gallery")) score += 18;
   if (normalized.includes("imovel") || normalized.includes("property") || normalized.includes("lote")) score += 8;
   if (normalized.includes("s3") || normalized.includes("cdn") || normalized.includes("content")) score += 6;
