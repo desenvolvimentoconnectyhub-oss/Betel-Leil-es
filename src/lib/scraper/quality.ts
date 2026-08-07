@@ -18,6 +18,14 @@ const NON_PROPERTY_IMAGE_SIGNALS = [
   "logo",
   "sprite",
   "icon",
+  "app_google",
+  "app_apple",
+  "app-store",
+  "appstore",
+  "google-play",
+  "googleplay",
+  "linkedin",
+  "youtube",
   "favicon",
   "placeholder",
   "loading",
@@ -34,6 +42,11 @@ const NON_PROPERTY_IMAGE_SIGNALS = [
   "banner",
   "brand",
   "marca",
+  "bandeira",
+  "bandeiras",
+  "bandeiras-br",
+  "flag",
+  "full/svg",
   "aviso",
   "alerta",
   "comunicado",
@@ -47,6 +60,12 @@ const NON_PROPERTY_IMAGE_SIGNALS = [
   "condicoes",
   "condicao",
   "santander",
+  "header.png",
+  "brasao",
+  "brasao_leilao",
+  "assets/media/app",
+  "assets/images/bandeiras",
+  "assets/dom",
 ];
 
 export function normalizeQualityText(value: string) {
@@ -184,6 +203,7 @@ export function isLikelyNonRealEstateAsset(input: RealEstateAssetInput) {
 export function isLikelyPropertyImageUrl(url: string) {
   const normalized = normalizeQualityText(url);
   if (!/^https?:\/\//i.test(url)) return false;
+  if (/\.svg(?:[?#].*)?$/i.test(url)) return false;
   if (NON_PROPERTY_IMAGE_SIGNALS.some((signal) => normalized.includes(signal))) return false;
 
   return (
