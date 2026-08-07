@@ -19,6 +19,7 @@ const selectClass =
   "h-10 w-full rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] px-3 text-sm text-white outline-none transition focus-visible:border-[var(--admin-cyan)] focus-visible:ring-3 focus-visible:ring-[rgba(0,243,255,0.18)]";
 
 const labelClass = "text-xs font-semibold uppercase tracking-[0.14em] text-[var(--admin-muted)]";
+const investorsComingSoon = true;
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
@@ -124,12 +125,12 @@ export default async function NewInvestorPage({
         <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
           <div className="min-w-0">
             <div className="mb-3 flex flex-wrap items-center gap-2">
+              <StatusBadge tone="yellow">Em breve</StatusBadge>
               <StatusBadge tone="purple">CRM de investidores</StatusBadge>
-              <StatusBadge tone="cyan">Matching assistido</StatusBadge>
             </div>
-            <h1 className="text-2xl font-semibold tracking-tight text-white">Novo investidor</h1>
+            <h1 className="text-2xl font-semibold tracking-tight text-white">Cadastro de investidores em breve</h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--admin-muted)]">
-              Cadastro de tese, capital, praca e apetite de risco para conectar oportunidades com o investidor certo.
+              A Betel ainda nao vai cadastrar investidores nesta fase. Esta tela fica preparada para quando o CRM e matching forem liberados.
             </p>
           </div>
 
@@ -263,9 +264,13 @@ export default async function NewInvestorPage({
           </DashboardCard>
 
           <div className="flex flex-col gap-2 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-3 sm:flex-row">
-            <Button className="h-10 flex-1 bg-[var(--admin-cyan)] font-bold text-black hover:bg-white" type="submit">
+            <Button
+              className="h-10 flex-1 bg-[var(--admin-cyan)] font-bold text-black hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={investorsComingSoon}
+              type="submit"
+            >
               <Save size={15} />
-              Salvar investidor
+              Em breve
             </Button>
             <Button
               asChild

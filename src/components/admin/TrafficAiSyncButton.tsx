@@ -15,13 +15,18 @@ const scopeByModule: Record<string, string> = {
   "meta-whatsapp-chat": "meta_social",
 };
 
+const comingSoonModules = new Set(["meta-whatsapp-chat"]);
+
 export function TrafficAiSyncButton({ moduleSlug }: { moduleSlug: string }) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const scope = useMemo(() => scopeByModule[moduleSlug] || "all", [moduleSlug]);
+  const comingSoon = comingSoonModules.has(moduleSlug);
 
   async function handleSync() {
+    if (comingSoon) return;
+
     setLoading(true);
     setMessage("");
     try {
@@ -48,12 +53,12 @@ export function TrafficAiSyncButton({ moduleSlug }: { moduleSlug: string }) {
       <Button
         type="button"
         onClick={handleSync}
-        disabled={loading}
+        disabled={comingSoon || loading}
         variant="outline"
-        className="h-9 border-[var(--admin-border)] bg-white text-[var(--admin-foreground)]"
+        className="h-9 border-[var(--admin-border)] bg-white text-[var(--admin-foreground)] disabled:cursor-not-allowed disabled:opacity-70"
       >
         {loading ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
-        Sincronizar
+        {comingSoon ? "Em breve" : "Sincronizar"}
       </Button>
       {message && <span className="max-w-52 text-[11px] leading-4 text-[var(--admin-muted)]">{message}</span>}
     </div>

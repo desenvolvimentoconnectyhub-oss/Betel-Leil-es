@@ -79,6 +79,11 @@ const modulePlan: Record<string, Array<{ title: string; detail: string; status: 
     { title: "Score de performance", detail: "Cruzar criativo com gasto, leads, CPL, taxa de resposta e canal.", status: "futuro" },
     { title: "Geracao controlada", detail: "IA cria variacoes, mas publicacao exige revisao.", status: "futuro" },
   ],
+  "meta-whatsapp-chat": [
+    { title: "Preparar webhooks oficiais", detail: "Receber conversas originadas pela WhatsApp Cloud API oficial da Meta.", status: "proximo" },
+    { title: "Inbox em modo leitura", detail: "Listar conversas, contatos, janela de 24h e status sem permitir resposta automatica.", status: "futuro" },
+    { title: "Resposta com revisao humana", detail: "Liberar envio somente depois de credenciais, governanca e handoff estarem validados.", status: "futuro" },
+  ],
 };
 
 function statusTone(status: string): TrafficTone {

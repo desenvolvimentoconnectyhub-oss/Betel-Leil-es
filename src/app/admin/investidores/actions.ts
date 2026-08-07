@@ -8,6 +8,8 @@ import {
 } from "@/lib/admin/repository";
 import { normalizeRiskAppetite } from "@/lib/admin/investors";
 
+const INVESTORS_COMING_SOON = true;
+
 function field(formData: FormData, name: string, fallback = "") {
   const value = formData.get(name);
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
@@ -75,6 +77,10 @@ function parseInvestorForm(formData: FormData, errorPath: string): CreateInvesto
 }
 
 export async function createInvestorAction(formData: FormData) {
+  if (INVESTORS_COMING_SOON) {
+    errorRedirect("/admin/investidores/novo", "Cadastro de investidores esta em breve.");
+  }
+
   const payload = parseInvestorForm(formData, "/admin/investidores/novo");
   const result = await createInvestorProfileRecord(payload);
 

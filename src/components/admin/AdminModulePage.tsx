@@ -244,7 +244,6 @@ export default function AdminModulePage({
   const resource = resourceOverride || getAdminResource(module.slug);
   const createHrefBySlug: Record<string, string> = {
     oportunidades: "/admin/oportunidades/nova",
-    investidores: "/admin/investidores/novo",
   };
   const createHref = createHrefBySlug[module.slug] || null;
   const isComingSoon = module.status === "build" && !createHref;
