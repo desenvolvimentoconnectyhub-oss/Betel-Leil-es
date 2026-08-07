@@ -162,20 +162,21 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
     const file = event.target.files?.[0] || null;
     setSelectedFile(file);
     setFilePreview(null);
-    if (file) setFeedback({ type: "info", message: "Arquivo selecionado. Gere a pre-visualizacao antes de salvar o lote." });
+    if (file) void previewFile(file);
   }
 
-  async function previewFile() {
-    if (!selectedFile) {
+  async function previewFile(fileOverride?: File) {
+    const fileToPreview = fileOverride || selectedFile;
+    if (!fileToPreview) {
       setFeedback({ type: "err", message: "Selecione um arquivo para pre-visualizar." });
       return;
     }
 
     const formData = new FormData();
     formData.set("action", "preview_file");
-    formData.set("file", selectedFile);
+    formData.set("file", fileToPreview);
     setBusy("preview_file");
-    setFeedback(null);
+    setFeedback({ type: "info", message: "Lendo arquivo e validando os links..." });
 
     try {
       const res = await fetch("/api/admin/scraper", { method: "POST", body: formData });
@@ -203,7 +204,7 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
       return;
     }
     if (!filePreview) {
-      setFeedback({ type: "err", message: "Gere a pre-visualizacao antes de salvar o lote." });
+      setFeedback({ type: "err", message: "Aguarde a pre-visualizacao automatica antes de salvar o lote." });
       return;
     }
     if (!selectedAgentOption?.id) {
@@ -499,12 +500,12 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={previewFile}
+                onClick={() => previewFile()}
                 disabled={!selectedFile || busy === "preview_file"}
                 className="inline-flex h-9 items-center gap-2 rounded-lg border border-[var(--admin-border)] px-3 text-sm text-white disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {busy === "preview_file" ? <Loader2 size={16} className="animate-spin" /> : <FileSpreadsheet size={16} />}
-                Pre-visualizar
+                {busy === "preview_file" ? "Lendo arquivo" : "Reprocessar previa"}
               </button>
               <button
                 type="submit"
