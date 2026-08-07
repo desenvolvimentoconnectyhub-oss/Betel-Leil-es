@@ -25,6 +25,7 @@ export type AdminNavItem = {
   label: string;
   icon: string;
   badge?: string;
+  children?: AdminNavItem[];
 };
 
 export type AdminNavGroup = {
@@ -408,7 +409,7 @@ export const adminModules: AdminModule[] = [
     icon: "Files",
     accent: "purple",
     status: "build",
-    statusLabel: "Fundacao",
+    statusLabel: "Em breve",
     metrics: [
       { label: "Gerenciados", value: "0", detail: "pelo painel" },
       { label: "Aprovados", value: "0", detail: "Meta" },
@@ -417,7 +418,7 @@ export const adminModules: AdminModule[] = [
     workflow: ["Criar template", "Enviar para Meta", "Aguardar aprovacao", "Usar em campanha"],
     focus: ["Variaveis", "Header", "Footer", "Botoes", "Preview"],
     records: [
-      { title: "Templates oficiais", meta: "Campanhas exibem apenas templates managed_from_panel.", status: "Em base", owner: "Trafego" },
+      { title: "Templates oficiais", meta: "Criacao e sincronizacao ficam para uma proxima fase.", status: "Em breve", owner: "Trafego" },
     ],
   }),
   createAdminModule({
@@ -1126,17 +1127,23 @@ export const adminNavGroups: AdminNavGroup[] = [
   {
     label: "Operacao",
     items: [
-      { href: "/admin/oportunidades", label: "Imóveis analisados", icon: "Gavel" },
+      {
+        href: "/admin/scraper",
+        label: "Analise de mercado",
+        icon: "Globe",
+        children: [
+          { href: "/admin/oportunidades", label: "Imóveis analisados", icon: "Gavel" },
+        ],
+      },
       { href: "/admin/investidores", label: "Investidores", icon: "Users", badge: "Em breve" },
-      { href: "/admin/scraper", label: "Analise de mercado", icon: "Globe" },
     ],
   },
   {
     label: "Inteligencia",
     items: [
-      { href: "/admin/agentes-ia", label: "Escritorio de Agentes IA", icon: "GitCompareArrows" },
+      { href: "/admin/agentes-ia", label: "Escritorio de Agentes IA", icon: "GitCompareArrows", badge: "Em breve" },
       { href: "/admin/whatsapp", label: "Agentes WhatsApp", icon: "MessageCircle" },
-      { href: "/admin/central-inteligencia", label: "Central de Inteligencia", icon: "BrainCircuit" },
+      { href: "/admin/central-inteligencia", label: "Central de Inteligencia", icon: "BrainCircuit", badge: "Em breve" },
     ],
   },
   {
@@ -1145,7 +1152,7 @@ export const adminNavGroups: AdminNavGroup[] = [
       { href: "/admin/meta-ads", label: "Meta Ads", icon: "BarChart3", badge: "Em breve" },
       { href: "/admin/meta-whatsapp", label: "Campanhas Meta WhatsApp", icon: "MessageSquareText", badge: "Em breve" },
       { href: "/admin/meta-whatsapp-chat", label: "Chat Meta WhatsApp", icon: "MessageCircle", badge: "Em breve" },
-      { href: "/admin/meta-whatsapp-templates", label: "Templates Meta", icon: "Files" },
+      { href: "/admin/meta-whatsapp-templates", label: "Templates Meta", icon: "Files", badge: "Em breve" },
       { href: "/admin/google-ads", label: "Google Ads", icon: "BadgeDollarSign", badge: "Em breve" },
       { href: "/admin/google-analytics", label: "Google Analytics", icon: "MonitorDot", badge: "Em breve" },
       { href: "/admin/trafego-organico", label: "Trafego Organico", icon: "RadioTower", badge: "Em breve" },
@@ -1162,7 +1169,7 @@ export const adminNavGroups: AdminNavGroup[] = [
   {
     label: "Conta",
     items: [
-      { href: "/admin/usuarios", label: "Usuarios", icon: "Users" },
+      { href: "/admin/usuarios", label: "Usuarios", icon: "Users", badge: "Em breve" },
     ],
   },
 ];

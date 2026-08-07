@@ -7,7 +7,13 @@ import { adminNavGroups } from "@/lib/admin/modules";
 import { cn } from "@/lib/utils";
 
 const items = adminNavGroups.flatMap((group) =>
-  group.items.map((item) => ({ ...item, group: group.label }))
+  group.items.flatMap((item) => [
+    { ...item, group: group.label },
+    ...(item.children || []).map((child) => ({
+      ...child,
+      group: `${group.label} / ${item.label}`,
+    })),
+  ])
 );
 
 export function CommandSearch() {

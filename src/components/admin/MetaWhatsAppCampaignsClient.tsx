@@ -280,11 +280,11 @@ export function MetaWhatsAppCampaignsClient({
             <button
               type="button"
               onClick={handleSyncMeta}
-              disabled={loading === "sync"}
+              disabled={campaignsComingSoon || loading === "sync"}
               className="inline-flex h-9 items-center gap-2 rounded-md border border-[rgba(200,90,31,0.28)] bg-[rgba(200,90,31,0.08)] px-3 text-xs font-semibold text-[var(--admin-cyan)] disabled:opacity-60"
             >
               {loading === "sync" ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-              Sincronizar Meta
+              {campaignsComingSoon ? "Em breve" : "Sincronizar Meta"}
             </button>
             <button
               type="button"

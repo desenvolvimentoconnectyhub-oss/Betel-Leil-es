@@ -46,6 +46,10 @@ const defaultButton: DraftButton = {
   phoneNumber: "",
 };
 
+const templatesComingSoon = true;
+const templatesComingSoonMessage =
+  "Em breve: Templates Meta ainda nao estao liberados. Vamos manter a preparacao visivel, mas criacao, sincronizacao e exclusao ficam bloqueadas por enquanto.";
+
 function defaultDraft(language = "pt_BR"): TemplateDraft {
   return {
     name: "",
@@ -107,7 +111,7 @@ export function MetaWhatsAppTemplatesClient({
   const [feedback, setFeedback] = useState<{ type: "ok" | "err"; message: string } | null>(null);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   const variables = useMemo(() => extractVariables(draft.bodyText), [draft.bodyText]);
-  const canCreate = Boolean(data.config.configured && draft.name.trim() && draft.bodyText.trim());
+  const canCreate = !templatesComingSoon && Boolean(data.config.configured && draft.name.trim() && draft.bodyText.trim());
 
   async function refresh() {
     const response = await fetch("/api/admin/meta-whatsapp/templates", { cache: "no-store" });
@@ -144,6 +148,10 @@ export function MetaWhatsAppTemplatesClient({
   }
 
   async function handleSync() {
+    if (templatesComingSoon) {
+      setFeedback({ type: "err", message: "Sincronizacao de Templates Meta esta em breve." });
+      return;
+    }
     setLoading("sync");
     setFeedback(null);
     try {
@@ -158,6 +166,10 @@ export function MetaWhatsAppTemplatesClient({
   }
 
   async function handleCreate() {
+    if (templatesComingSoon) {
+      setFeedback({ type: "err", message: "Criacao de Templates Meta esta em breve." });
+      return;
+    }
     if (!canCreate) return;
     setLoading("create");
     setFeedback(null);
@@ -179,6 +191,10 @@ export function MetaWhatsAppTemplatesClient({
   }
 
   async function handleDelete(id: string) {
+    if (templatesComingSoon) {
+      setFeedback({ type: "err", message: "Exclusao de Templates Meta esta em breve." });
+      return;
+    }
     setLoading(`delete:${id}`);
     setFeedback(null);
     try {
@@ -203,9 +219,14 @@ export function MetaWhatsAppTemplatesClient({
             <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--admin-muted)]">
               Trafego IA / Templates oficiais
             </p>
-            <h1 className="mt-1 text-2xl font-semibold tracking-tight text-[var(--admin-foreground)]">Templates Meta</h1>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <h1 className="text-2xl font-semibold tracking-tight text-[var(--admin-foreground)]">Templates Meta</h1>
+              <span className="inline-flex h-6 items-center rounded-full border border-[rgba(184,122,22,0.28)] bg-[rgba(184,122,22,0.08)] px-2.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--admin-yellow)]">
+                Em breve
+              </span>
+            </div>
             <p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--admin-muted)]">
-              Campanhas Meta WhatsApp usam somente templates aprovados e marcados como gerenciados pelo painel.
+              Preparacao para templates oficiais aprovados pela Meta, com criacao e sincronizacao liberadas em uma proxima fase.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -218,11 +239,11 @@ export function MetaWhatsAppTemplatesClient({
             <button
               type="button"
               onClick={handleSync}
-              disabled={loading === "sync"}
+              disabled={templatesComingSoon || loading === "sync"}
               className="inline-flex h-9 items-center gap-2 rounded-md border border-[var(--admin-border)] bg-white px-3 text-xs font-semibold text-[var(--admin-foreground)] shadow-sm disabled:opacity-60"
             >
               {loading === "sync" ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-              Sincronizar Meta
+              {templatesComingSoon ? "Em breve" : "Sincronizar Meta"}
             </button>
           </div>
         </div>
@@ -230,6 +251,7 @@ export function MetaWhatsAppTemplatesClient({
         {data.source === "migration_pending" && (
           <Notice tone="warn" message={data.reason || "Migration pendente."} />
         )}
+        {templatesComingSoon && <Notice tone="warn" message={templatesComingSoonMessage} />}
         {!data.config.configured && (
           <Notice tone="warn" message="Configure Meta System User Token, WABA ID, Phone Number ID e Webhook Verify Token na Sala de Manutencao." />
         )}
@@ -243,7 +265,7 @@ export function MetaWhatsAppTemplatesClient({
       </section>
 
       <section className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
-        <DashboardCard title="Criar template oficial" eyebrow="builder / meta api">
+        <DashboardCard title="Preparar template oficial" eyebrow="em breve / meta api">
           <div className="grid gap-3 md:grid-cols-3">
             <Field label="Nome" value={draft.name} onChange={(name) => updateDraft({ name: normalizeTemplateName(name) })} placeholder="ex: dica_leilao_vip" />
             <Select label="Categoria" value={draft.category} onChange={(category) => updateDraft({ category })} options={["MARKETING", "UTILITY", "AUTHENTICATION"]} />
@@ -352,11 +374,11 @@ export function MetaWhatsAppTemplatesClient({
             <button
               type="button"
               onClick={handleCreate}
-              disabled={!canCreate || loading === "create"}
+              disabled={templatesComingSoon || !canCreate || loading === "create"}
               className="inline-flex h-9 items-center gap-2 rounded-md border border-[rgba(200,90,31,0.32)] bg-[var(--admin-cyan)] px-3 text-xs font-semibold text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loading === "create" ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
-              Enviar para Meta
+              {templatesComingSoon ? "Em breve" : "Enviar para Meta"}
             </button>
           </div>
         </DashboardCard>
@@ -413,7 +435,7 @@ export function MetaWhatsAppTemplatesClient({
                     <button
                       type="button"
                       onClick={() => handleDelete(template.id)}
-                      disabled={loading === `delete:${template.id}`}
+                      disabled={templatesComingSoon || loading === `delete:${template.id}`}
                       className="grid size-8 place-items-center rounded-md border border-[rgba(220,38,38,0.22)] bg-[rgba(220,38,38,0.06)] text-[var(--admin-red)] disabled:opacity-50"
                       title="Excluir template"
                     >
@@ -428,7 +450,7 @@ export function MetaWhatsAppTemplatesClient({
               <FileText size={24} className="text-[var(--admin-muted)]" />
               <p className="mt-3 text-sm font-semibold text-[var(--admin-foreground)]">Nenhum template gerenciado ainda</p>
               <p className="mt-1 max-w-md text-xs leading-5 text-[var(--admin-muted)]">
-                Sincronize a Meta para auditoria ou crie o primeiro template pelo painel.
+                Em breve sera possivel sincronizar a Meta ou criar templates pelo painel.
               </p>
             </div>
           )}

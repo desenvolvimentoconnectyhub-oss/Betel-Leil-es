@@ -14,16 +14,25 @@ export function AdminNavGroup({
         {group.label}
       </div>
       <div className="grid gap-1">
-        {group.items.map((item) => (
-          <AdminNavItem
-            key={item.href}
-            href={item.href}
-            label={item.label}
-            icon={item.icon}
-            active={activeHref === item.href}
-            badge={item.badge}
-          />
-        ))}
+        {group.items.map((item) => {
+          const children = item.children?.map((child) => ({
+            ...child,
+            active: activeHref === child.href,
+          }));
+          const childActive = children?.some((child) => child.active);
+
+          return (
+            <AdminNavItem
+              key={item.href}
+              href={item.href}
+              label={item.label}
+              icon={item.icon}
+              active={activeHref === item.href || Boolean(childActive)}
+              badge={item.badge}
+              navChildren={children}
+            />
+          );
+        })}
       </div>
     </div>
   );

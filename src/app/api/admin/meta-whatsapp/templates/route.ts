@@ -11,6 +11,10 @@ import {
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+const META_WHATSAPP_TEMPLATES_COMING_SOON = true;
+const META_WHATSAPP_TEMPLATES_COMING_SOON_MESSAGE =
+  "Templates Meta estao em breve. Criacao, sincronizacao e exclusao ainda nao estao liberadas.";
+
 function cleanString(value: unknown, fallback = "") {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
@@ -58,6 +62,13 @@ export async function GET() {
 export async function POST(request: Request) {
   const authorization = await requireAdminApi();
   if (authorization.response) return authorization.response;
+
+  if (META_WHATSAPP_TEMPLATES_COMING_SOON) {
+    return NextResponse.json(
+      { ok: false, error: META_WHATSAPP_TEMPLATES_COMING_SOON_MESSAGE },
+      { status: 503 }
+    );
+  }
 
   try {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
