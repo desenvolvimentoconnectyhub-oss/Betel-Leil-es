@@ -37,10 +37,10 @@ const selectClass =
   "h-9 w-full rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.04)] px-2 text-sm text-white outline-none transition focus:border-[var(--admin-cyan)]";
 
 function statusTone(status: string) {
-  if (["concluido", "pronto_para_revisao", "sent"].includes(status)) return "text-emerald-300 border-emerald-400/25 bg-emerald-400/10";
-  if (["processando", "scraping", "aguardando_scraper"].includes(status)) return "text-cyan-200 border-cyan-400/25 bg-cyan-400/10";
-  if (["falha", "url_invalida", "failed"].includes(status)) return "text-red-200 border-red-400/25 bg-red-400/10";
-  return "text-yellow-100 border-yellow-400/25 bg-yellow-400/10";
+  if (["concluido", "pronto_para_revisao", "sent"].includes(status)) return "border-emerald-300 bg-emerald-50 text-emerald-900";
+  if (["processando", "scraping", "aguardando_scraper"].includes(status)) return "border-cyan-300 bg-cyan-50 text-cyan-900";
+  if (["falha", "url_invalida", "failed"].includes(status)) return "border-red-300 bg-red-50 text-red-900";
+  return "border-yellow-300 bg-yellow-50 text-yellow-950";
 }
 
 function Pill({ children, className }: { children: ReactNode; className?: string }) {
@@ -309,9 +309,9 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
         <div
           className={cn(
             "rounded-lg border px-4 py-3 text-sm",
-            feedback.type === "ok" && "border-emerald-400/30 bg-emerald-400/10 text-emerald-100",
-            feedback.type === "err" && "border-red-400/30 bg-red-400/10 text-red-100",
-            feedback.type === "info" && "border-cyan-400/30 bg-cyan-400/10 text-cyan-100"
+            feedback.type === "ok" && "border-emerald-300 bg-emerald-50 text-emerald-900",
+            feedback.type === "err" && "border-red-300 bg-red-50 text-red-900",
+            feedback.type === "info" && "border-cyan-300 bg-cyan-50 text-cyan-900"
           )}
         >
           {feedback.message}
@@ -329,9 +329,9 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
       <section className="grid gap-4 xl:grid-cols-[1fr_1.4fr]">
         <DashboardCard title="Corte da fase antiga" eyebrow="dry-run" action={<ShieldAlert size={18} className="text-yellow-200" />}>
           <div className="space-y-4 text-sm">
-            <div className="rounded-lg border border-yellow-400/20 bg-yellow-400/10 p-3 text-yellow-50">
+            <div className="rounded-lg border border-yellow-300 bg-yellow-50 p-3 text-yellow-950">
               <p className="font-semibold">Nada sera deletado aqui.</p>
-              <p className="mt-1 text-yellow-100/80">
+              <p className="mt-1 text-yellow-900">
                 A pre-analise identifica oportunidades da fase antiga por origem tecnica, codigo de alvo ou responsavel legado.
               </p>
             </div>
@@ -380,9 +380,9 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
                 onChange={(event) => setArchiveConfirmation(event.target.value)}
                 placeholder="Digite ARQUIVAR LEGADO"
               />
-              <div className="rounded-lg border border-red-400/20 bg-red-400/10 p-3">
-                <p className="text-xs font-semibold text-red-100">Exclusao controlada</p>
-                <p className="mt-1 text-xs leading-5 text-red-100/80">
+              <div className="rounded-lg border border-red-300 bg-red-50 p-3">
+                <p className="text-xs font-semibold text-red-900">Exclusao controlada</p>
+                <p className="mt-1 text-xs leading-5 text-red-800">
                   So apaga registros ja arquivados e ainda reconhecidos como legado sem uso operacional.
                   Prontos para deletar: {dashboard.legacyPreview.readyToDeleteOpportunities}.
                 </p>
@@ -513,11 +513,11 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
                   </div>
                   <div>
                     <p className="text-xs text-[var(--admin-muted)]">Invalidos</p>
-                    <p className="font-semibold text-red-100">{filePreview.invalidRowCount}</p>
+                    <p className="font-semibold text-red-700">{filePreview.invalidRowCount}</p>
                   </div>
                   <div>
                     <p className="text-xs text-[var(--admin-muted)]">Ignorados</p>
-                    <p className="font-semibold text-yellow-100">{filePreview.ignoredRowCount}</p>
+                    <p className="font-semibold text-yellow-700">{filePreview.ignoredRowCount}</p>
                   </div>
                 </div>
                 <div className="overflow-x-auto">
@@ -551,7 +551,7 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
               </div>
             )}
             {connectedAgents.length === 0 && (
-              <p className="flex items-center gap-2 text-xs text-yellow-100">
+              <p className="flex items-center gap-2 text-xs text-yellow-800">
                 <AlertTriangle size={14} />
                 Nenhum agente conectado foi detectado. O lote pode ser salvo, mas o aviso WhatsApp pode falhar.
               </p>
@@ -686,14 +686,14 @@ function BatchArticle({
                               </p>
                             ) : null}
                             {row.adapterName ? (
-                              <p className="mt-1 truncate text-[11px] text-cyan-100/80">{row.adapterName}</p>
+                              <p className="mt-1 truncate text-[11px] text-cyan-700">{row.adapterName}</p>
                             ) : null}
                           </td>
                           <td className="py-2 pr-3 text-[var(--admin-muted)]">
                             {(row.imageCount ?? 0)} img | {(row.documentCount ?? 0)} doc
                           </td>
                           <td className="py-2 pr-3"><Pill className={statusTone(row.status)}>{row.status}</Pill></td>
-                          <td className="max-w-[220px] truncate py-2 pr-3 text-red-100">{row.errorMessage || "-"}</td>
+                          <td className="max-w-[220px] truncate py-2 pr-3 text-red-700">{row.errorMessage || "-"}</td>
                           <td className="py-2 pr-3">
                             {rowNeedsRetry(row.status) ? (
                               <button
