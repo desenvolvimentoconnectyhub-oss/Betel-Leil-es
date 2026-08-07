@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type ChangeEvent, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type FormEvent, type ReactNode } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -68,6 +68,25 @@ function rowNeedsRetry(status: string) {
   return status === "falha";
 }
 
+const activeRowStatuses = new Set(["aguardando_scraper", "scraping", "scraper_concluido", "extracao_concluida", "analise_mercado_pendente"]);
+const terminalRowStatuses = new Set(["pronto_para_revisao", "falha", "url_invalida", "duplicado"]);
+
+function batchHasActiveWork(batch: LinkScraperBatch) {
+  return batch.status === "processando" || batch.rows.some((row) => activeRowStatuses.has(row.status));
+}
+
+function rowStageLabel(status: string) {
+  if (status === "aguardando_scraper") return "Na fila para abrir o link";
+  if (status === "scraping") return "Abrindo pagina e capturando dados";
+  if (status === "scraper_concluido") return "Dados do leilao capturados";
+  if (status === "extracao_concluida") return "Organizando informacoes do imovel";
+  if (status === "analise_mercado_pendente") return "Preparando analise de mercado";
+  if (status === "pronto_para_revisao") return "Pronto para revisao";
+  if (status === "falha") return "Falha na coleta";
+  if (status === "url_invalida") return "Link invalido";
+  return status || "Em processamento";
+}
+
 function instanceLabel(agent: WhatsappAgentOption) {
   const status = agent.connected ? "conectado" : agent.status || "indisponivel";
   return `${agent.instanceName || agent.agentKey || "Instancia WhatsApp"}${agent.phone ? ` - ${agent.phone}` : ""} - ${status}`;
@@ -129,12 +148,21 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
     () => dashboard.recipients.find((recipient) => recipient.id === selectedRecipient) || dashboard.recipients[0],
     [dashboard.recipients, selectedRecipient]
   );
+  const hasActiveBatch = useMemo(() => dashboard.batches.some(batchHasActiveWork), [dashboard.batches]);
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     const res = await fetch("/api/admin/scraper", { cache: "no-store" });
     const json = await res.json();
     if (json.data) setDashboard(json.data as LinkScraperDashboardData);
-  }
+  }, []);
+
+  useEffect(() => {
+    if (!hasActiveBatch) return;
+    const intervalId = window.setInterval(() => {
+      void refresh();
+    }, 6000);
+    return () => window.clearInterval(intervalId);
+  }, [hasActiveBatch, refresh]);
 
   async function postJson(payload: Record<string, unknown>, success: string) {
     setBusy(String(payload.action || "acao"));
@@ -707,6 +735,7 @@ function BatchArticle({
                     Iniciar processo
                   </button>
                 </div>
+                {batchHasActiveWork(batch) ? <BatchProcessingActivity batch={batch} /> : null}
                 <div className="mt-4 overflow-x-auto">
                   <table className="w-full min-w-[920px] text-left text-xs">
                     <thead className="text-[var(--admin-muted)]">
@@ -767,5 +796,105 @@ function BatchArticle({
                   </table>
                 </div>
               </article>
+  );
+}
+
+function BatchProcessingActivity({ batch }: { batch: LinkScraperBatch }) {
+  const rows = batch.rows;
+  const completedRows = rows.filter((row) => terminalRowStatuses.has(row.status)).length;
+  const totalRows = Math.max(batch.validRowCount || 0, rows.length, 1);
+  const workingRow =
+    rows.find((row) => row.status === "scraping") ||
+    rows.find((row) => activeRowStatuses.has(row.status)) ||
+    rows.find((row) => !terminalRowStatuses.has(row.status));
+  const currentIndex = workingRow ? rows.findIndex((row) => row.id === workingRow.id) : Math.min(completedRows, Math.max(rows.length - 1, 0));
+  const visibleStart = Math.min(Math.max(currentIndex - 3, 0), Math.max(rows.length - 10, 0));
+  const visibleRows = rows.slice(visibleStart, visibleStart + 10);
+  const progress = Math.min(100, Math.round((completedRows / totalRows) * 100));
+  const scannerPosition = `calc(${Math.min(96, Math.max(4, progress))}% - 8px)`;
+  const activeCount = rows.filter((row) => activeRowStatuses.has(row.status)).length;
+  const stage = workingRow ? rowStageLabel(workingRow.status) : "Conferindo fila do lote";
+  const currentLabel = workingRow
+    ? `Linha ${workingRow.rowNumber}${workingRow.sourceDomain ? ` - ${workingRow.sourceDomain}` : ""}`
+    : "Aguardando proximo link";
+
+  return (
+    <div className="mt-4 overflow-hidden rounded-lg border border-cyan-200 bg-cyan-50 p-4 text-cyan-950">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-700">
+            Sistema trabalhando
+          </p>
+          <h3 className="mt-1 text-sm font-semibold text-cyan-950">Indo link por link para montar a analise</h3>
+          <p className="mt-1 text-xs leading-5 text-cyan-800">
+            {stage}: <span className="font-semibold">{currentLabel}</span>
+          </p>
+        </div>
+        <div className="inline-flex w-fit items-center gap-2 rounded-full border border-cyan-200 bg-white px-3 py-1 text-[11px] font-semibold text-cyan-800">
+          <span className="relative flex size-2">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-cyan-500 opacity-60" />
+            <span className="relative inline-flex size-2 rounded-full bg-cyan-600" />
+          </span>
+          Atualiza a cada 6s
+        </div>
+      </div>
+
+      <div className="mt-4">
+        <div className="relative h-2 rounded-full bg-white">
+          <div className="h-2 rounded-full bg-cyan-500 transition-all duration-500" style={{ width: `${progress}%` }} />
+          <span
+            className="absolute top-1/2 grid size-4 -translate-y-1/2 place-items-center rounded-full border-2 border-white bg-cyan-600 shadow-lg shadow-cyan-600/25 transition-all duration-500 motion-safe:animate-pulse"
+            style={{ left: scannerPosition }}
+          />
+        </div>
+        <div className="mt-2 flex items-center justify-between text-[11px] text-cyan-800">
+          <span>{completedRows} de {totalRows} link(s) finalizados</span>
+          <span>{activeCount} em andamento ou na fila</span>
+        </div>
+      </div>
+
+      {visibleRows.length ? (
+        <div className="mt-4 overflow-x-auto pb-1">
+          <div className="flex min-w-max items-start gap-2">
+            {visibleStart > 0 ? <ProcessingGap label={`+${visibleStart} antes`} /> : null}
+            {visibleRows.map((row, index) => {
+              const rowIndex = visibleStart + index;
+              const isCurrent = workingRow ? workingRow.id === row.id : rowIndex === currentIndex;
+              const isDone = terminalRowStatuses.has(row.status);
+              return (
+                <div key={row.id} className="flex w-24 flex-col items-center gap-1 text-center">
+                  <div
+                    className={cn(
+                      "grid size-9 place-items-center rounded-full border text-xs font-semibold transition",
+                      isDone && "border-emerald-300 bg-emerald-50 text-emerald-800",
+                      isCurrent && "border-cyan-600 bg-cyan-600 text-white shadow-lg shadow-cyan-600/25 motion-safe:animate-pulse",
+                      !isDone && !isCurrent && "border-cyan-200 bg-white text-cyan-800"
+                    )}
+                  >
+                    {isDone ? <CheckCircle2 size={15} /> : row.rowNumber}
+                  </div>
+                  <span className="line-clamp-1 text-[10px] font-semibold text-cyan-900">
+                    {row.externalCode || `Linha ${row.rowNumber}`}
+                  </span>
+                  <span className="line-clamp-1 text-[10px] text-cyan-700">{rowStageLabel(row.status)}</span>
+                </div>
+              );
+            })}
+            {visibleStart + visibleRows.length < rows.length ? <ProcessingGap label={`+${rows.length - visibleStart - visibleRows.length} depois`} /> : null}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ProcessingGap({ label }: { label: string }) {
+  return (
+    <div className="flex w-20 flex-col items-center gap-1 text-center">
+      <div className="grid size-9 place-items-center rounded-full border border-dashed border-cyan-200 bg-white text-[10px] font-semibold text-cyan-700">
+        ...
+      </div>
+      <span className="text-[10px] text-cyan-700">{label}</span>
+    </div>
   );
 }
