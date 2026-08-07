@@ -12,6 +12,7 @@ import {
   Send,
   ShieldAlert,
   Upload,
+  X,
 } from "lucide-react";
 import type { AdminModule } from "@/lib/admin/modules";
 import type {
@@ -111,6 +112,7 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
   const [filePreview, setFilePreview] = useState<ParsedLinkImportFile | null>(null);
   const [archiveConfirmation, setArchiveConfirmation] = useState("");
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const [showRecipientModal, setShowRecipientModal] = useState(false);
 
   const connectedAgents = useMemo(
     () => dashboard.whatsappAgents.filter(isSelectableWhatsappAgent),
@@ -147,8 +149,10 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
       if (!res.ok || json.ok === false) throw new Error(json.error || "Falha na acao.");
       setFeedback({ type: "ok", message: success });
       await refresh();
+      return true;
     } catch (error) {
       setFeedback({ type: "err", message: error instanceof Error ? error.message : "Falha inesperada." });
+      return false;
     } finally {
       setBusy("");
     }
@@ -242,7 +246,7 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
     event.preventDefault();
     const form = event.currentTarget;
     const formData = new FormData(form);
-    await postJson(
+    const ok = await postJson(
       {
         action: "create_recipient",
         sectorName: formData.get("sectorName"),
@@ -253,7 +257,10 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
       },
       "Destinatario cadastrado."
     );
-    form.reset();
+    if (ok) {
+      form.reset();
+      setShowRecipientModal(false);
+    }
   }
 
   async function startBatch(batch: LinkScraperBatch) {
@@ -435,12 +442,20 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
               <label className="space-y-1">
                 <span className="flex items-center justify-between gap-2 text-xs text-[var(--admin-muted)]">
                   <span>Setor que recebe aviso</span>
-                  <a href="#destino-aviso-whatsapp" className="font-semibold text-[var(--admin-cyan)] hover:underline">
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setShowRecipientModal(true);
+                    }}
+                    className="font-semibold text-[var(--admin-cyan)] hover:underline"
+                  >
                     Cadastrar destino
-                  </a>
+                  </button>
                 </span>
                 <select className={selectClass} value={selectedRecipientOption?.id || ""} onChange={(event) => setSelectedRecipient(event.target.value)}>
-                  <option value="">{dashboard.recipients.length ? "Selecione" : "Cadastre um destino abaixo"}</option>
+                  <option value="">{dashboard.recipients.length ? "Selecione" : "Cadastre um destino"}</option>
                   {dashboard.recipients.map((recipient) => (
                     <option key={recipient.id} value={recipient.id}>{recipientLabel(recipient)}</option>
                   ))}
@@ -560,29 +575,7 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
         </DashboardCard>
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[0.9fr_1.5fr]">
-        <DashboardCard title="Destino do aviso WhatsApp" eyebrow="setor responsavel" action={<Send size={18} className="text-[var(--admin-cyan)]" />}>
-          <div id="destino-aviso-whatsapp" className="scroll-mt-24" />
-          <p className="mb-3 text-xs leading-5 text-[var(--admin-muted)]">
-            Cadastre aqui o setor, responsavel ou grupo que recebe a confirmacao da analise quando o lote terminar.
-            A instancia que envia e escolhida no formulario do lote acima.
-          </p>
-          <form onSubmit={createRecipient} className="space-y-3">
-            <input className={inputClass} name="sectorName" placeholder="Setor, ex: Analise de Mercado" required />
-            <input className={inputClass} name="recipientName" placeholder="Responsavel ou grupo" />
-            <input className={inputClass} name="whatsappNumber" placeholder="Numero: 5548999999999" />
-            <input className={inputClass} name="whatsappJid" placeholder="JID de grupo opcional" />
-            <label className="flex items-center gap-2 text-sm text-[var(--admin-muted)]">
-              <input name="isGroup" type="checkbox" />
-              Destinatario e grupo
-            </label>
-            <button type="submit" disabled={busy === "create_recipient"} className="inline-flex h-9 items-center gap-2 rounded-lg border border-[var(--admin-border)] px-3 text-sm text-white disabled:opacity-60">
-              {busy === "create_recipient" ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
-              Cadastrar
-            </button>
-          </form>
-        </DashboardCard>
-
+      <section>
         <DashboardCard title="Lotes importados" eyebrow="iniciar processo" action={<Play size={18} className="text-emerald-300" />}>
           <div className="space-y-3">
             {dashboard.batches.length === 0 && (
@@ -604,6 +597,64 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
           </div>
         </DashboardCard>
       </section>
+
+      {showRecipientModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+          <div className="w-full max-w-lg overflow-hidden rounded-xl border border-[var(--admin-border)] bg-[var(--admin-card)] shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-[var(--admin-border)] px-5 py-4">
+              <div className="flex gap-3">
+                <span className="mt-1 grid size-9 place-items-center rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.04)]">
+                  <Send size={18} className="text-[var(--admin-cyan)]" />
+                </span>
+                <div>
+                  <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--admin-muted)]">
+                    Setor responsavel
+                  </p>
+                  <h2 className="mt-1 text-lg font-semibold text-white">Destino do aviso WhatsApp</h2>
+                  <p className="mt-1 text-xs leading-5 text-[var(--admin-muted)]">
+                    Cadastre quem recebe a confirmacao da analise quando o lote terminar.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowRecipientModal(false)}
+                className="grid size-8 shrink-0 place-items-center rounded-lg border border-[var(--admin-border)] text-[var(--admin-muted)] transition hover:border-[var(--admin-cyan)] hover:text-white"
+              >
+                <X size={15} />
+                <span className="sr-only">Fechar</span>
+              </button>
+            </div>
+            <form onSubmit={createRecipient} className="space-y-3 px-5 py-4">
+              <input className={inputClass} name="sectorName" placeholder="Setor, ex: Analise de Mercado" required />
+              <input className={inputClass} name="recipientName" placeholder="Responsavel ou grupo" />
+              <input className={inputClass} name="whatsappNumber" placeholder="Numero: 5548999999999" />
+              <input className={inputClass} name="whatsappJid" placeholder="JID de grupo opcional" />
+              <label className="flex items-center gap-2 text-sm text-[var(--admin-muted)]">
+                <input name="isGroup" type="checkbox" />
+                Destinatario e grupo
+              </label>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowRecipientModal(false)}
+                  className="inline-flex h-9 items-center rounded-lg border border-[var(--admin-border)] px-3 text-sm text-white transition hover:border-[var(--admin-cyan)]"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={busy === "create_recipient"}
+                  className="inline-flex h-9 items-center gap-2 rounded-lg bg-[var(--admin-cyan)] px-3 text-sm font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {busy === "create_recipient" ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
+                  Cadastrar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
