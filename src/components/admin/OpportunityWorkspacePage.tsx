@@ -247,7 +247,7 @@ function filterLabel(filter: WorkspaceFilter) {
 
 function getPrimaryImage(item: WorkspaceOpportunity) {
   const images = item.images || [];
-  return images.find((image) => image.status === "mirrored")?.url || images[0]?.url || "";
+  return images.find((image) => image.status === "mirrored")?.url || images.find((image) => image.status !== "failed")?.url || "";
 }
 
 function metricTone(value: number, fallback: ResourceTone) {

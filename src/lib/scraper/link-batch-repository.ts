@@ -1338,7 +1338,7 @@ async function processImportRow(row: LinkScraperRow): Promise<{ ok: boolean; opp
     const rawImageUrls = uniqueStrings([...siteContext.imageUrls, ...genericImageUrls], 60);
     const opportunityCode = safeBatchCode(row.externalCode || `${domain}-${makeSourceHash(row.auctionUrl)}`, row.rowNumber);
     const images = rawImageUrls.length
-      ? await mirrorRemoteImagesToR2({ opportunityCode, imageUrls: rawImageUrls, alt: title, maxImages: 40 })
+      ? await mirrorRemoteImagesToR2({ opportunityCode, imageUrls: rawImageUrls, alt: title, maxImages: 40, referer: row.auctionUrl })
       : ([] as StoredImageAsset[]);
 
     const ingest = await ingestAuctionOpportunityRecord({

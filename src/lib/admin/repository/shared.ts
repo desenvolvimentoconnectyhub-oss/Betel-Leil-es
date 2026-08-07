@@ -25,7 +25,7 @@ import {
   type SourceProviderPullInput,
   type SourceProviderPullResult,
 } from "@/lib/sources/provider-adapters";
-import { isLikelyPropertyImageUrl } from "@/lib/scraper/quality";
+import { isLikelyPropertyImageUrl, sortLikelyPropertyImageUrls } from "@/lib/scraper/quality";
 import {
   agentDirectory,
   agentGroups,
@@ -1486,15 +1486,12 @@ export function normalizeOpportunityImages(rawPayloadValue: unknown): PropertyIm
       error: asString(image.error) || undefined,
       collectedAt: asString(image.collectedAt) || undefined,
     }))
-    .filter((image) => Boolean(image.url) && isLikelyPropertyImageUrl(image.sourceUrl || image.url));
+    .filter((image) => Boolean(image.url) && image.status !== "failed" && isLikelyPropertyImageUrl(image.sourceUrl || image.url));
 
   if (normalizedImages.length) return normalizedImages;
 
   const seen = new Set<string>();
-  return fallbackUrls
-    .map((url) => url.trim())
-    .filter(Boolean)
-    .filter(isLikelyPropertyImageUrl)
+  return sortLikelyPropertyImageUrls(fallbackUrls)
     .filter((url) => {
       if (seen.has(url)) return false;
       seen.add(url);

@@ -1,7 +1,7 @@
 import type { ScraperCandidate, ScraperResult, ScraperTarget } from "./types";
 import { cleanHtmlForLlm, extractCandidatesWithLlm } from "./scraper-llm";
 import { getAuctionWindow, parseAuctionDate } from "./scraper-criteria";
-import { isLikelyExactPropertySourceUrl, isLikelyPropertyImageUrl } from "./quality";
+import { isLikelyExactPropertySourceUrl, isLikelyPropertyImageUrl, sortLikelyPropertyImageUrls } from "./quality";
 
 type ScraperAnchor = { text: string; href: string };
 
@@ -202,15 +202,16 @@ export function extractImageUrlsFromHtml(html: string, baseUrl: string) {
   }
 
   const seen = new Set<string>();
-  return images
-    .filter(Boolean)
-    .filter(imageLooksUseful)
-    .filter((url) => {
-      if (seen.has(url)) return false;
-      seen.add(url);
-      return true;
-    })
-    .slice(0, MAX_IMAGES_PER_CANDIDATE);
+  return sortLikelyPropertyImageUrls(
+    images
+      .filter(Boolean)
+      .filter(imageLooksUseful)
+      .filter((url) => {
+        if (seen.has(url)) return false;
+        seen.add(url);
+        return true;
+      })
+  ).slice(0, MAX_IMAGES_PER_CANDIDATE);
 }
 
 async function extractRuntimeImageUrlsWithPlaywright(sourceUrl: string) {
@@ -290,7 +291,7 @@ export async function collectImageUrlsFromSourceUrl(sourceUrl: string, fallbackB
   } catch {}
 
   const runtimeImages = htmlImages.length >= 2 ? [] : await extractRuntimeImageUrlsWithPlaywright(sourceUrl);
-  return Array.from(new Set([...htmlImages, ...runtimeImages])).slice(0, MAX_IMAGES_PER_CANDIDATE);
+  return sortLikelyPropertyImageUrls([...htmlImages, ...runtimeImages]).slice(0, MAX_IMAGES_PER_CANDIDATE);
 }
 
 function moneyToNumber(value: string) {

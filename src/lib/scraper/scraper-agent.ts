@@ -208,6 +208,7 @@ export async function backfillOpportunityImages(options: {
       imageUrls,
       alt: title,
       maxImages: 40,
+      referer: sourceUrl,
     });
 
     if (!images.length) {
@@ -308,6 +309,7 @@ async function ingestScraperCandidates(target: ScraperTarget, candidates: Scrape
       imageUrls: sourceImageUrls,
       alt: candidate.title || `Imovel capturado em ${target.name}`,
       maxImages: 40,
+      referer: candidate.sourceUrl,
     });
 
     if (!hasUsableStoredImage(images)) {

@@ -1,6 +1,7 @@
 import "server-only";
 
 import { extractImageUrlsFromHtml } from "./scraper-strategies";
+import { sortLikelyPropertyImageUrls } from "./quality";
 
 export type AuctionSiteDocument = {
   label: string;
@@ -507,10 +508,10 @@ export function extractAuctionSiteContext(input: {
     landAreaM2: structuredOutput.extraction.landAreaM2 || findAreaAfterLabels(text, activeProfile.areaLabels.landAreaM2),
   };
 
-  const imageUrls = Array.from(new Set([
+  const imageUrls = sortLikelyPropertyImageUrls([
     ...extractImageUrlsFromHtml(input.html, input.sourceUrl),
     ...structuredOutput.images,
-  ].filter(Boolean))).slice(0, 50);
+  ].filter(Boolean)).slice(0, 50);
   const documents = extractDocuments(input.html, input.sourceUrl, activeProfile);
   const foundSignals = [
     extraction.title,

@@ -28,10 +28,24 @@ const NON_PROPERTY_IMAGE_SIGNALS = [
   "vendedor",
   "seller",
   "modal-home",
+  "modal",
+  "popup",
   "layout",
   "banner",
   "brand",
   "marca",
+  "aviso",
+  "alerta",
+  "comunicado",
+  "parcelamento",
+  "parcelas",
+  "proposta",
+  "propostas",
+  "habilitacao",
+  "edital",
+  "regulamento",
+  "condicoes",
+  "condicao",
   "santander",
 ];
 
@@ -180,6 +194,35 @@ export function isLikelyPropertyImageUrl(url: string) {
     normalized.includes("photo") ||
     normalized.includes("cdn")
   );
+}
+
+export function propertyImageUrlScore(url: string) {
+  if (!isLikelyPropertyImageUrl(url)) return -1_000;
+  const normalized = normalizeQualityText(url);
+  let score = 0;
+
+  if (/\.(?:jpe?g|webp|avif)(?:[?#].*)?$/i.test(url)) score += 12;
+  if (/\.(?:png)(?:[?#].*)?$/i.test(url)) score += 4;
+  if (normalized.includes("foto") || normalized.includes("photo") || normalized.includes("galeria") || normalized.includes("gallery")) score += 18;
+  if (normalized.includes("imovel") || normalized.includes("property") || normalized.includes("lote")) score += 8;
+  if (normalized.includes("s3") || normalized.includes("cdn") || normalized.includes("content")) score += 6;
+  if (normalized.includes("/util/") || normalized.includes("/assets/") || normalized.includes("/img/")) score -= 8;
+
+  return score;
+}
+
+export function sortLikelyPropertyImageUrls(urls: string[]) {
+  const seen = new Set<string>();
+  return urls
+    .map((url, index) => ({ url: url.trim(), index }))
+    .filter(({ url }) => Boolean(url) && isLikelyPropertyImageUrl(url))
+    .filter(({ url }) => {
+      if (seen.has(url)) return false;
+      seen.add(url);
+      return true;
+    })
+    .sort((a, b) => propertyImageUrlScore(b.url) - propertyImageUrlScore(a.url) || a.index - b.index)
+    .map(({ url }) => url);
 }
 
 function normalizeComparableUrl(value: string) {

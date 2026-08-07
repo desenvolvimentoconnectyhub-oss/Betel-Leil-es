@@ -3,7 +3,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { DeleteObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
-import { isLikelyPropertyImageUrl } from "@/lib/scraper/quality";
+import { isLikelyPropertyImageUrl, sortLikelyPropertyImageUrls } from "@/lib/scraper/quality";
 
 type AppConfig = Map<string, string>;
 
@@ -255,6 +255,15 @@ function extensionFor(contentType: string, sourceUrl: string) {
   return "jpg";
 }
 
+function contentTypeFromExtension(extension: string) {
+  if (extension === "png") return "image/png";
+  if (extension === "webp") return "image/webp";
+  if (extension === "gif") return "image/gif";
+  if (extension === "avif") return "image/avif";
+  if (extension === "svg") return "image/svg+xml";
+  return "image/jpeg";
+}
+
 function isHttpImageUrl(value: string) {
   try {
     const url = new URL(value);
@@ -265,15 +274,7 @@ function isHttpImageUrl(value: string) {
 }
 
 function uniqueUrls(urls: string[]) {
-  const seen = new Set<string>();
-  return urls
-    .map((url) => url.trim())
-    .filter(Boolean)
-    .filter((url) => {
-      if (!isHttpImageUrl(url) || !isLikelyPropertyImageUrl(url) || seen.has(url)) return false;
-      seen.add(url);
-      return true;
-    });
+  return sortLikelyPropertyImageUrls(urls).filter((url) => isHttpImageUrl(url) && isLikelyPropertyImageUrl(url));
 }
 
 export async function mirrorRemoteImagesToR2(input: {
@@ -281,6 +282,7 @@ export async function mirrorRemoteImagesToR2(input: {
   imageUrls: string[];
   alt?: string;
   maxImages?: number;
+  referer?: string;
 }): Promise<StoredImageAsset[]> {
   const collectedAt = new Date().toISOString();
   const imageUrls = uniqueUrls(input.imageUrls).slice(0, input.maxImages || MAX_IMAGES);
@@ -311,20 +313,27 @@ export async function mirrorRemoteImagesToR2(input: {
   return Promise.all(imageUrls.map(async (sourceUrl, index): Promise<StoredImageAsset> => {
     try {
       const response = await fetch(sourceUrl, {
-        headers: { "User-Agent": "BetelBot/1.0 (+https://betel.com.br)" },
+        headers: {
+          "User-Agent": "Mozilla/5.0 (compatible; BetelBot/1.0; +https://betel.com.br)",
+          Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+          ...(input.referer ? { Referer: input.referer } : {}),
+        },
         signal: AbortSignal.timeout(20_000),
       });
 
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-      const contentType = response.headers.get("content-type") || "image/jpeg";
-      if (!contentType.toLowerCase().startsWith("image/")) throw new Error(`Conteudo nao e imagem: ${contentType}`);
+      const responseContentType = response.headers.get("content-type") || "";
+      const extension = extensionFor(responseContentType || "image/jpeg", sourceUrl);
+      const contentType = responseContentType.toLowerCase().startsWith("image/")
+        ? responseContentType
+        : contentTypeFromExtension(extension);
+      if (!contentType.toLowerCase().startsWith("image/")) throw new Error(`Conteudo nao e imagem: ${responseContentType || "sem content-type"}`);
 
       const buffer = Buffer.from(await response.arrayBuffer());
       if (buffer.length > MAX_IMAGE_BYTES) throw new Error("Imagem maior que 8MB.");
 
       const hash = createHash("sha1").update(sourceUrl).digest("hex").slice(0, 12);
-      const extension = extensionFor(contentType, sourceUrl);
       const storageKey = `opportunities/${code}/photos/${String(index + 1).padStart(2, "0")}-${hash}.${extension}`;
 
       await client.send(
