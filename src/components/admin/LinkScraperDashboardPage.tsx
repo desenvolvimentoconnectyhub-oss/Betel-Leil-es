@@ -67,12 +67,24 @@ function rowNeedsRetry(status: string) {
   return status === "falha";
 }
 
-function agentLabel(agent: WhatsappAgentOption) {
-  return `${agent.instanceName || agent.agentKey || "Agente WhatsApp"}${agent.connected ? " - conectado" : " - indisponivel"}`;
+function instanceLabel(agent: WhatsappAgentOption) {
+  const status = agent.connected ? "conectado" : agent.status || "indisponivel";
+  return `${agent.instanceName || agent.agentKey || "Instancia WhatsApp"}${agent.phone ? ` - ${agent.phone}` : ""} - ${status}`;
 }
 
 function recipientLabel(recipient: ScraperNotificationRecipient) {
   return `${recipient.sectorName}${recipient.recipientName ? ` - ${recipient.recipientName}` : ""}`;
+}
+
+function findBatchAgent(agents: WhatsappAgentOption[], batch: LinkScraperBatch) {
+  return (
+    agents.find((agent) => agent.id === batch.whatsappInstanceId) ||
+    agents.find((agent) => agent.agentKey === batch.whatsappAgentKey)
+  );
+}
+
+function findBatchRecipient(recipients: ScraperNotificationRecipient[], batch: LinkScraperBatch) {
+  return recipients.find((recipient) => recipient.id === batch.notificationRecipientId);
 }
 
 function batchReadyToStart(batch: LinkScraperBatch) {
@@ -96,6 +108,18 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
   const connectedAgents = useMemo(
     () => dashboard.whatsappAgents.filter((agent) => agent.connected),
     [dashboard.whatsappAgents]
+  );
+  const selectedAgentOption = useMemo(
+    () =>
+      dashboard.whatsappAgents.find((agent) => agent.id === selectedInstance) ||
+      dashboard.whatsappAgents.find((agent) => agent.agentKey === selectedAgent) ||
+      dashboard.whatsappAgents.find((agent) => agent.connected) ||
+      dashboard.whatsappAgents[0],
+    [dashboard.whatsappAgents, selectedAgent, selectedInstance]
+  );
+  const selectedRecipientOption = useMemo(
+    () => dashboard.recipients.find((recipient) => recipient.id === selectedRecipient) || dashboard.recipients[0],
+    [dashboard.recipients, selectedRecipient]
   );
 
   async function refresh() {
@@ -172,13 +196,21 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
       setFeedback({ type: "err", message: "Gere a pre-visualizacao antes de salvar o lote." });
       return;
     }
+    if (!selectedAgentOption?.id) {
+      setFeedback({ type: "err", message: "Selecione a instancia WhatsApp que enviara o aviso de conclusao." });
+      return;
+    }
+    if (!selectedRecipientOption?.id) {
+      setFeedback({ type: "err", message: "Selecione o setor que recebera o aviso de conclusao." });
+      return;
+    }
 
     const formData = new FormData();
     formData.set("action", "import_file");
     formData.set("file", selectedFile);
-    formData.set("whatsappAgentKey", selectedAgent);
-    formData.set("whatsappInstanceId", selectedInstance);
-    formData.set("notificationRecipientId", selectedRecipient);
+    formData.set("whatsappAgentKey", selectedAgentOption.agentKey);
+    formData.set("whatsappInstanceId", selectedAgentOption.id);
+    formData.set("notificationRecipientId", selectedRecipientOption.id);
     setBusy("import_file");
     setFeedback(null);
 
@@ -219,13 +251,25 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
   }
 
   async function startBatch(batch: LinkScraperBatch) {
+    const currentAgent = selectedAgentOption || findBatchAgent(dashboard.whatsappAgents, batch);
+    const whatsappInstanceId = currentAgent?.id || batch.whatsappInstanceId;
+    const notificationRecipientId = selectedRecipientOption?.id || batch.notificationRecipientId;
+    if (!currentAgent || !whatsappInstanceId) {
+      setFeedback({ type: "err", message: "Selecione a instancia WhatsApp antes de iniciar o processo." });
+      return;
+    }
+    if (!notificationRecipientId) {
+      setFeedback({ type: "err", message: "Selecione o setor que recebera o aviso antes de iniciar o processo." });
+      return;
+    }
+
     await postJson(
       {
         action: "start_batch",
         batchId: batch.id,
-        whatsappAgentKey: selectedAgent || batch.whatsappAgentKey,
-        whatsappInstanceId: selectedInstance || batch.whatsappInstanceId,
-        notificationRecipientId: selectedRecipient || batch.notificationRecipientId,
+        whatsappAgentKey: currentAgent.agentKey,
+        whatsappInstanceId,
+        notificationRecipientId,
       },
       "Processamento enfileirado. O WhatsApp sera enviado quando o lote terminar."
     );
@@ -370,27 +414,47 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
           <form onSubmit={importFile} className="space-y-4">
             <div className="grid gap-3 md:grid-cols-2">
               <label className="space-y-1">
-                <span className="text-xs text-[var(--admin-muted)]">Agente WhatsApp</span>
-                <select className={selectClass} value={selectedAgent} onChange={(event) => {
-                  const agent = dashboard.whatsappAgents.find((item) => item.agentKey === event.target.value);
-                  setSelectedAgent(event.target.value);
+                <span className="text-xs text-[var(--admin-muted)]">Instancia que envia o aviso</span>
+                <select className={selectClass} value={selectedAgentOption?.id || ""} onChange={(event) => {
+                  const agent = dashboard.whatsappAgents.find((item) => item.id === event.target.value);
+                  setSelectedAgent(agent?.agentKey || "");
                   setSelectedInstance(agent?.id || "");
                 }}>
                   <option value="">Selecione</option>
                   {dashboard.whatsappAgents.map((agent) => (
-                    <option key={agent.id || agent.agentKey} value={agent.agentKey}>{agentLabel(agent)}</option>
+                    <option key={agent.id || agent.providerInstanceId || agent.agentKey} value={agent.id}>{instanceLabel(agent)}</option>
                   ))}
                 </select>
               </label>
               <label className="space-y-1">
                 <span className="text-xs text-[var(--admin-muted)]">Setor que recebe aviso</span>
-                <select className={selectClass} value={selectedRecipient} onChange={(event) => setSelectedRecipient(event.target.value)}>
+                <select className={selectClass} value={selectedRecipientOption?.id || ""} onChange={(event) => setSelectedRecipient(event.target.value)}>
                   <option value="">Selecione</option>
                   {dashboard.recipients.map((recipient) => (
                     <option key={recipient.id} value={recipient.id}>{recipientLabel(recipient)}</option>
                   ))}
                 </select>
               </label>
+            </div>
+            <div className="grid gap-2 rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] p-3 text-xs md:grid-cols-2">
+              <div>
+                <p className="font-mono uppercase tracking-[0.14em] text-[var(--admin-muted)]">Remetente</p>
+                <p className="mt-1 font-semibold text-white">
+                  {selectedAgentOption ? instanceLabel(selectedAgentOption) : "Nenhuma instancia selecionada"}
+                </p>
+                <p className="mt-1 text-[var(--admin-muted)]">
+                  Esta instancia/numero sera usada pelo ConnectyHub para enviar a confirmacao quando o lote terminar.
+                </p>
+              </div>
+              <div>
+                <p className="font-mono uppercase tracking-[0.14em] text-[var(--admin-muted)]">Destino</p>
+                <p className="mt-1 font-semibold text-white">
+                  {selectedRecipientOption ? recipientLabel(selectedRecipientOption) : "Nenhum setor selecionado"}
+                </p>
+                <p className="mt-1 text-[var(--admin-muted)]">
+                  O destinatario pode ser um numero individual ou JID de grupo cadastrado abaixo.
+                </p>
+              </div>
             </div>
             <label className="block rounded-lg border border-dashed border-[var(--admin-border)] p-4">
               <span className="mb-2 flex items-center gap-2 text-sm font-semibold text-white">
@@ -486,7 +550,10 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
       </section>
 
       <section className="grid gap-4 xl:grid-cols-[0.9fr_1.5fr]">
-        <DashboardCard title="Destinatario WhatsApp" eyebrow="setor responsavel" action={<Send size={18} className="text-[var(--admin-cyan)]" />}>
+        <DashboardCard title="Destino do aviso WhatsApp" eyebrow="setor responsavel" action={<Send size={18} className="text-[var(--admin-cyan)]" />}>
+          <p className="mb-3 text-xs leading-5 text-[var(--admin-muted)]">
+            Cadastre aqui quem recebe a confirmacao. A instancia que envia e escolhida no formulario do lote acima.
+          </p>
           <form onSubmit={createRecipient} className="space-y-3">
             <input className={inputClass} name="sectorName" placeholder="Setor, ex: Analise de Mercado" required />
             <input className={inputClass} name="recipientName" placeholder="Responsavel ou grupo" />
@@ -511,7 +578,43 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
               </p>
             )}
             {dashboard.batches.map((batch) => (
-              <article key={batch.id} className="rounded-lg border border-[var(--admin-border)] p-4">
+              <BatchArticle
+                key={batch.id}
+                batch={batch}
+                agents={dashboard.whatsappAgents}
+                recipients={dashboard.recipients}
+                busy={busy}
+                startBatch={startBatch}
+                retryRow={retryRow}
+              />
+            ))}
+          </div>
+        </DashboardCard>
+      </section>
+    </main>
+  );
+}
+
+function BatchArticle({
+  batch,
+  agents,
+  recipients,
+  busy,
+  startBatch,
+  retryRow,
+}: {
+  batch: LinkScraperBatch;
+  agents: WhatsappAgentOption[];
+  recipients: ScraperNotificationRecipient[];
+  busy: string;
+  startBatch: (batch: LinkScraperBatch) => void;
+  retryRow: (rowId: string) => void;
+}) {
+  const batchAgent = findBatchAgent(agents, batch);
+  const batchRecipient = findBatchRecipient(recipients, batch);
+
+  return (
+    <article className="rounded-lg border border-[var(--admin-border)] p-4">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
@@ -520,6 +623,13 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
                     </div>
                     <p className="mt-1 text-xs text-[var(--admin-muted)]">
                       {batch.validRowCount} link(s) validos | {batch.invalidRowCount} invalido(s) | criado em {batch.createdAt ? new Date(batch.createdAt).toLocaleString("pt-BR") : "-"}
+                    </p>
+                    <p className="mt-2 text-xs text-[var(--admin-muted)]">
+                      Aviso: envia por{" "}
+                      <span className="font-semibold text-white">{batchAgent ? instanceLabel(batchAgent) : "instancia escolhida ao iniciar"}</span>
+                      {" "}para{" "}
+                      <span className="font-semibold text-white">{batchRecipient ? recipientLabel(batchRecipient) : "setor escolhido ao iniciar"}</span>
+                      {batch.notificationStatus ? ` | status: ${batch.notificationStatus}` : ""}
                     </p>
                   </div>
                   <button
@@ -592,10 +702,5 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
                   </table>
                 </div>
               </article>
-            ))}
-          </div>
-        </DashboardCard>
-      </section>
-    </main>
   );
 }
