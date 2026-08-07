@@ -433,9 +433,14 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
                 </select>
               </label>
               <label className="space-y-1">
-                <span className="text-xs text-[var(--admin-muted)]">Setor que recebe aviso</span>
+                <span className="flex items-center justify-between gap-2 text-xs text-[var(--admin-muted)]">
+                  <span>Setor que recebe aviso</span>
+                  <a href="#destino-aviso-whatsapp" className="font-semibold text-[var(--admin-cyan)] hover:underline">
+                    Cadastrar destino
+                  </a>
+                </span>
                 <select className={selectClass} value={selectedRecipientOption?.id || ""} onChange={(event) => setSelectedRecipient(event.target.value)}>
-                  <option value="">Selecione</option>
+                  <option value="">{dashboard.recipients.length ? "Selecione" : "Cadastre um destino abaixo"}</option>
                   {dashboard.recipients.map((recipient) => (
                     <option key={recipient.id} value={recipient.id}>{recipientLabel(recipient)}</option>
                   ))}
@@ -557,8 +562,10 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
 
       <section className="grid gap-4 xl:grid-cols-[0.9fr_1.5fr]">
         <DashboardCard title="Destino do aviso WhatsApp" eyebrow="setor responsavel" action={<Send size={18} className="text-[var(--admin-cyan)]" />}>
+          <div id="destino-aviso-whatsapp" className="scroll-mt-24" />
           <p className="mb-3 text-xs leading-5 text-[var(--admin-muted)]">
-            Cadastre aqui quem recebe a confirmacao. A instancia que envia e escolhida no formulario do lote acima.
+            Cadastre aqui o setor, responsavel ou grupo que recebe a confirmacao da analise quando o lote terminar.
+            A instancia que envia e escolhida no formulario do lote acima.
           </p>
           <form onSubmit={createRecipient} className="space-y-3">
             <input className={inputClass} name="sectorName" placeholder="Setor, ex: Analise de Mercado" required />
