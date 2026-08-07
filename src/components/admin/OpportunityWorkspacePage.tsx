@@ -12,7 +12,7 @@ import {
   Database,
   FileText,
   Gavel,
-  Home,
+  ImageOff,
   ListChecks,
   MapPin,
   Search,
@@ -125,7 +125,7 @@ type WorkspaceValidationRun = {
   steps: WorkspaceValidationStep[];
 };
 
-type WorkspaceFilter = "todos" | "entrada" | "revisao" | "risco" | "pronto" | "com_foto";
+type WorkspaceFilter = "todos" | "entrada" | "revisao" | "risco" | "pronto" | "com_foto" | "sem_foto" | "sem_valor";
 type CategoryFilter =
   | "todos"
   | "imoveis"
@@ -179,6 +179,10 @@ function normalizeText(value: string) {
 function formatCurrency(value: number) {
   if (!value) return "Valor não informado";
   return currencyFormatter.format(Number.isFinite(value) ? value : 0);
+}
+
+function hasMarketValue(item: WorkspaceOpportunity) {
+  return item.initialBid > 0 || item.appraisalValue > 0;
 }
 
 function formatShortDate(value: string) {
@@ -241,6 +245,8 @@ function filterLabel(filter: WorkspaceFilter) {
     risco: "Risco",
     pronto: "Prontos",
     com_foto: "Com foto",
+    sem_foto: "Sem foto real",
+    sem_valor: "Sem valor",
   };
   return labels[filter];
 }
@@ -313,7 +319,7 @@ function statusSuggestsStop(value: string) {
 
 function snapshotStopLabel(snapshot: WorkspaceSnapshot, qualifiedCodes: Set<string>) {
   if (!snapshot.opportunityCode) return "Nao virou oportunidade";
-  if (!qualifiedCodes.has(snapshot.opportunityCode)) return "Fora da vitrine";
+  if (!qualifiedCodes.has(snapshot.opportunityCode)) return "Fora do catalogo";
   if (statusSuggestsStop(`${snapshot.status} ${snapshot.runStatus} ${snapshot.curationStatus}`)) return "Coleta ou curadoria";
   if (statusSuggestsStop(snapshot.hiddenRiskStatus)) return "Risco oculto";
   if (snapshot.humanHandoffStatus && !normalizeText(snapshot.humanHandoffStatus).includes("completed")) return "Revisao humana";
@@ -446,8 +452,8 @@ function ValidationPipelinePanel({
       <div className="mb-4 grid gap-3 md:grid-cols-4">
         <MetricTile label="Candidatos brutos" value={String(snapshots.length)} detail="snapshots capturados" tone={metricTone(snapshots.length, "cyan")} />
         <MetricTile label="Viraram oportunidade" value={String(linkedCodes.size)} detail="gravados no banco" tone={metricTone(linkedCodes.size, "purple")} />
-        <MetricTile label="Entraram na vitrine" value={String(qualifiedCodes.size)} detail="passaram filtros finais" tone={metricTone(qualifiedCodes.size, "green")} />
-        <MetricTile label="Fora/duplicados" value={String(outsideOrDuplicate)} detail={`${unlinkedSnapshots} sem oportunidade; ${outsidePortfolio} fora vitrine`} tone={metricTone(outsideOrDuplicate, "yellow")} />
+        <MetricTile label="Exibidos no catalogo" value={String(qualifiedCodes.size)} detail="aparecem em imoveis analisados" tone={metricTone(qualifiedCodes.size, "green")} />
+        <MetricTile label="Fora/duplicados" value={String(outsideOrDuplicate)} detail={`${unlinkedSnapshots} sem oportunidade; ${outsidePortfolio} fora catalogo`} tone={metricTone(outsideOrDuplicate, "yellow")} />
       </div>
 
       <div className="mb-4 rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.02)] p-4">
@@ -466,7 +472,7 @@ function ValidationPipelinePanel({
               </div>
             ))
           ) : (
-            <p className="text-sm text-[var(--admin-muted)]">Todas as capturas desta lista chegaram ate a vitrine.</p>
+            <p className="text-sm text-[var(--admin-muted)]">Todas as capturas desta lista chegaram ate o catalogo.</p>
           )}
         </div>
       </div>
@@ -552,7 +558,7 @@ function EmptyState() {
         <Database className="mx-auto mb-3 text-[var(--admin-muted)]" size={28} />
         <h2 className="text-lg font-semibold text-white">Nenhum imóvel analisado</h2>
         <p className="mt-2 max-w-md text-sm leading-6 text-[var(--admin-muted)]">
-          A vitrine aparece assim que a Renata ou a entrada manual criar o primeiro imóvel.
+          A lista aparece assim que a Analise de mercado ou a entrada manual criar o primeiro imóvel.
         </p>
       </div>
     </div>
@@ -570,6 +576,7 @@ function PropertyCard({
 }) {
   const imageUrl = getPrimaryImage(opportunity);
   const imagesCount = opportunity.images?.length || 0;
+  const hasValue = hasMarketValue(opportunity);
   const location = [opportunity.city, opportunity.state].filter(Boolean).join("/");
   const due = daysUntil(opportunity.auctionDate);
   const detailHref = `/admin/oportunidades/${opportunity.id}`;
@@ -587,8 +594,14 @@ function PropertyCard({
               className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.025]"
             />
           ) : (
-            <div className="grid h-full place-items-center text-[var(--admin-muted)]">
-              <Home size={36} className="opacity-30" />
+            <div className="flex h-full flex-col items-center justify-center gap-2 bg-[rgba(234,179,8,0.08)] px-4 text-center text-[var(--admin-muted)]">
+              <ImageOff size={34} className="opacity-45" />
+              <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--admin-yellow)]">
+                Sem foto real
+              </span>
+              <span className="max-w-48 text-xs leading-5">
+                Banner, logo ou imagem tecnica foi ignorada pela captura.
+              </span>
             </div>
           )}
 
@@ -600,6 +613,15 @@ function PropertyCard({
               <span className="inline-flex items-center gap-1 rounded-md border border-black/35 bg-black/72 px-2 py-1 font-mono text-[10px] font-bold text-white">
                 <Camera size={11} />
                 {imagesCount}
+              </span>
+            ) : (
+              <span className="rounded-md border border-black/35 bg-black/72 px-2 py-1 text-[10px] font-bold uppercase text-[var(--admin-yellow)]">
+                Sem foto real
+              </span>
+            )}
+            {!hasValue ? (
+              <span className="rounded-md border border-black/35 bg-black/72 px-2 py-1 text-[10px] font-bold uppercase text-[var(--admin-red)]">
+                Valor pendente
               </span>
             ) : null}
           </div>
@@ -650,7 +672,10 @@ function PropertyCard({
         </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <StatusBadge tone="green">{opportunity.discountPct}% desconto</StatusBadge>
+          <StatusBadge tone={hasValue ? "green" : "yellow"}>
+            {hasValue ? `${opportunity.discountPct}% desconto` : "valor em revisão"}
+          </StatusBadge>
+          {!imageUrl ? <StatusBadge tone="yellow">sem foto real</StatusBadge> : null}
           <RiskBadge score={opportunity.riskScore} className="h-7 min-w-10" />
           <span className="inline-flex h-7 items-center gap-1 rounded-md border border-[var(--admin-border)] px-2 font-mono text-[10px] text-[var(--admin-muted)]">
             <CalendarDays size={12} />
@@ -746,8 +771,11 @@ export function OpportunityWorkspacePage({
     return opportunities.filter((item) => {
       if (category !== "todos" && classifyPropertyCategory(item) !== category) return false;
       const bucket = classifyOpportunity(item);
-      if (filter !== "todos" && filter !== "com_foto" && bucket !== filter) return false;
-      if (filter === "com_foto" && !getPrimaryImage(item)) return false;
+      const imageUrl = getPrimaryImage(item);
+      if (filter === "com_foto" && !imageUrl) return false;
+      if (filter === "sem_foto" && imageUrl) return false;
+      if (filter === "sem_valor" && hasMarketValue(item)) return false;
+      if (!["todos", "com_foto", "sem_foto", "sem_valor"].includes(filter) && bucket !== filter) return false;
       if (!text) return true;
 
       const haystack = normalizeText(
@@ -791,6 +819,8 @@ export function OpportunityWorkspacePage({
   const revisaoCount = opportunities.filter((item) => classifyOpportunity(item) === "revisao").length;
   const readyCount = opportunities.filter((item) => classifyOpportunity(item) === "pronto").length;
   const withPhotoCount = opportunities.filter((item) => Boolean(getPrimaryImage(item))).length;
+  const withoutPhotoCount = opportunities.filter((item) => !getPrimaryImage(item)).length;
+  const missingValueCount = opportunities.filter((item) => !hasMarketValue(item)).length;
 
   return (
     <div className="mx-auto max-w-[1800px] px-4 py-4 lg:px-5">
@@ -839,11 +869,12 @@ export function OpportunityWorkspacePage({
         {reason ? <p className="mt-3 text-xs text-[var(--admin-muted)]">{reason}</p> : null}
       </section>
 
-      <section className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <MetricTile label="Qualificados" value={String(opportunities.length)} detail={`${rawCaptureCount} snapshots; ${notVisibleCount} fora/duplicados`} tone="cyan" />
-        <MetricTile label="Com foto" value={String(withPhotoCount)} detail="prontos para vitrine" tone={metricTone(withPhotoCount, "green")} />
-        <MetricTile label="Em revisão" value={String(revisaoCount)} detail="jurídico ou humano" tone={metricTone(revisaoCount, "yellow")} />
-        <MetricTile label="Urgentes" value={String(urgentCount)} detail="leilão em até 3 dias" tone={metricTone(urgentCount, "red")} />
+      <section className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <MetricTile label="Analisados" value={String(opportunities.length)} detail={`${rawCaptureCount} snapshots; ${notVisibleCount} falhas/duplicados`} tone="cyan" />
+        <MetricTile label="Com foto" value={String(withPhotoCount)} detail="foto real encontrada" tone={metricTone(withPhotoCount, "green")} />
+        <MetricTile label="Sem foto real" value={String(withoutPhotoCount)} detail="banner ou bloqueio de imagem" tone={metricTone(withoutPhotoCount, "yellow")} />
+        <MetricTile label="Sem valor" value={String(missingValueCount)} detail="lance ou avaliação pendente" tone={metricTone(missingValueCount, "red")} />
+        <MetricTile label="Em revisão" value={String(revisaoCount)} detail={`${urgentCount} urgentes em até 3 dias`} tone={metricTone(revisaoCount, "yellow")} />
       </section>
 
       <section className="mb-4">
@@ -855,8 +886,8 @@ export function OpportunityWorkspacePage({
       </section>
 
       <DashboardCard
-        title="Vitrine de imóveis analisados"
-        eyebrow="foto / descrição / valor"
+        title="Catálogo de imóveis analisados"
+        eyebrow="status / foto / valor"
         action={
           <div className="relative w-56 sm:w-80">
             <Search
@@ -907,7 +938,7 @@ export function OpportunityWorkspacePage({
         </div>
 
         <div className="mb-4 flex flex-wrap gap-2">
-          {(["todos", "com_foto", "entrada", "revisao", "risco", "pronto"] as WorkspaceFilter[]).map((item) => (
+          {(["todos", "com_foto", "sem_foto", "sem_valor", "entrada", "revisao", "risco", "pronto"] as WorkspaceFilter[]).map((item) => (
             <Button
               key={item}
               type="button"

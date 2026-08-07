@@ -100,6 +100,8 @@ export type LinkScraperRow = {
   extractionTitle?: string;
   extractionConfidence?: number;
   missingFields?: string[];
+  initialBid?: number;
+  appraisalValue?: number;
   imageCount?: number;
   documentCount?: number;
   adapterKey?: string;
@@ -553,6 +555,8 @@ function mergeRowExtraction(row: LinkScraperRow, run: DbRow | undefined): LinkSc
     extractionTitle: cleanString(extracted.title, cleanString(subject.address)),
     extractionConfidence: asNumber(gemini.confidenceScore),
     missingFields,
+    initialBid: asNumber(extracted.initialBid),
+    appraisalValue: asNumber(extracted.appraisalValue),
     imageCount: asNumber(extracted.imageCount),
     documentCount: asNumber(extracted.documentCount),
     adapterKey: cleanString(adapter.key),
@@ -1513,19 +1517,29 @@ async function processImportRow(row: LinkScraperRow): Promise<{ ok: boolean; opp
 }
 
 function buildBatchMessage(batch: LinkScraperBatch, rows: LinkScraperRow[]) {
-  const success = rows.filter((row) => row.status === "pronto_para_revisao").length;
+  const readyRows = rows.filter((row) => row.status === "pronto_para_revisao");
+  const success = readyRows.length;
   const failed = rows.filter((row) => row.status === "falha" || row.status === "url_invalida").length;
   const pending = rows.filter((row) => !["pronto_para_revisao", "falha", "url_invalida"].includes(row.status)).length;
+  const withRealPhoto = readyRows.filter((row) => (row.imageCount || 0) > 0).length;
+  const withoutRealPhoto = Math.max(success - withRealPhoto, 0);
+  const withoutMarketValue = readyRows.filter((row) => !(row.initialBid || row.appraisalValue)).length;
+  const readyNeedingReview = readyRows.filter((row) => (row.imageCount || 0) <= 0 || !(row.initialBid || row.appraisalValue)).length;
+  const needsReview = readyNeedingReview + failed + pending;
   const domains = [...new Set(rows.filter((row) => row.status === "falha").map((row) => row.sourceDomain).filter(Boolean))].slice(0, 6);
   return [
-    "Betel AI - processamento de links concluido",
+    "Betel AI - analise de mercado concluida",
     `Arquivo/lote: ${batch.originalFilename || batch.id}`,
     `Links: ${rows.length}`,
-    `Prontos para revisao: ${success}`,
+    `Imoveis analisados: ${success}`,
+    `Com foto real: ${withRealPhoto}`,
+    withoutRealPhoto ? `Sem foto real: ${withoutRealPhoto}` : "",
+    withoutMarketValue ? `Sem lance/avaliacao: ${withoutMarketValue}` : "",
     `Falhas: ${failed}`,
     `Pendentes: ${pending}`,
+    `Precisam revisao: ${needsReview}`,
     domains.length ? `Dominios com falha: ${domains.join(", ")}` : "",
-    "Acesse o admin do scraper para revisar os resultados.",
+    "Acesse Analise de mercado > Imoveis analisados para revisar os resultados.",
   ].filter(Boolean).join("\n");
 }
 
@@ -1645,7 +1659,20 @@ export async function startLinkScraperBatch(input: {
     .select("*")
     .eq("batch_id", input.batchId)
     .order("row_number", { ascending: true });
-  const normalizedRows = ((finalRows || []) as DbRow[]).map(normalizeRow);
+  let normalizedRows = ((finalRows || []) as DbRow[]).map(normalizeRow);
+  if (normalizedRows.length) {
+    const { data: runData } = await supabase
+      .from("auction_scrape_runs")
+      .select("import_row_id, extracted_payload, created_at")
+      .in("import_row_id", normalizedRows.map((row) => row.id))
+      .order("created_at", { ascending: false });
+    const latestRunByRow = new Map<string, DbRow>();
+    ((runData || []) as DbRow[]).forEach((run) => {
+      const rowId = cleanString(run.import_row_id);
+      if (rowId && !latestRunByRow.has(rowId)) latestRunByRow.set(rowId, run);
+    });
+    normalizedRows = normalizedRows.map((row) => mergeRowExtraction(row, latestRunByRow.get(row.id)));
+  }
   const finalBatch = normalizeBatch({
     ...asRecord(batchRow),
     whatsapp_agent_key: cleanString(input.whatsappAgentKey) || cleanString(batchRow.whatsapp_agent_key),
@@ -1653,13 +1680,20 @@ export async function startLinkScraperBatch(input: {
     notification_recipient_id: cleanString(input.notificationRecipientId) || cleanString(batchRow.notification_recipient_id),
   }, normalizedRows);
 
+  const readyRows = normalizedRows.filter((row) => row.status === "pronto_para_revisao");
+  const readyWithRealPhoto = readyRows.filter((row) => (row.imageCount || 0) > 0).length;
+  const readyWithoutMarketValue = readyRows.filter((row) => !(row.initialBid || row.appraisalValue)).length;
+
   await supabase.from("market_analysis_import_batches").update({
     status: failed > 0 && processed === 0 ? "falha" : "concluido",
     completed_at: new Date().toISOString(),
     summary_payload: {
       processed,
       failed,
-      ready: normalizedRows.filter((row) => row.status === "pronto_para_revisao").length,
+      ready: readyRows.length,
+      withRealPhoto: readyWithRealPhoto,
+      withoutRealPhoto: Math.max(readyRows.length - readyWithRealPhoto, 0),
+      withoutMarketValue: readyWithoutMarketValue,
       total: normalizedRows.length,
     },
   }).eq("id", input.batchId);

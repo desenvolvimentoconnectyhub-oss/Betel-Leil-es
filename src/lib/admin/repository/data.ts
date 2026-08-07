@@ -43,6 +43,18 @@ function hasPortfolioImage(row: OpportunityDbRow) {
   return normalizeOpportunityImages(row.raw_payload).some((image) => Boolean(image.url) && image.status !== "failed");
 }
 
+function isUploadedMarketAnalysisRow(row: OpportunityDbRow) {
+  const rawPayload = asRecord(row.raw_payload);
+  const owner = asString(row.owner_name);
+
+  return (
+    asString(row.collection_mode) === "uploaded_auction_link" ||
+    asString(row.source_type) === "auction_link" ||
+    owner.toLowerCase().includes("upload de links") ||
+    Boolean(asString(rawPayload.importRowId) || asString(rawPayload.importBatchId))
+  );
+}
+
 function getPortfolioSourceUrl(row: OpportunityDbRow) {
   const rawPayload = asRecord(row.raw_payload);
   const candidate = asRecord(rawPayload.candidate);
@@ -82,6 +94,8 @@ export function shouldShowInPortfolio(row: OpportunityDbRow) {
   if (status.includes("descart")) return false;
   if (!hasRealEstateAssetIntent(row)) return false;
   if (!hasExactPortfolioSourceUrl(row)) return false;
+
+  if (isUploadedMarketAnalysisRow(row)) return true;
 
   return hasPortfolioValue(row) && hasPortfolioImage(row);
 }
