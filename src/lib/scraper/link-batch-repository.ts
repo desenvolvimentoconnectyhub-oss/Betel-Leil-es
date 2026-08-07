@@ -597,15 +597,25 @@ function normalizeRecipient(row: DbRow): ScraperNotificationRecipient {
 
 function normalizeWhatsappAgent(row: DbRow): WhatsappAgentOption {
   const status = cleanString(row.status);
+  const normalizedStatus = status.toLowerCase();
   return {
     id: cleanString(row.id),
     agentKey: cleanString(row.agent_key),
     instanceName: cleanString(row.instance_name),
     phone: cleanString(row.phone),
     status,
-    connected: ["connected", "open", "online"].includes(status.toLowerCase()) || Boolean(row.connected_at),
+    connected:
+      !["deleted", "archived", "inactive", "disabled"].includes(normalizedStatus) &&
+      (["connected", "open", "online"].includes(normalizedStatus) || Boolean(row.connected_at)),
     providerInstanceId: cleanString(row.provider_instance_id),
   };
+}
+
+function isUsableWhatsappAgent(agent: WhatsappAgentOption) {
+  if (!agent.id || !agent.providerInstanceId || !agent.connected) return false;
+  const name = `${agent.instanceName} ${agent.agentKey}`.toLowerCase();
+  if (name.includes("health-check") || name === "test" || name.includes(" test ")) return false;
+  return !["deleted", "archived", "inactive", "disabled"].includes(agent.status.toLowerCase());
 }
 
 async function listWhatsappAgents(): Promise<WhatsappAgentOption[]> {
@@ -614,10 +624,12 @@ async function listWhatsappAgents(): Promise<WhatsappAgentOption[]> {
   const { data, error } = await supabase
     .from("whatsapp_instances")
     .select("id, agent_key, instance_name, phone, status, connected_at, provider_instance_id")
+    .neq("status", "deleted")
+    .not("provider_instance_id", "is", null)
     .order("updated_at", { ascending: false })
     .limit(50);
   if (error) return [];
-  return ((data || []) as DbRow[]).map(normalizeWhatsappAgent);
+  return ((data || []) as DbRow[]).map(normalizeWhatsappAgent).filter(isUsableWhatsappAgent);
 }
 
 async function resolveProviderInstanceId(localInstanceId: string) {

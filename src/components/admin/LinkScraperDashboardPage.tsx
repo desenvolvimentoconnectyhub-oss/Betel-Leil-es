@@ -72,6 +72,13 @@ function instanceLabel(agent: WhatsappAgentOption) {
   return `${agent.instanceName || agent.agentKey || "Instancia WhatsApp"}${agent.phone ? ` - ${agent.phone}` : ""} - ${status}`;
 }
 
+function isSelectableWhatsappAgent(agent: WhatsappAgentOption) {
+  if (!agent.id || !agent.providerInstanceId || !agent.connected) return false;
+  const name = `${agent.instanceName} ${agent.agentKey}`.toLowerCase();
+  if (name.includes("health-check") || name === "test" || name.includes(" test ")) return false;
+  return !["deleted", "archived", "inactive", "disabled"].includes(agent.status.toLowerCase());
+}
+
 function recipientLabel(recipient: ScraperNotificationRecipient) {
   return `${recipient.sectorName}${recipient.recipientName ? ` - ${recipient.recipientName}` : ""}`;
 }
@@ -106,16 +113,15 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
 
   const connectedAgents = useMemo(
-    () => dashboard.whatsappAgents.filter((agent) => agent.connected),
+    () => dashboard.whatsappAgents.filter(isSelectableWhatsappAgent),
     [dashboard.whatsappAgents]
   );
   const selectedAgentOption = useMemo(
     () =>
-      dashboard.whatsappAgents.find((agent) => agent.id === selectedInstance) ||
-      dashboard.whatsappAgents.find((agent) => agent.agentKey === selectedAgent) ||
-      dashboard.whatsappAgents.find((agent) => agent.connected) ||
-      dashboard.whatsappAgents[0],
-    [dashboard.whatsappAgents, selectedAgent, selectedInstance]
+      connectedAgents.find((agent) => agent.id === selectedInstance) ||
+      connectedAgents.find((agent) => agent.agentKey === selectedAgent) ||
+      connectedAgents[0],
+    [connectedAgents, selectedAgent, selectedInstance]
   );
   const selectedRecipientOption = useMemo(
     () => dashboard.recipients.find((recipient) => recipient.id === selectedRecipient) || dashboard.recipients[0],
@@ -416,12 +422,12 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
               <label className="space-y-1">
                 <span className="text-xs text-[var(--admin-muted)]">Instancia que envia o aviso</span>
                 <select className={selectClass} value={selectedAgentOption?.id || ""} onChange={(event) => {
-                  const agent = dashboard.whatsappAgents.find((item) => item.id === event.target.value);
+                  const agent = connectedAgents.find((item) => item.id === event.target.value);
                   setSelectedAgent(agent?.agentKey || "");
                   setSelectedInstance(agent?.id || "");
                 }}>
                   <option value="">Selecione</option>
-                  {dashboard.whatsappAgents.map((agent) => (
+                  {connectedAgents.map((agent) => (
                     <option key={agent.id || agent.providerInstanceId || agent.agentKey} value={agent.id}>{instanceLabel(agent)}</option>
                   ))}
                 </select>
