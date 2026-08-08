@@ -2162,6 +2162,14 @@ export async function startLinkScraperBatch(input: {
     }
   }
 
+  if (stoppedByQualityGate) {
+    await supabase
+      .from("market_analysis_import_rows")
+      .update({ status: "aguardando_inicio" })
+      .eq("batch_id", input.batchId)
+      .eq("status", "aguardando_scraper");
+  }
+
   const { data: finalRows } = await supabase
     .from("market_analysis_import_rows")
     .select("*")

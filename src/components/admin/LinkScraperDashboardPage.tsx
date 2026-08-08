@@ -77,10 +77,21 @@ const analysisDepthLabels: Record<LinkAnalysisDepth, string> = {
 };
 
 function batchHasActiveWork(batch: LinkScraperBatch) {
-  return batch.status === "processando" || batch.rows.some((row) => activeRowStatuses.has(row.status));
+  return batch.status === "processando" && batch.rows.some((row) => activeRowStatuses.has(row.status));
+}
+
+function findQualityGateBlockedRow(batch: LinkScraperBatch) {
+  return batch.rows.find((row) =>
+    row.status === "falha" && row.errorMessage.toLowerCase().includes("trava de qualidade")
+  );
+}
+
+function qualityGateIssueText(errorMessage: string) {
+  return errorMessage.split("Campos pendentes:").at(1)?.replace(/\.$/, "").trim() || errorMessage;
 }
 
 function rowStageLabel(status: string) {
+  if (status === "aguardando_inicio") return "Aguardando inicio";
   if (status === "aguardando_scraper") return "Na fila para abrir o link";
   if (status === "scraping") return "Abrindo pagina e capturando dados";
   if (status === "scraper_concluido") return "Dados do leilao capturados";
@@ -782,6 +793,7 @@ function BatchArticle({
                   </button>
                 </div>
                 {batchHasActiveWork(batch) ? <BatchProcessingActivity batch={batch} /> : null}
+                {!batchHasActiveWork(batch) && findQualityGateBlockedRow(batch) ? <BatchPausedActivity batch={batch} /> : null}
                 <div className="mt-4 overflow-x-auto">
                   <table className="w-full min-w-[920px] text-left text-xs">
                     <thead className="text-[var(--admin-muted)]">
@@ -933,6 +945,55 @@ function BatchProcessingActivity({ batch }: { batch: LinkScraperBatch }) {
             })}
             {visibleStart + visibleRows.length < rows.length ? <ProcessingGap label={`+${rows.length - visibleStart - visibleRows.length} depois`} /> : null}
           </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function BatchPausedActivity({ batch }: { batch: LinkScraperBatch }) {
+  const blockedRow = findQualityGateBlockedRow(batch);
+  if (!blockedRow) return null;
+
+  const pendingRows = batch.rows.filter((row) => !terminalRowStatuses.has(row.status)).length;
+  const issues = qualityGateIssueText(blockedRow.errorMessage)
+    .split(",")
+    .map((issue) => issue.trim())
+    .filter(Boolean)
+    .slice(0, 10);
+
+  return (
+    <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-950">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div className="min-w-0">
+          <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-700">
+            Analise pausada
+          </p>
+          <h3 className="mt-1 flex items-center gap-2 text-sm font-semibold text-amber-950">
+            <AlertTriangle size={16} />
+            Trava de qualidade acionada
+          </h3>
+          <p className="mt-1 text-xs leading-5 text-amber-800">
+            O lote parou na linha <span className="font-semibold">{blockedRow.rowNumber}</span>
+            {blockedRow.sourceDomain ? <> - <span className="font-semibold">{blockedRow.sourceDomain}</span></> : null}
+            . Complete os dados pendentes antes de continuar a sequencia.
+          </p>
+        </div>
+        <div className="inline-flex w-fit items-center gap-2 rounded-full border border-amber-200 bg-white px-3 py-1 text-[11px] font-semibold text-amber-800">
+          {pendingRows} link(s) aguardando
+        </div>
+      </div>
+
+      {issues.length ? (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {issues.map((issue) => (
+            <span
+              key={issue}
+              className="rounded-full border border-amber-200 bg-white px-2 py-1 text-[11px] font-semibold text-amber-800"
+            >
+              {issue}
+            </span>
+          ))}
         </div>
       ) : null}
     </div>
