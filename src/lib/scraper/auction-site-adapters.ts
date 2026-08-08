@@ -212,6 +212,23 @@ const PROFILES: AdapterProfile[] = [
     documentSignals: [...COMMON_DOCUMENT_SIGNALS, "todos"],
   },
   {
+    key: "pestana-leiloes",
+    name: "Pestana Leiloes",
+    domains: ["pestanaleiloes.com.br"],
+    initialBidLabels: ["lance minimo", "valor 1o leilao", "valor 1 leilao", "valor leilao1", ...COMMON_INITIAL_BID_LABELS],
+    appraisalLabels: COMMON_APPRAISAL_LABELS,
+    auctionDateLabels: ["data 1o leilao", "data 2o leilao", "pregao abre em", ...COMMON_DATE_LABELS],
+    paymentLabels: ["pagamento a vista", "vide edital", ...COMMON_PAYMENT_LABELS],
+    occupancyLabels: ["situacao", "ocupado", "desocupado", ...COMMON_OCCUPANCY_LABELS],
+    legalLabels: ["acao judicial", "debitos", "matricula", "observacoes", "alienacao fiduciaria", "penhora", ...COMMON_LEGAL_LABELS],
+    areaLabels: {
+      privateAreaM2: ["area privativa", "area util", ...COMMON_AREA_LABELS.privateAreaM2],
+      builtAreaM2: ["area construida", ...COMMON_AREA_LABELS.builtAreaM2],
+      landAreaM2: ["area de terreno", "area total", ...COMMON_AREA_LABELS.landAreaM2],
+    },
+    documentSignals: [...COMMON_DOCUMENT_SIGNALS, "edital lote", "regulamento"],
+  },
+  {
     key: "central-sul-leiloes",
     name: "Central Sul de Leiloes",
     domains: ["centralsuldeleiloes.com.br"],

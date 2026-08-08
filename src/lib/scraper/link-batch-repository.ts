@@ -1398,7 +1398,346 @@ function isLikelySupplementImageUrl(value: string) {
     "de_desconto",
     "desconto.png",
     "desconto.jpg",
+    "tarja",
+    "retirado",
+    "selo",
   ].some((signal) => normalized.includes(signal));
+}
+
+const PESTANA_CHARACTERISTIC_LABELS: Record<string, string> = {
+  "1759180483479": "Descricao completa",
+  "1759180486051": "Situacao",
+  "1759180487526": "Data 1o Leilao",
+  "1759180490557": "Valor 1o Leilao",
+  "1759180492589": "Data 2o Leilao",
+  "1759180494620": "Valor 2o Leilao",
+  "1759180496725": "Area Total",
+  "1759180497769": "Area Privativa",
+  "1759180500119": "Area de Terreno",
+  "1759180501812": "Area Construida",
+  "1759180502843": "Permite visitacao",
+  "1759180503875": "Debitos",
+  "1759180506907": "Tipo",
+  "1759180508941": "Matricula",
+  "1759180515049": "Bairro",
+  "1759180517085": "Logradouro",
+  "1759180520114": "Numero",
+  "1759180523151": "Complemento",
+  "1759180526185": "Distancia do Metro",
+  "1759180529217": "Acao Judicial",
+  "11111": "UF",
+  "22222": "Cidade",
+};
+
+type PestanaCharacteristicEntry = {
+  label: string;
+  value: string;
+  typeId: string;
+};
+
+function pestanaIdsFromUrl(value: string) {
+  try {
+    const pathname = new URL(value).pathname;
+    const match = pathname.match(/\/agenda-de-leiloes\/(\d+)\/(\d+)(?:\/|$)/i);
+    if (!match) return null;
+    return { auctionId: match[1], lotId: match[2] };
+  } catch {
+    return null;
+  }
+}
+
+function normalizePestanaText(value: string) {
+  return cleanString(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\u00b2/g, "2")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function meaningfulPestanaValue(value: unknown) {
+  const clean = cleanString(value);
+  if (!clean) return "";
+  const normalized = normalizePestanaText(clean);
+  if (["nao informado", "nao informada", "null", "undefined", "-"].includes(normalized)) return "";
+  return clean;
+}
+
+function pestanaAssets(lot: DbRow) {
+  return asArray(lot.bens)
+    .map(asRecord)
+    .sort((a, b) => asNumber(a.ordem, 999) - asNumber(b.ordem, 999));
+}
+
+function pestanaCharacteristicEntries(lot: DbRow): PestanaCharacteristicEntry[] {
+  return pestanaAssets(lot).flatMap((asset) =>
+    asArray(asset.caracteristicas).map((item) => {
+      const characteristic = asRecord(item);
+      const typeId = cleanString(characteristic.tipo);
+      return {
+        typeId,
+        label: cleanString(characteristic.nome, PESTANA_CHARACTERISTIC_LABELS[typeId] || typeId),
+        value: meaningfulPestanaValue(characteristic.valor),
+      };
+    }).filter((entry) => entry.label && entry.value)
+  );
+}
+
+function pestanaCharacteristicValue(entries: PestanaCharacteristicEntry[], labels: string[]) {
+  const targets = labels.map(normalizePestanaText);
+  return entries.find((entry) =>
+    targets.includes(normalizePestanaText(entry.label)) ||
+    targets.includes(normalizePestanaText(entry.typeId))
+  )?.value || "";
+}
+
+function pestanaMoneyFromLot(lot: DbRow, cardLot: DbRow, keys: string[]) {
+  const law = asRecord(lot.informacoesLei9514);
+  const cardLaw = asRecord(firstKnown(cardLot.footer && asRecord(cardLot.footer).leilaoLei, cardLot.informacoesLei9514));
+  const footer = asRecord(cardLot.footer);
+  return firstPositive(
+    ...keys.flatMap((key) => [
+      asMoneyNumber(lot[key]),
+      asMoneyNumber(cardLot[key]),
+      asMoneyNumber(law[key]),
+      asMoneyNumber(cardLaw[key]),
+      asMoneyNumber(footer[key]),
+    ])
+  );
+}
+
+function pestanaMediaUrl(value: unknown) {
+  const clean = cleanString(value);
+  if (!clean) return "";
+  if (/^https?:\/\//i.test(clean)) return clean;
+  return `https://ged.pestanaleiloes.com.br/ged/${clean.replace(/^\/+/, "")}`;
+}
+
+function pestanaImageUrls(lot: DbRow, cardLot: DbRow) {
+  const assets = [...pestanaAssets(lot), ...pestanaAssets(cardLot)];
+  const urls = assets.flatMap((asset) => {
+    const main = asRecord(asset.imagemPrincipal);
+    return [
+      main.original,
+      main.media,
+      main.pequena,
+      asset.imagemPlaceholder,
+      ...asArray(asset.imagens).flatMap((item) => {
+        const image = asRecord(item);
+        return [image.original, image.media, image.pequena];
+      }),
+    ].map(pestanaMediaUrl);
+  });
+  return uniqueStrings(urls.filter(isLikelySupplementImageUrl), 50);
+}
+
+function pestanaDocumentLinks(lot: DbRow): AuctionSiteDocument[] {
+  const documents = [
+    ...asArray(lot.documentos),
+    ...pestanaAssets(lot).flatMap((asset) => asArray(asset.documentos)),
+  ];
+
+  return mergeDocumentLinks(documents.map((item) => {
+    const document = asRecord(item);
+    const label = cleanString(document.nome || document.label || document.titulo, "Documento");
+    const url = cleanString(document.link || document.url || document.href);
+    const normalized = normalizePestanaText(`${label} ${url}`);
+    const kind = normalized.includes("matricula")
+      ? "matricula"
+      : normalized.includes("edital")
+        ? "edital"
+        : "documento";
+    return { label, url, kind };
+  }));
+}
+
+function buildPestanaSupplement(input: {
+  lot: DbRow;
+  cardLot: DbRow;
+  ids: { auctionId: string; lotId: string };
+  sourceUrl: string;
+  apiUrl: string;
+}) {
+  const entries = pestanaCharacteristicEntries(input.lot);
+  const assets = pestanaAssets(input.lot);
+  const primaryAsset = assets.find((asset) => normalizePestanaText(pestanaCharacteristicValue(
+    asArray(asset.caracteristicas).map((item) => {
+      const characteristic = asRecord(item);
+      const typeId = cleanString(characteristic.tipo);
+      return {
+        typeId,
+        label: cleanString(characteristic.nome, PESTANA_CHARACTERISTIC_LABELS[typeId] || typeId),
+        value: meaningfulPestanaValue(characteristic.valor),
+      };
+    }).filter((entry) => entry.label && entry.value),
+    ["Tipo"]
+  )) !== "vaga de garagem") || assets[0] || {};
+  const title = firstText(cleanString(input.lot.descricao), cleanString(primaryAsset.descricao), `Lote ${input.ids.lotId}`);
+  const law = asRecord(input.lot.informacoesLei9514);
+  const cardFooter = asRecord(input.cardLot.footer);
+  const footerLaw = asRecord(firstKnown(cardFooter.leilaoLei, input.cardLot.informacoesLei9514));
+  const description = firstText(
+    pestanaCharacteristicValue(entries, ["Descricao completa"]),
+    cleanString(primaryAsset.descricao),
+    cleanString(input.lot.descricao)
+  );
+  const observation = uniqueStrings(pestanaAssets(input.lot).map((asset) => cleanString(asset.observacao)).filter(Boolean), 4).join("\n");
+  const street = pestanaCharacteristicValue(entries, ["Logradouro"]);
+  const number = pestanaCharacteristicValue(entries, ["Numero"]);
+  const complement = pestanaCharacteristicValue(entries, ["Complemento"]);
+  const neighborhood = pestanaCharacteristicValue(entries, ["Bairro"]);
+  const city = pestanaCharacteristicValue(entries, ["Cidade"]);
+  const state = pestanaCharacteristicValue(entries, ["UF"]).toUpperCase();
+  const address = [street, number].filter(Boolean).join(", ");
+  const propertyType = pestanaCharacteristicValue(entries, ["Tipo"]) || inferPropertyType(`${title} ${description}`, "");
+  const occupancy = pestanaCharacteristicValue(entries, ["Situacao"]) || firstText(
+    normalizePestanaText(observation).includes("ocupado") ? "Ocupado" : "",
+    normalizePestanaText(observation).includes("desocupado") ? "Desocupado" : ""
+  );
+  const privateArea = firstPositive(asMoneyNumber(pestanaCharacteristicValue(entries, ["Area Privativa"])), areaFromText(description));
+  const landArea = asMoneyNumber(pestanaCharacteristicValue(entries, ["Area de Terreno", "Area Total"]));
+  const builtArea = asMoneyNumber(pestanaCharacteristicValue(entries, ["Area Construida"]));
+  const firstAuctionValue = firstPositive(
+    asMoneyNumber(pestanaCharacteristicValue(entries, ["Valor 1o Leilao"])),
+    asMoneyNumber(firstKnown(law.valorLeilao1, footerLaw.valorLeilao1, cardFooter.valorLeilao1))
+  );
+  const secondAuctionValue = firstPositive(
+    asMoneyNumber(pestanaCharacteristicValue(entries, ["Valor 2o Leilao"])),
+    asMoneyNumber(firstKnown(law.valorLeilao2, footerLaw.valorLeilao2, cardFooter.valorLeilao2))
+  );
+  const minimumBid = pestanaMoneyFromLot(input.lot, input.cardLot, ["lanceMinimo", "valorInicial", "valorFiltro", "lanceInicial", "valor"]);
+  const firstAuctionDate = firstText(
+    pestanaCharacteristicValue(entries, ["Data 1o Leilao"]),
+    formatDateForSupplement(cardFooter.date)
+  );
+  const secondAuctionDate = pestanaCharacteristicValue(entries, ["Data 2o Leilao"]);
+  const documents = pestanaDocumentLinks(input.lot);
+  const imageUrls = pestanaImageUrls(input.lot, input.cardLot);
+  const extraFields = entries
+    .filter((entry) => !["descricao completa"].includes(normalizePestanaText(entry.label)))
+    .map((entry) => `${entry.label}: ${entry.value}`);
+
+  const text = [
+    "Fonte complementar Pestana Leiloes",
+    `Titulo: ${title}`,
+    `Lote: ${cleanString(input.lot.numero, input.ids.lotId)}`,
+    propertyType ? `Tipo: ${propertyType}` : "",
+    address ? `Endereco: ${[address, complement].filter(Boolean).join(" - ")}` : "",
+    neighborhood ? `Bairro: ${neighborhood}` : "",
+    city || state ? `Cidade/UF: ${[city, state].filter(Boolean).join("/")}` : "",
+    occupancy ? `Ocupacao: ${occupancy}` : "",
+    privateArea ? `Area privativa: ${formatAreaForSupplement(privateArea)}` : "",
+    landArea ? `Area do terreno: ${formatAreaForSupplement(landArea)}` : "",
+    builtArea ? `Area construida: ${formatAreaForSupplement(builtArea)}` : "",
+    firstAuctionValue ? `Valor 1o Leilao: ${formatMoneyForSupplement(firstAuctionValue)}` : "",
+    secondAuctionValue ? `Valor 2o Leilao: ${formatMoneyForSupplement(secondAuctionValue)}` : "",
+    minimumBid ? `Lance minimo: ${formatMoneyForSupplement(minimumBid)}` : "",
+    firstAuctionDate ? `Data 1o Leilao: ${firstAuctionDate}` : "",
+    secondAuctionDate ? `Data 2o Leilao: ${secondAuctionDate}` : "",
+    asMoneyNumber(input.lot.incrementoMinimo) ? `Incremento minimo: ${formatMoneyForSupplement(asMoneyNumber(input.lot.incrementoMinimo))}` : "",
+    pestanaCharacteristicValue(entries, ["Debitos"]) ? `Debitos: ${pestanaCharacteristicValue(entries, ["Debitos"])}` : "",
+    pestanaCharacteristicValue(entries, ["Acao Judicial"]) ? `Acao Judicial: ${pestanaCharacteristicValue(entries, ["Acao Judicial"])}` : "",
+    pestanaCharacteristicValue(entries, ["Matricula"]) ? `Matricula: ${pestanaCharacteristicValue(entries, ["Matricula"])}` : "",
+    description ? `Descricao completa: ${description}` : "",
+    observation ? `Observacoes: ${observation}` : "",
+    extraFields.length ? `Caracteristicas: ${uniqueStrings(extraFields, 40).join(" | ")}` : "",
+    imageUrls.length ? `Galeria de imagens: ${imageUrls.join(" | ")}` : "",
+    documents.length ? `Documentos: ${documents.map((document) => `${document.label}: ${document.url}`).join(" | ")}` : "",
+  ].filter(Boolean).join("\n");
+
+  const html = [
+    `<h1>${escapeHtml(title)}</h1>`,
+    `<section>${escapeHtml(text)}</section>`,
+    imageUrls.map((url) => `<img src="${escapeHtml(url)}" alt="${escapeHtml(title)}" />`).join("\n"),
+    documents.map((document) => `<a href="${escapeHtml(document.url)}">${escapeHtml(document.label)}</a>`).join("\n"),
+  ].filter(Boolean).join("\n");
+
+  return {
+    html,
+    text,
+    imageUrls,
+    documentLinks: documents,
+    source: input.apiUrl,
+    warnings: [],
+  } satisfies AuctionPageSupplement;
+}
+
+async function fetchPestanaSupplement(input: { sourceUrl: string; resolvedSourceUrl: string; timeoutMs: number }) {
+  const ids = pestanaIdsFromUrl(input.resolvedSourceUrl) || pestanaIdsFromUrl(input.sourceUrl);
+  if (!ids) {
+    return {
+      ...emptyAuctionPageSupplement("pestana_leiloes_api"),
+      warnings: ["Pestana: link sem ids de leilao/lote para consulta complementar."],
+    };
+  }
+
+  const origin = (() => {
+    try {
+      return new URL(input.resolvedSourceUrl || input.sourceUrl).origin;
+    } catch {
+      return "https://www.pestanaleiloes.com.br";
+    }
+  })();
+  const apiUrl = `${origin}/api/v2/lote/por-leilao?idLeilao=${encodeURIComponent(ids.auctionId)}`;
+  const timeout = Math.min(Math.max(input.timeoutMs, 12_000), 40_000);
+  const headers = {
+    Accept: "application/json",
+    Referer: input.resolvedSourceUrl || input.sourceUrl,
+    "User-Agent": "BetelBot/1.0 (+https://betel.com.br)",
+  };
+
+  try {
+    const response = await fetch(apiUrl, {
+      headers,
+      signal: AbortSignal.timeout(timeout),
+    });
+    if (!response.ok) {
+      return {
+        ...emptyAuctionPageSupplement("pestana_leiloes_api"),
+        warnings: [`Pestana: API de lote retornou HTTP ${response.status}.`],
+      };
+    }
+
+    const lots = asArray(await response.json()).map(asRecord);
+    const lot = lots.find((candidate) => cleanString(candidate.id) === ids.lotId) || {};
+    if (!cleanString(lot.id || lot.descricao)) {
+      return {
+        ...emptyAuctionPageSupplement("pestana_leiloes_api"),
+        warnings: ["Pestana: API nao retornou o lote solicitado."],
+      };
+    }
+
+    const cardsApiUrl = `${origin}/api/v2/lote/cards-por-ids`;
+    let cardLot: DbRow = {};
+    try {
+      const cardsResponse = await fetch(cardsApiUrl, {
+        method: "POST",
+        headers: {
+          ...headers,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ ids: [Number(ids.lotId)] }),
+        signal: AbortSignal.timeout(timeout),
+      });
+      if (cardsResponse.ok) {
+        cardLot = asArray(await cardsResponse.json()).map(asRecord).find((candidate) => cleanString(candidate.id) === ids.lotId) || {};
+      }
+    } catch {}
+
+    return buildPestanaSupplement({
+      lot,
+      cardLot,
+      ids,
+      sourceUrl: input.resolvedSourceUrl || input.sourceUrl,
+      apiUrl,
+    });
+  } catch {
+    return {
+      ...emptyAuctionPageSupplement("pestana_leiloes_api"),
+      warnings: ["Pestana: API complementar indisponivel."],
+    };
+  }
 }
 
 function astaveroAttachmentUrl(item: unknown, baseUrl: string) {
@@ -1709,6 +2048,9 @@ async function fetchAuctionPageSupplement(input: {
   domain: string;
   timeoutMs: number;
 }) {
+  if (isDomain(input.domain, "pestanaleiloes.com.br")) {
+    return fetchPestanaSupplement(input);
+  }
   if (isDomain(input.domain, "centralsuldeleiloes.com.br")) {
     return fetchCentralSulSupplement(input);
   }
