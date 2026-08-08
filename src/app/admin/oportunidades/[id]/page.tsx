@@ -40,6 +40,7 @@ export default async function OpportunityDetailPage({
       activeTab={firstQueryValue(query.tab)}
       marketFilter={firstQueryValue(query.marketFilter)}
       marketSort={firstQueryValue(query.marketSort)}
+      selectedPhoto={firstQueryValue(query.photo)}
     />
   );
 }

@@ -70,6 +70,7 @@ type OpportunityDetailCenterProps = {
   activeTab?: string;
   marketFilter?: string;
   marketSort?: string;
+  selectedPhoto?: string;
 };
 
 const tabs: Array<{ id: OpportunityTabId; label: string; icon: ReactNode }> = [
@@ -137,6 +138,19 @@ function tabHref(tab: OpportunityTabId, extra?: Record<string, string | undefine
     if (value) params.set(key, value);
   });
   return `?${params.toString()}`;
+}
+
+function imageHref(tab: OpportunityTabId, imageIndex: number) {
+  return `${tabHref(tab, { photo: String(imageIndex + 1) })}#fotos`;
+}
+
+function normalizePhotoIndex(value: string | undefined, imageCount: number) {
+  if (!value || imageCount <= 0) return -1;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return -1;
+
+  const index = parsed <= 0 ? parsed : parsed - 1;
+  return index >= 0 && index < imageCount ? index : -1;
 }
 
 function percent(value: number) {
@@ -418,6 +432,7 @@ function HiddenReviewFields({ opportunity, analysis }: { opportunity: AuctionOpp
 }
 
 function SectionCard({
+  id,
   title,
   eyebrow,
   action,
@@ -425,6 +440,7 @@ function SectionCard({
   className,
   contentClassName,
 }: {
+  id?: string;
   title: string;
   eyebrow?: string;
   action?: ReactNode;
@@ -434,6 +450,7 @@ function SectionCard({
 }) {
   return (
     <section
+      id={id}
       className={cn(
         "min-w-0 overflow-hidden rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] text-[var(--admin-foreground)] shadow-sm shadow-[rgba(81,60,36,0.06)]",
         className
@@ -865,32 +882,56 @@ function Gallery({
   images,
   heroImage,
   title,
+  currentTab,
+  selectedImageIndex,
   compact = false,
 }: {
   images: PropertyImageAsset[];
   heroImage?: PropertyImageAsset;
   title: string;
+  currentTab: OpportunityTabId;
+  selectedImageIndex?: number;
   compact?: boolean;
 }) {
-  const thumbnails = images.filter((image) => image.url !== heroImage?.url).slice(0, compact ? 5 : 8);
-  const extraCount = Math.max(0, images.length - thumbnails.length - (heroImage ? 1 : 0));
+  const activeIndex =
+    typeof selectedImageIndex === "number"
+      ? selectedImageIndex
+      : heroImage
+        ? images.findIndex((image) => image.url === heroImage.url)
+        : -1;
+  const heroHeight = compact ? "h-[240px] sm:h-[320px] xl:h-[380px]" : "h-[300px] sm:h-[380px] xl:h-[460px]";
 
   return (
     <SectionCard
+      id="fotos"
       title="Fotos do imovel"
       eyebrow="galeria / r2"
       action={<StatusBadge tone={heroImage ? "green" : "yellow"}>{images.length} foto(s)</StatusBadge>}
+      className="scroll-mt-40"
       contentClassName="p-3"
     >
-      <div className={cn("grid gap-3", compact ? "lg:grid-cols-[1fr_160px]" : "lg:grid-cols-[minmax(0,1fr)_210px]")}>
+      <div className={cn("grid items-start gap-3", compact ? "lg:grid-cols-[1fr_164px]" : "lg:grid-cols-[minmax(0,1fr)_220px]")}>
         {heroImage ? (
-          <div className="overflow-hidden rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card-2)]">
+          <a
+            href={heroImage.url}
+            target="_blank"
+            rel="noreferrer"
+            className={cn(
+              "group relative block overflow-hidden rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card-2)] transition focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-[rgba(200,90,31,0.2)]",
+              heroHeight
+            )}
+            aria-label={`Abrir foto principal de ${title}`}
+          >
             <img
               src={heroImage.url}
               alt={heroImage.alt || title}
-              className={cn("w-full object-cover", compact ? "aspect-[16/8] max-h-[420px]" : "aspect-[16/10] max-h-[520px]")}
+              className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.015]"
             />
-          </div>
+            <span className="absolute bottom-3 right-3 inline-flex h-8 items-center gap-1.5 rounded-full border border-white/60 bg-black/58 px-3 text-xs font-semibold text-white opacity-0 shadow-sm transition group-hover:opacity-100 group-focus-visible:opacity-100">
+              Abrir imagem
+              <ArrowUpRight size={13} />
+            </span>
+          </a>
         ) : (
           <div className="grid aspect-[16/9] min-h-56 place-items-center rounded-lg border border-[var(--admin-border)] bg-[#fbf6e9] text-center">
             <div>
@@ -903,25 +944,38 @@ function Gallery({
           </div>
         )}
 
-        <div className={cn("grid gap-2", compact ? "grid-cols-3 lg:grid-cols-1" : "grid-cols-4 lg:grid-cols-2")}>
-          {thumbnails.map((image, index) => (
-            <div
+        <div
+          className={cn(
+            "grid gap-2",
+            compact
+              ? "grid-cols-5 lg:max-h-[380px] lg:grid-cols-1 lg:overflow-y-auto lg:pr-1"
+              : "grid-cols-4 lg:max-h-[460px] lg:grid-cols-2 lg:overflow-y-auto lg:pr-1"
+          )}
+        >
+          {images.map((image, index) => (
+            <Link
               key={`${image.url}-${index}`}
-              className="overflow-hidden rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card-2)]"
+              href={imageHref(currentTab, index)}
+              scroll={false}
+              className={cn(
+                "group relative block aspect-[4/3] overflow-hidden rounded-lg border bg-[var(--admin-card-2)] transition focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-[rgba(200,90,31,0.2)]",
+                activeIndex === index
+                  ? "border-[rgba(200,90,31,0.75)] ring-2 ring-[rgba(200,90,31,0.18)]"
+                  : "border-[var(--admin-border)] hover:border-[rgba(200,90,31,0.5)]"
+              )}
+              aria-label={`Selecionar foto ${index + 1} de ${title}`}
             >
               <img
                 src={image.url}
-                alt={image.alt || `${title} foto ${index + 2}`}
+                alt={image.alt || `${title} foto ${index + 1}`}
                 loading="lazy"
-                className="aspect-[4/3] h-full w-full object-cover"
+                className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.04]"
               />
-            </div>
+              <span className="absolute left-1.5 top-1.5 grid size-6 place-items-center rounded-full bg-black/58 font-mono text-[10px] font-semibold text-white">
+                {index + 1}
+              </span>
+            </Link>
           ))}
-          {extraCount > 0 ? (
-            <div className="grid aspect-[4/3] place-items-center rounded-lg border border-[var(--admin-border)] bg-white font-mono text-sm font-semibold text-[var(--admin-muted)]">
-              +{extraCount}
-            </div>
-          ) : null}
         </div>
       </div>
     </SectionCard>
@@ -933,11 +987,13 @@ function ExecutiveSummary({
   analysis,
   images,
   heroImage,
+  selectedImageIndex,
 }: {
   opportunity: AuctionOpportunity;
   analysis: PropertyMarketAnalysis | null;
   images: PropertyImageAsset[];
   heroImage?: PropertyImageAsset;
+  selectedImageIndex?: number;
 }) {
   const subject = analysis?.subject;
   const primaryCeiling = analysis?.ceilingTargets[0]?.value || analysis?.suggestedCeilingBid || 0;
@@ -946,7 +1002,14 @@ function ExecutiveSummary({
 
   return (
     <section className="grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(420px,1.05fr)]">
-      <Gallery images={images} heroImage={heroImage} title={opportunity.title} compact />
+      <Gallery
+        images={images}
+        heroImage={heroImage}
+        selectedImageIndex={selectedImageIndex}
+        title={opportunity.title}
+        currentTab="visao-geral"
+        compact
+      />
 
       <div className="grid content-start gap-4">
         <SectionCard title="Resumo executivo" eyebrow="imovel / decisao" contentClassName="p-4">
@@ -1093,12 +1156,14 @@ function TabContent({
   reason,
   images,
   heroImage,
+  selectedImageIndex,
   marketFilter,
   marketSort,
 }: OpportunityDetailCenterProps & {
   activeTab: OpportunityTabId;
   images: PropertyImageAsset[];
   heroImage?: PropertyImageAsset;
+  selectedImageIndex?: number;
 }) {
   switch (activeTab) {
     case "financeiro":
@@ -1108,7 +1173,7 @@ function TabContent({
     case "mercado":
       return <MarketTab analysis={analysis} marketFilter={marketFilter} marketSort={marketSort} />;
     case "imovel":
-      return <PropertyTab opportunity={opportunity} analysis={analysis} images={images} heroImage={heroImage} />;
+      return <PropertyTab opportunity={opportunity} analysis={analysis} images={images} heroImage={heroImage} selectedImageIndex={selectedImageIndex} />;
     case "documentos":
       return <DocumentsTab opportunity={opportunity} analysis={analysis} />;
     case "revisao":
@@ -1117,7 +1182,7 @@ function TabContent({
       return <HistoryTab opportunity={opportunity} analysis={analysis} />;
     case "visao-geral":
     default:
-      return <OverviewTab opportunity={opportunity} analysis={analysis} images={images} heroImage={heroImage} reason={reason} />;
+      return <OverviewTab opportunity={opportunity} analysis={analysis} images={images} heroImage={heroImage} selectedImageIndex={selectedImageIndex} reason={reason} />;
   }
 }
 
@@ -1126,12 +1191,14 @@ function OverviewTab({
   analysis,
   images,
   heroImage,
+  selectedImageIndex,
   reason,
 }: {
   opportunity: AuctionOpportunity;
   analysis: PropertyMarketAnalysis | null;
   images: PropertyImageAsset[];
   heroImage?: PropertyImageAsset;
+  selectedImageIndex?: number;
   reason?: string;
 }) {
   const review = reviewedFieldsCount(opportunity, analysis);
@@ -1139,7 +1206,13 @@ function OverviewTab({
 
   return (
     <div className="grid gap-4">
-      <ExecutiveSummary opportunity={opportunity} analysis={analysis} images={images} heroImage={heroImage} />
+      <ExecutiveSummary
+        opportunity={opportunity}
+        analysis={analysis}
+        images={images}
+        heroImage={heroImage}
+        selectedImageIndex={selectedImageIndex}
+      />
       <RecommendedAction opportunity={opportunity} analysis={analysis} />
       <PipelineStepper opportunity={opportunity} analysis={analysis} />
 
@@ -1621,18 +1694,26 @@ function PropertyTab({
   analysis,
   images,
   heroImage,
+  selectedImageIndex,
 }: {
   opportunity: AuctionOpportunity;
   analysis: PropertyMarketAnalysis | null;
   images: PropertyImageAsset[];
   heroImage?: PropertyImageAsset;
+  selectedImageIndex?: number;
 }) {
   const subject = analysis?.subject;
   const payment = analysis?.paymentSimulation;
 
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,0.8fr)_minmax(420px,1.2fr)]">
-      <Gallery images={images} heroImage={heroImage} title={opportunity.title} />
+      <Gallery
+        images={images}
+        heroImage={heroImage}
+        selectedImageIndex={selectedImageIndex}
+        title={opportunity.title}
+        currentTab="imovel"
+      />
       <div className="grid content-start gap-4">
         <SectionCard
           title="Cadastro do imovel"
@@ -2060,10 +2141,15 @@ export function OpportunityDetailCenter({
   activeTab,
   marketFilter,
   marketSort,
+  selectedPhoto,
 }: OpportunityDetailCenterProps) {
   const tab = normalizeTab(activeTab);
   const images = (opportunity.images || []).filter((image) => image.status !== "failed");
-  const heroImage = images.find((image) => image.status === "mirrored") || images[0];
+  const requestedImageIndex = normalizePhotoIndex(selectedPhoto, images.length);
+  const defaultImageIndex = images.findIndex((image) => image.status === "mirrored");
+  const selectedImageIndex =
+    requestedImageIndex >= 0 ? requestedImageIndex : defaultImageIndex >= 0 ? defaultImageIndex : images.length ? 0 : -1;
+  const heroImage = selectedImageIndex >= 0 ? images[selectedImageIndex] : undefined;
   const body = (
     <div id="topo-oportunidade" className="mx-auto grid max-w-[1600px] gap-4 px-3 py-3 lg:px-5">
       <div className="sticky top-16 z-10">
@@ -2078,6 +2164,7 @@ export function OpportunityDetailCenter({
         reason={reason}
         images={images}
         heroImage={heroImage}
+        selectedImageIndex={selectedImageIndex >= 0 ? selectedImageIndex : undefined}
         marketFilter={marketFilter}
         marketSort={marketSort}
       />
