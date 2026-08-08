@@ -76,8 +76,25 @@ function pricePerM2(value: number) {
   return value ? `${formatCurrency(value)}/m2` : "nao calculado";
 }
 
+function decodeEscapedText(value: string) {
+  const decoded = value.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex: string) =>
+    String.fromCharCode(Number.parseInt(hex, 16))
+  );
+
+  if (!/[\u00c3\u00c2\u00e2]/.test(decoded)) return decoded;
+
+  try {
+    const bytes = Uint8Array.from(
+      Array.from(decoded, (char) => Math.min(char.charCodeAt(0), 255))
+    );
+    return new TextDecoder("utf-8").decode(bytes);
+  } catch {
+    return decoded;
+  }
+}
+
 function compactText(value?: string, fallback = "nao informado") {
-  const cleaned = (value || "")
+  const cleaned = decodeEscapedText(value || "")
     .replace(/<[^>]*>/g, " ")
     .replace(/&nbsp;/gi, " ")
     .replace(/\\n/g, " ")
@@ -361,7 +378,7 @@ export function PropertyMarketAnalysisPanel({
       <div className="grid gap-4">
         {reason ? <p className="text-xs leading-5 text-[var(--admin-muted)]">{reason}</p> : null}
 
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-8">
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           <MetricTile label="Mercado base" value={formatCurrency(analysis.marketValueBase)} detail={pricePerM2(analysis.marketPricePerM2)} tone="cyan" />
           <MetricTile label="Lance atual" value={formatCurrency(analysis.initialBid)} detail={pricePerM2(analysis.initialBidPricePerM2)} tone="yellow" />
           <MetricTile label="Desconto real" value={percent(analysis.realDiscountPct)} detail="sobre mercado base" tone={analysis.realDiscountPct >= 35 ? "green" : "yellow"} />
@@ -372,8 +389,8 @@ export function PropertyMarketAnalysisPanel({
           <MetricTile label="Confianca" value={`${analysis.confidenceScore}%`} detail={`${analysis.comparables.length} comparavel(is)`} tone={analysis.confidenceScore >= 70 ? "green" : "yellow"} />
         </div>
 
-        <div className="grid gap-3 2xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-          <div className={cn("rounded-md border p-4", toneBorder[decision])}>
+        <div className="grid gap-3 2xl:grid-cols-[minmax(320px,0.78fr)_minmax(0,1.22fr)]">
+          <div className={cn("rounded-md border p-3", toneBorder[decision])}>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="inline-flex items-center gap-2">
                 <BarChart3 size={17} className={toneText[decision]} />
@@ -381,14 +398,14 @@ export function PropertyMarketAnalysisPanel({
               </div>
               <ScoreBadge score={analysis.liquidityScore} className="h-8 min-w-11" />
             </div>
-            <p className="mt-3 line-clamp-4 text-sm leading-6 text-[var(--admin-soft)]">{cleanSummary}</p>
+            <p className="mt-3 max-h-20 overflow-hidden text-sm leading-5 text-[var(--admin-soft)]">{cleanSummary}</p>
             <div className="mt-3 grid gap-2 sm:grid-cols-3">
               <InfoValue label="Liquidez" value={`${analysis.liquidityScore}%`} />
               <InfoValue label="Comparaveis" value={analysis.comparables.length || "pendente"} />
               <InfoValue label="Status" value={analysis.status} />
             </div>
             {cleanCautionNotes ? (
-              <p className="mt-3 line-clamp-3 rounded-md border border-[rgba(234,179,8,0.24)] bg-[rgba(234,179,8,0.08)] px-3 py-2 text-xs leading-5 text-[var(--admin-soft)]">
+              <p className="mt-3 max-h-16 overflow-hidden rounded-md border border-[rgba(234,179,8,0.24)] bg-[rgba(234,179,8,0.08)] px-3 py-2 text-xs leading-5 text-[var(--admin-soft)]">
                 {cleanCautionNotes}
               </p>
             ) : null}
@@ -401,7 +418,7 @@ export function PropertyMarketAnalysisPanel({
           </div>
 
           <div className="grid gap-3 md:grid-cols-2">
-            <div className="rounded-md border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] p-4">
+            <div className="rounded-md border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] p-3">
               <div className="mb-3 inline-flex items-center gap-2 text-sm font-semibold text-white">
                 <Home size={16} className="text-[var(--admin-cyan)]" />
                 Imovel analisado
@@ -417,12 +434,12 @@ export function PropertyMarketAnalysisPanel({
               </div>
             </div>
 
-            <div className="rounded-md border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] p-4">
+            <div className="rounded-md border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] p-3">
               <div className="mb-3 inline-flex items-center gap-2 text-sm font-semibold text-white">
                 <Scale size={16} className="text-[var(--admin-yellow)]" />
                 Juridico e ressalvas
               </div>
-              <p className="line-clamp-5 text-xs leading-5 text-[var(--admin-soft)]">{cleanLegalSignal}</p>
+              <p className="max-h-24 overflow-hidden text-xs leading-5 text-[var(--admin-soft)]">{cleanLegalSignal}</p>
               {cleanLegalSignal.length > 220 ? (
                 <div className="mt-3">
                   <TextDisclosure label="Ver texto juridico completo">{cleanLegalSignal}</TextDisclosure>
@@ -430,7 +447,7 @@ export function PropertyMarketAnalysisPanel({
               ) : null}
             </div>
 
-            <div className="rounded-md border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] p-4 md:col-span-2">
+            <div className="rounded-md border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] p-3 md:col-span-2">
               <div className="mb-3 inline-flex items-center gap-2 text-sm font-semibold text-white">
                 <CreditCard size={16} className="text-[var(--admin-green)]" />
                 Pagamento
@@ -442,9 +459,9 @@ export function PropertyMarketAnalysisPanel({
                 <InfoValue label="Parcelas" value={payment.installmentCount ? `${payment.installmentCount}x de ${formatCurrency(payment.installmentAmount)}` : "nao informado"} />
               </div>
               {cleanPaymentCondition ? (
-                <p className="mt-3 line-clamp-2 text-xs leading-5 text-[var(--admin-muted)]">Condicao: {cleanPaymentCondition}</p>
+                <p className="mt-3 max-h-10 overflow-hidden text-xs leading-5 text-[var(--admin-muted)]">Condicao: {cleanPaymentCondition}</p>
               ) : null}
-              {payment.correctionWarning ? <p className="mt-2 line-clamp-2 text-xs leading-5 text-[var(--admin-yellow)]">{compactText(payment.correctionWarning)}</p> : null}
+              {payment.correctionWarning ? <p className="mt-2 max-h-10 overflow-hidden text-xs leading-5 text-[var(--admin-yellow)]">{compactText(payment.correctionWarning)}</p> : null}
             </div>
           </div>
         </div>

@@ -250,19 +250,10 @@ export default async function OpportunityDetailPage({
         </nav>
       </section>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-        <main className="grid min-w-0 content-start gap-4">
+      <div className="grid gap-4 xl:grid-cols-[430px_minmax(0,1fr)]">
+        <aside id="operacao" className="grid content-start gap-4 xl:sticky xl:top-4">
           <Gallery images={images} heroImage={heroImage} title={opportunity.title} />
 
-          <section id="mercado" className="scroll-mt-24">
-            <PropertyMarketAnalysisPanel
-              analysis={analysis}
-              reason={marketAnalysisResult.reason}
-            />
-          </section>
-        </main>
-
-        <aside id="operacao" className="grid content-start gap-4 xl:sticky xl:top-4">
           <DashboardCard title="Fila de decisao" eyebrow="operacao">
             <div className="grid gap-3">
               <div className="grid grid-cols-3 gap-2">
@@ -343,6 +334,15 @@ export default async function OpportunityDetailPage({
             </div>
           </DashboardCard>
         </aside>
+
+        <main className="grid min-w-0 content-start gap-4">
+          <section id="mercado" className="scroll-mt-24">
+            <PropertyMarketAnalysisPanel
+              analysis={analysis}
+              reason={marketAnalysisResult.reason}
+            />
+          </section>
+        </main>
       </div>
 
       <section id="evidencias" className="mt-4 grid scroll-mt-24 gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
