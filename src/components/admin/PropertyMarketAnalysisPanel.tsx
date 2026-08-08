@@ -76,6 +76,26 @@ function pricePerM2(value: number) {
   return value ? `${formatCurrency(value)}/m2` : "nao calculado";
 }
 
+function compactText(value?: string, fallback = "nao informado") {
+  const cleaned = (value || "")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\\n/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return cleaned || fallback;
+}
+
+function paymentLabel(value?: string) {
+  const normalized = compactText(value, "").toLowerCase();
+  if (!normalized) return "validar edital";
+  if (normalized.includes("parcel")) return "parcelado";
+  if (normalized.includes("financi")) return "financiamento";
+  if (normalized.includes("vista") || normalized.includes("a_vista")) return "a vista";
+  return normalized.length > 26 ? `${normalized.slice(0, 26)}...` : normalized;
+}
+
 function sourceUrlFor(analysis: PropertyMarketAnalysis, labels: string[]) {
   const normalizedLabels = labels.map((label) => label.toLowerCase());
   return analysis.sourceLinks.find((item) => {
@@ -148,6 +168,43 @@ function ComparableRow({ comparable }: { comparable: PropertyMarketComparable })
         <span className="text-xs text-[var(--admin-muted)]">sem link</span>
       )}
     </div>
+  );
+}
+
+function InfoValue({
+  label,
+  value,
+  className,
+}: {
+  label: string;
+  value: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={cn("min-w-0 rounded-md border border-[var(--admin-border)] bg-[rgba(255,255,255,0.025)] px-3 py-2", className)}>
+      <p className="text-[10px] uppercase tracking-[0.12em] text-[var(--admin-muted)]">{label}</p>
+      <p className="mt-1 line-clamp-2 text-xs font-medium leading-5 text-[var(--admin-soft)]">{value}</p>
+    </div>
+  );
+}
+
+function TextDisclosure({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <details className="group rounded-md border border-[var(--admin-border)] bg-[rgba(255,255,255,0.025)]">
+      <summary className="flex min-h-9 cursor-pointer items-center justify-between gap-3 px-3 text-xs font-semibold text-[var(--admin-muted)]">
+        {label}
+        <ChevronDown size={14} className="transition group-open:rotate-180" />
+      </summary>
+      <div className="border-t border-[var(--admin-border)] px-3 py-2 text-xs leading-5 text-[var(--admin-soft)]">
+        {children}
+      </div>
+    </details>
   );
 }
 
@@ -281,6 +338,13 @@ export function PropertyMarketAnalysisPanel({
   const rental = analysis.rentalEstimate;
   const payment = analysis.paymentSimulation;
   const costByLabel = new Map(analysis.estimatedCosts.map((item) => [item.label.toLowerCase(), item.value]));
+  const visibleSources = analysis.sourceLinks.slice(0, 5);
+  const remainingSources = analysis.sourceLinks.slice(5);
+  const cleanSummary = compactText(analysis.summary);
+  const cleanDecisionReason = compactText(analysis.decisionReason);
+  const cleanCautionNotes = compactText(analysis.cautionNotes, "");
+  const cleanLegalSignal = compactText(analysis.legalSignal);
+  const cleanPaymentCondition = compactText(analysis.paymentCondition, "");
   const rentYieldDetail = rental.monthlyRent
     ? `${percent(rental.monthlyYieldOnMarketPct)} a.m. mercado / ${percent(rental.monthlyYieldOnBidPct)} a.m. lance`
     : rental.referenceFound
@@ -308,7 +372,7 @@ export function PropertyMarketAnalysisPanel({
           <MetricTile label="Confianca" value={`${analysis.confidenceScore}%`} detail={`${analysis.comparables.length} comparavel(is)`} tone={analysis.confidenceScore >= 70 ? "green" : "yellow"} />
         </div>
 
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.05fr)_minmax(340px,0.95fr)]">
+        <div className="grid gap-3 2xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
           <div className={cn("rounded-md border p-4", toneBorder[decision])}>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="inline-flex items-center gap-2">
@@ -317,29 +381,39 @@ export function PropertyMarketAnalysisPanel({
               </div>
               <ScoreBadge score={analysis.liquidityScore} className="h-8 min-w-11" />
             </div>
-            <p className="mt-3 text-sm leading-6 text-[var(--admin-soft)]">{analysis.summary}</p>
-            <p className="mt-3 text-xs leading-5 text-[var(--admin-muted)]">{analysis.decisionReason}</p>
-            {analysis.cautionNotes ? (
-              <p className="mt-3 rounded-md border border-[rgba(234,179,8,0.24)] bg-[rgba(234,179,8,0.08)] px-3 py-2 text-xs leading-5 text-[var(--admin-soft)]">
-                {analysis.cautionNotes}
+            <p className="mt-3 line-clamp-4 text-sm leading-6 text-[var(--admin-soft)]">{cleanSummary}</p>
+            <div className="mt-3 grid gap-2 sm:grid-cols-3">
+              <InfoValue label="Liquidez" value={`${analysis.liquidityScore}%`} />
+              <InfoValue label="Comparaveis" value={analysis.comparables.length || "pendente"} />
+              <InfoValue label="Status" value={analysis.status} />
+            </div>
+            {cleanCautionNotes ? (
+              <p className="mt-3 line-clamp-3 rounded-md border border-[rgba(234,179,8,0.24)] bg-[rgba(234,179,8,0.08)] px-3 py-2 text-xs leading-5 text-[var(--admin-soft)]">
+                {cleanCautionNotes}
               </p>
             ) : null}
+            <div className="mt-3 grid gap-2">
+              <TextDisclosure label="Ler justificativa completa">
+                <p>{cleanDecisionReason}</p>
+                {cleanCautionNotes ? <p className="mt-2">{cleanCautionNotes}</p> : null}
+              </TextDisclosure>
+            </div>
           </div>
 
-          <div className="grid gap-3">
+          <div className="grid gap-3 md:grid-cols-2">
             <div className="rounded-md border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] p-4">
               <div className="mb-3 inline-flex items-center gap-2 text-sm font-semibold text-white">
                 <Home size={16} className="text-[var(--admin-cyan)]" />
                 Imovel analisado
               </div>
-              <div className="grid gap-2 text-xs text-[var(--admin-soft)] sm:grid-cols-2">
-                <span>Tipo: {subject.propertyType || "nao informado"}</span>
-                <span>Pagamento: {analysis.paymentCondition}</span>
-                <span>Privativa: {area(subject.privateAreaM2)}</span>
-                <span>Terreno: {area(subject.landAreaM2)}</span>
-                <span>Construida: {area(subject.builtAreaM2)}</span>
-                <span>Dormitorios: {subject.bedrooms || "nao informado"}</span>
-                <span>Garagem: {subject.parkingSpaces || "nao informado"}</span>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <InfoValue label="Tipo" value={subject.propertyType || "nao informado"} />
+                <InfoValue label="Pagamento" value={paymentLabel(payment.paymentMode || analysis.paymentCondition)} />
+                <InfoValue label="Privativa" value={area(subject.privateAreaM2)} />
+                <InfoValue label="Terreno" value={area(subject.landAreaM2)} />
+                <InfoValue label="Construida" value={area(subject.builtAreaM2)} />
+                <InfoValue label="Dormitorios" value={subject.bedrooms || "nao informado"} />
+                <InfoValue label="Garagem" value={subject.parkingSpaces || "nao informado"} className="sm:col-span-2" />
               </div>
             </div>
 
@@ -348,21 +422,29 @@ export function PropertyMarketAnalysisPanel({
                 <Scale size={16} className="text-[var(--admin-yellow)]" />
                 Juridico e ressalvas
               </div>
-              <p className="text-xs leading-5 text-[var(--admin-soft)]">{analysis.legalSignal}</p>
+              <p className="line-clamp-5 text-xs leading-5 text-[var(--admin-soft)]">{cleanLegalSignal}</p>
+              {cleanLegalSignal.length > 220 ? (
+                <div className="mt-3">
+                  <TextDisclosure label="Ver texto juridico completo">{cleanLegalSignal}</TextDisclosure>
+                </div>
+              ) : null}
             </div>
 
-            <div className="rounded-md border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] p-4">
+            <div className="rounded-md border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] p-4 md:col-span-2">
               <div className="mb-3 inline-flex items-center gap-2 text-sm font-semibold text-white">
                 <CreditCard size={16} className="text-[var(--admin-green)]" />
                 Pagamento
               </div>
-              <div className="grid gap-2 text-xs text-[var(--admin-soft)] sm:grid-cols-2">
-                <span>Modo: {payment.paymentMode || "nao informado"}</span>
-                <span>Entrada: {payment.downPaymentPct ? `${percent(payment.downPaymentPct)} / ${formatCurrency(payment.downPaymentAmount)}` : "nao informado"}</span>
-                <span>Saldo: {payment.installmentBalance ? formatCurrency(payment.installmentBalance) : "nao informado"}</span>
-                <span>Parcelas: {payment.installmentCount ? `${payment.installmentCount}x de ${formatCurrency(payment.installmentAmount)}` : "nao informado"}</span>
+              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                <InfoValue label="Modo" value={paymentLabel(payment.paymentMode)} />
+                <InfoValue label="Entrada" value={payment.downPaymentPct ? `${percent(payment.downPaymentPct)} / ${formatCurrency(payment.downPaymentAmount)}` : "nao informado"} />
+                <InfoValue label="Saldo" value={payment.installmentBalance ? formatCurrency(payment.installmentBalance) : "nao informado"} />
+                <InfoValue label="Parcelas" value={payment.installmentCount ? `${payment.installmentCount}x de ${formatCurrency(payment.installmentAmount)}` : "nao informado"} />
               </div>
-              {payment.correctionWarning ? <p className="mt-2 text-xs leading-5 text-[var(--admin-yellow)]">{payment.correctionWarning}</p> : null}
+              {cleanPaymentCondition ? (
+                <p className="mt-3 line-clamp-2 text-xs leading-5 text-[var(--admin-muted)]">Condicao: {cleanPaymentCondition}</p>
+              ) : null}
+              {payment.correctionWarning ? <p className="mt-2 line-clamp-2 text-xs leading-5 text-[var(--admin-yellow)]">{compactText(payment.correctionWarning)}</p> : null}
             </div>
           </div>
         </div>
@@ -430,8 +512,8 @@ export function PropertyMarketAnalysisPanel({
                 Fontes
               </div>
               <div className="grid gap-2">
-                {analysis.sourceLinks.length ? (
-                  analysis.sourceLinks.map((source) => (
+                {visibleSources.length ? (
+                  visibleSources.map((source) => (
                     <Link
                       key={source.url}
                       href={source.url}
@@ -446,6 +528,24 @@ export function PropertyMarketAnalysisPanel({
                 ) : (
                   <p className="text-xs leading-5 text-[var(--admin-muted)]">Fontes ainda nao estruturadas.</p>
                 )}
+                {remainingSources.length ? (
+                  <TextDisclosure label={`Ver mais ${remainingSources.length} fonte(s)`}>
+                    <div className="grid gap-2">
+                      {remainingSources.map((source) => (
+                        <Link
+                          key={source.url}
+                          href={source.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex min-h-8 items-center justify-between gap-3 rounded-md border border-[var(--admin-border)] px-2 text-xs font-semibold text-[var(--admin-soft)] transition hover:text-white"
+                        >
+                          <span className="truncate">{source.label}</span>
+                          <ArrowUpRight size={12} className="shrink-0" />
+                        </Link>
+                      ))}
+                    </div>
+                  </TextDisclosure>
+                ) : null}
               </div>
             </div>
           </div>

@@ -88,6 +88,7 @@ function Gallery({
 }) {
   const thumbnails = images.filter((image) => image.url !== heroImage?.url).slice(0, 6);
   const extraCount = Math.max(0, images.length - thumbnails.length - (heroImage ? 1 : 0));
+  const hasThumbnails = thumbnails.length > 0 || extraCount > 0;
 
   return (
     <section
@@ -104,13 +105,13 @@ function Gallery({
         <StatusBadge tone={heroImage ? "green" : "yellow"}>{images.length} foto(s)</StatusBadge>
       </div>
 
-      <div className="grid gap-2 p-3 lg:grid-cols-[minmax(0,1fr)_260px]">
+      <div className={cn("grid gap-2 p-3", hasThumbnails ? "lg:grid-cols-[minmax(0,1fr)_240px]" : "lg:grid-cols-1")}>
         {heroImage ? (
           <div className="overflow-hidden rounded-md border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)]">
             <img
               src={heroImage.url}
               alt={heroImage.alt || title}
-              className="aspect-[16/9] max-h-[430px] w-full object-cover"
+              className={cn("aspect-[16/9] w-full object-cover", hasThumbnails ? "max-h-[430px]" : "max-h-[360px]")}
             />
           </div>
         ) : (
@@ -124,26 +125,28 @@ function Gallery({
           </div>
         )}
 
-        <div className="grid grid-cols-3 gap-2 lg:grid-cols-2">
-          {thumbnails.map((image, index) => (
-            <div
-              key={`${image.url}-${index}`}
-              className="overflow-hidden rounded-md border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)]"
-            >
-              <img
-                src={image.url}
-                alt={image.alt || `${title} foto ${index + 2}`}
-                loading="lazy"
-                className="aspect-[4/3] h-full w-full object-cover"
-              />
-            </div>
-          ))}
-          {extraCount > 0 ? (
-            <div className="grid aspect-[4/3] place-items-center rounded-md border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] font-mono text-xs font-semibold text-[var(--admin-muted)]">
-              +{extraCount}
-            </div>
-          ) : null}
-        </div>
+        {hasThumbnails ? (
+          <div className="grid grid-cols-3 gap-2 lg:grid-cols-2">
+            {thumbnails.map((image, index) => (
+              <div
+                key={`${image.url}-${index}`}
+                className="overflow-hidden rounded-md border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)]"
+              >
+                <img
+                  src={image.url}
+                  alt={image.alt || `${title} foto ${index + 2}`}
+                  loading="lazy"
+                  className="aspect-[4/3] h-full w-full object-cover"
+                />
+              </div>
+            ))}
+            {extraCount > 0 ? (
+              <div className="grid aspect-[4/3] place-items-center rounded-md border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] font-mono text-xs font-semibold text-[var(--admin-muted)]">
+                +{extraCount}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </section>
   );
