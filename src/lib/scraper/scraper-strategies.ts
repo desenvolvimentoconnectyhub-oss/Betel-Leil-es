@@ -50,10 +50,25 @@ const REAL_ESTATE_TITLE_SIGNALS = [
 
 function looksLikeBotChallenge(html: string, title: string, url: string) {
   const value = `${title}\n${url}\n${html.slice(0, 5000)}`.toLowerCase();
+  const normalizedTitle = normalizeText(title);
+  const realEstateSignals = REAL_ESTATE_TITLE_SIGNALS.some((signal) => value.includes(signal));
+  const moneySignal = /r\$\s*[\d.]+,\d{2}/i.test(html);
+  const challengeTitle =
+    normalizedTitle.includes("just a moment") ||
+    normalizedTitle.includes("attention required") ||
+    normalizedTitle.includes("access denied");
+
+  if (!challengeTitle && realEstateSignals && moneySignal) return false;
+
   return (
-    value.includes("captcha") ||
-    value.includes("cloudflare") ||
-    value.includes("attention required") ||
+    challengeTitle ||
+    value.includes("checking if the site connection is secure") ||
+    value.includes("cf-browser-verification") ||
+    value.includes("cf-challenge") ||
+    value.includes("cf-turnstile") ||
+    value.includes("g-recaptcha") ||
+    value.includes("hcaptcha") ||
+    (value.includes("captcha") && !realEstateSignals) ||
     value.includes("radware bot manager") ||
     value.includes("shieldsquare") ||
     value.includes("validate.perfdrive")

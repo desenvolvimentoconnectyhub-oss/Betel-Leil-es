@@ -143,6 +143,23 @@ const PROFILES: AdapterProfile[] = [
     documentSignals: COMMON_DOCUMENT_SIGNALS,
   },
   {
+    key: "muller-leiloes",
+    name: "Muller Leiloes",
+    domains: ["mullerleiloes.com.br"],
+    initialBidLabels: ["lance inicial", "proximo lance", "valor do lance", ...COMMON_INITIAL_BID_LABELS],
+    appraisalLabels: ["valor de avaliacao", "avaliacao", "avaliado em", ...COMMON_APPRAISAL_LABELS],
+    auctionDateLabels: ["data 1 leilao", "data 2 leilao", "1 leilao", "2 leilao", ...COMMON_DATE_LABELS],
+    paymentLabels: ["pagamento a vista", "pagamento", ...COMMON_PAYMENT_LABELS],
+    occupancyLabels: ["ocupado", "desocupado", "situacao", ...COMMON_OCCUPANCY_LABELS],
+    legalLabels: ["onus", "penhora", "indisponibilidade", "acao", "processo", "matricula", ...COMMON_LEGAL_LABELS],
+    areaLabels: {
+      privateAreaM2: ["area privativa", "area util", ...COMMON_AREA_LABELS.privateAreaM2],
+      builtAreaM2: ["area real total", "area total", "area construida", ...COMMON_AREA_LABELS.builtAreaM2],
+      landAreaM2: ["fracao ideal do terreno", "area do terreno", "terreno", ...COMMON_AREA_LABELS.landAreaM2],
+    },
+    documentSignals: [...COMMON_DOCUMENT_SIGNALS, "edital de leilao", "avaliacao"],
+  },
+  {
     key: "flexleiloes",
     name: "Flex Leiloes",
     domains: ["flexleiloes.com.br"],
@@ -357,6 +374,10 @@ function moneyToNumber(value: string) {
   const normalized = cleanString(value).replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", ".");
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatMoneyText(value: number) {
+  return value > 0 ? `R$ ${value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "";
 }
 
 function numberFromUnknown(value: unknown) {
@@ -960,6 +981,190 @@ function extractPortalZukTextContext(textInput: string, domain: string) {
   return { extraction, imageUrls: [] as string[], documents: [] as AuctionSiteDocument[], text };
 }
 
+function htmlHeadingTexts(html: string, tagName: string) {
+  const pattern = new RegExp(`<${tagName}\\b[^>]*>([\\s\\S]*?)<\\/${tagName}>`, "gi");
+  const headings: string[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(html))) {
+    const value = decodeHtml(match[1].replace(/<[^>]+>/g, " "));
+    if (value) headings.push(value);
+  }
+  return headings;
+}
+
+function cleanMullerTitle(value: string) {
+  return cleanString(value)
+    .replace(/\s+-\s*Lance Inicial[\s\S]*$/i, "")
+    .replace(/\s+-\s*Lote\s+\d+[\s\S]*$/i, "")
+    .replace(/\s+::\s+Muller Leil(?:o|õ)es[\s\S]*$/i, "")
+    .trim();
+}
+
+function mullerPageMode(sourceUrl: string) {
+  try {
+    return cleanString(new URL(sourceUrl).searchParams.get("page"));
+  } catch {
+    return "";
+  }
+}
+
+function extractMullerLabeledText(text: string, labelPattern: RegExp, stopPattern: RegExp, maxLength = 1600) {
+  const match = text.match(labelPattern);
+  if (match?.index === undefined) return "";
+  const start = match.index + match[0].length;
+  const slice = text.slice(start, start + maxLength);
+  const stop = slice.search(stopPattern);
+  return cleanString((stop >= 0 ? slice.slice(0, stop) : slice).replace(/\s+/g, " "));
+}
+
+function extractMullerSoleonTextContext(input: {
+  text: string;
+  html: string;
+  baseUrl: string;
+  domain: string;
+  sourceUrl: string;
+}) {
+  if (!isProfileDomain(input.domain, ["mullerleiloes.com.br"])) return emptyDomainContext();
+  const text = cleanString(input.text);
+  if (!text) return emptyDomainContext();
+
+  const headings = htmlHeadingTexts(input.html, "h1");
+  const title = cleanMullerTitle(firstCleanString(
+    headings.find((heading) => !/^lote\s+\d+/i.test(normalizeText(heading))) || "",
+    metaContent(input.html, ["og:title", "twitter:title"]),
+    input.html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] || ""
+  ));
+  const cityState = inferCityState(`${title} ${text}`);
+  const address = firstCleanString(
+    extractMullerLabeledText(
+      text,
+      /Endere[cç]o:\s*/i,
+      /\s+(?:Descri[cç][aã]o:|Processo:|Exequente:|Executado:|Observa[cç][oõ]es do Lote|Localiza[cç][aã]o do Im[oó]vel|CONTATOS)\b/i,
+      360
+    ),
+    extractStreetAddress(text)
+  );
+  const description = firstCleanString(
+    extractMullerLabeledText(
+      text,
+      /Descri[cç][aã]o:\s*/i,
+      /\s+(?:Processo:|Exequente:|Executado:|Observa[cç][oõ]es do Lote|Localiza[cç][aã]o do Im[oó]vel|CONTATOS)\b/i,
+      2200
+    ),
+    metaContent(input.html, ["og:description"])
+  );
+  const pageMode = mullerPageMode(input.sourceUrl);
+  const firstAuctionBid = findMoneyByPatterns(text, [
+    /data\s+1(?:o|º|°)?\s+leilao[\s\S]{0,180}?lance\s+inicial\s*:\s*r\$\s*([\d.]+,\d{2})/i,
+    /1(?:o|º|°)?\s+leilao[\s\S]{0,180}?lance\s+inicial\s*:\s*r\$\s*([\d.]+,\d{2})/i,
+  ]);
+  const secondAuctionBid = findMoneyByPatterns(text, [
+    /data\s+2(?:o|º|°)?\s+leilao[\s\S]{0,180}?lance\s+inicial\s*:\s*r\$\s*([\d.]+,\d{2})/i,
+    /2(?:o|º|°)?\s+leilao[\s\S]{0,180}?lance\s+inicial\s*:\s*r\$\s*([\d.]+,\d{2})/i,
+  ]);
+  const firstAuctionDate = findDateByPatterns(text, [
+    /data\s+1(?:o|º|°)?\s+leilao\s*:\s*(\d{1,2}\/\d{1,2}\/\d{2,4}\s*\d{1,2}:\d{2})/i,
+    /1(?:o|º|°)?\s+leilao\s*:\s*(\d{1,2}\/\d{1,2}\/\d{2,4}\s*\d{1,2}:\d{2})/i,
+  ]);
+  const secondAuctionDate = findDateByPatterns(text, [
+    /data\s+2(?:o|º|°)?\s+leilao\s*:\s*(\d{1,2}\/\d{1,2}\/\d{2,4}\s*\d{1,2}:\d{2})/i,
+    /2(?:o|º|°)?\s+leilao\s*:\s*(\d{1,2}\/\d{1,2}\/\d{2,4}\s*\d{1,2}:\d{2})/i,
+  ]);
+  const initialBid = firstPositiveNumber(
+    pageMode === "2" ? secondAuctionBid : 0,
+    secondAuctionBid,
+    firstAuctionBid,
+    findMoneyAfterLabels(text, ["lance inicial", "proximo lance", "valor do lance"])
+  );
+  const auctionDate = firstCleanString(
+    pageMode === "2" ? secondAuctionDate : "",
+    secondAuctionDate,
+    firstAuctionDate,
+    findDateAfterLabels(text, ["data do leilao", "data 2 leilao", "data 1 leilao"])
+  );
+  const appraisalValue = firstPositiveNumber(
+    findMoneyAfterLabels(text, ["valor de avaliacao", "avaliacao"]),
+    findMoneyByPatterns(text, [/avaliacao\s+r\$\s*([\d.]+,\d{2})/i])
+  );
+  const privateAreaM2 = firstPositiveNumber(
+    findAreaAfterLabels(text, ["area privativa", "area util"]),
+    findAreaByPatterns(description, [/area\s+privativa\s+de\s+([\d.]+,\d{1,4})\s*m(?:2|\u00b2)/i])
+  );
+  const builtAreaM2 = firstPositiveNumber(
+    findAreaAfterLabels(text, ["area real total", "area total"]),
+    findAreaByPatterns(description, [/area\s+real\s+total\s+de\s+([\d.]+,\d{1,4})\s*m(?:2|\u00b2)/i])
+  );
+  const landAreaM2 = firstPositiveNumber(
+    findAreaAfterLabels(text, ["area do terreno", "fracao ideal do terreno"]),
+    findAreaByPatterns(description, [/terreno\s+com\s+a\s+area\s+de\s+([\d.]+,\d{1,4})\s*m(?:2|\u00b2)/i])
+  );
+  const titleNeighborhood = cleanString(title.match(/\bbairro\s+(.+?)\s+em\s+/i)?.[1]);
+  const addressNeighborhood = cleanString(address.match(/\s-\s*([^-,]+)$/)?.[1]);
+  const occupancy = firstSentenceContaining(text, ["ocupado", "desocupado"]);
+  const legalSignal = firstSentenceContaining(text, ["onus", "penhora", "indisponibilidade", "acao", "processo"]);
+  const paymentCondition = normalizeText(text).includes("pagamento a vista")
+    ? "Pagamento a vista."
+    : firstSentenceContaining(text, ["pagamento", "forma de pagamento"]);
+  const imageUrls = extractImageUrlsFromHtml(input.html, input.baseUrl);
+  const profile = profileForDomain(input.domain);
+  const documents = profile ? extractDocuments(input.html, input.baseUrl, profile) : [];
+  const auctionNotes = [
+    firstAuctionDate || firstAuctionBid ? `1 leilao: ${[firstAuctionDate, formatMoneyText(firstAuctionBid)].filter(Boolean).join(" - ")}` : "",
+    secondAuctionDate || secondAuctionBid ? `2 leilao: ${[secondAuctionDate, formatMoneyText(secondAuctionBid)].filter(Boolean).join(" - ")}` : "",
+  ].filter(Boolean).join("; ");
+
+  const extraction = compactExtractionPatch({
+    title,
+    propertyType: inferPropertyType(`${title} ${description}`),
+    address,
+    city: cityState.city,
+    state: cityState.state,
+    neighborhood: firstCleanString(titleNeighborhood, addressNeighborhood, extractNeighborhood(`${title} ${address} ${description}`)),
+    privateAreaM2,
+    builtAreaM2,
+    landAreaM2,
+    bedrooms: findCountByRoomLabels(description, ["quartos", "dormitorios", "dorms"]),
+    parkingSpaces: firstPositiveNumber(findCountByRoomLabels(description, ["vagas"]), findParkingSpaces(description)),
+    initialBid,
+    appraisalValue,
+    auctionDate,
+    paymentCondition,
+    occupancy,
+    legalSignal,
+    summary: description.slice(0, 700),
+    cautionNotes: firstCleanString(legalSignal, auctionNotes),
+    confidenceScore: firstPositiveNumber(initialBid, appraisalValue, privateAreaM2 || builtAreaM2 || landAreaM2) ? 88 : 72,
+  });
+
+  const contextText = [
+    "Fonte complementar Muller Leiloes / plataforma Soleon",
+    title ? `Titulo: ${title}` : "",
+    address ? `Endereco: ${address}` : "",
+    cityState.city || cityState.state ? `Cidade/UF: ${[cityState.city, cityState.state].filter(Boolean).join("/")}` : "",
+    privateAreaM2 ? `Area privativa: ${privateAreaM2} m2` : "",
+    builtAreaM2 ? `Area total/construida: ${builtAreaM2} m2` : "",
+    landAreaM2 ? `Area do terreno/fracao: ${landAreaM2} m2` : "",
+    firstAuctionBid ? `Lance 1o leilao: ${formatMoneyText(firstAuctionBid)}` : "",
+    secondAuctionBid ? `Lance 2o leilao: ${formatMoneyText(secondAuctionBid)}` : "",
+    initialBid ? `Lance considerado: ${formatMoneyText(initialBid)}` : "",
+    appraisalValue ? `Valor de avaliacao: ${formatMoneyText(appraisalValue)}` : "",
+    auctionDate ? `Data considerada: ${auctionDate}` : "",
+    paymentCondition ? `Pagamento: ${paymentCondition}` : "",
+    occupancy ? `Ocupacao: ${occupancy}` : "",
+    legalSignal ? `Sinal juridico: ${legalSignal}` : "",
+    description ? `Descricao: ${description}` : "",
+    imageUrls.length ? `Galeria de imagens: ${imageUrls.join(" | ")}` : "",
+    documents.length ? `Documentos: ${documents.map((document) => `${document.label}: ${document.url}`).join(" | ")}` : "",
+  ].filter(Boolean).join("\n");
+
+  return {
+    extraction,
+    imageUrls,
+    documents,
+    text: contextText,
+  };
+}
+
 function walkStructuredData(value: unknown, baseUrl: string, output: { extraction: AuctionSiteExtractionPatch; images: string[] }) {
   if (!value) return;
   if (Array.isArray(value)) {
@@ -1078,18 +1283,27 @@ export function extractAuctionSiteContext(input: {
   const visibleText = cleanString(input.visibleText) || htmlToText(input.html);
   const centralSulContext = extractCentralSulTextContext(visibleText, input.sourceDomain);
   const portalZukContext = extractPortalZukTextContext(visibleText, input.sourceDomain);
+  const mullerContext = extractMullerSoleonTextContext({
+    text: visibleText,
+    html: input.html,
+    baseUrl: input.sourceUrl,
+    domain: input.sourceDomain,
+    sourceUrl: input.sourceUrl,
+  });
   structuredBlocks.forEach((block) => walkStructuredData(block, input.sourceUrl, structuredOutput));
   structuredOutput.extraction = {
     ...structuredOutput.extraction,
     ...compactExtractionPatch(satoContext.extraction),
     ...compactExtractionPatch(centralSulContext.extraction),
     ...compactExtractionPatch(portalZukContext.extraction),
+    ...compactExtractionPatch(mullerContext.extraction),
   };
   const text = cleanString([
     visibleText,
     satoContext.text,
     centralSulContext.text,
     portalZukContext.text,
+    mullerContext.text,
   ].filter(Boolean).join("\n\n")) || htmlToText(input.html);
 
   const title = titleFromHtml(input.html, structuredOutput.extraction.title || "");
@@ -1120,6 +1334,7 @@ export function extractAuctionSiteContext(input: {
     ...satoContext.imageUrls,
     ...centralSulContext.imageUrls,
     ...portalZukContext.imageUrls,
+    ...mullerContext.imageUrls,
     ...extractImageUrlsFromHtml(input.html, input.sourceUrl),
     ...structuredOutput.images,
   ].filter(Boolean)).slice(0, 50);
@@ -1127,6 +1342,7 @@ export function extractAuctionSiteContext(input: {
     ...satoContext.documents,
     ...centralSulContext.documents,
     ...portalZukContext.documents,
+    ...mullerContext.documents,
     ...extractDocuments(input.html, input.sourceUrl, activeProfile),
   ]
     .filter((document, index, all) => all.findIndex((item) => item.url === document.url) === index)
