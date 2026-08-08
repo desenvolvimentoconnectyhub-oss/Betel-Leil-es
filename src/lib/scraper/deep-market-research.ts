@@ -55,6 +55,7 @@ type SearchResult = {
   url: string;
   snippet: string;
   kind: ListingKind;
+  provider: "bing" | "duckduckgo";
 };
 
 type SubjectProfile = {
@@ -73,9 +74,10 @@ type SubjectProfile = {
 
 const SEARCH_TIMEOUT_MS = 8_000;
 const PAGE_TIMEOUT_MS = 7_000;
-const MAX_SEARCH_RESULTS = 10;
-const MAX_SALE_PAGES = 5;
-const MAX_RENT_PAGES = 3;
+const PAGE_TEXT_LIMIT = 600_000;
+const MAX_SEARCH_RESULTS = 12;
+const MAX_SALE_PAGES = 8;
+const MAX_RENT_PAGES = 4;
 
 const MARKET_SOURCE_ALLOWLIST = [
   "zapimoveis",
@@ -97,10 +99,14 @@ const MARKET_SOURCE_ALLOWLIST = [
   "agenteimovel",
   "123i",
   "imobiliaria",
+  "imob",
+  "imb.br",
+  "classimoveis",
   "corretora",
   "imoveis",
   "imovel",
   "properati",
+  "luxuryestate",
 ];
 
 const AUCTION_SOURCE_BLOCKLIST = [
@@ -221,6 +227,19 @@ function unwrapBingUrl(url: string) {
   }
 }
 
+function unwrapDuckDuckGoUrl(url: string) {
+  const decoded = htmlDecode(url);
+  try {
+    const parsed = new URL(decoded, "https://duckduckgo.com");
+    const target = parsed.searchParams.get("uddg");
+    if (target && /^https?:\/\//i.test(target)) return target;
+    if (/^https?:\/\//i.test(parsed.href)) return parsed.href;
+  } catch {
+    // Keep the decoded value below.
+  }
+  return decoded;
+}
+
 function extractBingResults(html: string, kind: ListingKind) {
   const results: SearchResult[] = [];
   const blocks = html.match(/<li\b[^>]*class=["'][^"']*\bb_algo\b[^"']*["'][\s\S]*?<\/li>/gi) || [];
@@ -233,7 +252,34 @@ function extractBingResults(html: string, kind: ListingKind) {
     if (!isLikelyMarketSource(url)) continue;
     const title = stripTags(link[2]);
     const snippet = stripTags(block.match(/<p\b[^>]*>([\s\S]*?)<\/p>/i)?.[1] || block);
-    results.push({ title, url, snippet, kind });
+    results.push({ title, url, snippet, kind, provider: "bing" });
+    if (results.length >= MAX_SEARCH_RESULTS) break;
+  }
+
+  return results;
+}
+
+function extractDuckDuckGoResults(html: string, kind: ListingKind) {
+  const results: SearchResult[] = [];
+  const blocks =
+    html.match(/<div\b[^>]*class=["'][^"']*\bresult\b[^"']*["'][\s\S]*?(?=<div\b[^>]*class=["'][^"']*\bresult\b|<\/body>)/gi) ||
+    [];
+  const candidates = blocks.length
+    ? blocks
+    : html.match(/<a\b[^>]*class=["'][^"']*\bresult__a\b[^"']*["'][\s\S]*?<\/a>/gi) || [];
+
+  for (const block of candidates) {
+    const link = block.match(/<a\b[^>]*class=["'][^"']*\bresult__a\b[^"']*["'][^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/i);
+    if (!link?.[1]) continue;
+    const url = unwrapDuckDuckGoUrl(link[1]);
+    if (!isLikelyMarketSource(url)) continue;
+    const title = stripTags(link[2]);
+    const snippet = stripTags(
+      block.match(/<a\b[^>]*class=["'][^"']*\bresult__snippet\b[^"']*["'][\s\S]*?>([\s\S]*?)<\/a>/i)?.[1] ||
+        block.match(/<div\b[^>]*class=["'][^"']*\bresult__snippet\b[^"']*["'][\s\S]*?>([\s\S]*?)<\/div>/i)?.[1] ||
+        block
+    );
+    results.push({ title, url, snippet, kind, provider: "duckduckgo" });
     if (results.length >= MAX_SEARCH_RESULTS) break;
   }
 
@@ -269,15 +315,29 @@ function inferPropertyType(value: string) {
 function extractCondoName(input: string) {
   const text = cleanString(input).replace(/\s+/g, " ");
   const patterns = [
-    /\b(?:condominio|cond\.|edificio|residencial)\s+([A-Za-zÀ-ÿ0-9 .'/-]{4,70})/i,
-    /\b(spazio\s+[A-Za-zÀ-ÿ0-9 .'/-]{3,50})/i,
+    /\bloteamento\s+(?:denominado\s+)?([A-Za-z\u00C0-\u00FF0-9 .'/-]{4,80})/i,
+    /\b(?:condominio|cond\.|edificio)\s+(?:denominado\s+)?([A-Za-z\u00C0-\u00FF0-9 .'/-]{4,80})/i,
+    /\bresidencial\s+(?!em\b|de\b|da\b|do\b|das\b|dos\b|no\b|na\b|situado\b|localizado\b|lote\b|terreno\b|casa\b|sobrado\b)([A-Za-z\u00C0-\u00FF0-9 .'/-]{4,70})/i,
+    /\b(spazio\s+[A-Za-z\u00C0-\u00FF0-9 .'/-]{3,50})/i,
   ];
   for (const pattern of patterns) {
     const match = text.match(pattern);
-    const value = cleanString(match?.[1]).replace(/[|,.;:]+.*$/, "").trim();
+    const value = cleanCondoCandidate(match?.[1]);
     if (value.length >= 4) return value;
   }
   return "";
+}
+
+function cleanCondoCandidate(value: unknown) {
+  const candidate = cleanString(value)
+    .replace(/[|,.;:]+.*$/, "")
+    .replace(/\s+(?:com|contendo|localizado|situado|ocupado)\b.*$/i, "")
+    .trim();
+  const normalized = normalizeText(candidate);
+  if (!normalized) return "";
+  if (/^(em|de|da|do|das|dos|no|na|nos|nas|n|numero|lote|quadra)\b/.test(normalized)) return "";
+  if (/\b(alvenaria|area|terreno|casa|sobrado|apartamento|imovel|lote)\b/.test(normalized)) return "";
+  return candidate;
 }
 
 function buildSubjectProfile(input: {
@@ -305,19 +365,34 @@ function compactQuery(parts: Array<string | number | undefined>) {
   return uniqueStrings(parts.map((part) => cleanString(part)).filter(Boolean), 12).join(" ");
 }
 
+function streetForSearch(address: string) {
+  return cleanString(address)
+    .replace(/\b(?:n[ºo]?|numero)\s*[\d\w-]+/gi, "")
+    .split(",")[0]
+    .trim();
+}
+
 function buildSearchQueries(subject: SubjectProfile) {
   const type = subject.propertyType || "imovel";
+  const titleText = normalizeText(subject.title);
+  const primaryType = titleText.includes("sobrado") ? "sobrado" : type;
   const cityUf = compactQuery([subject.city, subject.state]);
   const area = subject.areaM2 ? `${Math.round(subject.areaM2)} m2` : "";
+  const microLocation = subject.condoName || subject.neighborhood;
+  const street = streetForSearch(subject.address);
   const saleQueries = uniqueStrings([
     subject.condoName ? compactQuery([`"${subject.condoName}"`, type, "venda", cityUf]) : "",
+    microLocation ? compactQuery([primaryType, "venda", microLocation, cityUf, area]) : "",
+    titleText.includes("sobrado") ? compactQuery(["casa", "venda", microLocation, cityUf, area]) : "",
+    compactQuery([type, "alto padrao", "venda", subject.city, subject.state, area]),
     compactQuery([type, "venda", subject.neighborhood, subject.city, subject.state, area]),
-    compactQuery([subject.address, type, "venda", subject.city, subject.state]),
-  ], 3);
+    street ? compactQuery([street, type, "venda", subject.city, subject.state]) : "",
+  ], 6);
   const rentQueries = uniqueStrings([
     subject.condoName ? compactQuery([`"${subject.condoName}"`, type, "aluguel", cityUf]) : "",
+    microLocation ? compactQuery([primaryType, "aluguel", microLocation, cityUf, area]) : "",
     compactQuery([type, "aluguel", subject.neighborhood, subject.city, subject.state, area]),
-  ], 2);
+  ], 3);
 
   return [
     ...saleQueries.map((query) => ({ query, kind: "sale" as const })),
@@ -327,16 +402,29 @@ function buildSearchQueries(subject: SubjectProfile) {
 
 async function searchMarketResults(subject: SubjectProfile) {
   const searches = buildSearchQueries(subject);
+  const providers = [
+    {
+      id: "bing" as const,
+      url: (query: string) => `https://www.bing.com/search?q=${encodeURIComponent(query)}`,
+      extract: extractBingResults,
+    },
+    {
+      id: "duckduckgo" as const,
+      url: (query: string) => `https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
+      extract: extractDuckDuckGoResults,
+    },
+  ];
   const pages = await Promise.all(
-    searches.map(async (item) => {
-      const url = `https://www.bing.com/search?q=${encodeURIComponent(item.query)}`;
+    searches.flatMap((item) => providers.map(async (provider) => {
+      const url = provider.url(item.query);
       const fetched = await fetchText(url, SEARCH_TIMEOUT_MS);
       return {
         ...item,
+        provider: provider.id,
         url,
-        results: fetched.text ? extractBingResults(fetched.text, item.kind) : [],
+        results: fetched.text ? provider.extract(fetched.text, item.kind) : [],
       };
-    })
+    }))
   );
 
   const results = pages.flatMap((page) => page.results);
@@ -350,7 +438,7 @@ async function searchMarketResults(subject: SubjectProfile) {
 
   return {
     searchQueries: searches.map((item) => item.query),
-    searchedUrls: pages.map((item) => ({ label: item.query, url: item.url, kind: item.kind })),
+    searchedUrls: pages.map((item) => ({ label: `${item.provider}: ${item.query}`, url: item.url, kind: item.kind })),
     results: uniqueResults,
   };
 }
@@ -385,9 +473,19 @@ function extractRentPrice(text: string) {
 }
 
 function extractArea(text: string) {
-  const matches = [...text.matchAll(/(\d{2,4}(?:[.,]\d{1,2})?)\s*(?:m²|m2|m\s*²|metros quadrados)/gi)]
-    .map((match) => asNumber(match[1]))
+  const areaUnit = String.raw`m(?:\s|\u00a0)*(?:2|\u00b2|\u00c2\u00b2)|metros quadrados`;
+  const labeledPatterns = [
+    new RegExp(String.raw`(?:area|privativa|construida|constru\u00edda|terreno|total|util|\u00fatil)\D{0,45}(\d{2,5}(?:[.,]\d{1,2})?)\s*(?:${areaUnit})`, "gi"),
+    new RegExp(String.raw`(\d{2,5}(?:[.,]\d{1,2})?)\s*(?:${areaUnit})\D{0,35}(?:area|privativa|construida|constru\u00edda|terreno|total|util|\u00fatil)`, "gi"),
+  ];
+  const labeled = labeledPatterns
+    .flatMap((pattern) => [...text.matchAll(pattern)].map((match) => asNumber(match[1])))
     .filter((value) => value >= 20 && value <= 20_000);
+  if (labeled.length) return labeled[0];
+
+  const matches = [...text.matchAll(new RegExp(String.raw`(\d{2,5}(?:[.,]\d{1,2})?)\s*(?:${areaUnit})`, "gi"))]
+    .map((match) => asNumber(match[1]))
+    .filter((value) => value >= 20 && value <= 20_000 && (value < 1900 || value > 2035));
   return matches[0] || 0;
 }
 
@@ -445,7 +543,7 @@ function qualityFromScore(score: number): MarketComparableQuality {
 async function hydrateSearchResult(subject: SubjectProfile, result: SearchResult): Promise<DeepMarketComparable | null> {
   const fetched = await fetchText(result.url, PAGE_TIMEOUT_MS);
   const html = fetched.text;
-  const combinedText = stripTags(`${result.title} ${result.snippet} ${html.slice(0, 180_000)}`);
+  const combinedText = stripTags(`${result.title} ${result.snippet} ${html.slice(0, PAGE_TEXT_LIMIT)}`);
   const title = extractTitle(html, result.title);
   const listingType = result.kind;
   const areaM2 = extractArea(combinedText);
