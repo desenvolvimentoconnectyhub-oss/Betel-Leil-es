@@ -907,7 +907,7 @@ function Gallery({
       title="Fotos do imovel"
       eyebrow="galeria / r2"
       action={<StatusBadge tone={heroImage ? "green" : "yellow"}>{images.length} foto(s)</StatusBadge>}
-      className="scroll-mt-40"
+      className="scroll-mt-40 self-start h-fit"
       contentClassName="p-3"
     >
       <div className={cn("grid items-start gap-3", compact ? "lg:grid-cols-[1fr_164px]" : "lg:grid-cols-[minmax(0,1fr)_220px]")}>
@@ -1001,7 +1001,7 @@ function ExecutiveSummary({
   const areaBase = subject?.privateAreaM2 || subject?.builtAreaM2 || subject?.landAreaM2 || 0;
 
   return (
-    <section className="grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(420px,1.05fr)]">
+    <section className="grid items-start gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(420px,1.05fr)]">
       <Gallery
         images={images}
         heroImage={heroImage}
@@ -1706,7 +1706,7 @@ function PropertyTab({
   const payment = analysis?.paymentSimulation;
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,0.8fr)_minmax(420px,1.2fr)]">
+    <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,0.8fr)_minmax(420px,1.2fr)]">
       <Gallery
         images={images}
         heroImage={heroImage}
