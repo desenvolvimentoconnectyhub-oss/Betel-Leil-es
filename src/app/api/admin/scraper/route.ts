@@ -53,6 +53,7 @@ async function handleFormData(request: Request) {
       whatsappAgentKey: cleanString(formData.get("whatsappAgentKey")),
       whatsappInstanceId: cleanString(formData.get("whatsappInstanceId")),
       notificationRecipientId: cleanString(formData.get("notificationRecipientId")),
+      analysisDepth: cleanString(formData.get("analysisDepth"), "deep"),
     });
 
     revalidateScraper();
@@ -89,6 +90,7 @@ export async function POST(request: Request) {
         whatsappAgentKey: cleanString(body.whatsappAgentKey),
         whatsappInstanceId: cleanString(body.whatsappInstanceId),
         notificationRecipientId: cleanString(body.notificationRecipientId),
+        analysisDepth: cleanString(body.analysisDepth, "deep"),
       };
       const queued = await queueLinkScraperBatch(startPayload);
       if (!queued.ok) return NextResponse.json(queued, { status: 400 });
@@ -116,6 +118,7 @@ export async function POST(request: Request) {
         whatsappAgentKey: cleanString(body.whatsappAgentKey),
         whatsappInstanceId: cleanString(body.whatsappInstanceId),
         notificationRecipientId: cleanString(body.notificationRecipientId),
+        analysisDepth: cleanString(body.analysisDepth, "deep"),
       });
       revalidateScraper();
       return NextResponse.json(result, { status: result.ok ? 200 : 400 });

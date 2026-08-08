@@ -22,6 +22,36 @@ import type { DataResult, MutationResult } from "@/lib/admin/repository/shared";
 type DbRow = Record<string, unknown>;
 
 type ImportSourceType = "xlsx" | "csv" | "txt" | "manual";
+export type LinkAnalysisDepth = "standard" | "deep";
+
+const DEFAULT_ANALYSIS_DEPTH: LinkAnalysisDepth = "deep";
+const ANALYSIS_DEPTH_LABELS: Record<LinkAnalysisDepth, string> = {
+  standard: "Analise padrao",
+  deep: "Analise profunda",
+};
+
+const ANALYSIS_DEPTH_PROFILES: Record<LinkAnalysisDepth, {
+  llmTextLimit: number;
+  maxImages: number;
+  fetchTimeoutMs: number;
+  minimumConfidence: number;
+  requireDocuments: boolean;
+}> = {
+  standard: {
+    llmTextLimit: 30_000,
+    maxImages: 24,
+    fetchTimeoutMs: 25_000,
+    minimumConfidence: 45,
+    requireDocuments: false,
+  },
+  deep: {
+    llmTextLimit: 60_000,
+    maxImages: 40,
+    fetchTimeoutMs: 35_000,
+    minimumConfidence: 65,
+    requireDocuments: true,
+  },
+};
 
 export type LinkScraperBatchStatus = "draft" | "aguardando_inicio" | "processando" | "concluido" | "falha" | "cancelado";
 export type LinkScraperRowStatus =
@@ -65,6 +95,7 @@ export type LinkScraperBatch = {
   id: string;
   originalFilename: string;
   sourceType: string;
+  analysisDepth: LinkAnalysisDepth;
   rowCount: number;
   validRowCount: number;
   invalidRowCount: number;
@@ -84,6 +115,7 @@ export type LinkScraperRow = {
   id: string;
   batchId: string;
   rowNumber: number;
+  analysisDepth: LinkAnalysisDepth;
   externalCode: string;
   auctionUrl: string;
   sourceDomain: string;
@@ -106,6 +138,7 @@ export type LinkScraperRow = {
   documentCount?: number;
   adapterKey?: string;
   adapterName?: string;
+  qualityFlags?: string[];
 };
 
 export type ScraperNotificationRecipient = {
@@ -200,6 +233,15 @@ function asNumber(value: unknown, fallback = 0) {
 
 function asRecord(value: unknown): DbRow {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as DbRow) : {};
+}
+
+function normalizeAnalysisDepth(value: unknown): LinkAnalysisDepth {
+  const normalized = cleanString(value).toLowerCase();
+  return normalized === "standard" || normalized === "padrao" ? "standard" : DEFAULT_ANALYSIS_DEPTH;
+}
+
+function analysisDepthProfile(value: unknown) {
+  return ANALYSIS_DEPTH_PROFILES[normalizeAnalysisDepth(value)];
 }
 
 function normalizeCode(value: string) {
@@ -520,10 +562,12 @@ export async function parsePropertyLinkImportFile(file: File): Promise<ParsedLin
 }
 
 function normalizeRow(row: DbRow): LinkScraperRow {
+  const rawPayload = asRecord(row.raw_row_payload);
   return {
     id: cleanString(row.id),
     batchId: cleanString(row.batch_id),
     rowNumber: asNumber(row.row_number),
+    analysisDepth: normalizeAnalysisDepth(rawPayload.analysisDepth || rawPayload.analysis_depth),
     externalCode: cleanString(row.external_code),
     auctionUrl: cleanString(row.auction_url),
     sourceDomain: cleanString(row.source_domain),
@@ -546,12 +590,17 @@ function mergeRowExtraction(row: LinkScraperRow, run: DbRow | undefined): LinkSc
   const gemini = asRecord(extracted.gemini);
   const subject = asRecord(extracted.subject);
   const adapter = asRecord(extracted.adapter);
+  const deepAnalysis = asRecord(extracted.deepAnalysis);
   const missingFields = Array.isArray(gemini.missingFields)
     ? gemini.missingFields.map((item) => cleanString(item)).filter(Boolean)
+    : [];
+  const qualityFlags = Array.isArray(deepAnalysis.qualityFlags)
+    ? deepAnalysis.qualityFlags.map((item) => cleanString(item)).filter(Boolean)
     : [];
 
   return {
     ...row,
+    analysisDepth: normalizeAnalysisDepth(extracted.analysisDepth || row.analysisDepth),
     extractionTitle: cleanString(extracted.title, cleanString(subject.address)),
     extractionConfidence: asNumber(gemini.confidenceScore),
     missingFields,
@@ -561,14 +610,17 @@ function mergeRowExtraction(row: LinkScraperRow, run: DbRow | undefined): LinkSc
     documentCount: asNumber(extracted.documentCount),
     adapterKey: cleanString(adapter.key),
     adapterName: cleanString(adapter.name),
+    qualityFlags,
   };
 }
 
 function normalizeBatch(row: DbRow, rows: LinkScraperRow[] = []): LinkScraperBatch {
+  const mappingPayload = asRecord(row.mapping_payload);
   return {
     id: cleanString(row.id),
     originalFilename: cleanString(row.original_filename),
     sourceType: cleanString(row.source_type),
+    analysisDepth: normalizeAnalysisDepth(mappingPayload.analysisDepth || mappingPayload.analysis_depth),
     rowCount: asNumber(row.row_count),
     validRowCount: asNumber(row.valid_row_count),
     invalidRowCount: asNumber(row.invalid_row_count),
@@ -950,12 +1002,15 @@ export async function createLinkScraperBatch(input: {
   whatsappAgentKey?: string;
   whatsappInstanceId?: string;
   notificationRecipientId?: string;
+  analysisDepth?: LinkAnalysisDepth | string;
 }): Promise<MutationResult<{ batchId: string; rowsCreated: number }>> {
   const supabase = getSupabaseAdminClient();
   if (!supabase) return { ok: false, error: "Supabase admin nao configurado." };
 
   const validRows = input.parsed.rows.filter((row) => row.status !== "url_invalida");
   if (!validRows.length) return { ok: false, error: "Nenhum link valido encontrado no arquivo." };
+  const analysisDepth = normalizeAnalysisDepth(input.analysisDepth);
+  const profile = analysisDepthProfile(analysisDepth);
 
   const { data: batch, error: batchError } = await supabase
     .from("market_analysis_import_batches")
@@ -970,6 +1025,9 @@ export async function createLinkScraperBatch(input: {
       whatsapp_instance_id: cleanString(input.whatsappInstanceId) || null,
       notification_recipient_id: cleanString(input.notificationRecipientId) || null,
       mapping_payload: {
+        analysisDepth,
+        analysisLabel: ANALYSIS_DEPTH_LABELS[analysisDepth],
+        profile,
         ignoredRowCount: input.parsed.ignoredRowCount,
         invalidRows: input.parsed.rows.filter((row) => row.status === "url_invalida"),
       },
@@ -991,7 +1049,7 @@ export async function createLinkScraperBatch(input: {
     auction_date_hint: row.auctionDateHint || null,
     property_type_hint: row.propertyTypeHint || null,
     status: "aguardando_inicio",
-    raw_row_payload: { rawValues: row.rawValues },
+    raw_row_payload: { rawValues: row.rawValues, analysisDepth },
   }));
 
   const { error: rowsError } = await supabase.from("market_analysis_import_rows").insert(rowsPayload);
@@ -1171,6 +1229,90 @@ function mergeAuctionExtraction(gemini: AuctionLinkExtraction, adapter: AuctionS
   return merged;
 }
 
+type LinkAnalysisQualityReview = {
+  analysisDepth: LinkAnalysisDepth;
+  qualityFlags: string[];
+  missingFields: string[];
+  cautionNotes: string[];
+  confidenceScore: number;
+  requiresReview: boolean;
+};
+
+function buildLinkAnalysisQualityReview(input: {
+  analysisDepth: LinkAnalysisDepth;
+  extraction: AuctionLinkExtraction;
+  initialBid: number;
+  appraisalValue: number;
+  imageCount: number;
+  documentCount: number;
+  responseOk: boolean;
+  geminiError?: string;
+  adapterWarnings?: string[];
+}) {
+  const profile = analysisDepthProfile(input.analysisDepth);
+  const flags: string[] = [];
+  const missingFields = new Set<string>(input.extraction.missingFields || []);
+  const cautionNotes: string[] = [];
+  const areaM2 = firstPositive(input.extraction.privateAreaM2, input.extraction.builtAreaM2, input.extraction.landAreaM2);
+
+  function flag(code: string, missingField: string, note: string) {
+    flags.push(code);
+    missingFields.add(missingField);
+    cautionNotes.push(note);
+  }
+
+  if (!input.responseOk) flag("http_nao_confirmado", "captura http", "A pagina nao respondeu com sucesso; revisar captura antes da decisao.");
+  if (!input.imageCount) flag("sem_foto_real", "foto real", "Nenhuma foto real foi confirmada para o imovel.");
+  if (!input.initialBid) flag("sem_lance", "lance", "Lance inicial/proximo lance nao foi encontrado com seguranca.");
+  if (!input.appraisalValue) flag("sem_valor_avaliacao_ou_mercado", "valor de avaliacao/mercado", "Valor de avaliacao ou mercado nao foi confirmado por fonte.");
+  if (!areaM2) flag("sem_area", "area", "Area do imovel nao foi confirmada.");
+  if (!input.extraction.auctionDate) flag("sem_data_leilao", "data do leilao", "Data do leilao nao foi confirmada.");
+  if (!input.extraction.city || !input.extraction.state) flag("sem_cidade_uf", "cidade/uf", "Cidade ou UF nao foram confirmadas.");
+  if (!input.extraction.address || input.extraction.address.toLowerCase().includes("nao informado")) {
+    flag("sem_endereco", "endereco", "Endereco completo nao foi confirmado.");
+  }
+
+  if (profile.requireDocuments && !input.documentCount) {
+    flag("sem_documento", "edital/matricula", "Modo profundo exige ao menos edital, matricula, laudo ou documento do lote quando disponivel.");
+  }
+  if (profile.requireDocuments && !input.extraction.legalSignal) {
+    flag("juridico_nao_validado", "juridico", "Modo profundo exige sinal juridico/ocupacao/onús para liberar com mais confianca.");
+  }
+  if (input.geminiError) flag("gemini_indisponivel", "leitura ia", `Gemini nao concluiu a leitura: ${input.geminiError}`);
+  if (input.adapterWarnings?.length) {
+    cautionNotes.push(`Avisos do adaptador: ${input.adapterWarnings.join(" | ")}`);
+    if (input.adapterWarnings.some((warning) => warning.toLowerCase().includes("generico"))) flags.push("adaptador_generico");
+  }
+
+  let confidenceScore = input.extraction.confidenceScore || 0;
+  if (!confidenceScore) confidenceScore = input.initialBid && input.imageCount && areaM2 ? 55 : 35;
+  if (input.analysisDepth === "deep") {
+    confidenceScore = Math.min(confidenceScore + 8, 92);
+    if (!input.imageCount) confidenceScore = Math.min(confidenceScore, 55);
+    if (!input.initialBid) confidenceScore = Math.min(confidenceScore, 45);
+    if (!input.appraisalValue) confidenceScore = Math.min(confidenceScore, 60);
+    if (!areaM2) confidenceScore = Math.min(confidenceScore, 58);
+    if (!input.documentCount) confidenceScore = Math.min(confidenceScore, 68);
+    confidenceScore = Math.max(15, confidenceScore - Math.max(0, flags.length - 2) * 4);
+  }
+
+  const criticalFlags = flags.filter((flagCode) =>
+    ["sem_foto_real", "sem_lance", "sem_valor_avaliacao_ou_mercado", "sem_area", "sem_cidade_uf", "sem_documento"].includes(flagCode)
+  );
+  const requiresReview = input.analysisDepth === "deep"
+    ? criticalFlags.length > 0 || confidenceScore < profile.minimumConfidence
+    : confidenceScore < profile.minimumConfidence;
+
+  return {
+    analysisDepth: input.analysisDepth,
+    qualityFlags: uniqueStrings(flags, 20),
+    missingFields: uniqueStrings(Array.from(missingFields), 30),
+    cautionNotes: uniqueStrings(cautionNotes, 20),
+    confidenceScore: clampMarketScore(confidenceScore),
+    requiresReview,
+  } satisfies LinkAnalysisQualityReview;
+}
+
 function decidePreliminaryMarket(realDiscountPct: number, confidenceScore: number): MarketAnalysisDecision {
   if (confidenceScore < 35) return "review";
   if (realDiscountPct >= 45) return "excellent";
@@ -1182,6 +1324,8 @@ function decidePreliminaryMarket(realDiscountPct: number, confidenceScore: numbe
 async function upsertPreliminaryMarketAnalysis(input: {
   opportunityId: string;
   opportunityCode: string;
+  analysisDepth: LinkAnalysisDepth;
+  qualityReview: LinkAnalysisQualityReview;
   extraction: AuctionLinkExtraction;
   initialBid: number;
   appraisalValue: number;
@@ -1200,7 +1344,8 @@ async function upsertPreliminaryMarketAnalysis(input: {
   const areaM2 = firstPositive(input.extraction.privateAreaM2, input.extraction.builtAreaM2, input.extraction.landAreaM2);
   const realDiscountPct = calculateMarketDiscount(input.initialBid, marketValueBase);
   const confidenceScore = clampMarketScore(
-    input.extraction.confidenceScore ||
+    input.qualityReview.confidenceScore ||
+      input.extraction.confidenceScore ||
       (marketValueBase && input.initialBid && areaM2 ? 52 : marketValueBase && input.initialBid ? 42 : 25)
   );
   const decision = decidePreliminaryMarket(realDiscountPct, confidenceScore);
@@ -1210,14 +1355,15 @@ async function upsertPreliminaryMarketAnalysis(input: {
   if (!input.initialBid) missing.add("lance");
   if (!areaM2) missing.add("area");
   if (!input.extraction.legalSignal) missing.add("juridico");
+  input.qualityReview.missingFields.forEach((field) => missing.add(field));
 
   try {
     await supabase.from("property_market_analyses").upsert(
       {
         opportunity_id: input.opportunityId,
         analysis_code: `MKT-${input.opportunityCode}`.slice(0, 64),
-        status: confidenceScore >= 55 ? "human_review" : "insufficient_data",
-        analyst_name: "Motor Betel por link",
+        status: confidenceScore >= 55 && !input.qualityReview.requiresReview ? "human_review" : "insufficient_data",
+        analyst_name: input.analysisDepth === "deep" ? "Motor Betel por link profundo" : "Motor Betel por link",
         payment_condition: input.extraction.paymentCondition || "Validar edital",
         subject_property_snapshot: {
           propertyType: input.extraction.propertyType,
@@ -1246,8 +1392,9 @@ async function upsertPreliminaryMarketAnalysis(input: {
         legal_signal: input.extraction.legalSignal || "Validar juridico manualmente.",
         decision,
         decision_reason: [
-          "Analise preliminar gerada automaticamente a partir do link de leilao.",
+          `${ANALYSIS_DEPTH_LABELS[input.analysisDepth]} gerada automaticamente a partir do link de leilao.`,
           realDiscountPct ? `Desconto preliminar sobre avaliacao/fonte: ${realDiscountPct}%.` : "",
+          input.qualityReview.qualityFlags.length ? `Flags de curadoria: ${input.qualityReview.qualityFlags.join(", ")}.` : "",
           missing.size ? `Pendencias: ${Array.from(missing).join(", ")}.` : "",
         ].filter(Boolean).join(" "),
         summary:
@@ -1255,6 +1402,7 @@ async function upsertPreliminaryMarketAnalysis(input: {
           "Captura inicial por link enviada pela equipe. Completar comparaveis de mercado antes de liberar teto de lance.",
         caution_notes: [
           input.extraction.cautionNotes,
+          ...input.qualityReview.cautionNotes,
           input.geminiError ? `Gemini: ${input.geminiError}` : "",
           input.imageCount ? "" : "Nenhuma imagem util capturada.",
         ].filter(Boolean).join("\n"),
@@ -1262,6 +1410,8 @@ async function upsertPreliminaryMarketAnalysis(input: {
         raw_payload: {
           source: "link_batch_scraper",
           sourceDomain: input.sourceDomain,
+          analysisDepth: input.analysisDepth,
+          qualityReview: input.qualityReview,
           extraction: input.extraction,
           imageCount: input.imageCount,
           documentCount: input.documentCount,
@@ -1276,10 +1426,12 @@ async function upsertPreliminaryMarketAnalysis(input: {
   }
 }
 
-async function processImportRow(row: LinkScraperRow): Promise<{ ok: boolean; opportunityId?: string; error?: string }> {
+async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: LinkAnalysisDepth | string } = {}): Promise<{ ok: boolean; opportunityId?: string; error?: string }> {
   const supabase = getSupabaseAdminClient();
   if (!supabase) return { ok: false, error: "Supabase admin nao configurado." };
 
+  const analysisDepth = normalizeAnalysisDepth(options.analysisDepth || row.analysisDepth);
+  const profile = analysisDepthProfile(analysisDepth);
   const startedAt = new Date().toISOString();
   const { data: run, error: runError } = await supabase
     .from("auction_scrape_runs")
@@ -1287,8 +1439,14 @@ async function processImportRow(row: LinkScraperRow): Promise<{ ok: boolean; opp
       import_row_id: row.id,
       source_url: row.auctionUrl,
       source_domain: row.sourceDomain || sourceDomain(row.auctionUrl),
+      adapter_key: `link_batch_${analysisDepth}`,
       status: "running",
       started_at: startedAt,
+      extracted_payload: {
+        analysisDepth,
+        profile,
+        queuedAt: startedAt,
+      },
     })
     .select("id")
     .single();
@@ -1300,7 +1458,7 @@ async function processImportRow(row: LinkScraperRow): Promise<{ ok: boolean; opp
   try {
     const response = await fetch(row.auctionUrl, {
       headers: { "User-Agent": "BetelBot/1.0 (+https://betel.com.br)" },
-      signal: AbortSignal.timeout(25_000),
+      signal: AbortSignal.timeout(profile.fetchTimeoutMs),
     });
     const html = await response.text();
     const visibleText = htmlToText(html);
@@ -1312,6 +1470,7 @@ async function processImportRow(row: LinkScraperRow): Promise<{ ok: boolean; opp
       html,
       visibleText,
     });
+    await supabase.from("market_analysis_import_rows").update({ status: "scraper_concluido" }).eq("id", row.id);
     const documentLinks = mergeDocumentLinks(
       extractDocumentLinksFromHtml(html, resolvedSourceUrl),
       siteContext.documents
@@ -1320,6 +1479,8 @@ async function processImportRow(row: LinkScraperRow): Promise<{ ok: boolean; opp
       sourceUrl: row.auctionUrl,
       sourceDomain: domain,
       htmlText: [siteContext.llmContext, visibleText].filter(Boolean).join("\n\n"),
+      analysisDepth,
+      maxInputChars: profile.llmTextLimit,
       hints: {
         city: row.cityHint,
         state: row.stateHint,
@@ -1342,8 +1503,27 @@ async function processImportRow(row: LinkScraperRow): Promise<{ ok: boolean; opp
     const rawImageUrls = uniqueStrings([...siteContext.imageUrls, ...genericImageUrls], 60);
     const opportunityCode = safeBatchCode(row.externalCode || `${domain}-${makeSourceHash(row.auctionUrl)}`, row.rowNumber);
     const images = rawImageUrls.length
-      ? await mirrorRemoteImagesToR2({ opportunityCode, imageUrls: rawImageUrls, alt: title, maxImages: 40, referer: row.auctionUrl })
+      ? await mirrorRemoteImagesToR2({ opportunityCode, imageUrls: rawImageUrls, alt: title, maxImages: profile.maxImages, referer: row.auctionUrl })
       : ([] as StoredImageAsset[]);
+    const usableImageCount = images.filter((image) => image.status === "mirrored" || image.status === "external").length;
+    const qualityReview = buildLinkAnalysisQualityReview({
+      analysisDepth,
+      extraction,
+      initialBid,
+      appraisalValue,
+      imageCount: usableImageCount,
+      documentCount: documentLinks.length,
+      responseOk: response.ok,
+      geminiError: gemini.error,
+      adapterWarnings: siteContext.warnings,
+    });
+    extraction.confidenceScore = qualityReview.confidenceScore;
+    extraction.missingFields = qualityReview.missingFields;
+    extraction.cautionNotes = uniqueStrings([
+      extraction.cautionNotes,
+      ...qualityReview.cautionNotes,
+    ], 30).join("\n");
+    await supabase.from("market_analysis_import_rows").update({ status: "extracao_concluida" }).eq("id", row.id);
 
     const ingest = await ingestAuctionOpportunityRecord({
       code: opportunityCode,
@@ -1357,13 +1537,15 @@ async function processImportRow(row: LinkScraperRow): Promise<{ ok: boolean; opp
       initialBid,
       appraisalValue,
       discountPct: discount,
-      opportunityScore: discount > 0 ? Math.min(95, 45 + discount) : 50,
-      riskScore: 50,
-      complianceScore: response.ok ? 65 : 45,
-      aiStatus: "Fila IA",
-      legalStatus: "Pendente",
-      stage: "Entrada",
-      nextAction: "Revisar captura por link, extrair edital e completar analise de mercado.",
+      opportunityScore: Math.max(20, (discount > 0 ? Math.min(95, 45 + discount) : 50) - qualityReview.qualityFlags.length * 3),
+      riskScore: qualityReview.requiresReview ? 65 : 50,
+      complianceScore: response.ok && !qualityReview.requiresReview ? 72 : 45,
+      aiStatus: analysisDepth === "deep" ? "Analise profunda" : "Fila IA",
+      legalStatus: extraction.legalSignal ? "Pendente" : "Revisao necessaria",
+      stage: qualityReview.requiresReview ? "Revisao humana" : "Entrada",
+      nextAction: qualityReview.requiresReview
+        ? "Completar curadoria profunda: documentos, valores, fotos reais e comparaveis antes de liberar decisao."
+        : "Revisar captura por link, extrair edital e completar analise de mercado.",
       owner: "Upload de Links - Analise de Mercado",
       auctionDate: firstText(extraction.auctionDate, row.auctionDateHint),
       occupancy: firstText(extraction.occupancy, "Nao informado"),
@@ -1374,10 +1556,13 @@ async function processImportRow(row: LinkScraperRow): Promise<{ ok: boolean; opp
       sourceUrl: row.auctionUrl,
       externalId: row.auctionUrl,
       collectionMode: "uploaded_auction_link",
-      evidenceNotes: "Captura por link enviado pelo usuario; substitui busca automatica por fontes.",
+      evidenceNotes: `${ANALYSIS_DEPTH_LABELS[analysisDepth]} por link enviado pelo usuario; flags: ${qualityReview.qualityFlags.join(", ") || "sem flags criticas"}.`,
       rawPayload: {
         importRowId: row.id,
         importBatchId: row.batchId,
+        analysisDepth,
+        analysisProfile: profile,
+        qualityReview,
         sourceUrl: row.auctionUrl,
         sourceDomain: domain,
         httpStatus: response.status,
@@ -1441,9 +1626,13 @@ async function processImportRow(row: LinkScraperRow): Promise<{ ok: boolean; opp
       );
     }
 
+    await supabase.from("market_analysis_import_rows").update({ status: "analise_mercado_pendente" }).eq("id", row.id);
+
     await upsertPreliminaryMarketAnalysis({
       opportunityId: ingest.data.opportunityId,
       opportunityCode,
+      analysisDepth,
+      qualityReview,
       extraction,
       initialBid,
       appraisalValue,
@@ -1461,12 +1650,21 @@ async function processImportRow(row: LinkScraperRow): Promise<{ ok: boolean; opp
       http_status: response.status,
       raw_snapshot_id: ingest.data.snapshotId,
       extracted_payload: {
+        analysisDepth,
+        profile,
         title,
         gemini: {
           model: gemini.model,
           error: gemini.error || null,
           confidenceScore: extraction.confidenceScore,
           missingFields: extraction.missingFields,
+        },
+        deepAnalysis: {
+          qualityFlags: qualityReview.qualityFlags,
+          missingFields: qualityReview.missingFields,
+          cautionNotes: qualityReview.cautionNotes,
+          requiresReview: qualityReview.requiresReview,
+          minimumConfidence: profile.minimumConfidence,
         },
         adapter: {
           key: siteContext.adapterKey,
@@ -1530,6 +1728,7 @@ function buildBatchMessage(batch: LinkScraperBatch, rows: LinkScraperRow[]) {
   return [
     "Betel AI - analise de mercado concluida",
     `Arquivo/lote: ${batch.originalFilename || batch.id}`,
+    `Modo: ${ANALYSIS_DEPTH_LABELS[batch.analysisDepth || DEFAULT_ANALYSIS_DEPTH]}`,
     `Links: ${rows.length}`,
     `Imoveis analisados: ${success}`,
     `Com foto real: ${withRealPhoto}`,
@@ -1612,6 +1811,7 @@ export async function startLinkScraperBatch(input: {
   whatsappAgentKey?: string;
   whatsappInstanceId?: string;
   notificationRecipientId?: string;
+  analysisDepth?: LinkAnalysisDepth | string;
 }): Promise<MutationResult<{ processed: number; failed: number }>> {
   const supabase = getSupabaseAdminClient();
   if (!supabase) return { ok: false, error: "Supabase admin nao configurado." };
@@ -1622,6 +1822,8 @@ export async function startLinkScraperBatch(input: {
     .eq("id", input.batchId)
     .maybeSingle();
   if (batchError || !batchRow) return { ok: false, error: batchError?.message || "Lote nao encontrado." };
+  const batchPayload = asRecord(batchRow.mapping_payload);
+  const analysisDepth = normalizeAnalysisDepth(input.analysisDepth || batchPayload.analysisDepth || batchPayload.analysis_depth);
 
   await supabase.from("market_analysis_import_batches").update({
     status: "processando",
@@ -1630,6 +1832,12 @@ export async function startLinkScraperBatch(input: {
     whatsapp_instance_id: cleanString(input.whatsappInstanceId) || cleanString(batchRow.whatsapp_instance_id) || null,
     notification_recipient_id: cleanString(input.notificationRecipientId) || cleanString(batchRow.notification_recipient_id) || null,
     notification_status: "pending",
+    mapping_payload: {
+      ...batchPayload,
+      analysisDepth,
+      analysisLabel: ANALYSIS_DEPTH_LABELS[analysisDepth],
+      profile: analysisDepthProfile(analysisDepth),
+    },
   }).eq("id", input.batchId);
 
   const { data: rowData, error: rowError } = await supabase
@@ -1649,7 +1857,7 @@ export async function startLinkScraperBatch(input: {
   let processed = 0;
   let failed = 0;
   for (const row of ((rowData || []) as DbRow[]).map(normalizeRow)) {
-    const result = await processImportRow({ ...row, status: "aguardando_scraper" });
+    const result = await processImportRow({ ...row, status: "aguardando_scraper", analysisDepth }, { analysisDepth });
     if (result.ok) processed += 1;
     else failed += 1;
   }
@@ -1675,6 +1883,12 @@ export async function startLinkScraperBatch(input: {
   }
   const finalBatch = normalizeBatch({
     ...asRecord(batchRow),
+    mapping_payload: {
+      ...batchPayload,
+      analysisDepth,
+      analysisLabel: ANALYSIS_DEPTH_LABELS[analysisDepth],
+      profile: analysisDepthProfile(analysisDepth),
+    },
     whatsapp_agent_key: cleanString(input.whatsappAgentKey) || cleanString(batchRow.whatsapp_agent_key),
     whatsapp_instance_id: cleanString(input.whatsappInstanceId) || cleanString(batchRow.whatsapp_instance_id),
     notification_recipient_id: cleanString(input.notificationRecipientId) || cleanString(batchRow.notification_recipient_id),
@@ -1694,6 +1908,8 @@ export async function startLinkScraperBatch(input: {
       withRealPhoto: readyWithRealPhoto,
       withoutRealPhoto: Math.max(readyRows.length - readyWithRealPhoto, 0),
       withoutMarketValue: readyWithoutMarketValue,
+      analysisDepth,
+      analysisLabel: ANALYSIS_DEPTH_LABELS[analysisDepth],
       total: normalizedRows.length,
     },
   }).eq("id", input.batchId);
@@ -1707,6 +1923,7 @@ export async function queueLinkScraperBatch(input: {
   whatsappAgentKey?: string;
   whatsappInstanceId?: string;
   notificationRecipientId?: string;
+  analysisDepth?: LinkAnalysisDepth | string;
 }): Promise<MutationResult<{ batchId: string; queuedRows: number }>> {
   const supabase = getSupabaseAdminClient();
   if (!supabase) return { ok: false, error: "Supabase admin nao configurado." };
@@ -1716,10 +1933,12 @@ export async function queueLinkScraperBatch(input: {
 
   const { data: batchRow, error: batchError } = await supabase
     .from("market_analysis_import_batches")
-    .select("id, status, whatsapp_agent_key, whatsapp_instance_id, notification_recipient_id")
+    .select("id, status, whatsapp_agent_key, whatsapp_instance_id, notification_recipient_id, mapping_payload")
     .eq("id", batchId)
     .maybeSingle();
   if (batchError || !batchRow) return { ok: false, error: batchError?.message || "Lote nao encontrado." };
+  const batchPayload = asRecord(batchRow.mapping_payload);
+  const analysisDepth = normalizeAnalysisDepth(input.analysisDepth || batchPayload.analysisDepth || batchPayload.analysis_depth);
 
   await supabase.from("market_analysis_import_batches").update({
     status: "processando",
@@ -1728,6 +1947,12 @@ export async function queueLinkScraperBatch(input: {
     whatsapp_instance_id: cleanString(input.whatsappInstanceId) || cleanString(batchRow.whatsapp_instance_id) || null,
     notification_recipient_id: cleanString(input.notificationRecipientId) || cleanString(batchRow.notification_recipient_id) || null,
     notification_status: "queued",
+    mapping_payload: {
+      ...batchPayload,
+      analysisDepth,
+      analysisLabel: ANALYSIS_DEPTH_LABELS[analysisDepth],
+      profile: analysisDepthProfile(analysisDepth),
+    },
   }).eq("id", batchId);
 
   await supabase

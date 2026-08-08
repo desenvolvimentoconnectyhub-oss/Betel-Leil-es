@@ -18,6 +18,7 @@ import type { AdminModule } from "@/lib/admin/modules";
 import type {
   LinkScraperBatch,
   LinkScraperDashboardData,
+  LinkAnalysisDepth,
   ParsedLinkImportFile,
   ScraperNotificationRecipient,
   WhatsappAgentOption,
@@ -70,6 +71,10 @@ function rowNeedsRetry(status: string) {
 
 const activeRowStatuses = new Set(["aguardando_scraper", "scraping", "scraper_concluido", "extracao_concluida", "analise_mercado_pendente"]);
 const terminalRowStatuses = new Set(["pronto_para_revisao", "falha", "url_invalida", "duplicado"]);
+const analysisDepthLabels: Record<LinkAnalysisDepth, string> = {
+  deep: "Analise profunda",
+  standard: "Analise padrao",
+};
 
 function batchHasActiveWork(batch: LinkScraperBatch) {
   return batch.status === "processando" || batch.rows.some((row) => activeRowStatuses.has(row.status));
@@ -132,6 +137,7 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
   const [archiveConfirmation, setArchiveConfirmation] = useState("");
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const [showRecipientModal, setShowRecipientModal] = useState(false);
+  const [analysisDepth, setAnalysisDepth] = useState<LinkAnalysisDepth>("deep");
 
   const connectedAgents = useMemo(
     () => dashboard.whatsappAgents.filter(isSelectableWhatsappAgent),
@@ -250,6 +256,7 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
     formData.set("whatsappAgentKey", selectedAgentOption.agentKey);
     formData.set("whatsappInstanceId", selectedAgentOption.id);
     formData.set("notificationRecipientId", selectedRecipientOption.id);
+    formData.set("analysisDepth", analysisDepth);
     setBusy("import_file");
     setFeedback(null);
 
@@ -312,6 +319,7 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
         whatsappAgentKey: currentAgent.agentKey,
         whatsappInstanceId,
         notificationRecipientId,
+        analysisDepth: batch.analysisDepth || analysisDepth,
       },
       "Processamento enfileirado. O WhatsApp sera enviado quando o lote terminar."
     );
@@ -491,6 +499,41 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
                 </select>
               </label>
             </div>
+            <fieldset className="rounded-lg border border-[var(--admin-border)] p-3">
+              <legend className="px-1 text-xs text-[var(--admin-muted)]">Profundidade da analise</legend>
+              <div className="grid gap-2 md:grid-cols-2">
+                {(["deep", "standard"] as LinkAnalysisDepth[]).map((option) => (
+                  <label
+                    key={option}
+                    className={cn(
+                      "flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition",
+                      analysisDepth === option
+                        ? "border-[var(--admin-cyan)] bg-cyan-50 text-cyan-950"
+                        : "border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] text-white"
+                    )}
+                  >
+                    <input
+                      type="radio"
+                      name="analysisDepth"
+                      value={option}
+                      checked={analysisDepth === option}
+                      onChange={() => setAnalysisDepth(option)}
+                      className="mt-1"
+                    />
+                    <span>
+                      <span className="block text-sm font-semibold">
+                        {analysisDepthLabels[option]}{option === "deep" ? " (recomendado)" : ""}
+                      </span>
+                      <span className={cn("mt-1 block text-xs leading-5", analysisDepth === option ? "text-cyan-800" : "text-[var(--admin-muted)]")}>
+                        {option === "deep"
+                          ? "Mais lenta e conservadora: exige mais evidencias, documentos, foto real e pendencias explicitas."
+                          : "Mais enxuta para triagem, mantendo revisao humana antes da decisao."}
+                      </span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
             <div className="grid gap-2 rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] p-3 text-xs md:grid-cols-2">
               <div>
                 <p className="font-mono uppercase tracking-[0.14em] text-[var(--admin-muted)]">Remetente</p>
@@ -713,6 +756,9 @@ function BatchArticle({
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="truncate text-sm font-semibold text-white">{batch.originalFilename || batch.id}</p>
                       <Pill className={statusTone(batch.status)}>{batch.status}</Pill>
+                      <Pill className={batch.analysisDepth === "deep" ? "border-cyan-300 bg-cyan-50 text-cyan-900" : "border-slate-300 bg-slate-50 text-slate-800"}>
+                        {analysisDepthLabels[batch.analysisDepth || "deep"]}
+                      </Pill>
                     </div>
                     <p className="mt-1 text-xs text-[var(--admin-muted)]">
                       {batch.validRowCount} link(s) validos | {batch.invalidRowCount} invalido(s) | criado em {batch.createdAt ? new Date(batch.createdAt).toLocaleString("pt-BR") : "-"}
@@ -768,6 +814,11 @@ function BatchArticle({
                             ) : null}
                             {row.adapterName ? (
                               <p className="mt-1 truncate text-[11px] text-cyan-700">{row.adapterName}</p>
+                            ) : null}
+                            {row.qualityFlags?.length ? (
+                              <p className="mt-1 truncate text-[11px] text-yellow-700">
+                                Flags: {row.qualityFlags.slice(0, 3).join(", ")}
+                              </p>
                             ) : null}
                           </td>
                           <td className="py-2 pr-3 text-[var(--admin-muted)]">

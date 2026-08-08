@@ -13,6 +13,7 @@ export const linkBatchScraperFunction = inngest.createFunction(
       whatsappAgentKey?: string;
       whatsappInstanceId?: string;
       notificationRecipientId?: string;
+      analysisDepth?: string;
     };
 
     const result = await step.run("process-link-batch", () =>
@@ -21,6 +22,7 @@ export const linkBatchScraperFunction = inngest.createFunction(
         whatsappAgentKey: String(data.whatsappAgentKey || ""),
         whatsappInstanceId: String(data.whatsappInstanceId || ""),
         notificationRecipientId: String(data.notificationRecipientId || ""),
+        analysisDepth: String(data.analysisDepth || "deep"),
       })
     );
 

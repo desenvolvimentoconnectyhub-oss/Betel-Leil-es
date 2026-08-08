@@ -135,6 +135,8 @@ export async function extractAuctionLinkWithGemini(input: {
   sourceUrl: string;
   sourceDomain: string;
   htmlText: string;
+  analysisDepth?: "standard" | "deep" | string;
+  maxInputChars?: number;
   hints?: {
     city?: string;
     state?: string;
@@ -148,7 +150,8 @@ export async function extractAuctionLinkWithGemini(input: {
   }
 
   const model = await getGeminiModel();
-  const htmlText = input.htmlText.slice(0, 30_000);
+  const deepMode = input.analysisDepth === "deep";
+  const htmlText = input.htmlText.slice(0, input.maxInputChars || (deepMode ? 60_000 : 30_000));
 
   try {
     const { GoogleGenerativeAI } = await import("@google/generative-ai");
@@ -165,6 +168,12 @@ export async function extractAuctionLinkWithGemini(input: {
         "Separe fato de inferencia: use cautionNotes para ressalvas e confidenceScore baixo quando faltar informacao.",
         "Valores monetarios devem ser numeros em BRL, sem R$ e sem separador de milhar.",
         "Areas devem ser numeros em m2.",
+        deepMode
+          ? "Modo profundo: privilegie precisao acima de velocidade, seja conservador e marque pendencias quando faltarem foto real, lance, avaliacao/mercado, area, endereco, ocupacao, juridico, edital ou matricula."
+          : "",
+        deepMode
+          ? "Nao use lance inicial, proximo lance, incremento ou valor de 2 leilao como avaliacao de mercado. appraisalValue so deve ser preenchido quando o texto trouxer avaliacao, valor avaliado, valor de mercado ou equivalente."
+          : "",
       ].join("\n"),
     });
 
@@ -176,6 +185,7 @@ export async function extractAuctionLinkWithGemini(input: {
         "",
         `URL: ${input.sourceUrl}`,
         `Dominio: ${input.sourceDomain}`,
+        `Modo de analise: ${deepMode ? "profunda e conservadora" : "padrao"}`,
         `Dicas manuais: ${JSON.stringify(input.hints || {})}`,
         "",
         `Texto da pagina:\n${htmlText}`,
