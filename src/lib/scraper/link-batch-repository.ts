@@ -51,7 +51,7 @@ const ANALYSIS_DEPTH_PROFILES: Record<LinkAnalysisDepth, {
     maxImages: 40,
     fetchTimeoutMs: 35_000,
     minimumConfidence: 65,
-    requireDocuments: true,
+    requireDocuments: false,
   },
 };
 
@@ -1252,6 +1252,49 @@ type ProcessImportRowResult = {
   blocked?: boolean;
 };
 
+function isMarketAnalysisMissingField(field: unknown) {
+  const normalized = cleanString(field)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+
+  if (!normalized) return false;
+  return ![
+    "auctiondate",
+    "data do leilao",
+    "address",
+    "endereco",
+    "neighborhood",
+    "bairro",
+    "edital",
+    "edital/matricula",
+    "matricula",
+    "documento",
+    "documento oficial",
+    "certidao",
+    "processo",
+    "juridico",
+    "legalsignal",
+    "legal signal",
+    "legal",
+    "onus",
+    "oneriacoes",
+    "propter rem",
+    "posse",
+    "occupancy",
+    "ocupacao",
+    "paymentcondition",
+    "payment condition",
+    "condicao de pagamento",
+    "forma de pagamento",
+    "pagamento",
+  ].some((ignored) => normalized.includes(ignored));
+}
+
+function marketAnalysisMissingFields(fields: Iterable<unknown>) {
+  return Array.from(fields).filter(isMarketAnalysisMissingField).map((field) => cleanString(field));
+}
+
 function buildLinkAnalysisQualityReview(input: {
   analysisDepth: LinkAnalysisDepth;
   extraction: AuctionLinkExtraction;
@@ -1265,7 +1308,7 @@ function buildLinkAnalysisQualityReview(input: {
 }) {
   const profile = analysisDepthProfile(input.analysisDepth);
   const flags: string[] = [];
-  const missingFields = new Set<string>(input.extraction.missingFields || []);
+  const missingFields = new Set<string>(marketAnalysisMissingFields(input.extraction.missingFields || []));
   const cautionNotes: string[] = [];
   const areaM2 = firstPositive(input.extraction.privateAreaM2, input.extraction.builtAreaM2, input.extraction.landAreaM2);
 
@@ -1286,12 +1329,6 @@ function buildLinkAnalysisQualityReview(input: {
     flag("sem_endereco", "endereco", "Endereco completo nao foi confirmado.");
   }
 
-  if (profile.requireDocuments && !input.documentCount) {
-    flag("sem_documento", "edital/matricula", "Modo profundo exige ao menos edital, matricula, laudo ou documento do lote quando disponivel.");
-  }
-  if (profile.requireDocuments && !input.extraction.legalSignal) {
-    flag("juridico_nao_validado", "juridico", "Modo profundo exige sinal juridico/ocupacao/onús para liberar com mais confianca.");
-  }
   if (input.geminiError) flag("gemini_indisponivel", "leitura ia", `Gemini nao concluiu a leitura: ${input.geminiError}`);
   if (input.adapterWarnings?.length) {
     cautionNotes.push(`Avisos do adaptador: ${input.adapterWarnings.join(" | ")}`);
@@ -1306,12 +1343,11 @@ function buildLinkAnalysisQualityReview(input: {
     if (!input.initialBid) confidenceScore = Math.min(confidenceScore, 45);
     if (!input.appraisalValue) confidenceScore = Math.min(confidenceScore, 60);
     if (!areaM2) confidenceScore = Math.min(confidenceScore, 58);
-    if (!input.documentCount) confidenceScore = Math.min(confidenceScore, 68);
     confidenceScore = Math.max(15, confidenceScore - Math.max(0, flags.length - 2) * 4);
   }
 
   const criticalFlags = flags.filter((flagCode) =>
-    ["sem_foto_real", "sem_lance", "sem_valor_avaliacao_ou_mercado", "sem_area", "sem_cidade_uf", "sem_documento"].includes(flagCode)
+    ["sem_foto_real", "sem_lance", "sem_valor_avaliacao_ou_mercado", "sem_area", "sem_cidade_uf"].includes(flagCode)
   );
   const requiresReview = input.analysisDepth === "deep"
     ? criticalFlags.length > 0 || confidenceScore < profile.minimumConfidence
@@ -1353,7 +1389,7 @@ function applyDeepMarketResearchToQualityReview(
     missingFields.add("referencia direta de aluguel");
   }
 
-  marketResearch.missingFields.forEach((field) => missingFields.add(field));
+  marketAnalysisMissingFields(marketResearch.missingFields).forEach((field) => missingFields.add(field));
   marketResearch.cautionNotes.forEach((note) => cautionNotes.add(note));
 
   const confidenceScore = marketResearch.marketValueBase
@@ -1395,12 +1431,7 @@ function evaluateLinkAnalysisQualityGate(input: {
   if (!input.marketValueBase) issues.add("valor de mercado calculado");
   if (!areaM2) issues.add("area do imovel");
   if (!input.extraction.city || !input.extraction.state) issues.add("cidade/UF");
-  if (!input.extraction.address || input.extraction.address.toLowerCase().includes("nao informado")) issues.add("endereco");
-  if (!input.extraction.auctionDate) issues.add("data do leilao");
   if (!input.imageCount) issues.add("foto real do imovel");
-  if (profile.requireDocuments && !input.documentCount) issues.add("edital, matricula ou documento oficial");
-  if (profile.requireDocuments && !input.extraction.legalSignal) issues.add("sinal juridico/ocupacao/oneriacoes");
-
   if (input.analysisDepth === "deep") {
     if (!input.marketResearch || input.marketResearch.status !== "completed") issues.add("pesquisa de mercado completa");
     if ((input.marketResearch?.saleComparables.length || 0) < 3) issues.add("minimo de 3 comparaveis de venda");
@@ -1411,7 +1442,7 @@ function evaluateLinkAnalysisQualityGate(input: {
     issues.add(`confianca minima de ${profile.minimumConfidence}%`);
   }
 
-  input.qualityReview.missingFields.forEach((field) => {
+  marketAnalysisMissingFields(input.qualityReview.missingFields).forEach((field) => {
     const clean = cleanString(field);
     if (clean) issues.add(clean);
   });
@@ -1569,12 +1600,11 @@ async function upsertPreliminaryMarketAnalysis(input: {
     marketValueBase,
     initialBid: input.initialBid,
   });
-  const missing = new Set(input.extraction.missingFields || []);
+  const missing = new Set(marketAnalysisMissingFields(input.extraction.missingFields || []));
   if (!marketValueBase) missing.add("valor de avaliacao/mercado");
   if (!input.initialBid) missing.add("lance");
   if (!areaM2) missing.add("area");
-  if (!input.extraction.legalSignal) missing.add("juridico");
-  input.qualityReview.missingFields.forEach((field) => missing.add(field));
+  marketAnalysisMissingFields(input.qualityReview.missingFields).forEach((field) => missing.add(field));
   const sourceLinks = marketSourceLinks({ auctionUrl: input.auctionUrl, marketResearch: input.marketResearch });
 
   try {
@@ -1609,7 +1639,7 @@ async function upsertPreliminaryMarketAnalysis(input: {
         ceiling_targets: ceilingTargets,
         liquidity_score: input.marketResearch?.liquidityScore || 0,
         confidence_score: confidenceScore,
-        legal_signal: input.extraction.legalSignal || "Validar juridico manualmente.",
+        legal_signal: input.extraction.legalSignal || "Fora do escopo da analise de mercado.",
         decision,
         decision_reason: [
           `${ANALYSIS_DEPTH_LABELS[input.analysisDepth]} gerada automaticamente a partir do link de leilao.`,
@@ -1797,13 +1827,13 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
       riskScore: !qualityGate.passed || qualityReview.requiresReview ? 65 : 50,
       complianceScore: response.ok && qualityGate.passed && !qualityReview.requiresReview ? 72 : 45,
       aiStatus: analysisDepth === "deep" ? "Analise profunda" : "Fila IA",
-      legalStatus: extraction.legalSignal ? "Pendente" : "Revisao necessaria",
+      legalStatus: extraction.legalSignal ? "Informado na fonte" : "Nao avaliado nesta fase",
       stage: !qualityGate.passed || qualityReview.requiresReview ? "Revisao humana" : "Entrada",
       nextAction: !qualityGate.passed
         ? `Completar campos obrigatorios antes de continuar o lote: ${qualityGate.issues.join(", ")}.`
         : qualityReview.requiresReview
-        ? "Completar curadoria profunda: documentos, valores, fotos reais e comparaveis antes de liberar decisao."
-        : "Revisar captura por link, extrair edital e completar analise de mercado.",
+        ? "Completar curadoria de mercado: valores, fotos reais, area e comparaveis antes de liberar decisao."
+        : "Revisar captura por link e completar analise de mercado.",
       owner: "Upload de Links - Analise de Mercado",
       auctionDate: firstText(extraction.auctionDate, row.auctionDateHint),
       occupancy: firstText(extraction.occupancy, "Nao informado"),
