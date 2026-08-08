@@ -8,6 +8,7 @@ import {
   calculatePricePerM2,
   clampMarketScore,
   type MarketAnalysisDecision,
+  type MarketCostItem,
 } from "@/lib/admin/market-analysis";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { ingestAuctionOpportunityRecord } from "@/lib/admin/repository/pipeline";
@@ -15,6 +16,7 @@ import { sendWhatsAppAgentReply, sendWhatsAppDestinationText } from "@/lib/commu
 import { mirrorRemoteImagesToR2, type StoredImageAsset } from "@/lib/storage/r2";
 import { extractAuctionSiteContext, type AuctionSiteDocument, type AuctionSiteExtractionPatch } from "./auction-site-adapters";
 import { extractAuctionLinkWithGemini, type AuctionLinkExtraction } from "./auction-link-extractor";
+import { runDeepMarketResearch, type DeepMarketComparable, type DeepMarketResearchResult } from "./deep-market-research";
 import { cleanHtmlForLlm } from "./scraper-llm";
 import { collectImageUrlsFromSourceUrl } from "./scraper-strategies";
 import type { DataResult, MutationResult } from "@/lib/admin/repository/shared";
@@ -1313,12 +1315,160 @@ function buildLinkAnalysisQualityReview(input: {
   } satisfies LinkAnalysisQualityReview;
 }
 
+function applyDeepMarketResearchToQualityReview(
+  review: LinkAnalysisQualityReview,
+  marketResearch: DeepMarketResearchResult | null
+) {
+  if (!marketResearch) return review;
+
+  const profile = analysisDepthProfile(review.analysisDepth);
+  const flags = new Set(review.qualityFlags);
+  const missingFields = new Set(review.missingFields);
+  const cautionNotes = new Set(review.cautionNotes);
+
+  if (marketResearch.marketValueBase > 0) {
+    flags.delete("sem_valor_avaliacao_ou_mercado");
+    missingFields.delete("valor de avaliacao/mercado");
+  }
+
+  if (marketResearch.saleComparables.length < 3) {
+    flags.add("comparaveis_insuficientes");
+    missingFields.add("minimo de 3 comparaveis de venda");
+  }
+
+  if (!marketResearch.rentalComparables.length) {
+    flags.add("aluguel_sem_referencia_direta");
+    missingFields.add("referencia direta de aluguel");
+  }
+
+  marketResearch.missingFields.forEach((field) => missingFields.add(field));
+  marketResearch.cautionNotes.forEach((note) => cautionNotes.add(note));
+
+  const confidenceScore = marketResearch.marketValueBase
+    ? clampMarketScore(Math.round((review.confidenceScore + marketResearch.confidenceScore) / 2))
+    : Math.min(review.confidenceScore, marketResearch.confidenceScore || review.confidenceScore);
+  const requiresReview =
+    review.requiresReview ||
+    !marketResearch.marketValueBase ||
+    marketResearch.saleComparables.length < 3 ||
+    confidenceScore < profile.minimumConfidence;
+
+  return {
+    ...review,
+    qualityFlags: uniqueStrings(Array.from(flags), 24),
+    missingFields: uniqueStrings(Array.from(missingFields), 36),
+    cautionNotes: uniqueStrings(Array.from(cautionNotes), 30),
+    confidenceScore: clampMarketScore(confidenceScore),
+    requiresReview,
+  } satisfies LinkAnalysisQualityReview;
+}
+
 function decidePreliminaryMarket(realDiscountPct: number, confidenceScore: number): MarketAnalysisDecision {
   if (confidenceScore < 35) return "review";
   if (realDiscountPct >= 45) return "excellent";
   if (realDiscountPct >= 32) return "good";
   if (realDiscountPct >= 20) return "caution";
   return "review";
+}
+
+function marketSourceLinks(input: {
+  auctionUrl: string;
+  marketResearch: DeepMarketResearchResult | null;
+}) {
+  const links = [
+    { label: "Link leilao", url: input.auctionUrl },
+    ...(input.marketResearch?.searchedUrls || []).map((item) => ({ label: `Busca: ${item.label}`, url: item.url })),
+    ...(input.marketResearch?.saleComparables || []).map((item) => ({ label: `Comparavel venda: ${item.sourceLabel}`, url: item.sourceUrl })),
+    ...(input.marketResearch?.rentalComparables || []).map((item) => ({ label: `Comparavel aluguel: ${item.sourceLabel}`, url: item.sourceUrl })),
+  ];
+  const seen = new Set<string>();
+  return links
+    .map((link) => ({ label: cleanString(link.label, "Fonte"), url: cleanString(link.url) }))
+    .filter((link) => link.url)
+    .filter((link) => {
+      if (seen.has(link.url)) return false;
+      seen.add(link.url);
+      return true;
+    })
+    .slice(0, 30);
+}
+
+function estimatedCostTotal(costs: MarketCostItem[]) {
+  return costs.reduce((total, item) => total + (Number(item.value) || 0), 0);
+}
+
+function buildRentalEstimatePayload(input: {
+  marketResearch: DeepMarketResearchResult | null;
+  marketValueBase: number;
+  initialBid: number;
+}) {
+  const monthlyRent = input.marketResearch?.rentalMonthlyRent || 0;
+  return {
+    monthlyRent,
+    referenceUrl: input.marketResearch?.rentalReferenceUrl || "",
+    referenceFound: Boolean(input.marketResearch?.rentalReferenceUrl),
+    valueKnown: Boolean(input.marketResearch?.rentalComparables.length),
+    monthlyYieldOnMarketPct: input.marketValueBase && monthlyRent ? Math.round((monthlyRent / input.marketValueBase) * 10000) / 100 : 0,
+    annualYieldOnMarketPct: input.marketValueBase && monthlyRent ? Math.round(((monthlyRent * 12) / input.marketValueBase) * 10000) / 100 : 0,
+    monthlyYieldOnBidPct: input.initialBid && monthlyRent ? Math.round((monthlyRent / input.initialBid) * 10000) / 100 : 0,
+    annualYieldOnBidPct: input.initialBid && monthlyRent ? Math.round(((monthlyRent * 12) / input.initialBid) * 10000) / 100 : 0,
+    notes: input.marketResearch?.rentalComparables.length
+      ? "Aluguel baseado em referencias encontradas na pesquisa profunda."
+      : monthlyRent
+        ? "Aluguel estimado por yield conservador; validar com anuncio de locacao."
+        : "Aluguel ainda pendente de referencia.",
+  };
+}
+
+async function replaceDeepMarketComparables(input: {
+  analysisId: string;
+  opportunityId: string;
+  comparables: DeepMarketComparable[];
+}) {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase || !input.analysisId) return;
+
+  await supabase
+    .from("property_market_comparables")
+    .delete()
+    .eq("analysis_id", input.analysisId)
+    .eq("raw_payload->>source", "deep_market_research");
+
+  const rows = input.comparables
+    .filter((comparable) => comparable.quality !== "discarded")
+    .slice(0, 12)
+    .map((comparable) => {
+      const referenceValue = firstPositive(comparable.askingPrice, comparable.monthlyRent);
+      return {
+        analysis_id: input.analysisId,
+        opportunity_id: input.opportunityId,
+        source_label: comparable.sourceLabel,
+        source_url: comparable.sourceUrl,
+        listing_type: comparable.listingType === "rent" ? "Aluguel" : "Venda",
+        property_type: comparable.propertyType,
+        address: comparable.address || null,
+        neighborhood: comparable.neighborhood || null,
+        city: comparable.city || null,
+        state: comparable.state || null,
+        area_m2: comparable.areaM2,
+        asking_price: referenceValue,
+        sold_price: 0,
+        price_per_m2: comparable.pricePerM2,
+        distance_km: 0,
+        similarity_score: comparable.similarityScore,
+        quality: comparable.quality,
+        notes: comparable.notes,
+        collected_at: comparable.collectedAt,
+        raw_payload: {
+          source: "deep_market_research",
+          listingType: comparable.listingType,
+          askingPrice: comparable.askingPrice,
+          monthlyRent: comparable.monthlyRent,
+        },
+      };
+    });
+
+  if (rows.length) await supabase.from("property_market_comparables").insert(rows);
 }
 
 async function upsertPreliminaryMarketAnalysis(input: {
@@ -1329,6 +1479,8 @@ async function upsertPreliminaryMarketAnalysis(input: {
   extraction: AuctionLinkExtraction;
   initialBid: number;
   appraisalValue: number;
+  auctionAppraisalValue: number;
+  marketResearch: DeepMarketResearchResult | null;
   auctionUrl: string;
   sourceDomain: string;
   imageCount: number;
@@ -1338,31 +1490,40 @@ async function upsertPreliminaryMarketAnalysis(input: {
   const supabase = getSupabaseAdminClient();
   if (!supabase) return;
 
-  const marketValueBase = input.appraisalValue;
-  const marketValueLow = marketValueBase ? Math.round(marketValueBase * 0.9) : 0;
-  const marketValueHigh = marketValueBase ? Math.round(marketValueBase * 1.08) : 0;
+  const marketValueBase = firstPositive(input.marketResearch?.marketValueBase || 0, input.appraisalValue);
+  const marketValueLow = firstPositive(input.marketResearch?.marketValueLow || 0, marketValueBase ? Math.round(marketValueBase * 0.9) : 0);
+  const marketValueHigh = firstPositive(input.marketResearch?.marketValueHigh || 0, marketValueBase ? Math.round(marketValueBase * 1.08) : 0);
+  const marketValueSource = input.marketResearch?.marketValueBase ? "comparaveis_web" : input.auctionAppraisalValue ? "avaliacao_leilao" : "indisponivel";
   const areaM2 = firstPositive(input.extraction.privateAreaM2, input.extraction.builtAreaM2, input.extraction.landAreaM2);
   const realDiscountPct = calculateMarketDiscount(input.initialBid, marketValueBase);
   const confidenceScore = clampMarketScore(
-    input.qualityReview.confidenceScore ||
+    input.marketResearch?.confidenceScore ||
+      input.qualityReview.confidenceScore ||
       input.extraction.confidenceScore ||
       (marketValueBase && input.initialBid && areaM2 ? 52 : marketValueBase && input.initialBid ? 42 : 25)
   );
   const decision = decidePreliminaryMarket(realDiscountPct, confidenceScore);
   const ceilingTargets = buildCeilingTargets(marketValueBase);
+  const estimatedCosts = input.marketResearch?.estimatedCosts || [];
+  const rentalEstimate = buildRentalEstimatePayload({
+    marketResearch: input.marketResearch,
+    marketValueBase,
+    initialBid: input.initialBid,
+  });
   const missing = new Set(input.extraction.missingFields || []);
   if (!marketValueBase) missing.add("valor de avaliacao/mercado");
   if (!input.initialBid) missing.add("lance");
   if (!areaM2) missing.add("area");
   if (!input.extraction.legalSignal) missing.add("juridico");
   input.qualityReview.missingFields.forEach((field) => missing.add(field));
+  const sourceLinks = marketSourceLinks({ auctionUrl: input.auctionUrl, marketResearch: input.marketResearch });
 
   try {
-    await supabase.from("property_market_analyses").upsert(
+    const { data: analysisRow } = await supabase.from("property_market_analyses").upsert(
       {
         opportunity_id: input.opportunityId,
         analysis_code: `MKT-${input.opportunityCode}`.slice(0, 64),
-        status: confidenceScore >= 55 && !input.qualityReview.requiresReview ? "human_review" : "insufficient_data",
+        status: marketValueBase ? "human_review" : "insufficient_data",
         analyst_name: input.analysisDepth === "deep" ? "Motor Betel por link profundo" : "Motor Betel por link",
         payment_condition: input.extraction.paymentCondition || "Validar edital",
         subject_property_snapshot: {
@@ -1383,17 +1544,19 @@ async function upsertPreliminaryMarketAnalysis(input: {
         market_price_per_m2: calculatePricePerM2(marketValueBase, areaM2),
         initial_bid_price_per_m2: calculatePricePerM2(input.initialBid, areaM2),
         real_discount_pct: realDiscountPct,
-        estimated_costs: [],
-        estimated_net_margin: marketValueBase && input.initialBid ? Math.round(marketValueBase - input.initialBid) : 0,
+        estimated_costs: estimatedCosts,
+        estimated_net_margin: marketValueBase && input.initialBid ? Math.round(marketValueBase - input.initialBid - estimatedCostTotal(estimatedCosts)) : 0,
         suggested_ceiling_bid: ceilingTargets[0]?.value || 0,
         ceiling_targets: ceilingTargets,
-        liquidity_score: 0,
+        liquidity_score: input.marketResearch?.liquidityScore || 0,
         confidence_score: confidenceScore,
         legal_signal: input.extraction.legalSignal || "Validar juridico manualmente.",
         decision,
         decision_reason: [
           `${ANALYSIS_DEPTH_LABELS[input.analysisDepth]} gerada automaticamente a partir do link de leilao.`,
-          realDiscountPct ? `Desconto preliminar sobre avaliacao/fonte: ${realDiscountPct}%.` : "",
+          `Fonte do mercado: ${marketValueSource}.`,
+          input.marketResearch ? `Comparaveis venda: ${input.marketResearch.saleComparables.length}; aluguel: ${input.marketResearch.rentalComparables.length}.` : "",
+          realDiscountPct ? `Desconto preliminar sobre mercado: ${realDiscountPct}%.` : "",
           input.qualityReview.qualityFlags.length ? `Flags de curadoria: ${input.qualityReview.qualityFlags.join(", ")}.` : "",
           missing.size ? `Pendencias: ${Array.from(missing).join(", ")}.` : "",
         ].filter(Boolean).join(" "),
@@ -1403,14 +1566,19 @@ async function upsertPreliminaryMarketAnalysis(input: {
         caution_notes: [
           input.extraction.cautionNotes,
           ...input.qualityReview.cautionNotes,
+          ...(input.marketResearch?.cautionNotes || []),
           input.geminiError ? `Gemini: ${input.geminiError}` : "",
           input.imageCount ? "" : "Nenhuma imagem util capturada.",
         ].filter(Boolean).join("\n"),
-        source_links: [{ label: "Link leilao", url: input.auctionUrl }],
+        source_links: sourceLinks,
         raw_payload: {
           source: "link_batch_scraper",
           sourceDomain: input.sourceDomain,
           analysisDepth: input.analysisDepth,
+          marketValueSource,
+          auctionAppraisalValue: input.auctionAppraisalValue,
+          rentalEstimate,
+          marketResearch: input.marketResearch,
           qualityReview: input.qualityReview,
           extraction: input.extraction,
           imageCount: input.imageCount,
@@ -1420,7 +1588,16 @@ async function upsertPreliminaryMarketAnalysis(input: {
         updated_at: new Date().toISOString(),
       },
       { onConflict: "opportunity_id" }
-    );
+    ).select("id").single();
+
+    const analysisId = cleanString((analysisRow as DbRow | null)?.id);
+    if (analysisId && input.marketResearch) {
+      await replaceDeepMarketComparables({
+        analysisId,
+        opportunityId: input.opportunityId,
+        comparables: [...input.marketResearch.saleComparables, ...input.marketResearch.rentalComparables],
+      });
+    }
   } catch {
     // The analysis migration may not have been applied in every environment yet.
   }
@@ -1498,7 +1675,6 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
       extraction.appraisalValue,
       findMoneyAfter(visibleText, ["avaliacao", "valor de avaliacao", "valor avaliado"])
     );
-    const discount = discountPct(appraisalValue, initialBid);
     const genericImageUrls = await collectImageUrlsFromSourceUrl(row.auctionUrl, resolvedSourceUrl);
     const rawImageUrls = uniqueStrings([...siteContext.imageUrls, ...genericImageUrls], 60);
     const opportunityCode = safeBatchCode(row.externalCode || `${domain}-${makeSourceHash(row.auctionUrl)}`, row.rowNumber);
@@ -1506,7 +1682,7 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
       ? await mirrorRemoteImagesToR2({ opportunityCode, imageUrls: rawImageUrls, alt: title, maxImages: profile.maxImages, referer: row.auctionUrl })
       : ([] as StoredImageAsset[]);
     const usableImageCount = images.filter((image) => image.status === "mirrored" || image.status === "external").length;
-    const qualityReview = buildLinkAnalysisQualityReview({
+    let qualityReview = buildLinkAnalysisQualityReview({
       analysisDepth,
       extraction,
       initialBid,
@@ -1517,6 +1693,13 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
       geminiError: gemini.error,
       adapterWarnings: siteContext.warnings,
     });
+    const marketResearch = analysisDepth === "deep"
+      ? await runDeepMarketResearch({ extraction, title, initialBid })
+      : null;
+    qualityReview = applyDeepMarketResearchToQualityReview(qualityReview, marketResearch);
+    const marketValueBase = firstPositive(marketResearch?.marketValueBase || 0, appraisalValue);
+    const marketValueSource = marketResearch?.marketValueBase ? "comparaveis_web" : appraisalValue ? "avaliacao_leilao" : "indisponivel";
+    const discount = discountPct(marketValueBase, initialBid);
     extraction.confidenceScore = qualityReview.confidenceScore;
     extraction.missingFields = qualityReview.missingFields;
     extraction.cautionNotes = uniqueStrings([
@@ -1535,7 +1718,7 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
       sourceName: domain || "Link de leilao",
       sourceType: "auction_link",
       initialBid,
-      appraisalValue,
+      appraisalValue: marketValueBase,
       discountPct: discount,
       opportunityScore: Math.max(20, (discount > 0 ? Math.min(95, 45 + discount) : 50) - qualityReview.qualityFlags.length * 3),
       riskScore: qualityReview.requiresReview ? 65 : 50,
@@ -1562,6 +1745,10 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
         importBatchId: row.batchId,
         analysisDepth,
         analysisProfile: profile,
+        marketValueSource,
+        auctionAppraisalValue: appraisalValue,
+        marketValueBase,
+        marketResearch,
         qualityReview,
         sourceUrl: row.auctionUrl,
         sourceDomain: domain,
@@ -1635,7 +1822,9 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
       qualityReview,
       extraction,
       initialBid,
-      appraisalValue,
+      appraisalValue: marketValueBase,
+      auctionAppraisalValue: appraisalValue,
+      marketResearch,
       auctionUrl: row.auctionUrl,
       sourceDomain: domain,
       imageCount: images.length,
@@ -1685,7 +1874,10 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
           parkingSpaces: extraction.parkingSpaces,
         },
         initialBid,
-        appraisalValue,
+        appraisalValue: marketValueBase,
+        auctionAppraisalValue: appraisalValue,
+        marketValueSource,
+        marketResearch,
         discountPct: discount,
         imageCount: images.length,
         documentCount: documentLinks.length,
@@ -1721,8 +1913,8 @@ function buildBatchMessage(batch: LinkScraperBatch, rows: LinkScraperRow[]) {
   const pending = rows.filter((row) => !["pronto_para_revisao", "falha", "url_invalida"].includes(row.status)).length;
   const withRealPhoto = readyRows.filter((row) => (row.imageCount || 0) > 0).length;
   const withoutRealPhoto = Math.max(success - withRealPhoto, 0);
-  const withoutMarketValue = readyRows.filter((row) => !(row.initialBid || row.appraisalValue)).length;
-  const readyNeedingReview = readyRows.filter((row) => (row.imageCount || 0) <= 0 || !(row.initialBid || row.appraisalValue)).length;
+  const withoutMarketValue = readyRows.filter((row) => !(row.appraisalValue || 0)).length;
+  const readyNeedingReview = readyRows.filter((row) => (row.imageCount || 0) <= 0 || !(row.appraisalValue || 0)).length;
   const needsReview = readyNeedingReview + failed + pending;
   const domains = [...new Set(rows.filter((row) => row.status === "falha").map((row) => row.sourceDomain).filter(Boolean))].slice(0, 6);
   return [
@@ -1733,7 +1925,7 @@ function buildBatchMessage(batch: LinkScraperBatch, rows: LinkScraperRow[]) {
     `Imoveis analisados: ${success}`,
     `Com foto real: ${withRealPhoto}`,
     withoutRealPhoto ? `Sem foto real: ${withoutRealPhoto}` : "",
-    withoutMarketValue ? `Sem lance/avaliacao: ${withoutMarketValue}` : "",
+    withoutMarketValue ? `Sem valor de mercado: ${withoutMarketValue}` : "",
     `Falhas: ${failed}`,
     `Pendentes: ${pending}`,
     `Precisam revisao: ${needsReview}`,
@@ -1896,7 +2088,7 @@ export async function startLinkScraperBatch(input: {
 
   const readyRows = normalizedRows.filter((row) => row.status === "pronto_para_revisao");
   const readyWithRealPhoto = readyRows.filter((row) => (row.imageCount || 0) > 0).length;
-  const readyWithoutMarketValue = readyRows.filter((row) => !(row.initialBid || row.appraisalValue)).length;
+  const readyWithoutMarketValue = readyRows.filter((row) => !(row.appraisalValue || 0)).length;
 
   await supabase.from("market_analysis_import_batches").update({
     status: failed > 0 && processed === 0 ? "falha" : "concluido",
