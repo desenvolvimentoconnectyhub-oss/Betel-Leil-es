@@ -13,7 +13,7 @@ import {
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { ingestAuctionOpportunityRecord } from "@/lib/admin/repository/pipeline";
 import { sendWhatsAppAgentReply, sendWhatsAppDestinationText } from "@/lib/communication/connectyhub-client";
-import { mirrorRemoteImagesToR2, type StoredImageAsset } from "@/lib/storage/r2";
+import { deletePublicR2Object, mirrorRemoteImagesToR2, type StoredImageAsset } from "@/lib/storage/r2";
 import { extractAuctionSiteContext, type AuctionSiteDocument, type AuctionSiteExtractionPatch } from "./auction-site-adapters";
 import { extractAuctionLinkWithGemini, type AuctionLinkExtraction } from "./auction-link-extractor";
 import { runDeepMarketResearch, type DeepMarketComparable, type DeepMarketResearchResult } from "./deep-market-research";
@@ -204,6 +204,29 @@ export type ScraperLegacyCleanupExecutionSummary = {
   alreadyArchivedOpportunities: number;
   deletedOpportunities: number;
   readyToDeleteOpportunities: number;
+};
+
+export type MarketAnalysisResetSummary = {
+  batchesFound: number;
+  rowsFound: number;
+  opportunitiesFound: number;
+  assetsFound: number;
+  r2ObjectsFound: number;
+  r2ObjectsDeleted: number;
+  r2ObjectsFailed: number;
+  externalAssetsSkipped: number;
+  rowsDeleted: number;
+  batchesDeleted: number;
+  notificationsDeleted: number;
+  opportunitiesDeleted: number;
+  assetsDeleted: number;
+  scrapeRunsDeleted: number;
+  sourceSnapshotsDeleted: number;
+  aiAnalysisRunsDeleted: number;
+  marketAnalysesDeleted: number;
+  marketComparablesDeleted: number;
+  relatedRowsDeleted: number;
+  failures: string[];
 };
 
 type LegacyCleanupCandidate = {
@@ -1830,7 +1853,7 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
       legalStatus: extraction.legalSignal ? "Informado na fonte" : "Nao avaliado nesta fase",
       stage: !qualityGate.passed || qualityReview.requiresReview ? "Revisao humana" : "Entrada",
       nextAction: !qualityGate.passed
-        ? `Completar campos obrigatorios antes de continuar o lote: ${qualityGate.issues.join(", ")}.`
+        ? `Completar campos obrigatorios antes de aprovar a analise: ${qualityGate.issues.join(", ")}.`
         : qualityReview.requiresReview
         ? "Completar curadoria de mercado: valores, fotos reais, area e comparaveis antes de liberar decisao."
         : "Revisar captura por link e completar analise de mercado.",
@@ -1992,25 +2015,10 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
       },
     }).eq("id", runId);
 
-    if (!qualityGate.passed) {
-      await supabase.from("market_analysis_import_rows").update({
-        status: "falha",
-        opportunity_id: ingest.data.opportunityId,
-        error_message: qualityGateMessage,
-      }).eq("id", row.id);
-
-      return {
-        ok: false,
-        opportunityId: ingest.data.opportunityId,
-        error: qualityGateMessage,
-        blocked: true,
-      };
-    }
-
     await supabase.from("market_analysis_import_rows").update({
       status: "pronto_para_revisao",
       opportunity_id: ingest.data.opportunityId,
-      error_message: null,
+      error_message: qualityGate.passed ? null : qualityGateMessage,
     }).eq("id", row.id);
 
     return { ok: true, opportunityId: ingest.data.opportunityId };
@@ -2037,6 +2045,10 @@ function buildBatchMessage(batch: LinkScraperBatch, rows: LinkScraperRow[]) {
   const withRealPhoto = readyRows.filter((row) => (row.imageCount || 0) > 0).length;
   const withoutRealPhoto = Math.max(success - withRealPhoto, 0);
   const withoutMarketValue = readyRows.filter((row) => !(row.appraisalValue || 0)).length;
+  const readyWithQualityIssues = readyRows.filter((row) =>
+    row.errorMessage.toLowerCase().includes("trava de qualidade") ||
+    (row.qualityFlags || []).length > 0
+  ).length;
   const readyNeedingReview = readyRows.filter((row) => (row.imageCount || 0) <= 0 || !(row.appraisalValue || 0)).length;
   const needsReview = readyNeedingReview + failed + pending;
   const qualityBlockedRow = rows.find((row) =>
@@ -2052,6 +2064,7 @@ function buildBatchMessage(batch: LinkScraperBatch, rows: LinkScraperRow[]) {
     `Com foto real: ${withRealPhoto}`,
     withoutRealPhoto ? `Sem foto real: ${withoutRealPhoto}` : "",
     withoutMarketValue ? `Sem valor de mercado: ${withoutMarketValue}` : "",
+    readyWithQualityIssues ? `Com pendencias de curadoria: ${readyWithQualityIssues}` : "",
     `Falhas: ${failed}`,
     `Pendentes: ${pending}`,
     `Precisam revisao: ${needsReview}`,
@@ -2494,6 +2507,257 @@ async function safeDeleteByOpportunity(table: string, opportunityIds: string[]) 
   try {
     await supabase.from(table).delete().in("opportunity_id", opportunityIds);
   } catch {}
+}
+
+function isMarketAnalysisUploadedOpportunity(row: DbRow) {
+  const rawPayload = asRecord(row.raw_payload);
+  const ownerName = cleanString(row.owner_name).toLowerCase();
+
+  return (
+    ownerName.includes("upload de links") ||
+    cleanString(rawPayload.collectionMode) === "uploaded_auction_link" ||
+    Boolean(cleanString(rawPayload.importRowId) || cleanString(rawPayload.importBatchId))
+  );
+}
+
+function normalizeR2StorageKey(value: unknown) {
+  const rawValue = cleanString(value).replace(/^\/+/, "");
+  if (!rawValue) return "";
+  if (rawValue.startsWith("opportunities/")) return rawValue;
+
+  try {
+    const pathname = new URL(rawValue).pathname.replace(/^\/+/, "");
+    const opportunityIndex = pathname.indexOf("opportunities/");
+    return opportunityIndex >= 0 ? pathname.slice(opportunityIndex) : "";
+  } catch {
+    return "";
+  }
+}
+
+function extractR2StorageKeyFromAsset(asset: DbRow) {
+  const rawPayload = asRecord(asset.raw_payload);
+  return firstText(
+    normalizeR2StorageKey(rawPayload.storageKey),
+    normalizeR2StorageKey(rawPayload.storage_key),
+    normalizeR2StorageKey(asset.storage_path),
+    normalizeR2StorageKey(rawPayload.url)
+  );
+}
+
+function isMissingRelationError(error: unknown) {
+  const message = error instanceof Error ? error.message : cleanString(error);
+  return message.includes("Could not find the table") || message.includes("does not exist") || message.includes("schema cache");
+}
+
+export async function resetMarketAnalysisTestData(input: {
+  confirmation: string;
+}): Promise<MutationResult<MarketAnalysisResetSummary>> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return { ok: false, error: "Supabase admin nao configurado." };
+  const admin = supabase;
+  if (cleanString(input.confirmation).toUpperCase() !== "LIMPAR ANALISE") {
+    return { ok: false, error: "Digite LIMPAR ANALISE para confirmar a limpeza." };
+  }
+
+  const failures: string[] = [];
+  const pageSize = 1000;
+
+  async function selectAll(table: string, columns: string) {
+    const rows: DbRow[] = [];
+    for (let from = 0; from < 10_000; from += pageSize) {
+      const { data, error } = await admin
+        .from(table)
+        .select(columns)
+        .range(from, from + pageSize - 1);
+      if (error) throw new Error(`${table}: ${error.message}`);
+      const page = ((data || []) as unknown as DbRow[]);
+      rows.push(...page);
+      if (page.length < pageSize) break;
+    }
+    return rows;
+  }
+
+  async function selectByIds(table: string, columns: string, column: string, ids: string[]) {
+    const selected: DbRow[] = [];
+    const cleanIds = uniqueStrings(ids, 10_000);
+    for (let index = 0; index < cleanIds.length; index += 250) {
+      const chunk = cleanIds.slice(index, index + 250);
+      const { data, error } = await admin.from(table).select(columns).in(column, chunk);
+      if (error) throw new Error(`${table}: ${error.message}`);
+      selected.push(...(((data || []) as unknown as DbRow[])));
+    }
+    return selected;
+  }
+
+  async function deleteByIds(table: string, column: string, ids: string[]) {
+    let deleted = 0;
+    const cleanIds = uniqueStrings(ids, 10_000);
+    for (let index = 0; index < cleanIds.length; index += 250) {
+      const chunk = cleanIds.slice(index, index + 250);
+      const { count, error } = await admin.from(table).delete({ count: "exact" }).in(column, chunk);
+      if (error) throw new Error(`${table}: ${error.message}`);
+      deleted += count || 0;
+    }
+    return deleted;
+  }
+
+  async function optionalDeleteByIds(table: string, column: string, ids: string[]) {
+    try {
+      return await deleteByIds(table, column, ids);
+    } catch (error) {
+      if (isMissingRelationError(error)) return 0;
+      throw error;
+    }
+  }
+
+  try {
+    const importRows = await selectAll("market_analysis_import_rows", "id,batch_id,opportunity_id,scrape_run_id");
+    const importBatches = await selectAll("market_analysis_import_batches", "id");
+    const allOpportunities = await selectAll("auction_opportunities", "id,owner_name,raw_payload");
+    const uploadedOpportunities = allOpportunities.filter(isMarketAnalysisUploadedOpportunity);
+
+    const rowIds = uniqueStrings(importRows.map((row) => cleanString(row.id)), 10_000);
+    const batchIds = uniqueStrings([
+      ...importBatches.map((row) => cleanString(row.id)),
+      ...importRows.map((row) => cleanString(row.batch_id)),
+    ], 10_000);
+    const opportunityIds = uniqueStrings([
+      ...uploadedOpportunities.map((row) => cleanString(row.id)),
+      ...importRows.map((row) => cleanString(row.opportunity_id)),
+    ], 10_000);
+
+    const runsByRows = rowIds.length
+      ? await selectByIds("auction_scrape_runs", "id,opportunity_id,import_row_id,raw_snapshot_id", "import_row_id", rowIds)
+      : [];
+    const runsByOpportunities = opportunityIds.length
+      ? await selectByIds("auction_scrape_runs", "id,opportunity_id,import_row_id,raw_snapshot_id", "opportunity_id", opportunityIds)
+      : [];
+    const scrapeRunIds = uniqueStrings([
+      ...importRows.map((row) => cleanString(row.scrape_run_id)),
+      ...runsByRows.map((row) => cleanString(row.id)),
+      ...runsByOpportunities.map((row) => cleanString(row.id)),
+    ], 10_000);
+
+    const snapshotsByOpportunities = opportunityIds.length
+      ? await selectByIds("source_snapshots", "id,opportunity_id", "opportunity_id", opportunityIds)
+      : [];
+    const snapshotIds = uniqueStrings([
+      ...runsByRows.map((row) => cleanString(row.raw_snapshot_id)),
+      ...runsByOpportunities.map((row) => cleanString(row.raw_snapshot_id)),
+      ...snapshotsByOpportunities.map((row) => cleanString(row.id)),
+    ], 10_000);
+
+    const assetsByRuns = scrapeRunIds.length
+      ? await selectByIds("auction_scrape_assets", "id,scrape_run_id,opportunity_id,asset_type,storage_path,raw_payload", "scrape_run_id", scrapeRunIds)
+      : [];
+    const assetsByOpportunities = opportunityIds.length
+      ? await selectByIds("auction_scrape_assets", "id,scrape_run_id,opportunity_id,asset_type,storage_path,raw_payload", "opportunity_id", opportunityIds)
+      : [];
+    const assetMap = new Map<string, DbRow>();
+    [...assetsByRuns, ...assetsByOpportunities].forEach((asset) => {
+      const id = cleanString(asset.id);
+      if (id) assetMap.set(id, asset);
+    });
+    const assets = [...assetMap.values()];
+    const assetIds = uniqueStrings(assets.map((asset) => cleanString(asset.id)), 10_000);
+    const imageAssets = assets.filter((asset) => cleanString(asset.asset_type, "image") === "image");
+    const r2StorageKeys = uniqueStrings(imageAssets.map(extractR2StorageKeyFromAsset), 10_000);
+
+    const r2Results = [];
+    for (const storageKey of r2StorageKeys) {
+      const result = await deletePublicR2Object(storageKey);
+      r2Results.push(result);
+      if (result.status === "failed" || result.status === "unavailable") {
+        failures.push(`${storageKey}: ${result.error || result.status}`);
+      }
+    }
+
+    const baseSummary: MarketAnalysisResetSummary = {
+      batchesFound: batchIds.length,
+      rowsFound: rowIds.length,
+      opportunitiesFound: opportunityIds.length,
+      assetsFound: assets.length,
+      r2ObjectsFound: r2StorageKeys.length,
+      r2ObjectsDeleted: r2Results.filter((item) => item.status === "deleted").length,
+      r2ObjectsFailed: r2Results.filter((item) => item.status === "failed" || item.status === "unavailable").length,
+      externalAssetsSkipped: imageAssets.length - r2StorageKeys.length,
+      rowsDeleted: 0,
+      batchesDeleted: 0,
+      notificationsDeleted: 0,
+      opportunitiesDeleted: 0,
+      assetsDeleted: 0,
+      scrapeRunsDeleted: 0,
+      sourceSnapshotsDeleted: 0,
+      aiAnalysisRunsDeleted: 0,
+      marketAnalysesDeleted: 0,
+      marketComparablesDeleted: 0,
+      relatedRowsDeleted: 0,
+      failures,
+    };
+
+    if (baseSummary.r2ObjectsFailed > 0) {
+      return {
+        ok: false,
+        data: baseSummary,
+        error: "A limpeza foi interrompida porque uma ou mais imagens do R2 nao puderam ser apagadas.",
+      };
+    }
+
+    let relatedRowsDeleted = 0;
+    const marketComparablesDeleted = await optionalDeleteByIds("property_market_comparables", "opportunity_id", opportunityIds);
+    const marketAnalysesDeleted = await optionalDeleteByIds("property_market_analyses", "opportunity_id", opportunityIds);
+    const validationStepsDeleted = await optionalDeleteByIds("opportunity_validation_steps", "opportunity_id", opportunityIds);
+    const validationRunsDeleted = await optionalDeleteByIds("opportunity_validation_runs", "opportunity_id", opportunityIds);
+    relatedRowsDeleted += validationStepsDeleted + validationRunsDeleted;
+
+    for (const table of [
+      "legal_reviews",
+      "dossiers",
+      "post_auction_cases",
+      "auction_sessions",
+      "bid_strategies",
+      "opportunity_matches",
+      "admin_alerts",
+      "communication_outbox",
+      "agent_runs",
+      "intelligence_reports",
+      "advisory_contracts",
+      "audit_logs",
+      "scraper_legacy_archives",
+    ]) {
+      relatedRowsDeleted += await optionalDeleteByIds(table, "opportunity_id", opportunityIds);
+    }
+
+    const aiAnalysisRunsDeleted = await optionalDeleteByIds("ai_analysis_runs", "opportunity_id", opportunityIds);
+    const assetsDeleted = await deleteByIds("auction_scrape_assets", "id", assetIds);
+    const scrapeRunsDeleted = await deleteByIds("auction_scrape_runs", "id", scrapeRunIds);
+    const sourceSnapshotsDeleted = await deleteByIds("source_snapshots", "id", snapshotIds);
+    const notificationsDeleted = await optionalDeleteByIds("scraper_process_notifications", "batch_id", batchIds);
+    const rowsDeleted = await deleteByIds("market_analysis_import_rows", "id", rowIds);
+    const batchesDeleted = await deleteByIds("market_analysis_import_batches", "id", batchIds);
+    const opportunitiesDeleted = await deleteByIds("auction_opportunities", "id", opportunityIds);
+
+    return {
+      ok: true,
+      data: {
+        ...baseSummary,
+        rowsDeleted,
+        batchesDeleted,
+        notificationsDeleted,
+        opportunitiesDeleted,
+        assetsDeleted,
+        scrapeRunsDeleted,
+        sourceSnapshotsDeleted,
+        aiAnalysisRunsDeleted,
+        marketAnalysesDeleted,
+        marketComparablesDeleted,
+        relatedRowsDeleted,
+      },
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Falha ao limpar analises de mercado.";
+    return { ok: false, error: message };
+  }
 }
 
 export async function deleteArchivedLegacyScraperOpportunities(input: {

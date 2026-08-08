@@ -6,6 +6,7 @@ import {
   type MarketComparableQuality,
   type MarketCostItem,
 } from "@/lib/admin/market-analysis";
+import { getGeminiApiKey, getGeminiModel } from "@/lib/ai/config";
 import type { AuctionLinkExtraction } from "./auction-link-extractor";
 
 type ListingKind = "sale" | "rent";
@@ -58,6 +59,12 @@ type SearchResult = {
   provider: "bing" | "duckduckgo";
 };
 
+type MarketSearchUrl = {
+  label: string;
+  url: string;
+  kind: ListingKind;
+};
+
 type SubjectProfile = {
   title: string;
   propertyType: string;
@@ -78,6 +85,8 @@ const PAGE_TEXT_LIMIT = 600_000;
 const MAX_SEARCH_RESULTS = 12;
 const MAX_SALE_PAGES = 8;
 const MAX_RENT_PAGES = 4;
+const GEMINI_GROUNDED_TIMEOUT_MS = 45_000;
+const MAX_GROUNDED_COMPARABLES = 10;
 
 const MARKET_SOURCE_ALLOWLIST = [
   "zapimoveis",
@@ -122,6 +131,19 @@ const AUCTION_SOURCE_BLOCKLIST = [
   "hasta",
 ];
 
+const NON_LISTING_SOURCE_BLOCKLIST = [
+  "google.com",
+  "bing.com",
+  "duckduckgo.com",
+  "facebook.com",
+  "instagram.com",
+  "youtube.com",
+  "youtu.be",
+  "whatsapp",
+  "wa.me",
+  "maps.google",
+];
+
 function cleanString(value: unknown, fallback = "") {
   if (typeof value === "string") return value.trim() || fallback;
   if (value === null || value === undefined) return fallback;
@@ -160,6 +182,34 @@ function asNumber(value: unknown, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function asStringArray(value: unknown) {
+  return Array.isArray(value)
+    ? value.map((item) => cleanString(item)).filter(Boolean)
+    : [];
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function pickJsonObject(raw: string) {
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1] || raw;
+  try {
+    return JSON.parse(fenced);
+  } catch {
+    const start = fenced.indexOf("{");
+    const end = fenced.lastIndexOf("}");
+    if (start < 0 || end <= start) return null;
+    try {
+      return JSON.parse(fenced.slice(start, end + 1));
+    } catch {
+      return null;
+    }
+  }
+}
+
 function currencyFromText(value: string) {
   const parsed = asNumber(value);
   return Number.isFinite(parsed) ? Math.round(parsed) : 0;
@@ -167,6 +217,10 @@ function currencyFromText(value: string) {
 
 function firstPositive(...values: number[]) {
   return values.find((value) => Number.isFinite(value) && value > 0) || 0;
+}
+
+function firstText(...values: unknown[]) {
+  return values.map((value) => cleanString(value)).find(Boolean) || "";
 }
 
 function htmlDecode(value: string) {
@@ -209,6 +263,23 @@ function isLikelyMarketSource(url: string) {
   if (!/^https?:\/\//i.test(url)) return false;
   if (AUCTION_SOURCE_BLOCKLIST.some((token) => normalized.includes(token))) return false;
   return MARKET_SOURCE_ALLOWLIST.some((token) => normalized.includes(token));
+}
+
+function isAcceptableGroundedMarketSource(url: string) {
+  const normalized = normalizeText(url);
+  if (!/^https?:\/\//i.test(url)) return false;
+  if (AUCTION_SOURCE_BLOCKLIST.some((token) => normalized.includes(token))) return false;
+  if (NON_LISTING_SOURCE_BLOCKLIST.some((token) => normalized.includes(token))) return false;
+  return true;
+}
+
+function normalizeComparableQuality(value: unknown, score: number): MarketComparableQuality {
+  const normalized = normalizeText(value);
+  if (normalized === "strong" || normalized === "forte" || normalized === "alta") return "strong";
+  if (normalized === "medium" || normalized === "media" || normalized === "média") return "medium";
+  if (normalized === "weak" || normalized === "fraca" || normalized === "baixa") return "weak";
+  if (normalized === "discarded" || normalized === "descartado") return "discarded";
+  return qualityFromScore(score);
 }
 
 function unwrapBingUrl(url: string) {
@@ -658,6 +729,396 @@ function calculateRental(subject: SubjectProfile, rentalComparables: DeepMarketC
   return { monthlyRent: 0, referenceUrl: "", note: "Sem base suficiente para estimar aluguel." };
 }
 
+function normalizeGroundedComparable(
+  subject: SubjectProfile,
+  value: unknown,
+  fallbackKind: ListingKind
+): DeepMarketComparable | null {
+  const row = asRecord(value);
+  const sourceUrl = cleanString(row.sourceUrl || row.source_url || row.url || row.link);
+  if (!isAcceptableGroundedMarketSource(sourceUrl)) return null;
+
+  const kindText = normalizeText(row.listingType || row.listing_type || row.tipo || row.kind);
+  const listingType: ListingKind = kindText.includes("alug") || kindText.includes("rent") || fallbackKind === "rent"
+    ? "rent"
+    : "sale";
+  const areaM2 = asNumber(row.areaM2 ?? row.area_m2 ?? row.area ?? row.privateAreaM2 ?? row.private_area_m2);
+  const askingPrice = listingType === "sale"
+    ? asNumber(row.askingPrice ?? row.asking_price ?? row.price ?? row.preco ?? row.precoPedido ?? row.valorVenda)
+    : 0;
+  const monthlyRent = listingType === "rent"
+    ? asNumber(row.monthlyRent ?? row.monthly_rent ?? row.rent ?? row.aluguel ?? row.aluguelMensal)
+    : 0;
+  if (listingType === "sale" && !askingPrice) return null;
+  if (listingType === "rent" && !monthlyRent) return null;
+
+  const title = cleanString(row.title || row.titulo, "Comparavel de mercado");
+  const comparableBase = {
+    sourceLabel: cleanString(row.sourceLabel || row.source_label, sourceLabel(sourceUrl)),
+    sourceUrl,
+    listingType,
+    propertyType: cleanString(row.propertyType || row.property_type || row.tipoImovel, inferPropertyType(title)),
+    title,
+    address: cleanString(row.address || row.endereco),
+    neighborhood: cleanString(row.neighborhood || row.bairro, subject.neighborhood),
+    city: cleanString(row.city || row.cidade, subject.city),
+    state: cleanString(row.state || row.uf, subject.state).toUpperCase(),
+    areaM2,
+    askingPrice,
+    monthlyRent,
+    pricePerM2: listingType === "sale" ? calculatePricePerM2(askingPrice, areaM2) : 0,
+    bedrooms: asNumber(row.bedrooms ?? row.dormitorios ?? row.quartos),
+    parkingSpaces: asNumber(row.parkingSpaces ?? row.parking_spaces ?? row.vagas),
+  };
+  const rawScore = asNumber(row.similarityScore ?? row.similarity_score ?? row.similaridade);
+  const similarityScore = clampMarketScore(rawScore || scoreComparable(subject, comparableBase));
+  const quality = normalizeComparableQuality(row.quality || row.qualidade, similarityScore);
+
+  return {
+    ...comparableBase,
+    similarityScore,
+    quality,
+    notes: cleanString(row.notes || row.observacoes || row.justificativa),
+    collectedAt: new Date().toISOString(),
+  };
+}
+
+function normalizeGroundedComparableList(subject: SubjectProfile, value: unknown, fallbackKind: ListingKind) {
+  return (Array.isArray(value) ? value : [])
+    .map((item) => normalizeGroundedComparable(subject, item, fallbackKind))
+    .filter((item): item is DeepMarketComparable => Boolean(item))
+    .slice(0, MAX_GROUNDED_COMPARABLES);
+}
+
+function mergeComparableLists(comparables: DeepMarketComparable[]) {
+  const seen = new Set<string>();
+  return comparables
+    .filter((item) => item.quality !== "discarded")
+    .filter((item) => {
+      const key = `${item.listingType}:${item.sourceUrl.split("#")[0]}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => b.similarityScore - a.similarityScore)
+    .slice(0, 14);
+}
+
+function uniqueSearchedUrls(
+  values: MarketSearchUrl[]
+): MarketSearchUrl[] {
+  const seen = new Set<string>();
+  const output: MarketSearchUrl[] = [];
+  for (const item of values) {
+    const url = cleanString(item.url);
+    if (!url) continue;
+    const key = url.split("#")[0];
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push({
+      label: cleanString(item.label, sourceLabel(url)),
+      url,
+      kind: item.kind,
+    });
+    if (output.length >= 40) break;
+  }
+  return output;
+}
+
+function collectGroundingLinks(response: unknown) {
+  const candidates = Array.isArray((response as { candidates?: unknown[] })?.candidates)
+    ? ((response as { candidates?: unknown[] }).candidates || [])
+    : [];
+  const firstCandidate = asRecord(candidates[0]);
+  const metadata = asRecord(firstCandidate.groundingMetadata || firstCandidate.grounding_metadata);
+  const chunks = Array.isArray(metadata.groundingChunks || metadata.grounding_chunks)
+    ? ((metadata.groundingChunks || metadata.grounding_chunks) as unknown[])
+    : [];
+  const sourceLinks = chunks
+    .reduce<MarketSearchUrl[]>((links, chunk) => {
+      const web = asRecord(asRecord(chunk).web);
+      const url = cleanString(web.uri || web.url);
+      if (!isAcceptableGroundedMarketSource(url)) return links;
+      links.push({
+        label: cleanString(web.title, sourceLabel(url)),
+        url,
+        kind: "sale",
+      });
+      return links;
+    }, []);
+
+  return {
+    queries: asStringArray(metadata.webSearchQueries || metadata.web_search_queries),
+    sourceLinks,
+  };
+}
+
+function normalizeGroundedMarketResearch(
+  subject: SubjectProfile,
+  parsed: unknown,
+  grounding: ReturnType<typeof collectGroundingLinks>
+): DeepMarketResearchResult | null {
+  const row = asRecord(parsed);
+  const saleComparables = normalizeGroundedComparableList(
+    subject,
+    row.saleComparables || row.sale_comparables || row.comparaveisVenda || row.comparaveis_venda,
+    "sale"
+  );
+  const rentalComparables = normalizeGroundedComparableList(
+    subject,
+    row.rentalComparables || row.rental_comparables || row.comparaveisAluguel || row.comparaveis_aluguel,
+    "rent"
+  );
+  if (!saleComparables.length && !rentalComparables.length) return null;
+
+  const calculatedMarket = calculateMarketValue(subject, saleComparables);
+  const marketValueBase = firstPositive(
+    asNumber(row.marketValueBase ?? row.market_value_base ?? row.valorMercadoBase ?? row.valor_mercado_base),
+    calculatedMarket.base
+  );
+  const marketValueLow = firstPositive(
+    asNumber(row.marketValueLow ?? row.market_value_low ?? row.valorMercadoConservador),
+    calculatedMarket.low,
+    marketValueBase ? Math.round(marketValueBase * 0.92) : 0
+  );
+  const marketValueHigh = firstPositive(
+    asNumber(row.marketValueHigh ?? row.market_value_high ?? row.valorMercadoOtimista),
+    calculatedMarket.high,
+    marketValueBase ? Math.round(marketValueBase * 1.08) : 0
+  );
+  const rental = calculateRental(subject, rentalComparables, marketValueBase);
+  const rentalMonthlyRent = firstPositive(
+    asNumber(row.rentalMonthlyRent ?? row.rental_monthly_rent ?? row.aluguelMensal),
+    rental.monthlyRent
+  );
+  const rentalReferenceUrl = cleanString(row.rentalReferenceUrl || row.rental_reference_url, rental.referenceUrl);
+  const missingFields = new Set(asStringArray(row.missingFields || row.missing_fields || row.pendencias));
+  const cautionNotes = new Set(asStringArray(row.cautionNotes || row.caution_notes || row.ressalvas));
+
+  if (!marketValueBase) missingFields.add("valor de mercado por comparaveis");
+  if (saleComparables.length < 3) missingFields.add("minimo de 3 comparaveis de venda");
+  if (!rentalComparables.length) missingFields.add("referencia direta de aluguel");
+  if (!subject.areaM2) missingFields.add("area para preco por m2");
+  cautionNotes.add("Pesquisa com Gemini e Google Search; conferir links e aderencia antes de aprovar.");
+
+  const comparableLinks = [
+    ...saleComparables.map((item) => ({ label: `Gemini venda: ${item.sourceLabel}`, url: item.sourceUrl, kind: "sale" as const })),
+    ...rentalComparables.map((item) => ({ label: `Gemini aluguel: ${item.sourceLabel}`, url: item.sourceUrl, kind: "rent" as const })),
+  ];
+  const confidenceScore = clampMarketScore(
+    firstPositive(asNumber(row.confidenceScore ?? row.confidence_score ?? row.confianca), 0) ||
+      ((marketValueBase ? 50 : 25) +
+        Math.min(24, saleComparables.length * 6) +
+        Math.min(12, rentalComparables.length * 6) +
+        (saleComparables.some((item) => item.quality === "strong") ? 8 : 0) -
+        Math.max(0, missingFields.size - 1) * 5)
+  );
+
+  return {
+    status: marketValueBase && saleComparables.length >= 3 ? "completed" : "partial",
+    searchQueries: uniqueStrings([
+      ...asStringArray(row.searchQueries || row.search_queries || row.buscas),
+      ...grounding.queries,
+    ], 12),
+    searchedUrls: uniqueSearchedUrls([...comparableLinks, ...grounding.sourceLinks]),
+    saleComparables,
+    rentalComparables,
+    marketValueLow,
+    marketValueBase,
+    marketValueHigh,
+    rentalMonthlyRent,
+    rentalReferenceUrl,
+    confidenceScore,
+    liquidityScore: clampMarketScore(firstPositive(asNumber(row.liquidityScore ?? row.liquidity_score), 0) || 45 + saleComparables.length * 5),
+    estimatedCosts: buildEstimatedCosts(subject.initialBid, marketValueBase),
+    missingFields: uniqueStrings(Array.from(missingFields), 12),
+    cautionNotes: uniqueStrings(Array.from(cautionNotes), 12),
+  };
+}
+
+async function generateGeminiGroundedContent(input: {
+  apiKey: string;
+  model: string;
+  prompt: string;
+  systemInstruction: string;
+}) {
+  const { DynamicRetrievalMode, GoogleGenerativeAI } = await import("@google/generative-ai");
+  const client = new GoogleGenerativeAI(input.apiKey);
+  const toolAttempts = [
+    {
+      label: "googleSearch",
+      tools: [{ googleSearch: {} }],
+    },
+    {
+      label: "googleSearchRetrieval",
+      tools: [
+        {
+          googleSearchRetrieval: {
+            dynamicRetrievalConfig: {
+              mode: DynamicRetrievalMode.MODE_DYNAMIC,
+              dynamicThreshold: 0,
+            },
+          },
+        },
+      ],
+    },
+  ];
+
+  let lastError = "";
+  for (const attempt of toolAttempts) {
+    try {
+      const genModel = client.getGenerativeModel({
+        model: input.model,
+        tools: attempt.tools,
+        generationConfig: {
+          temperature: 0.1,
+          topP: 0.8,
+        },
+        systemInstruction: input.systemInstruction,
+      } as Parameters<typeof client.getGenerativeModel>[0]);
+      const result = await genModel.generateContent(input.prompt, { timeout: GEMINI_GROUNDED_TIMEOUT_MS });
+      return {
+        response: result.response,
+        rawText: result.response.text(),
+        toolName: attempt.label,
+      };
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : `Falha usando ${attempt.label}.`;
+    }
+  }
+
+  throw new Error(lastError || "Falha na pesquisa Gemini/Google.");
+}
+
+async function runGeminiGroundedMarketResearch(input: {
+  extraction: AuctionLinkExtraction;
+  title: string;
+  initialBid: number;
+}, subject: SubjectProfile): Promise<{ research: DeepMarketResearchResult | null; error: string }> {
+  const apiKey = await getGeminiApiKey();
+  if (!apiKey) return { research: null, error: "Gemini nao configurado para pesquisa com Google." };
+
+  const model = await getGeminiModel();
+  const subjectPayload = {
+    title: input.title,
+    propertyType: subject.propertyType,
+    address: subject.address,
+    neighborhood: subject.neighborhood,
+    condoName: subject.condoName,
+    city: subject.city,
+    state: subject.state,
+    areaM2: subject.areaM2,
+    bedrooms: subject.bedrooms,
+    parkingSpaces: subject.parkingSpaces,
+    initialBid: input.initialBid,
+  };
+
+  try {
+    const systemInstruction = [
+      "Voce e o motor de curadoria imobiliaria da Betel.",
+      "Use Google Search para encontrar referencias atuais de venda e aluguel de imoveis comparaveis.",
+      "Retorne somente JSON valido, sem markdown.",
+      "Nunca use leiloes, editais, anuncios de arrematacao ou a propria pagina do leilao como comparavel de mercado.",
+      "Se uma informacao nao estiver sustentada por fonte, deixe pendente e explique em cautionNotes.",
+      "Prefira precisao a velocidade. Qualidade e confiabilidade sao mais importantes que completar a qualquer custo.",
+    ].join("\n");
+    const prompt = [
+      "Monte uma pesquisa de mercado profunda para o imovel abaixo.",
+      "Busque no Google referencias reais de venda e aluguel na mesma cidade, bairro, condominio/loteamento ou padrao equivalente.",
+      "Retorne JSON exatamente neste formato:",
+      JSON.stringify({
+        status: "completed|partial|skipped",
+        searchQueries: ["consulta usada"],
+        saleComparables: [
+          {
+            sourceLabel: "Portal ou imobiliaria",
+            sourceUrl: "https://...",
+            listingType: "sale",
+            propertyType: "apartamento|casa|terreno|comercial|imovel",
+            title: "Titulo do anuncio",
+            address: "Endereco/bairro quando houver",
+            neighborhood: "Bairro",
+            city: "Cidade",
+            state: "UF",
+            areaM2: 0,
+            askingPrice: 0,
+            monthlyRent: 0,
+            bedrooms: 0,
+            parkingSpaces: 0,
+            similarityScore: 0,
+            quality: "strong|medium|weak|discarded",
+            notes: "Por que e comparavel",
+          },
+        ],
+        rentalComparables: [
+          {
+            sourceLabel: "Portal ou imobiliaria",
+            sourceUrl: "https://...",
+            listingType: "rent",
+            propertyType: "apartamento|casa|terreno|comercial|imovel",
+            title: "Titulo do anuncio",
+            address: "Endereco/bairro quando houver",
+            neighborhood: "Bairro",
+            city: "Cidade",
+            state: "UF",
+            areaM2: 0,
+            askingPrice: 0,
+            monthlyRent: 0,
+            bedrooms: 0,
+            parkingSpaces: 0,
+            similarityScore: 0,
+            quality: "strong|medium|weak|discarded",
+            notes: "Por que e comparavel",
+          },
+        ],
+        marketValueLow: 0,
+        marketValueBase: 0,
+        marketValueHigh: 0,
+        rentalMonthlyRent: 0,
+        rentalReferenceUrl: "https://...",
+        confidenceScore: 0,
+        liquidityScore: 0,
+        missingFields: ["pendencia"],
+        cautionNotes: ["ressalva"],
+      }),
+      "",
+      "Regras:",
+      "- Use no minimo 3 comparaveis de venda quando existirem fontes aderentes.",
+      "- Use pelo menos 1 comparavel de aluguel quando existir fonte aderente.",
+      "- Para casas/sobrados, diferencie terreno, area construida, bairro e padrao.",
+      "- Para apartamentos, priorize mesmo condominio, bairro, area privativa, dormitorios e vagas.",
+      "- Para terrenos/lotes, priorize mesmo loteamento/bairro, area, zoneamento e preco por m2.",
+      "- Se o valor de mercado for estimado com poucos comparaveis, reduza confidenceScore e explique.",
+      "- Nao invente links, valores, areas, quartos ou vagas.",
+      "",
+      `Imovel alvo: ${JSON.stringify(subjectPayload)}`,
+      `Extracao da pagina de leilao: ${JSON.stringify(input.extraction)}`,
+    ].join("\n");
+
+    const grounded = await generateGeminiGroundedContent({ apiKey, model, prompt, systemInstruction });
+    const parsed = pickJsonObject(grounded.rawText);
+    if (!parsed) return { research: null, error: "Gemini/Google retornou resposta sem JSON estruturado." };
+
+    const grounding = collectGroundingLinks(grounded.response);
+    const research = normalizeGroundedMarketResearch(subject, parsed, grounding);
+    if (research) {
+      research.cautionNotes = uniqueStrings([
+        `Pesquisa Gemini/Google executada com ${grounded.toolName}.`,
+        ...research.cautionNotes,
+      ], 12);
+    }
+    return {
+      research,
+      error: research ? "" : "Gemini/Google nao retornou comparaveis aproveitaveis.",
+    };
+  } catch (error) {
+    return {
+      research: null,
+      error: error instanceof Error ? error.message : "Falha na pesquisa Gemini/Google.",
+    };
+  }
+}
+
 function buildEstimatedCosts(initialBid: number, marketValueBase: number): MarketCostItem[] {
   const bid = initialBid || 0;
   const market = marketValueBase || 0;
@@ -714,45 +1175,83 @@ export async function runDeepMarketResearch(input: {
     } satisfies DeepMarketResearchResult;
   }
 
-  const search = await searchMarketResults(subject);
+  const groundedAttempt = await runGeminiGroundedMarketResearch(input, subject);
+  const groundedResearch = groundedAttempt.research;
+  const needsFallbackSearch =
+    !groundedResearch ||
+    !groundedResearch.marketValueBase ||
+    groundedResearch.saleComparables.length < 3 ||
+    groundedResearch.rentalComparables.length < 1;
+
+  const search = needsFallbackSearch
+    ? await searchMarketResults(subject)
+    : {
+        searchQueries: [] as string[],
+        searchedUrls: [] as Array<{ label: string; url: string; kind: ListingKind }>,
+        results: [] as SearchResult[],
+      };
   const saleResults = search.results.filter((item) => item.kind === "sale").slice(0, MAX_SALE_PAGES);
   const rentResults = search.results.filter((item) => item.kind === "rent").slice(0, MAX_RENT_PAGES);
-  const hydrated = await Promise.all([...saleResults, ...rentResults].map((result) => hydrateSearchResult(subject, result)));
+  const hydrated = needsFallbackSearch
+    ? await Promise.all([...saleResults, ...rentResults].map((result) => hydrateSearchResult(subject, result)))
+    : [];
   const comparables = hydrated.filter((item): item is DeepMarketComparable => Boolean(item));
-  const saleComparables = comparables.filter((item) => item.listingType === "sale").sort((a, b) => b.similarityScore - a.similarityScore);
-  const rentalComparables = comparables.filter((item) => item.listingType === "rent").sort((a, b) => b.similarityScore - a.similarityScore);
-  const marketValue = calculateMarketValue(subject, saleComparables);
+  const saleComparables = mergeComparableLists([
+    ...(groundedResearch?.saleComparables || []),
+    ...comparables.filter((item) => item.listingType === "sale"),
+  ]);
+  const rentalComparables = mergeComparableLists([
+    ...(groundedResearch?.rentalComparables || []),
+    ...comparables.filter((item) => item.listingType === "rent"),
+  ]);
+  const calculatedMarketValue = calculateMarketValue(subject, saleComparables);
+  const marketValue = {
+    low: firstPositive(calculatedMarketValue.low, groundedResearch?.marketValueLow || 0),
+    base: firstPositive(calculatedMarketValue.base, groundedResearch?.marketValueBase || 0),
+    high: firstPositive(calculatedMarketValue.high, groundedResearch?.marketValueHigh || 0),
+    confidenceBoost: calculatedMarketValue.confidenceBoost,
+  };
   const rental = calculateRental(subject, rentalComparables, marketValue.base);
+  const rentalMonthlyRent = firstPositive(rental.monthlyRent, groundedResearch?.rentalMonthlyRent || 0);
+  const rentalReferenceUrl = firstText(rental.referenceUrl, groundedResearch?.rentalReferenceUrl || "");
 
   if (saleComparables.length < 3) missingFields.push("minimo de 3 comparaveis de venda");
   if (!marketValue.base) missingFields.push("valor de mercado por comparaveis");
   if (!rentalComparables.length) missingFields.push("referencia direta de aluguel");
   if (!subject.areaM2) missingFields.push("area para preco por m2");
-  if (!search.results.length) cautionNotes.push("Nenhum resultado de mercado aderente foi encontrado na busca automatica.");
+  (groundedResearch?.missingFields || []).forEach((field) => missingFields.push(field));
+  if (groundedAttempt.error) cautionNotes.push(`Pesquisa Gemini/Google: ${groundedAttempt.error}`);
+  cautionNotes.push(...(groundedResearch?.cautionNotes || []));
+  if (needsFallbackSearch && !search.results.length && !(groundedResearch?.searchedUrls.length)) {
+    cautionNotes.push("Nenhum resultado de mercado aderente foi encontrado na busca automatica.");
+  }
   if (saleComparables.length && saleComparables.length < 3) {
     cautionNotes.push(`Apenas ${saleComparables.length} comparavel(is) de venda aderente(s); revisar manualmente antes de aprovar.`);
   }
-  if (!rentalComparables.length && rental.monthlyRent) cautionNotes.push(rental.note);
+  if (!rentalComparables.length && rentalMonthlyRent) cautionNotes.push(rental.note);
 
-  const confidenceScore = clampMarketScore(
+  const calculatedConfidenceScore = clampMarketScore(
     (marketValue.base ? 48 : 20) +
       marketValue.confidenceBoost +
       Math.min(12, rentalComparables.length * 4) +
       (subject.condoName && saleComparables.some((item) => includesToken(item.title, subject.condoName)) ? 8 : 0) -
       Math.max(0, missingFields.length - 1) * 6
   );
+  const confidenceScore = groundedResearch?.confidenceScore
+    ? clampMarketScore(Math.round((calculatedConfidenceScore + groundedResearch.confidenceScore) / 2))
+    : calculatedConfidenceScore;
 
   return {
-    status: marketValue.base ? "completed" : "partial",
-    searchQueries: search.searchQueries,
-    searchedUrls: search.searchedUrls,
+    status: marketValue.base && saleComparables.length >= 3 ? "completed" : "partial",
+    searchQueries: uniqueStrings([...(groundedResearch?.searchQueries || []), ...search.searchQueries], 18),
+    searchedUrls: uniqueSearchedUrls([...(groundedResearch?.searchedUrls || []), ...search.searchedUrls]),
     saleComparables,
     rentalComparables,
     marketValueLow: marketValue.low,
     marketValueBase: marketValue.base,
     marketValueHigh: marketValue.high,
-    rentalMonthlyRent: rental.monthlyRent,
-    rentalReferenceUrl: rental.referenceUrl,
+    rentalMonthlyRent,
+    rentalReferenceUrl,
     confidenceScore,
     liquidityScore: clampMarketScore(45 + Math.min(25, saleComparables.length * 5) + Math.min(15, rentalComparables.length * 5)),
     estimatedCosts: buildEstimatedCosts(input.initialBid, marketValue.base),

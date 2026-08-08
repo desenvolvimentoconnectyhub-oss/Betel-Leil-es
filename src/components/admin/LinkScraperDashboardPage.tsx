@@ -11,6 +11,7 @@ import {
   RefreshCw,
   Send,
   ShieldAlert,
+  Trash2,
   Upload,
   X,
 } from "lucide-react";
@@ -19,6 +20,7 @@ import type {
   LinkScraperBatch,
   LinkScraperDashboardData,
   LinkAnalysisDepth,
+  MarketAnalysisResetSummary,
   ParsedLinkImportFile,
   ScraperNotificationRecipient,
   WhatsappAgentOption,
@@ -134,6 +136,14 @@ function batchReadyToStart(batch: LinkScraperBatch) {
   return batch.status === "aguardando_inicio" || batch.status === "draft" || batch.status === "falha";
 }
 
+function formatResetSummary(summary?: MarketAnalysisResetSummary) {
+  if (!summary) return "Analises de mercado limpas.";
+  return [
+    `Limpeza concluida: ${summary.opportunitiesDeleted} imovel(is), ${summary.rowsDeleted} linha(s) e ${summary.batchesDeleted} lote(s) removido(s).`,
+    `${summary.r2ObjectsDeleted} imagem(ns) apagada(s) do R2; ${summary.externalAssetsSkipped} imagem(ns) externa(s) ignorada(s).`,
+  ].join(" ");
+}
+
 export function LinkScraperDashboardPage({ module, data }: Props) {
   const [dashboard, setDashboard] = useState(data.data);
   const [feedback, setFeedback] = useState<{ type: "ok" | "err" | "info"; message: string } | null>(
@@ -149,6 +159,7 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const [showRecipientModal, setShowRecipientModal] = useState(false);
   const [analysisDepth, setAnalysisDepth] = useState<LinkAnalysisDepth>("deep");
+  const [resetConfirmation, setResetConfirmation] = useState("");
 
   const connectedAgents = useMemo(
     () => dashboard.whatsappAgents.filter(isSelectableWhatsappAgent),
@@ -340,6 +351,31 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
     await postJson({ action: "retry_row", rowId }, "Linha reprocessada.");
   }
 
+  async function resetMarketAnalysis() {
+    setBusy("market_analysis_reset");
+    setFeedback(null);
+    try {
+      const res = await fetch("/api/admin/scraper", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "market_analysis_reset", confirmation: resetConfirmation }),
+      });
+      const json = await res.json();
+      if (!res.ok || json.ok === false) {
+        const summary = json.data as MarketAnalysisResetSummary | undefined;
+        const failureDetail = summary?.failures?.length ? ` Falhas: ${summary.failures.slice(0, 2).join(" | ")}` : "";
+        throw new Error(`${json.error || "Falha ao limpar analises."}${failureDetail}`);
+      }
+      setResetConfirmation("");
+      setFeedback({ type: "ok", message: formatResetSummary(json.data as MarketAnalysisResetSummary | undefined) });
+      await refresh();
+    } catch (error) {
+      setFeedback({ type: "err", message: error instanceof Error ? error.message : "Falha ao limpar analises." });
+    } finally {
+      setBusy("");
+    }
+  }
+
   return (
     <main className="space-y-6">
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
@@ -380,6 +416,31 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
         <Metric label="Falhas" value={dashboard.metrics.failedRows} detail="Requerem nova tentativa" />
         <Metric label="Legado" value={dashboard.metrics.legacyCandidates} detail="Candidatos da fase antiga" />
       </section>
+
+      <DashboardCard title="Limpar imoveis analisados" eyebrow="testes / banco + r2" action={<Trash2 size={18} className="text-red-300" />}>
+        <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
+          <div className="space-y-2">
+            <p className="text-sm text-[var(--admin-muted)]">
+              Remove os lotes importados, linhas presas, imoveis criados pela analise e imagens espelhadas no R2.
+            </p>
+            <input
+              className={inputClass}
+              value={resetConfirmation}
+              onChange={(event) => setResetConfirmation(event.target.value)}
+              placeholder="Digite LIMPAR ANALISE"
+            />
+          </div>
+          <button
+            type="button"
+            disabled={resetConfirmation.toUpperCase() !== "LIMPAR ANALISE" || busy === "market_analysis_reset"}
+            onClick={resetMarketAnalysis}
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-red-400 px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {busy === "market_analysis_reset" ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+            Limpar testes
+          </button>
+        </div>
+      </DashboardCard>
 
       <section className="grid gap-4 xl:grid-cols-[1fr_1.4fr]">
         <DashboardCard title="Corte da fase antiga" eyebrow="dry-run" action={<ShieldAlert size={18} className="text-yellow-200" />}>

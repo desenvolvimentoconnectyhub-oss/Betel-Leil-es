@@ -10,6 +10,7 @@ import {
   parsePropertyLinkImportFile,
   queueLinkScraperBatch,
   recordLegacyCleanupDryRun,
+  resetMarketAnalysisTestData,
   retryLinkScraperRow,
   startLinkScraperBatch,
 } from "@/lib/scraper";
@@ -140,6 +141,14 @@ export async function POST(request: Request) {
     if (action === "retry_row") {
       const result = await retryLinkScraperRow({
         rowId: cleanString(body.rowId),
+      });
+      revalidateScraper();
+      return NextResponse.json(result, { status: result.ok ? 200 : 400 });
+    }
+
+    if (action === "market_analysis_reset") {
+      const result = await resetMarketAnalysisTestData({
+        confirmation: cleanString(body.confirmation),
       });
       revalidateScraper();
       return NextResponse.json(result, { status: result.ok ? 200 : 400 });
