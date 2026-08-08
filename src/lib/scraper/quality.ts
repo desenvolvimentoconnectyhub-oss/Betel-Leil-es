@@ -202,9 +202,12 @@ export function isLikelyNonRealEstateAsset(input: RealEstateAssetInput) {
 
 export function isLikelyPropertyImageUrl(url: string) {
   const normalized = normalizeQualityText(url);
+  const normalizedForSignals = normalized
+    .replace(/marca[_-]?dagua(?:=[^&\s]*)?/g, "")
+    .replace(/watermark(?:=[^&\s]*)?/g, "");
   if (!/^https?:\/\//i.test(url)) return false;
   if (/\.svg(?:[?#].*)?$/i.test(url)) return false;
-  if (NON_PROPERTY_IMAGE_SIGNALS.some((signal) => normalized.includes(signal))) return false;
+  if (NON_PROPERTY_IMAGE_SIGNALS.some((signal) => normalizedForSignals.includes(signal))) return false;
 
   const signedMediaImage = normalized.includes("/midia/") && normalized.includes("largura=") && normalized.includes("altura=");
 
