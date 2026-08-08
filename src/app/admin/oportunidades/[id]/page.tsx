@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import type { ReactNode } from "react";
 import {
   ArrowLeft,
   FileCheck2,
@@ -50,6 +51,21 @@ function SectionLink({ href, children }: { href: string; children: string }) {
     >
       {children}
     </a>
+  );
+}
+
+function HeaderScoreCard({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="min-w-0 rounded-md border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] px-2 py-2">
+      <p className="truncate text-[10px] text-[var(--admin-muted)]">{label}</p>
+      <div className="mt-2">{children}</div>
+    </div>
   );
 }
 
@@ -153,7 +169,7 @@ export default async function OpportunityDetailPage({
   return (
     <div className="mx-auto max-w-[1580px] px-3 py-3 lg:px-5">
       <section className="mb-3 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-3">
-        <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
+        <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px] xl:items-start">
           <div className="min-w-0">
             <div className="mb-3 flex flex-wrap items-center gap-2">
               <Button
@@ -187,21 +203,42 @@ export default async function OpportunityDetailPage({
             <p className="mt-2 max-w-5xl text-sm leading-6 text-[var(--admin-soft)]">{opportunity.summary}</p>
           </div>
 
-          <div className="flex flex-wrap gap-2 xl:justify-end">
-            <Button
-              asChild
-              variant="outline"
-              className="h-8 border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] text-[var(--admin-foreground)]"
-            >
-              <Link href={`/admin/oportunidades/${opportunity.id}/editar`}>
-                <Pencil size={14} />
-                Editar imovel
-              </Link>
-            </Button>
-            <Button className="h-8 bg-[var(--admin-cyan)] text-black hover:bg-white">
-              <FileCheck2 size={14} />
-              Gerar dossie
-            </Button>
+          <div className="grid gap-2">
+            <div className="flex flex-wrap gap-2 xl:justify-end">
+              <Button
+                asChild
+                variant="outline"
+                className="h-8 border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] text-[var(--admin-foreground)]"
+              >
+                <Link href={`/admin/oportunidades/${opportunity.id}/editar`}>
+                  <Pencil size={14} />
+                  Editar imovel
+                </Link>
+              </Button>
+              <Button className="h-8 bg-[var(--admin-cyan)] text-black hover:bg-white">
+                <FileCheck2 size={14} />
+                Gerar dossie
+              </Button>
+            </div>
+            <div className="rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] p-2">
+              <div className="mb-2 flex items-center justify-between gap-3 px-1">
+                <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--admin-muted)]">
+                  score da analise
+                </p>
+                <StatusBadge tone={getStatusTone(opportunity.stage)}>{opportunity.stage}</StatusBadge>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <HeaderScoreCard label="Potencial">
+                  <ScoreBadge score={opportunity.opportunityScore} className="h-9 min-w-12" />
+                </HeaderScoreCard>
+                <HeaderScoreCard label="Risco">
+                  <RiskBadge score={opportunity.riskScore} className="h-9 min-w-12" />
+                </HeaderScoreCard>
+                <HeaderScoreCard label="Compliance">
+                  <ScoreBadge score={opportunity.complianceScore} className="h-9 min-w-12" />
+                </HeaderScoreCard>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -220,21 +257,6 @@ export default async function OpportunityDetailPage({
 
           <DashboardCard title="Fila de decisao" eyebrow="operacao">
             <div className="grid gap-3">
-              <div className="grid grid-cols-3 gap-2">
-                <div className="rounded-md border border-[var(--admin-border)] px-2 py-2">
-                  <p className="text-[10px] text-[var(--admin-muted)]">Potencial</p>
-                  <ScoreBadge score={opportunity.opportunityScore} className="mt-2 h-9 min-w-12" />
-                </div>
-                <div className="rounded-md border border-[var(--admin-border)] px-2 py-2">
-                  <p className="text-[10px] text-[var(--admin-muted)]">Risco</p>
-                  <RiskBadge score={opportunity.riskScore} className="mt-2 h-9 min-w-12" />
-                </div>
-                <div className="rounded-md border border-[var(--admin-border)] px-2 py-2">
-                  <p className="text-[10px] text-[var(--admin-muted)]">Compliance</p>
-                  <ScoreBadge score={opportunity.complianceScore} className="mt-2 h-9 min-w-12" />
-                </div>
-              </div>
-
               <div className="rounded-md border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] p-3">
                 <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-[var(--admin-foreground)]">
                   <Target size={15} className="text-[var(--admin-cyan)]" />
