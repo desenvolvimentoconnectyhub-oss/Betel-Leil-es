@@ -1,6 +1,7 @@
 import type { ScraperCandidate, ScraperResult, ScraperTarget } from "./types";
 import { cleanHtmlForLlm, extractCandidatesWithLlm } from "./scraper-llm";
 import { getAuctionWindow, parseAuctionDate } from "./scraper-criteria";
+import { auctionPageFetchHeaders } from "./http";
 import { isLikelyExactPropertySourceUrl, isLikelyPropertyImageUrl, sortLikelyPropertyImageUrls } from "./quality";
 
 type ScraperAnchor = { text: string; href: string };
@@ -48,7 +49,7 @@ const REAL_ESTATE_TITLE_SIGNALS = [
   "terreno",
 ];
 
-function looksLikeBotChallenge(html: string, title: string, url: string) {
+export function looksLikeBotChallenge(html: string, title: string, url: string) {
   const value = `${title}\n${url}\n${html.slice(0, 5000)}`.toLowerCase();
   const normalizedTitle = normalizeText(title);
   const realEstateSignals = REAL_ESTATE_TITLE_SIGNALS.some((signal) => value.includes(signal));
@@ -295,7 +296,8 @@ export async function collectImageUrlsFromSourceUrl(sourceUrl: string, fallbackB
   let htmlImages: string[] = [];
   try {
     const response = await fetch(sourceUrl, {
-      headers: { "User-Agent": "BetelBot/1.0 (+https://betel.com.br)" },
+      cache: "no-store",
+      headers: auctionPageFetchHeaders(fallbackBaseUrl),
       signal: AbortSignal.timeout(20_000),
     });
 
@@ -531,7 +533,8 @@ export async function executeFetchStrategy(
 
   try {
     const response = await fetch(target.url, {
-      headers: { "User-Agent": "BetelBot/1.0 (+https://betel.com.br)" },
+      cache: "no-store",
+      headers: auctionPageFetchHeaders(),
       signal: AbortSignal.timeout(30_000),
     });
 

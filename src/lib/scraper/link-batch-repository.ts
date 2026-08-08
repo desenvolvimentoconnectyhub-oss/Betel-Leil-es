@@ -17,8 +17,9 @@ import { deletePublicR2Object, mirrorRemoteImagesToR2, type StoredImageAsset } f
 import { extractAuctionSiteContext, type AuctionSiteDocument, type AuctionSiteExtractionPatch } from "./auction-site-adapters";
 import { extractAuctionLinkWithGemini, type AuctionLinkExtraction } from "./auction-link-extractor";
 import { runDeepMarketResearch, type DeepMarketComparable, type DeepMarketResearchResult } from "./deep-market-research";
+import { auctionApiFetchHeaders, auctionPageFetchHeaders } from "./http";
 import { cleanHtmlForLlm } from "./scraper-llm";
-import { collectImageUrlsFromSourceUrl } from "./scraper-strategies";
+import { collectImageUrlsFromSourceUrl, looksLikeBotChallenge } from "./scraper-strategies";
 import type { DataResult, MutationResult } from "@/lib/admin/repository/shared";
 
 type DbRow = Record<string, unknown>;
@@ -1681,11 +1682,7 @@ async function fetchPestanaSupplement(input: { sourceUrl: string; resolvedSource
   })();
   const apiUrl = `${origin}/api/v2/lote/por-leilao?idLeilao=${encodeURIComponent(ids.auctionId)}`;
   const timeout = Math.min(Math.max(input.timeoutMs, 12_000), 40_000);
-  const headers = {
-    Accept: "application/json",
-    Referer: input.resolvedSourceUrl || input.sourceUrl,
-    "User-Agent": "BetelBot/1.0 (+https://betel.com.br)",
-  };
+  const headers = auctionApiFetchHeaders(input.resolvedSourceUrl || input.sourceUrl);
 
   try {
     const response = await fetch(apiUrl, {
@@ -1961,11 +1958,7 @@ async function fetchCentralSulSupplement(input: { sourceUrl: string; resolvedSou
   for (const apiUrl of endpoints) {
     try {
       const response = await fetch(apiUrl, {
-        headers: {
-          Accept: "application/json",
-          "User-Agent": "BetelBot/1.0 (+https://betel.com.br)",
-          Referer: input.resolvedSourceUrl || input.sourceUrl,
-        },
+        headers: auctionApiFetchHeaders(input.resolvedSourceUrl || input.sourceUrl),
         signal: AbortSignal.timeout(Math.min(Math.max(input.timeoutMs, 12_000), 35_000)),
       });
       if (!response.ok) continue;
@@ -2012,8 +2005,7 @@ async function fetchAstaveroSupplement(input: { sourceUrl: string; resolvedSourc
         Accept: "application/json",
         "Content-Type": "application/json",
         Origin: origin,
-        Referer: input.resolvedSourceUrl || input.sourceUrl,
-        "User-Agent": "BetelBot/1.0 (+https://betel.com.br)",
+        ...auctionApiFetchHeaders(input.resolvedSourceUrl || input.sourceUrl),
       },
       body: JSON.stringify({ id: ids.auctionId, idl: ids.lotId, cadastro: "" }),
       signal: AbortSignal.timeout(Math.min(Math.max(input.timeoutMs, 12_000), 35_000)),
@@ -2181,6 +2173,31 @@ function mergeAuctionExtraction(gemini: AuctionLinkExtraction, adapter: AuctionS
   const missing = new Set([...(gemini.missingFields || []), ...(adapter.missingFields || [])].map((field) => cleanString(field)).filter(Boolean));
   merged.missingFields = [...missing].filter((field) => !fieldHasValue(field, merged));
   return merged;
+}
+
+function hasUsableAuctionEvidence(input: {
+  extraction: AuctionSiteExtractionPatch;
+  imageCount: number;
+  documentCount: number;
+  supplementText: string;
+}) {
+  const extraction = input.extraction;
+  const hardSignals = [
+    extraction.initialBid,
+    extraction.appraisalValue,
+    extraction.privateAreaM2 || extraction.builtAreaM2 || extraction.landAreaM2,
+    extraction.address,
+    extraction.city && extraction.state,
+  ].filter(Boolean).length;
+  const supportSignals = [
+    extraction.title && !/just a moment|attention required|access denied/i.test(extraction.title),
+    extraction.summary && !/just a moment|attention required|access denied/i.test(extraction.summary),
+    input.imageCount,
+    input.documentCount,
+    cleanString(input.supplementText),
+  ].filter(Boolean).length;
+
+  return hardSignals >= 2 || (hardSignals >= 1 && supportSignals >= 2);
 }
 
 type LinkAnalysisQualityReview = {
@@ -2675,12 +2692,14 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
 
   try {
     const response = await fetch(row.auctionUrl, {
-      headers: { "User-Agent": "BetelBot/1.0 (+https://betel.com.br)" },
+      cache: "no-store",
+      headers: auctionPageFetchHeaders(),
       signal: AbortSignal.timeout(profile.fetchTimeoutMs),
     });
     const html = await response.text();
     const resolvedSourceUrl = response.url || row.auctionUrl;
     const domain = row.sourceDomain || sourceDomain(resolvedSourceUrl);
+    const pageBlocked = looksLikeBotChallenge(html, titleFromHtml(html, domain), resolvedSourceUrl);
     const supplement = await fetchAuctionPageSupplement({
       sourceUrl: row.auctionUrl,
       resolvedSourceUrl,
@@ -2701,6 +2720,16 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
       supplement.documentLinks,
       siteContext.documents
     );
+    if (pageBlocked && !hasUsableAuctionEvidence({
+      extraction: siteContext.extraction,
+      imageCount: siteContext.imageUrls.length + supplement.imageUrls.length,
+      documentCount: documentLinks.length,
+      supplementText: supplement.text,
+    })) {
+      throw new Error(
+        `Pagina protegida ou desafio anti-bot em ${domain || "fonte"}; a coleta automatica nao recebeu dados suficientes para cadastrar o imovel.`
+      );
+    }
     const gemini = await extractAuctionLinkWithGemini({
       sourceUrl: row.auctionUrl,
       sourceDomain: domain,
@@ -2935,6 +2964,11 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
           name: siteContext.adapterName,
           confidenceScore: siteContext.extraction.confidenceScore,
           warnings: siteContext.warnings,
+        },
+        pageDiagnostics: {
+          blockedByAntiBot: pageBlocked,
+          httpStatus: response.status,
+          resolvedSourceUrl,
         },
         subject: {
           propertyType: extraction.propertyType,

@@ -2,6 +2,7 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { DeleteObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { auctionImageFetchHeaders } from "@/lib/scraper/http";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { isLikelyPropertyImageUrl, sortLikelyPropertyImageUrls } from "@/lib/scraper/quality";
 
@@ -313,11 +314,7 @@ export async function mirrorRemoteImagesToR2(input: {
   return Promise.all(imageUrls.map(async (sourceUrl, index): Promise<StoredImageAsset> => {
     try {
       const response = await fetch(sourceUrl, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (compatible; BetelBot/1.0; +https://betel.com.br)",
-          Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-          ...(input.referer ? { Referer: input.referer } : {}),
-        },
+        headers: auctionImageFetchHeaders(input.referer),
         signal: AbortSignal.timeout(20_000),
       });
 
