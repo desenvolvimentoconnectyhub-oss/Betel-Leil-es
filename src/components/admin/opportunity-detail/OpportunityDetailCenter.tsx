@@ -899,7 +899,8 @@ function Gallery({
       : heroImage
         ? images.findIndex((image) => image.url === heroImage.url)
         : -1;
-  const heroHeight = compact ? "h-[240px] sm:h-[320px] xl:h-[380px]" : "h-[300px] sm:h-[380px] xl:h-[460px]";
+  const heroHeight = compact ? "h-[280px] sm:h-[360px] xl:h-[440px]" : "h-[360px] sm:h-[500px] xl:h-[620px]";
+  const thumbnailRailHeight = compact ? "lg:max-h-[440px]" : "lg:max-h-[620px]";
 
   return (
     <SectionCard
@@ -948,8 +949,8 @@ function Gallery({
           className={cn(
             "grid gap-2",
             compact
-              ? "grid-cols-5 lg:max-h-[380px] lg:grid-cols-1 lg:overflow-y-auto lg:pr-1"
-              : "grid-cols-4 lg:max-h-[460px] lg:grid-cols-2 lg:overflow-y-auto lg:pr-1"
+              ? cn("grid-cols-5 lg:grid-cols-1 lg:overflow-y-auto lg:pr-1", thumbnailRailHeight)
+              : cn("grid-cols-4 lg:grid-cols-2 lg:overflow-y-auto lg:pr-1", thumbnailRailHeight)
           )}
         >
           {images.map((image, index) => (
