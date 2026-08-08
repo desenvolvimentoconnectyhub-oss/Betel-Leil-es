@@ -1,6 +1,21 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { ArrowUpRight, Banknote, BarChart3, Calculator, CheckCircle2, CreditCard, FileSearch, Home, Save, Scale, ShieldCheck, XCircle } from "lucide-react";
+import {
+  ArrowUpRight,
+  Banknote,
+  BarChart3,
+  Calculator,
+  CheckCircle2,
+  ChevronDown,
+  CreditCard,
+  FileSearch,
+  Home,
+  Save,
+  Scale,
+  ShieldCheck,
+  SlidersHorizontal,
+  XCircle,
+} from "lucide-react";
 import { savePropertyMarketAnalysisAction } from "@/app/admin/oportunidades/actions";
 import { DashboardCard } from "@/components/admin/DashboardCard";
 import { ScoreBadge } from "@/components/admin/ScoreBadge";
@@ -81,10 +96,10 @@ function MetricTile({
   tone: ResourceTone;
 }) {
   return (
-    <div className={cn("min-h-28 rounded-lg border px-3 py-3", toneBorder[tone])}>
+    <div className={cn("min-h-[88px] rounded-md border px-3 py-2.5", toneBorder[tone])}>
       <p className="text-xs text-[var(--admin-muted)]">{label}</p>
-      <p className={cn("mt-3 truncate font-mono text-xl font-bold", toneText[tone])}>{value}</p>
-      <p className="mt-2 text-xs leading-5 text-[var(--admin-soft)]">{detail}</p>
+      <p className={cn("mt-2 truncate font-mono text-lg font-bold", toneText[tone])}>{value}</p>
+      <p className="mt-1 line-clamp-2 text-xs leading-5 text-[var(--admin-soft)]">{detail}</p>
     </div>
   );
 }
@@ -277,11 +292,12 @@ export function PropertyMarketAnalysisPanel({
       title="Analise de mercado"
       eyebrow="comparaveis / teto / decisao"
       action={<StatusBadge tone={statusTone(analysis.status)}>{analysis.status}</StatusBadge>}
+      contentClassName="p-3 lg:p-4"
     >
       <div className="grid gap-4">
         {reason ? <p className="text-xs leading-5 text-[var(--admin-muted)]">{reason}</p> : null}
 
-        <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-8">
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-8">
           <MetricTile label="Mercado base" value={formatCurrency(analysis.marketValueBase)} detail={pricePerM2(analysis.marketPricePerM2)} tone="cyan" />
           <MetricTile label="Lance atual" value={formatCurrency(analysis.initialBid)} detail={pricePerM2(analysis.initialBidPricePerM2)} tone="yellow" />
           <MetricTile label="Desconto real" value={percent(analysis.realDiscountPct)} detail="sobre mercado base" tone={analysis.realDiscountPct >= 35 ? "green" : "yellow"} />
@@ -293,7 +309,7 @@ export function PropertyMarketAnalysisPanel({
         </div>
 
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1.05fr)_minmax(340px,0.95fr)]">
-          <div className={cn("rounded-lg border p-4", toneBorder[decision])}>
+          <div className={cn("rounded-md border p-4", toneBorder[decision])}>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="inline-flex items-center gap-2">
                 <BarChart3 size={17} className={toneText[decision]} />
@@ -311,7 +327,7 @@ export function PropertyMarketAnalysisPanel({
           </div>
 
           <div className="grid gap-3">
-            <div className="rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] p-4">
+            <div className="rounded-md border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] p-4">
               <div className="mb-3 inline-flex items-center gap-2 text-sm font-semibold text-white">
                 <Home size={16} className="text-[var(--admin-cyan)]" />
                 Imovel analisado
@@ -327,7 +343,7 @@ export function PropertyMarketAnalysisPanel({
               </div>
             </div>
 
-            <div className="rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] p-4">
+            <div className="rounded-md border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] p-4">
               <div className="mb-3 inline-flex items-center gap-2 text-sm font-semibold text-white">
                 <Scale size={16} className="text-[var(--admin-yellow)]" />
                 Juridico e ressalvas
@@ -335,7 +351,7 @@ export function PropertyMarketAnalysisPanel({
               <p className="text-xs leading-5 text-[var(--admin-soft)]">{analysis.legalSignal}</p>
             </div>
 
-            <div className="rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] p-4">
+            <div className="rounded-md border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] p-4">
               <div className="mb-3 inline-flex items-center gap-2 text-sm font-semibold text-white">
                 <CreditCard size={16} className="text-[var(--admin-green)]" />
                 Pagamento
@@ -436,16 +452,17 @@ export function PropertyMarketAnalysisPanel({
         </div>
 
         <form
+          id="ajustes"
           action={savePropertyMarketAnalysisAction}
-          className="rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.02)] p-4"
+          className="scroll-mt-24 rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.02)] p-3"
         >
           <input name="opportunityCode" type="hidden" value={analysis.opportunityCode} />
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--admin-muted)]">
-                registro rapido
+                decisao / ajustes
               </p>
-              <h3 className="mt-1 text-sm font-semibold text-white">Salvar analise de mercado</h3>
+              <h3 className="mt-1 text-sm font-semibold text-white">Revisao operacional</h3>
             </div>
             <div className="flex flex-wrap gap-2">
               <SubmitReviewButton className="border border-[var(--admin-border)] text-white hover:bg-[rgba(255,255,255,0.08)]" value="human_review">
@@ -467,7 +484,16 @@ export function PropertyMarketAnalysisPanel({
             </div>
           </div>
 
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          <details className="group mt-3 overflow-hidden rounded-md border border-[var(--admin-border)] bg-[rgba(255,255,255,0.02)]">
+            <summary className="flex min-h-11 cursor-pointer items-center justify-between gap-3 px-3 text-sm font-semibold text-white">
+              <span className="inline-flex items-center gap-2">
+                <SlidersHorizontal size={15} className="text-[var(--admin-cyan)]" />
+                Campos de curadoria e preenchimento manual
+              </span>
+              <ChevronDown size={16} className="text-[var(--admin-muted)] transition group-open:rotate-180" />
+            </summary>
+
+          <div className="grid gap-4 border-t border-[var(--admin-border)] p-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
             <div className="grid gap-4">
               <div className="grid gap-3 md:grid-cols-3">
                 <Field label="Mercado conservador" name="marketValueLow" defaultValue={analysis.marketValueLow || ""} />
@@ -614,6 +640,7 @@ export function PropertyMarketAnalysisPanel({
               </div>
             </div>
           </div>
+          </details>
         </form>
       </div>
     </DashboardCard>
