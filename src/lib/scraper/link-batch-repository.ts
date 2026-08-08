@@ -1240,6 +1240,18 @@ type LinkAnalysisQualityReview = {
   requiresReview: boolean;
 };
 
+type LinkAnalysisQualityGate = {
+  passed: boolean;
+  issues: string[];
+};
+
+type ProcessImportRowResult = {
+  ok: boolean;
+  opportunityId?: string;
+  error?: string;
+  blocked?: boolean;
+};
+
 function buildLinkAnalysisQualityReview(input: {
   analysisDepth: LinkAnalysisDepth;
   extraction: AuctionLinkExtraction;
@@ -1361,6 +1373,53 @@ function applyDeepMarketResearchToQualityReview(
     confidenceScore: clampMarketScore(confidenceScore),
     requiresReview,
   } satisfies LinkAnalysisQualityReview;
+}
+
+function evaluateLinkAnalysisQualityGate(input: {
+  analysisDepth: LinkAnalysisDepth;
+  title: string;
+  extraction: AuctionLinkExtraction;
+  qualityReview: LinkAnalysisQualityReview;
+  marketResearch: DeepMarketResearchResult | null;
+  initialBid: number;
+  marketValueBase: number;
+  imageCount: number;
+  documentCount: number;
+}) {
+  const profile = analysisDepthProfile(input.analysisDepth);
+  const issues = new Set<string>();
+  const areaM2 = firstPositive(input.extraction.privateAreaM2, input.extraction.builtAreaM2, input.extraction.landAreaM2);
+
+  if (!input.title) issues.add("titulo do imovel");
+  if (!input.initialBid) issues.add("lance inicial/proximo lance");
+  if (!input.marketValueBase) issues.add("valor de mercado calculado");
+  if (!areaM2) issues.add("area do imovel");
+  if (!input.extraction.city || !input.extraction.state) issues.add("cidade/UF");
+  if (!input.extraction.address || input.extraction.address.toLowerCase().includes("nao informado")) issues.add("endereco");
+  if (!input.extraction.auctionDate) issues.add("data do leilao");
+  if (!input.imageCount) issues.add("foto real do imovel");
+  if (profile.requireDocuments && !input.documentCount) issues.add("edital, matricula ou documento oficial");
+  if (profile.requireDocuments && !input.extraction.legalSignal) issues.add("sinal juridico/ocupacao/oneriacoes");
+
+  if (input.analysisDepth === "deep") {
+    if (!input.marketResearch || input.marketResearch.status !== "completed") issues.add("pesquisa de mercado completa");
+    if ((input.marketResearch?.saleComparables.length || 0) < 3) issues.add("minimo de 3 comparaveis de venda");
+    if (!input.marketResearch?.rentalComparables.length) issues.add("referencia direta de aluguel");
+  }
+
+  if (input.qualityReview.confidenceScore < profile.minimumConfidence) {
+    issues.add(`confianca minima de ${profile.minimumConfidence}%`);
+  }
+
+  input.qualityReview.missingFields.forEach((field) => {
+    const clean = cleanString(field);
+    if (clean) issues.add(clean);
+  });
+
+  return {
+    passed: issues.size === 0,
+    issues: uniqueStrings(Array.from(issues), 40),
+  } satisfies LinkAnalysisQualityGate;
 }
 
 function decidePreliminaryMarket(realDiscountPct: number, confidenceScore: number): MarketAnalysisDecision {
@@ -1603,7 +1662,7 @@ async function upsertPreliminaryMarketAnalysis(input: {
   }
 }
 
-async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: LinkAnalysisDepth | string } = {}): Promise<{ ok: boolean; opportunityId?: string; error?: string }> {
+async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: LinkAnalysisDepth | string } = {}): Promise<ProcessImportRowResult> {
   const supabase = getSupabaseAdminClient();
   if (!supabase) return { ok: false, error: "Supabase admin nao configurado." };
 
@@ -1700,6 +1759,20 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
     const marketValueBase = firstPositive(marketResearch?.marketValueBase || 0, appraisalValue);
     const marketValueSource = marketResearch?.marketValueBase ? "comparaveis_web" : appraisalValue ? "avaliacao_leilao" : "indisponivel";
     const discount = discountPct(marketValueBase, initialBid);
+    const qualityGate = evaluateLinkAnalysisQualityGate({
+      analysisDepth,
+      title,
+      extraction,
+      qualityReview,
+      marketResearch,
+      initialBid,
+      marketValueBase,
+      imageCount: usableImageCount,
+      documentCount: documentLinks.length,
+    });
+    const qualityGateMessage = qualityGate.passed
+      ? ""
+      : `Trava de qualidade: analise incompleta. Campos pendentes: ${qualityGate.issues.join(", ")}.`;
     extraction.confidenceScore = qualityReview.confidenceScore;
     extraction.missingFields = qualityReview.missingFields;
     extraction.cautionNotes = uniqueStrings([
@@ -1721,12 +1794,14 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
       appraisalValue: marketValueBase,
       discountPct: discount,
       opportunityScore: Math.max(20, (discount > 0 ? Math.min(95, 45 + discount) : 50) - qualityReview.qualityFlags.length * 3),
-      riskScore: qualityReview.requiresReview ? 65 : 50,
-      complianceScore: response.ok && !qualityReview.requiresReview ? 72 : 45,
+      riskScore: !qualityGate.passed || qualityReview.requiresReview ? 65 : 50,
+      complianceScore: response.ok && qualityGate.passed && !qualityReview.requiresReview ? 72 : 45,
       aiStatus: analysisDepth === "deep" ? "Analise profunda" : "Fila IA",
       legalStatus: extraction.legalSignal ? "Pendente" : "Revisao necessaria",
-      stage: qualityReview.requiresReview ? "Revisao humana" : "Entrada",
-      nextAction: qualityReview.requiresReview
+      stage: !qualityGate.passed || qualityReview.requiresReview ? "Revisao humana" : "Entrada",
+      nextAction: !qualityGate.passed
+        ? `Completar campos obrigatorios antes de continuar o lote: ${qualityGate.issues.join(", ")}.`
+        : qualityReview.requiresReview
         ? "Completar curadoria profunda: documentos, valores, fotos reais e comparaveis antes de liberar decisao."
         : "Revisar captura por link, extrair edital e completar analise de mercado.",
       owner: "Upload de Links - Analise de Mercado",
@@ -1750,6 +1825,7 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
         marketValueBase,
         marketResearch,
         qualityReview,
+        qualityGate,
         sourceUrl: row.auctionUrl,
         sourceDomain: domain,
         httpStatus: response.status,
@@ -1827,16 +1903,17 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
       marketResearch,
       auctionUrl: row.auctionUrl,
       sourceDomain: domain,
-      imageCount: images.length,
+      imageCount: usableImageCount,
       documentCount: documentLinks.length,
       geminiError: gemini.error,
     });
 
     await supabase.from("auction_scrape_runs").update({
       opportunity_id: ingest.data.opportunityId,
-      status: response.ok ? "completed" : "partial",
+      status: response.ok && qualityGate.passed ? "completed" : "partial",
       completed_at: new Date().toISOString(),
       http_status: response.status,
+      error_message: qualityGate.passed ? null : qualityGateMessage,
       raw_snapshot_id: ingest.data.snapshotId,
       extracted_payload: {
         analysisDepth,
@@ -1854,6 +1931,7 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
           cautionNotes: qualityReview.cautionNotes,
           requiresReview: qualityReview.requiresReview,
           minimumConfidence: profile.minimumConfidence,
+          qualityGate,
         },
         adapter: {
           key: siteContext.adapterKey,
@@ -1879,10 +1957,25 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
         marketValueSource,
         marketResearch,
         discountPct: discount,
-        imageCount: images.length,
+        imageCount: usableImageCount,
         documentCount: documentLinks.length,
       },
     }).eq("id", runId);
+
+    if (!qualityGate.passed) {
+      await supabase.from("market_analysis_import_rows").update({
+        status: "falha",
+        opportunity_id: ingest.data.opportunityId,
+        error_message: qualityGateMessage,
+      }).eq("id", row.id);
+
+      return {
+        ok: false,
+        opportunityId: ingest.data.opportunityId,
+        error: qualityGateMessage,
+        blocked: true,
+      };
+    }
 
     await supabase.from("market_analysis_import_rows").update({
       status: "pronto_para_revisao",
@@ -1916,9 +2009,12 @@ function buildBatchMessage(batch: LinkScraperBatch, rows: LinkScraperRow[]) {
   const withoutMarketValue = readyRows.filter((row) => !(row.appraisalValue || 0)).length;
   const readyNeedingReview = readyRows.filter((row) => (row.imageCount || 0) <= 0 || !(row.appraisalValue || 0)).length;
   const needsReview = readyNeedingReview + failed + pending;
+  const qualityBlockedRow = rows.find((row) =>
+    row.status === "falha" && row.errorMessage.toLowerCase().includes("trava de qualidade")
+  );
   const domains = [...new Set(rows.filter((row) => row.status === "falha").map((row) => row.sourceDomain).filter(Boolean))].slice(0, 6);
   return [
-    "Betel AI - analise de mercado concluida",
+    qualityBlockedRow ? "Betel AI - analise pausada por dados incompletos" : "Betel AI - analise de mercado concluida",
     `Arquivo/lote: ${batch.originalFilename || batch.id}`,
     `Modo: ${ANALYSIS_DEPTH_LABELS[batch.analysisDepth || DEFAULT_ANALYSIS_DEPTH]}`,
     `Links: ${rows.length}`,
@@ -1929,6 +2025,7 @@ function buildBatchMessage(batch: LinkScraperBatch, rows: LinkScraperRow[]) {
     `Falhas: ${failed}`,
     `Pendentes: ${pending}`,
     `Precisam revisao: ${needsReview}`,
+    qualityBlockedRow ? `Processo parado na linha ${qualityBlockedRow.rowNumber}: ${qualityBlockedRow.errorMessage}` : "",
     domains.length ? `Dominios com falha: ${domains.join(", ")}` : "",
     "Acesse Analise de mercado > Imoveis analisados para revisar os resultados.",
   ].filter(Boolean).join("\n");
@@ -2004,7 +2101,7 @@ export async function startLinkScraperBatch(input: {
   whatsappInstanceId?: string;
   notificationRecipientId?: string;
   analysisDepth?: LinkAnalysisDepth | string;
-}): Promise<MutationResult<{ processed: number; failed: number }>> {
+}): Promise<MutationResult<{ processed: number; failed: number; stoppedByQualityGate?: boolean; stopReason?: string }>> {
   const supabase = getSupabaseAdminClient();
   if (!supabase) return { ok: false, error: "Supabase admin nao configurado." };
 
@@ -2048,10 +2145,21 @@ export async function startLinkScraperBatch(input: {
 
   let processed = 0;
   let failed = 0;
+  let stoppedByQualityGate = false;
+  let stopReason = "";
   for (const row of ((rowData || []) as DbRow[]).map(normalizeRow)) {
     const result = await processImportRow({ ...row, status: "aguardando_scraper", analysisDepth }, { analysisDepth });
-    if (result.ok) processed += 1;
-    else failed += 1;
+    if (result.ok) {
+      processed += 1;
+      continue;
+    }
+
+    failed += 1;
+    if (result.blocked) {
+      stoppedByQualityGate = true;
+      stopReason = result.error || "Analise incompleta.";
+      break;
+    }
   }
 
   const { data: finalRows } = await supabase
@@ -2091,11 +2199,13 @@ export async function startLinkScraperBatch(input: {
   const readyWithoutMarketValue = readyRows.filter((row) => !(row.appraisalValue || 0)).length;
 
   await supabase.from("market_analysis_import_batches").update({
-    status: failed > 0 && processed === 0 ? "falha" : "concluido",
+    status: stoppedByQualityGate || (failed > 0 && processed === 0) ? "falha" : "concluido",
     completed_at: new Date().toISOString(),
     summary_payload: {
       processed,
       failed,
+      stoppedByQualityGate,
+      stopReason,
       ready: readyRows.length,
       withRealPhoto: readyWithRealPhoto,
       withoutRealPhoto: Math.max(readyRows.length - readyWithRealPhoto, 0),
@@ -2107,7 +2217,7 @@ export async function startLinkScraperBatch(input: {
   }).eq("id", input.batchId);
 
   await sendBatchNotification(input.batchId, finalBatch, normalizedRows);
-  return { ok: true, data: { processed, failed } };
+  return { ok: true, data: { processed, failed, stoppedByQualityGate, stopReason } };
 }
 
 export async function queueLinkScraperBatch(input: {
