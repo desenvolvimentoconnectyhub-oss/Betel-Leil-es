@@ -885,6 +885,7 @@ function Gallery({
   currentTab,
   selectedImageIndex,
   compact = false,
+  fillHeight = false,
 }: {
   images: PropertyImageAsset[];
   heroImage?: PropertyImageAsset;
@@ -892,6 +893,7 @@ function Gallery({
   currentTab: OpportunityTabId;
   selectedImageIndex?: number;
   compact?: boolean;
+  fillHeight?: boolean;
 }) {
   const activeIndex =
     typeof selectedImageIndex === "number"
@@ -899,7 +901,7 @@ function Gallery({
       : heroImage
         ? images.findIndex((image) => image.url === heroImage.url)
         : -1;
-  const heroHeight = "h-[360px] sm:h-[500px] xl:h-[620px]";
+  const heroHeight = fillHeight ? "h-full min-h-[360px] sm:min-h-[500px] xl:min-h-[620px]" : "h-[360px] sm:h-[500px] xl:h-[620px]";
   const thumbnailRailHeight = "lg:max-h-[620px]";
 
   return (
@@ -908,10 +910,16 @@ function Gallery({
       title="Fotos do imovel"
       eyebrow="galeria / r2"
       action={<StatusBadge tone={heroImage ? "green" : "yellow"}>{images.length} foto(s)</StatusBadge>}
-      className="scroll-mt-40 self-start h-fit"
-      contentClassName="p-3"
+      className={cn("scroll-mt-40", fillHeight ? "flex h-full self-stretch flex-col" : "self-start h-fit")}
+      contentClassName={cn("p-3", fillHeight && "flex flex-1")}
     >
-      <div className={cn("grid items-start gap-3", compact ? "lg:grid-cols-[1fr_164px]" : "lg:grid-cols-[minmax(0,1fr)_220px]")}>
+      <div
+        className={cn(
+          "grid w-full items-start gap-3",
+          fillHeight && "lg:h-full lg:items-stretch",
+          compact ? "lg:grid-cols-[1fr_164px]" : "lg:grid-cols-[minmax(0,1fr)_220px]"
+        )}
+      >
         {heroImage ? (
           <a
             href={heroImage.url}
@@ -934,7 +942,12 @@ function Gallery({
             </span>
           </a>
         ) : (
-          <div className="grid aspect-[16/9] min-h-56 place-items-center rounded-lg border border-[var(--admin-border)] bg-[#fbf6e9] text-center">
+          <div
+            className={cn(
+              "grid aspect-[16/9] min-h-56 place-items-center rounded-lg border border-[var(--admin-border)] bg-[#fbf6e9] text-center",
+              fillHeight && "lg:h-full lg:min-h-[620px]"
+            )}
+          >
             <div>
               <ImageOff className="mx-auto text-[var(--admin-muted)]" size={36} />
               <p className="mt-3 font-mono text-xs font-semibold uppercase tracking-[0.14em] text-[var(--admin-yellow)]">
@@ -949,8 +962,8 @@ function Gallery({
           className={cn(
             "grid gap-2",
             compact
-              ? cn("grid-cols-5 lg:grid-cols-1 lg:overflow-y-auto lg:pr-1", thumbnailRailHeight)
-              : cn("grid-cols-4 lg:grid-cols-2 lg:overflow-y-auto lg:pr-1", thumbnailRailHeight)
+              ? cn("grid-cols-5 lg:grid-cols-1 lg:overflow-y-auto lg:pr-1", fillHeight ? "lg:h-full lg:max-h-none" : thumbnailRailHeight)
+              : cn("grid-cols-4 lg:grid-cols-2 lg:overflow-y-auto lg:pr-1", fillHeight ? "lg:h-full lg:max-h-none" : thumbnailRailHeight)
           )}
         >
           {images.map((image, index) => (
@@ -1002,7 +1015,7 @@ function ExecutiveSummary({
   const areaBase = subject?.privateAreaM2 || subject?.builtAreaM2 || subject?.landAreaM2 || 0;
 
   return (
-    <section className="grid items-start gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(420px,1.05fr)]">
+    <section className="grid items-stretch gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(420px,1.05fr)]">
       <Gallery
         images={images}
         heroImage={heroImage}
@@ -1010,6 +1023,7 @@ function ExecutiveSummary({
         title={opportunity.title}
         currentTab="visao-geral"
         compact
+        fillHeight
       />
 
       <div className="grid content-start gap-4">
