@@ -2,7 +2,6 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
   ArrowLeft,
-  ExternalLink,
   FileCheck2,
   Gavel,
   ImageOff,
@@ -11,7 +10,6 @@ import {
   Pencil,
   ShieldAlert,
   Target,
-  WalletCards,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DashboardCard } from "@/components/admin/DashboardCard";
@@ -21,8 +19,6 @@ import { ScoreBadge } from "@/components/admin/ScoreBadge";
 import { StatusBadge, getStatusTone } from "@/components/admin/StatusBadge";
 import { getAuctionOpportunityByCode, getPropertyMarketAnalysisByOpportunityCode } from "@/lib/admin/repository";
 import {
-  formatCurrency,
-  formatDate,
   type PropertyImageAsset,
   type ResourceTone,
 } from "@/lib/admin/resources";
@@ -45,26 +41,6 @@ const toneBg: Record<ResourceTone, string> = {
   purple: "border-[rgba(139,92,246,0.26)] bg-[rgba(139,92,246,0.09)]",
   muted: "border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)]",
 };
-
-function HeaderStat({
-  label,
-  value,
-  detail,
-  tone = "muted",
-}: {
-  label: string;
-  value: string;
-  detail: string;
-  tone?: ResourceTone;
-}) {
-  return (
-    <div className={cn("min-w-0 rounded-md border px-3 py-2.5", toneBg[tone])}>
-      <p className="text-[11px] text-[var(--admin-muted)]">{label}</p>
-      <p className={cn("mt-1 truncate font-mono text-base font-bold", toneText[tone])}>{value}</p>
-      <p className="mt-1 truncate text-[11px] text-[var(--admin-soft)]">{detail}</p>
-    </div>
-  );
-}
 
 function SectionLink({ href, children }: { href: string; children: string }) {
   return (
@@ -105,17 +81,17 @@ function Gallery({
         <StatusBadge tone={heroImage ? "green" : "yellow"}>{images.length} foto(s)</StatusBadge>
       </div>
 
-      <div className={cn("grid gap-2 p-3", hasThumbnails ? "lg:grid-cols-[minmax(0,1fr)_240px]" : "lg:grid-cols-1")}>
+      <div className="grid gap-2 p-3">
         {heroImage ? (
           <div className="overflow-hidden rounded-md border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)]">
             <img
               src={heroImage.url}
               alt={heroImage.alt || title}
-              className={cn("aspect-[16/9] w-full object-cover", hasThumbnails ? "max-h-[430px]" : "max-h-[360px]")}
+              className="aspect-[16/10] max-h-[280px] w-full object-cover"
             />
           </div>
         ) : (
-          <div className="grid aspect-[16/9] max-h-[430px] place-items-center rounded-md border border-[var(--admin-border)] bg-[rgba(234,179,8,0.08)] text-center">
+          <div className="grid aspect-[16/10] max-h-[280px] place-items-center rounded-md border border-[var(--admin-border)] bg-[rgba(234,179,8,0.08)] text-center">
             <div>
               <ImageOff className="mx-auto text-[var(--admin-muted)]" size={34} />
               <p className="mt-3 font-mono text-xs font-semibold uppercase tracking-[0.14em] text-[var(--admin-yellow)]">
@@ -126,7 +102,7 @@ function Gallery({
         )}
 
         {hasThumbnails ? (
-          <div className="grid grid-cols-3 gap-2 lg:grid-cols-2">
+          <div className="grid grid-cols-4 gap-2">
             {thumbnails.map((image, index) => (
               <div
                 key={`${image.url}-${index}`}
@@ -172,9 +148,6 @@ export default async function OpportunityDetailPage({
   const analysis = marketAnalysisResult.data;
   const images = (opportunity.images || []).filter((image) => image.status !== "failed");
   const heroImage = images.find((image) => image.status === "mirrored") || images[0];
-  const marketValue = analysis?.marketValueBase || opportunity.appraisalValue;
-  const discountPct = analysis?.realDiscountPct || opportunity.discountPct;
-  const confidenceScore = analysis?.confidenceScore || opportunity.complianceScore;
   const latestTimeline = [...opportunity.timeline].slice(-3).reverse();
 
   return (
@@ -230,15 +203,6 @@ export default async function OpportunityDetailPage({
               Gerar dossie
             </Button>
           </div>
-        </div>
-
-        <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-6">
-          <HeaderStat label="Lance" value={formatCurrency(opportunity.initialBid)} detail="capturado da fonte" tone="yellow" />
-          <HeaderStat label="Mercado" value={formatCurrency(marketValue)} detail={analysis ? "base da analise" : "avaliacao inicial"} tone="cyan" />
-          <HeaderStat label="Desconto" value={`${discountPct}%`} detail="sobre mercado base" tone={discountPct >= 35 ? "green" : "yellow"} />
-          <HeaderStat label="Data" value={formatDate(opportunity.auctionDate)} detail="leilao" tone="muted" />
-          <HeaderStat label="Confianca" value={`${confidenceScore}%`} detail={analysis ? `${analysis.comparables.length} comparaveis` : "score operacional"} tone={confidenceScore >= 65 ? "green" : "yellow"} />
-          <HeaderStat label="Fotos" value={String(images.length)} detail={heroImage ? "foto real encontrada" : "sem foto real"} tone={heroImage ? "green" : "yellow"} />
         </div>
 
         <nav className="mt-3 flex gap-2 overflow-x-auto border-t border-[var(--admin-border)] pt-3">
@@ -325,14 +289,6 @@ export default async function OpportunityDetailPage({
               ))}
             </div>
           </DashboardCard>
-
-          <DashboardCard title="Contexto" eyebrow="imovel">
-            <div className="grid gap-2 text-xs text-[var(--admin-soft)]">
-              <span>Tipo: {opportunity.propertyType}</span>
-              <span>Ocupacao: {opportunity.occupancy}</span>
-              <span>Origem: {opportunity.sourceType}</span>
-            </div>
-          </DashboardCard>
         </aside>
 
         <main className="grid min-w-0 content-start gap-4">
@@ -379,24 +335,6 @@ export default async function OpportunityDetailPage({
         </DashboardCard>
       </section>
 
-      <details className="mt-4 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)]">
-        <summary className="flex min-h-12 cursor-pointer items-center justify-between gap-3 px-4 text-sm font-semibold text-[var(--admin-foreground)]">
-          <span className="inline-flex items-center gap-2">
-            <WalletCards size={16} className="text-[var(--admin-cyan)]" />
-            Financeiro bruto da oportunidade
-          </span>
-          <ExternalLink size={14} className="text-[var(--admin-muted)]" />
-        </summary>
-        <div className="grid gap-3 border-t border-[var(--admin-border)] p-4 md:grid-cols-3">
-          {opportunity.financialSummary.map((item) => (
-            <div key={item.label} className="rounded-md border border-[var(--admin-border)] px-3 py-3">
-              <p className="text-xs text-[var(--admin-muted)]">{item.label}</p>
-              <p className="mt-2 font-mono text-lg font-bold text-[var(--admin-foreground)]">{item.value}</p>
-              <p className="mt-1 text-xs leading-5 text-[var(--admin-muted)]">{item.detail}</p>
-            </div>
-          ))}
-        </div>
-      </details>
     </div>
   );
 }

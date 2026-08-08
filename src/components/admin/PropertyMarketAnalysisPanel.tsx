@@ -424,13 +424,12 @@ export function PropertyMarketAnalysisPanel({
                 Imovel analisado
               </div>
               <div className="grid gap-2 sm:grid-cols-2">
-                <InfoValue label="Tipo" value={subject.propertyType || "nao informado"} />
-                <InfoValue label="Pagamento" value={paymentLabel(payment.paymentMode || analysis.paymentCondition)} />
                 <InfoValue label="Privativa" value={area(subject.privateAreaM2)} />
                 <InfoValue label="Terreno" value={area(subject.landAreaM2)} />
                 <InfoValue label="Construida" value={area(subject.builtAreaM2)} />
+                <InfoValue label="Tipo" value={subject.propertyType || "nao informado"} />
                 <InfoValue label="Dormitorios" value={subject.bedrooms || "nao informado"} />
-                <InfoValue label="Garagem" value={subject.parkingSpaces || "nao informado"} className="sm:col-span-2" />
+                <InfoValue label="Garagem" value={subject.parkingSpaces || "nao informado"} />
               </div>
             </div>
 
