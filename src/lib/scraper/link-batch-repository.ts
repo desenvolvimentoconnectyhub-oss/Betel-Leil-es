@@ -244,6 +244,52 @@ type ZipEntry = {
   localHeaderOffset: number;
 };
 
+type AuctionPageSupplement = {
+  html: string;
+  text: string;
+  imageUrls: string[];
+  documentLinks: AuctionSiteDocument[];
+  source: string;
+  warnings: string[];
+};
+
+const HTML_ENTITY_MAP: Record<string, string> = {
+  nbsp: " ",
+  amp: "&",
+  quot: "\"",
+  lt: "<",
+  gt: ">",
+  apos: "'",
+  aacute: "a",
+  agrave: "a",
+  acirc: "a",
+  atilde: "a",
+  eacute: "e",
+  ecirc: "e",
+  iacute: "i",
+  oacute: "o",
+  ocirc: "o",
+  otilde: "o",
+  uacute: "u",
+  ccedil: "c",
+  Aacute: "A",
+  Agrave: "A",
+  Acirc: "A",
+  Atilde: "A",
+  Eacute: "E",
+  Ecirc: "E",
+  Iacute: "I",
+  Oacute: "O",
+  Ocirc: "O",
+  Otilde: "O",
+  Uacute: "U",
+  Ccedil: "C",
+  deg: "o",
+  ordm: "o",
+  ordf: "a",
+  sup2: "2",
+};
+
 function cleanString(value: unknown, fallback = "") {
   if (typeof value === "string") return value.trim() || fallback;
   if (value === null || value === undefined) return fallback;
@@ -258,6 +304,30 @@ function asNumber(value: unknown, fallback = 0) {
 
 function asRecord(value: unknown): DbRow {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as DbRow) : {};
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function asMoneyNumber(value: unknown, fallback = 0) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const raw = cleanString(value);
+  if (!raw) return fallback;
+  const stripped = raw.replace(/[^\d,.-]/g, "");
+  if (!stripped) return fallback;
+  const normalized = stripped.includes(",")
+    ? stripped.replace(/\./g, "").replace(",", ".")
+    : stripped;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function decodeHtmlEntities(value: string) {
+  return value
+    .replace(/&([a-zA-Z][a-zA-Z0-9]+);/g, (entity, name) => HTML_ENTITY_MAP[name] || HTML_ENTITY_MAP[String(name).toLowerCase()] || entity)
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCharCode(Number.parseInt(code, 16)));
 }
 
 function normalizeAnalysisDepth(value: unknown): LinkAnalysisDepth {
@@ -1090,15 +1160,12 @@ function titleFromHtml(html: string, domain: string) {
 }
 
 function htmlToText(html: string) {
-  return html
+  return decodeHtmlEntities(html)
     .replace(/<script[\s\S]*?<\/script>/gi, "\n")
     .replace(/<style[\s\S]*?<\/style>/gi, "\n")
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/(?:p|div|li|tr|h[1-6]|section|article)>/gi, "\n")
     .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -1134,6 +1201,237 @@ function extractDocumentLinksFromHtml(html: string, baseUrl: string) {
     seen.add(document.url);
     return true;
   }).slice(0, 20);
+}
+
+function emptyAuctionPageSupplement(source = ""): AuctionPageSupplement {
+  return { html: "", text: "", imageUrls: [], documentLinks: [], source, warnings: [] };
+}
+
+function isDomain(value: string, domain: string) {
+  const clean = cleanString(value).replace(/^www\./i, "").toLowerCase();
+  return clean === domain || clean.endsWith(`.${domain}`);
+}
+
+function firstKnown(...values: unknown[]) {
+  return values.find((value) => value !== null && value !== undefined && cleanString(value) !== "") ?? "";
+}
+
+function escapeHtml(value: unknown) {
+  return cleanString(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function resolveSupplementUrl(value: unknown, baseUrl: string) {
+  const clean = cleanString(value).replace(/\\u002F/gi, "/").replace(/\\\//g, "/");
+  if (!clean || clean.startsWith("data:") || clean.startsWith("blob:")) return "";
+  try {
+    return new URL(clean, baseUrl).toString();
+  } catch {
+    return "";
+  }
+}
+
+function formatMoneyForSupplement(value: number) {
+  return value > 0 ? `R$ ${value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "";
+}
+
+function centralSulLotIdFromUrl(value: string) {
+  try {
+    const pathname = new URL(value).pathname;
+    return cleanString(pathname.match(/\/lote\/(\d+)\b/i)?.[1] || pathname.match(/\/lotes\/(\d+)\b/i)?.[1]);
+  } catch {
+    return "";
+  }
+}
+
+function normalizeCentralSulLotPayload(payload: unknown) {
+  const root = asRecord(payload);
+  const data = asRecord(root.data);
+  const body = asRecord(root.body);
+  const candidates = [
+    root,
+    data,
+    body,
+    asRecord(data.lot),
+    asRecord(data.lote),
+    asRecord(body.lot),
+    asRecord(body.lote),
+    asRecord(root.lot),
+    asRecord(root.lote),
+  ];
+  return candidates.find((candidate) =>
+    cleanString(candidate.id || candidate.title || candidate.description || candidate.minimum_bid || candidate.value)
+  ) || {};
+}
+
+function centralSulImageUrls(lot: DbRow, baseUrl: string) {
+  const photos = [
+    ...asArray(lot.photos),
+    ...asArray(lot.images),
+    ...asArray(lot.fotos),
+    ...asArray(lot.gallery),
+  ];
+  return uniqueStrings(
+    photos.flatMap((item) => {
+      const photo = asRecord(item);
+      return [
+        photo.image_url,
+        photo.thumbnail_url,
+        photo.url,
+        photo.original_url,
+        photo.file_url,
+        asRecord(photo.file).url,
+        asRecord(photo.file).download_url,
+      ].map((url) => resolveSupplementUrl(url, baseUrl));
+    }),
+    40
+  );
+}
+
+function centralSulDocumentLinks(lot: DbRow, baseUrl: string): AuctionSiteDocument[] {
+  const documents = [
+    lot.file,
+    ...asArray(lot.files),
+    ...asArray(lot.documents),
+    ...asArray(lot.documentos),
+    ...asArray(lot.attachments),
+  ];
+
+  return mergeDocumentLinks(documents.map((item) => {
+    const document = asRecord(item);
+    const nestedFile = asRecord(document.file);
+    const label = firstText(
+      cleanString(document.name),
+      cleanString(document.title),
+      cleanString(document.label),
+      cleanString(document.description),
+      cleanString(nestedFile.name),
+      cleanString(nestedFile.title),
+      "Documento"
+    );
+    const url = resolveSupplementUrl(firstKnown(
+      document.download_url,
+      document.url,
+      document.file_url,
+      nestedFile.download_url,
+      nestedFile.url,
+      nestedFile.file_url
+    ), baseUrl);
+    const normalized = `${label} ${url}`.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    const kind = normalized.includes("matricula")
+      ? "matricula"
+      : normalized.includes("edital")
+        ? "edital"
+        : normalized.includes("laudo")
+          ? "laudo"
+          : "documento";
+    return { label, url, kind };
+  }));
+}
+
+function buildCentralSulSupplement(lot: DbRow, sourceUrl: string, apiUrl: string): AuctionPageSupplement {
+  const auction = asRecord(firstKnown(lot.auction, lot.leilao));
+  const title = firstText(cleanString(lot.title), cleanString(lot.titulo), titleFromHtml("", "centralsuldeleiloes.com.br"));
+  const descriptionText = htmlToText(cleanString(firstKnown(lot.description, lot.descricao)));
+  const auctionDescriptionText = htmlToText(cleanString(firstKnown(auction.description, auction.descricao)));
+  const appraisalValue = asMoneyNumber(firstKnown(lot.value, lot.appraisal_value, lot.appraisalValue, lot.avaliacao));
+  const minimumBid = firstPositive(
+    asMoneyNumber(firstKnown(lot.minimum_bid, lot.minimumBid, lot.lance_minimo, lot.lanceMinimo)),
+    asMoneyNumber(firstKnown(lot.initial_bid, lot.initialBid, lot.lance_inicial))
+  );
+  const currentBid = asMoneyNumber(firstKnown(lot.current_bid, lot.currentBid, lot.maior_lance));
+  const auctionDate = cleanString(firstKnown(lot.time_limit, lot.ends_at, lot.date_limit, lot.data_limite, lot.data_fim));
+  const increment = asMoneyNumber(firstKnown(lot.increment, lot.incremento));
+  const processCode = cleanString(firstKnown(lot.code, lot.process, lot.process_number, lot.numero_processo));
+  const baseUrl = sourceUrl || apiUrl;
+  const imageUrls = centralSulImageUrls(lot, baseUrl);
+  const documentLinks = centralSulDocumentLinks(lot, baseUrl);
+
+  const text = [
+    "Fonte complementar Central Sul de Leiloes",
+    `Titulo: ${title}`,
+    processCode ? `Processo: ${processCode}` : "",
+    appraisalValue ? `Avaliacao: ${formatMoneyForSupplement(appraisalValue)}` : "",
+    minimumBid ? `Lance minimo: ${formatMoneyForSupplement(minimumBid)}` : "",
+    currentBid ? `Maior lance atual: ${formatMoneyForSupplement(currentBid)}` : "",
+    increment ? `Incremento: ${formatMoneyForSupplement(increment)}` : "",
+    auctionDate ? `Lances serao aceitos ate: ${auctionDate}` : "",
+    descriptionText ? `Descricao do lote: ${descriptionText}` : "",
+    auctionDescriptionText ? `Condicoes do leilao: ${auctionDescriptionText}` : "",
+    imageUrls.length ? `Galeria de imagens: ${imageUrls.join(" | ")}` : "",
+    documentLinks.length ? `Documentos: ${documentLinks.map((document) => `${document.label}: ${document.url}`).join(" | ")}` : "",
+  ].filter(Boolean).join("\n");
+
+  const html = [
+    `<h1>${escapeHtml(title)}</h1>`,
+    `<section>${escapeHtml(text)}</section>`,
+    imageUrls.map((url) => `<img src="${escapeHtml(url)}" alt="${escapeHtml(title)}" />`).join("\n"),
+    documentLinks.map((document) => `<a href="${escapeHtml(document.url)}">${escapeHtml(document.label)}</a>`).join("\n"),
+  ].filter(Boolean).join("\n");
+
+  return {
+    html,
+    text,
+    imageUrls,
+    documentLinks,
+    source: apiUrl,
+    warnings: [],
+  };
+}
+
+async function fetchCentralSulSupplement(input: { sourceUrl: string; resolvedSourceUrl: string; timeoutMs: number }) {
+  const lotId = centralSulLotIdFromUrl(input.resolvedSourceUrl) || centralSulLotIdFromUrl(input.sourceUrl);
+  if (!lotId) return emptyAuctionPageSupplement("central_sul_api");
+
+  const origin = (() => {
+    try {
+      return new URL(input.resolvedSourceUrl || input.sourceUrl).origin;
+    } catch {
+      return "https://www.centralsuldeleiloes.com.br";
+    }
+  })();
+  const endpoints = [
+    `${origin}/api/v2/web/lot/${lotId}`,
+    `${origin}/api/lot/${lotId}`,
+  ];
+
+  for (const apiUrl of endpoints) {
+    try {
+      const response = await fetch(apiUrl, {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "BetelBot/1.0 (+https://betel.com.br)",
+          Referer: input.resolvedSourceUrl || input.sourceUrl,
+        },
+        signal: AbortSignal.timeout(Math.min(Math.max(input.timeoutMs, 12_000), 35_000)),
+      });
+      if (!response.ok) continue;
+      const payload = await response.json();
+      const lot = normalizeCentralSulLotPayload(payload);
+      if (!cleanString(lot.id || lot.title || lot.description)) continue;
+      return buildCentralSulSupplement(lot, input.resolvedSourceUrl || input.sourceUrl, apiUrl);
+    } catch {}
+  }
+
+  return {
+    ...emptyAuctionPageSupplement("central_sul_api"),
+    warnings: ["Central Sul: API complementar indisponivel."],
+  };
+}
+
+async function fetchAuctionPageSupplement(input: {
+  sourceUrl: string;
+  resolvedSourceUrl: string;
+  domain: string;
+  timeoutMs: number;
+}) {
+  if (isDomain(input.domain, "centralsuldeleiloes.com.br")) {
+    return fetchCentralSulSupplement(input);
+  }
+  return emptyAuctionPageSupplement();
 }
 
 function inferPropertyType(text: string, fallback: string) {
@@ -1224,25 +1522,30 @@ function fieldHasValue(field: string, extraction: AuctionLinkExtraction) {
 }
 
 function mergeAuctionExtraction(gemini: AuctionLinkExtraction, adapter: AuctionSiteExtractionPatch): AuctionLinkExtraction {
+  const trustedAdapter = (adapter.confidenceScore || 0) >= 70;
+  const pickText = (geminiValue: string, adapterValue?: string) =>
+    trustedAdapter ? firstText(adapterValue || "", geminiValue) : firstText(geminiValue, adapterValue || "");
+  const pickNumber = (geminiValue: number, adapterValue?: number) =>
+    trustedAdapter ? firstPositive(adapterValue || 0, geminiValue) : firstPositive(geminiValue, adapterValue || 0);
   const merged: AuctionLinkExtraction = {
     ...gemini,
-    title: firstText(gemini.title, adapter.title || ""),
-    propertyType: firstText(gemini.propertyType, adapter.propertyType || ""),
-    address: firstText(gemini.address, adapter.address || ""),
-    city: firstText(gemini.city, adapter.city || ""),
-    state: firstText(gemini.state, adapter.state || "").toUpperCase(),
-    neighborhood: firstText(gemini.neighborhood, adapter.neighborhood || ""),
-    landAreaM2: firstPositive(gemini.landAreaM2, adapter.landAreaM2 || 0),
-    builtAreaM2: firstPositive(gemini.builtAreaM2, adapter.builtAreaM2 || 0),
-    privateAreaM2: firstPositive(gemini.privateAreaM2, adapter.privateAreaM2 || 0),
-    bedrooms: firstPositive(gemini.bedrooms, adapter.bedrooms || 0),
-    parkingSpaces: firstPositive(gemini.parkingSpaces, adapter.parkingSpaces || 0),
-    initialBid: firstPositive(gemini.initialBid, adapter.initialBid || 0),
-    appraisalValue: firstPositive(gemini.appraisalValue, adapter.appraisalValue || 0),
-    auctionDate: firstText(gemini.auctionDate, adapter.auctionDate || ""),
-    paymentCondition: firstText(gemini.paymentCondition, adapter.paymentCondition || ""),
-    occupancy: firstText(gemini.occupancy, adapter.occupancy || ""),
-    legalSignal: firstText(gemini.legalSignal, adapter.legalSignal || ""),
+    title: pickText(gemini.title, adapter.title),
+    propertyType: pickText(gemini.propertyType, adapter.propertyType),
+    address: pickText(gemini.address, adapter.address),
+    city: pickText(gemini.city, adapter.city),
+    state: pickText(gemini.state, adapter.state).toUpperCase(),
+    neighborhood: pickText(gemini.neighborhood, adapter.neighborhood),
+    landAreaM2: pickNumber(gemini.landAreaM2, adapter.landAreaM2),
+    builtAreaM2: pickNumber(gemini.builtAreaM2, adapter.builtAreaM2),
+    privateAreaM2: pickNumber(gemini.privateAreaM2, adapter.privateAreaM2),
+    bedrooms: pickNumber(gemini.bedrooms, adapter.bedrooms),
+    parkingSpaces: pickNumber(gemini.parkingSpaces, adapter.parkingSpaces),
+    initialBid: pickNumber(gemini.initialBid, adapter.initialBid),
+    appraisalValue: pickNumber(gemini.appraisalValue, adapter.appraisalValue),
+    auctionDate: pickText(gemini.auctionDate, adapter.auctionDate),
+    paymentCondition: pickText(gemini.paymentCondition, adapter.paymentCondition),
+    occupancy: pickText(gemini.occupancy, adapter.occupancy),
+    legalSignal: pickText(gemini.legalSignal, adapter.legalSignal),
     summary: firstText(gemini.summary, adapter.summary || ""),
     cautionNotes: firstText(gemini.cautionNotes, adapter.cautionNotes || ""),
     confidenceScore: Math.max(gemini.confidenceScore || 0, adapter.confidenceScore || 0),
@@ -1750,18 +2053,26 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
       signal: AbortSignal.timeout(profile.fetchTimeoutMs),
     });
     const html = await response.text();
-    const visibleText = htmlToText(html);
     const resolvedSourceUrl = response.url || row.auctionUrl;
     const domain = row.sourceDomain || sourceDomain(resolvedSourceUrl);
+    const supplement = await fetchAuctionPageSupplement({
+      sourceUrl: row.auctionUrl,
+      resolvedSourceUrl,
+      domain,
+      timeoutMs: profile.fetchTimeoutMs,
+    });
+    const enrichedHtml = [html, supplement.html].filter(Boolean).join("\n\n");
+    const visibleText = cleanString([htmlToText(html), supplement.text].filter(Boolean).join("\n\n"));
     const siteContext = extractAuctionSiteContext({
       sourceUrl: resolvedSourceUrl,
       sourceDomain: domain,
-      html,
+      html: enrichedHtml,
       visibleText,
     });
     await supabase.from("market_analysis_import_rows").update({ status: "scraper_concluido" }).eq("id", row.id);
     const documentLinks = mergeDocumentLinks(
-      extractDocumentLinksFromHtml(html, resolvedSourceUrl),
+      extractDocumentLinksFromHtml(enrichedHtml, resolvedSourceUrl),
+      supplement.documentLinks,
       siteContext.documents
     );
     const gemini = await extractAuctionLinkWithGemini({
@@ -1788,7 +2099,7 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
       findMoneyAfter(visibleText, ["avaliacao", "valor de avaliacao", "valor avaliado"])
     );
     const genericImageUrls = await collectImageUrlsFromSourceUrl(row.auctionUrl, resolvedSourceUrl);
-    const rawImageUrls = uniqueStrings([...siteContext.imageUrls, ...genericImageUrls], 60);
+    const rawImageUrls = uniqueStrings([...siteContext.imageUrls, ...supplement.imageUrls, ...genericImageUrls], 60);
     const opportunityCode = safeBatchCode(row.externalCode || `${domain}-${makeSourceHash(row.auctionUrl)}`, row.rowNumber);
     const images = rawImageUrls.length
       ? await mirrorRemoteImagesToR2({ opportunityCode, imageUrls: rawImageUrls, alt: title, maxImages: profile.maxImages, referer: row.auctionUrl })
@@ -1803,7 +2114,7 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
       documentCount: documentLinks.length,
       responseOk: response.ok,
       geminiError: gemini.error,
-      adapterWarnings: siteContext.warnings,
+      adapterWarnings: [...siteContext.warnings, ...supplement.warnings],
     });
     const marketResearch = analysisDepth === "deep"
       ? await runDeepMarketResearch({ extraction, title, initialBid })
@@ -1896,8 +2207,15 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
           imageUrls: siteContext.imageUrls,
           warnings: siteContext.warnings,
         },
+        pageSupplement: {
+          source: supplement.source,
+          warnings: supplement.warnings,
+          imageCount: supplement.imageUrls.length,
+          documentCount: supplement.documentLinks.length,
+          textPreview: supplement.text.slice(0, 4000),
+        },
         htmlTextPreview: visibleText.slice(0, 8000),
-        cleanedHtmlPreview: cleanHtmlForLlm(html),
+        cleanedHtmlPreview: cleanHtmlForLlm(enrichedHtml),
         media: {
           images,
           documents: documentLinks,
