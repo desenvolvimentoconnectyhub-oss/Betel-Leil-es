@@ -899,8 +899,8 @@ function Gallery({
       : heroImage
         ? images.findIndex((image) => image.url === heroImage.url)
         : -1;
-  const heroHeight = compact ? "h-[280px] sm:h-[360px] xl:h-[440px]" : "h-[360px] sm:h-[500px] xl:h-[620px]";
-  const thumbnailRailHeight = compact ? "lg:max-h-[440px]" : "lg:max-h-[620px]";
+  const heroHeight = "h-[360px] sm:h-[500px] xl:h-[620px]";
+  const thumbnailRailHeight = "lg:max-h-[620px]";
 
   return (
     <SectionCard
