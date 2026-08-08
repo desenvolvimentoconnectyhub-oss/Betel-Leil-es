@@ -182,6 +182,23 @@ const PROFILES: AdapterProfile[] = [
     documentSignals: [...COMMON_DOCUMENT_SIGNALS, "lote"],
   },
   {
+    key: "astavero-leiloes",
+    name: "Astavero Leiloes",
+    domains: ["oesteleiloes.com.br", "topleiloes.com.br"],
+    initialBidLabels: ["lance inicial/proximo lance", "valor", "escolha sua oferta", "valor leilao", ...COMMON_INITIAL_BID_LABELS],
+    appraisalLabels: ["valor de avaliacao", "valor avaliacao", "avaliacao", ...COMMON_APPRAISAL_LABELS],
+    auctionDateLabels: ["data do leilao", "1 leilao", "2 leilao", "encerra a partir", "inicio pregao", ...COMMON_DATE_LABELS],
+    paymentLabels: ["pagamento a vista", "pix", ...COMMON_PAYMENT_LABELS],
+    occupancyLabels: ["ocupado", "desocupado", "situacao", ...COMMON_OCCUPANCY_LABELS],
+    legalLabels: ["matricula", "alienacao fiduciaria", "imovel registrado", "credor", "devedor", ...COMMON_LEGAL_LABELS],
+    areaLabels: {
+      privateAreaM2: COMMON_AREA_LABELS.privateAreaM2,
+      builtAreaM2: COMMON_AREA_LABELS.builtAreaM2,
+      landAreaM2: ["area do terreno", "area rural com", "area rural", "identificacao do imovel", ...COMMON_AREA_LABELS.landAreaM2],
+    },
+    documentSignals: [...COMMON_DOCUMENT_SIGNALS, "anexos", "arquivo do lote"],
+  },
+  {
     key: "sato-leiloes",
     name: "Sato Leiloes",
     domains: ["satoleiloes.com.br"],

@@ -1332,6 +1332,227 @@ function centralSulDocumentLinks(lot: DbRow, baseUrl: string): AuctionSiteDocume
   }));
 }
 
+const ASTAVERO_DOMAINS = ["oesteleiloes.com.br", "topleiloes.com.br"];
+
+function isAstaveroDomain(value: string) {
+  return ASTAVERO_DOMAINS.some((domain) => isDomain(value, domain));
+}
+
+function astaveroIdsFromUrl(value: string) {
+  try {
+    const pathname = new URL(value).pathname;
+    const match = pathname.match(/\/pregao\/([0-9a-f]{24})(?:\/|-)([0-9a-f]{24})(?:\/|$)/i);
+    if (!match) return null;
+    return { auctionId: match[1], lotId: match[2] };
+  } catch {
+    return null;
+  }
+}
+
+function formatDateForSupplement(value: unknown) {
+  const clean = cleanString(value);
+  if (!clean) return "";
+  const iso = clean.match(/^(\d{4})-(\d{2})-(\d{2})T?(\d{2})?:?(\d{2})?/);
+  if (!iso) return clean;
+  const [, year, month, day, hour, minute] = iso;
+  return `${day}/${month}/${year}${hour && minute ? ` ${hour}:${minute}` : ""}`;
+}
+
+function formatAreaForSupplement(value: number) {
+  return value > 0 ? `${value.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} m2` : "";
+}
+
+function areaFromText(value: string) {
+  const normalized = decodeHtmlEntities(value);
+  const patterns = [
+    /area\s+(?:rural\s+)?com\s+([\d.]+(?:,\d{1,4})?)\s*m(?:2|²)/i,
+    /area\s+de\s+([\d.]+(?:,\d{1,4})?)\s*m(?:2|²)/i,
+    /([\d.]+(?:,\d{1,4})?)\s*m(?:2|²)/i,
+  ];
+  for (const pattern of patterns) {
+    const match = normalized.match(pattern);
+    const area = asMoneyNumber(match?.[1]);
+    if (area > 0) return area;
+  }
+  return 0;
+}
+
+function isLikelySupplementImageUrl(value: string) {
+  if (!/^https?:\/\//i.test(value)) return false;
+  if (!/\.(?:jpe?g|png|webp|avif)(?:[?#]|$)/i.test(value)) return false;
+  const normalized = value.toLowerCase();
+  return ![
+    "logo",
+    "favicon",
+    "whatsapp",
+    "facebook",
+    "instagram",
+    "youtube",
+    "banner",
+    "modal",
+    "popup",
+    "edital",
+    "matricula",
+    "parcelamento",
+    "proposta",
+    "de_desconto",
+    "desconto.png",
+    "desconto.jpg",
+  ].some((signal) => normalized.includes(signal));
+}
+
+function astaveroAttachmentUrl(item: unknown, baseUrl: string) {
+  const attachment = asRecord(item);
+  return resolveSupplementUrl(firstKnown(
+    attachment.url,
+    attachment.href,
+    attachment.download_url,
+    attachment.file_url,
+    attachment.path && attachment.arquivo ? `${cleanString(attachment.path)}${cleanString(attachment.arquivo)}` : ""
+  ), baseUrl);
+}
+
+function astaveroImageUrls(lot: DbRow, baseUrl: string) {
+  const attachments = [
+    lot.image,
+    ...asArray(lot.anexos),
+    ...asArray(lot.fotos),
+    ...asArray(lot.images),
+    ...asArray(lot.galeria),
+  ];
+  return uniqueStrings(
+    attachments
+      .map((item) => {
+        if (typeof item === "string") return resolveSupplementUrl(item, baseUrl);
+        return astaveroAttachmentUrl(item, baseUrl);
+      })
+      .filter(isLikelySupplementImageUrl),
+    50
+  );
+}
+
+function astaveroDocumentLinks(lot: DbRow, auction: DbRow, baseUrl: string): AuctionSiteDocument[] {
+  const attachments = [
+    ...asArray(auction.anexos),
+    ...asArray(lot.anexos),
+    ...asArray(lot.documents),
+    ...asArray(lot.documentos),
+  ];
+
+  return mergeDocumentLinks(attachments.map((item) => {
+    const attachment = asRecord(item);
+    const label = firstText(
+      cleanString(attachment.nome),
+      cleanString(attachment.titulo),
+      cleanString(attachment.label),
+      cleanString(attachment.arquivo),
+      "Documento"
+    );
+    const url = astaveroAttachmentUrl(item, baseUrl);
+    const normalized = `${label} ${url}`.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    const isDocument =
+      /\.(pdf|docx?|xlsx?|zip)(?:[?#]|$)/i.test(url) ||
+      /edital|matricula|laudo|documento|processo|certidao/.test(normalized);
+    if (!isDocument) return { label: "", url: "", kind: "" };
+    const kind = normalized.includes("matricula")
+      ? "matricula"
+      : normalized.includes("edital")
+        ? "edital"
+        : normalized.includes("laudo")
+          ? "laudo"
+          : "documento";
+    return { label, url, kind };
+  }));
+}
+
+function normalizeAstaveroPayload(payload: unknown, lotId: string) {
+  const root = asRecord(payload);
+  const detailedLot = asRecord(root.lote);
+  const lots = asArray(root.lotes).map(asRecord);
+  const lot = cleanString(detailedLot._id) === lotId || cleanString(detailedLot.nome || detailedLot.detalhada)
+    ? detailedLot
+    : lots.find((candidate) => cleanString(candidate._id) === lotId) || detailedLot || {};
+  return {
+    auction: asRecord(root.leilao),
+    lot,
+  };
+}
+
+function buildAstaveroSupplement(payload: unknown, ids: { auctionId: string; lotId: string }, sourceUrl: string, apiUrl: string): AuctionPageSupplement {
+  const { auction, lot } = normalizeAstaveroPayload(payload, ids.lotId);
+  const values = asRecord(lot.v);
+  const addressData = asRecord(lot.d);
+  const sellerData = asRecord(lot.w);
+  const dates = asRecord(firstKnown(lot.datas, auction.datas));
+  const title = firstText(cleanString(lot.nome), titleFromHtml("", "astavero"));
+  const descriptionText = htmlToText(cleanString(firstKnown(lot.detalhada, lot.descricao, lot.description, lot.motivo)));
+  const landArea = firstPositive(
+    areaFromText(`${title}\n${descriptionText}`),
+    asMoneyNumber(firstKnown(addressData.area, addressData.area_m2, lot.area_m2, lot.area))
+  );
+  const appraisalValue = firstPositive(
+    asMoneyNumber(firstKnown(values.avaliacao, values.corrigido, lot.avaliacao, lot.valor_avaliacao)),
+    asMoneyNumber(firstKnown(values.primeira, lot.valor))
+  );
+  const auctionRound = asNumber(firstKnown(lot.praca, auction.praca));
+  const firstRoundBid = asMoneyNumber(firstKnown(values.primeira, values.lance1));
+  const secondRoundBid = asMoneyNumber(firstKnown(values.segunda, values.lance2));
+  const currentBid = firstPositive(
+    asMoneyNumber(firstKnown(values.valor, values.atual, values.maior, lot.valor)),
+    auctionRound > 1 ? secondRoundBid : firstRoundBid,
+    firstRoundBid,
+    secondRoundBid
+  );
+  const increment = asMoneyNumber(firstKnown(values.incremento, lot.incremento));
+  const commissionPct = asNumber(firstKnown(values.comissao, lot.comissao));
+  const city = cleanString(addressData.cidade);
+  const state = cleanString(addressData.uf);
+  const address = cleanString(firstKnown(addressData.endereco, addressData.local, addressData.visita));
+  const payment = firstText(cleanString(auction.pix), cleanString(auction.pagto), "Pagamento a Vista");
+  const auctionDate = formatDateForSupplement(firstKnown(dates.leilao, dates.d, dates.d1, dates.d2, dates.encerrado));
+  const baseUrl = sourceUrl || apiUrl;
+  const imageUrls = astaveroImageUrls(lot, baseUrl);
+  const documentLinks = astaveroDocumentLinks(lot, auction, baseUrl);
+
+  const text = [
+    "Fonte complementar Astavero Leiloes",
+    `Titulo: ${title}`,
+    cleanString(lot.lote) ? `Lote: ${cleanString(lot.lote)}` : "",
+    address ? `Endereco: ${address}` : "",
+    city || state ? `Cidade/UF: ${[city, state].filter(Boolean).join("/")}` : "",
+    cleanString(sellerData.nome || sellerData.snome) ? `Vendedor: ${cleanString(firstKnown(sellerData.nome, sellerData.snome))}` : "",
+    landArea ? `Area do terreno: ${formatAreaForSupplement(landArea)}` : "",
+    appraisalValue ? `Valor de avaliacao: ${formatMoneyForSupplement(appraisalValue)}` : "",
+    currentBid ? `Lance inicial/proximo lance: ${formatMoneyForSupplement(currentBid)}` : "",
+    firstRoundBid ? `1 leilao: ${formatMoneyForSupplement(firstRoundBid)} em ${formatDateForSupplement(firstKnown(dates.d1, dates.d))}` : "",
+    secondRoundBid ? `2 leilao: ${formatMoneyForSupplement(secondRoundBid)} em ${formatDateForSupplement(dates.d2)}` : "",
+    increment ? `Incremento: ${formatMoneyForSupplement(increment)}` : "",
+    commissionPct ? `Comissao: ${commissionPct}%` : "",
+    auctionDate ? `Data do leilao: ${auctionDate}` : "",
+    payment ? `Pagamento: ${payment}` : "",
+    cleanString(lot.status) ? `Status: ${cleanString(lot.status)}` : "",
+    descriptionText ? `Descricao do lote: ${descriptionText}` : "",
+    imageUrls.length ? `Galeria de imagens: ${imageUrls.join(" | ")}` : "",
+    documentLinks.length ? `Documentos: ${documentLinks.map((document) => `${document.label}: ${document.url}`).join(" | ")}` : "",
+  ].filter(Boolean).join("\n");
+
+  const html = [
+    `<h1>${escapeHtml(title)}</h1>`,
+    `<section>${escapeHtml(text)}</section>`,
+    imageUrls.map((url) => `<img src="${escapeHtml(url)}" alt="${escapeHtml(title)}" />`).join("\n"),
+    documentLinks.map((document) => `<a href="${escapeHtml(document.url)}">${escapeHtml(document.label)}</a>`).join("\n"),
+  ].filter(Boolean).join("\n");
+
+  return {
+    html,
+    text,
+    imageUrls,
+    documentLinks,
+    source: apiUrl,
+    warnings: [],
+  };
+}
+
 function buildCentralSulSupplement(lot: DbRow, sourceUrl: string, apiUrl: string): AuctionPageSupplement {
   const auction = asRecord(firstKnown(lot.auction, lot.leilao));
   const title = firstText(cleanString(lot.title), cleanString(lot.titulo), titleFromHtml("", "centralsuldeleiloes.com.br"));
@@ -1422,6 +1643,66 @@ async function fetchCentralSulSupplement(input: { sourceUrl: string; resolvedSou
   };
 }
 
+async function fetchAstaveroSupplement(input: { sourceUrl: string; resolvedSourceUrl: string; timeoutMs: number; domain: string }) {
+  const ids = astaveroIdsFromUrl(input.resolvedSourceUrl) || astaveroIdsFromUrl(input.sourceUrl);
+  const source = isDomain(input.domain, "oesteleiloes.com.br")
+    ? "oeste_leiloes_api"
+    : isDomain(input.domain, "topleiloes.com.br")
+      ? "top_leiloes_api"
+      : "astavero_api";
+  if (!ids) {
+    return {
+      ...emptyAuctionPageSupplement(source),
+      warnings: ["Astavero: link sem ids de pregao/lote para consulta complementar."],
+    };
+  }
+
+  const origin = (() => {
+    try {
+      return new URL(input.resolvedSourceUrl || input.sourceUrl).origin;
+    } catch {
+      return `https://${input.domain}`;
+    }
+  })();
+  const apiUrl = `${origin}/app/pregao/init`;
+
+  try {
+    const response = await fetch(apiUrl, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Origin: origin,
+        Referer: input.resolvedSourceUrl || input.sourceUrl,
+        "User-Agent": "BetelBot/1.0 (+https://betel.com.br)",
+      },
+      body: JSON.stringify({ id: ids.auctionId, idl: ids.lotId, cadastro: "" }),
+      signal: AbortSignal.timeout(Math.min(Math.max(input.timeoutMs, 12_000), 35_000)),
+    });
+    if (!response.ok) {
+      return {
+        ...emptyAuctionPageSupplement(source),
+        warnings: [`Astavero: API complementar retornou HTTP ${response.status}.`],
+      };
+    }
+
+    const payload = await response.json();
+    const supplement = buildAstaveroSupplement(payload, ids, input.resolvedSourceUrl || input.sourceUrl, apiUrl);
+    if (!cleanString(supplement.text)) {
+      return {
+        ...emptyAuctionPageSupplement(source),
+        warnings: ["Astavero: API complementar nao trouxe dados do lote."],
+      };
+    }
+    return supplement;
+  } catch {
+    return {
+      ...emptyAuctionPageSupplement(source),
+      warnings: ["Astavero: API complementar indisponivel."],
+    };
+  }
+}
+
 async function fetchAuctionPageSupplement(input: {
   sourceUrl: string;
   resolvedSourceUrl: string;
@@ -1430,6 +1711,9 @@ async function fetchAuctionPageSupplement(input: {
 }) {
   if (isDomain(input.domain, "centralsuldeleiloes.com.br")) {
     return fetchCentralSulSupplement(input);
+  }
+  if (isAstaveroDomain(input.domain)) {
+    return fetchAstaveroSupplement(input);
   }
   return emptyAuctionPageSupplement();
 }
