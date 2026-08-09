@@ -905,14 +905,24 @@ function Gallery({
         : -1;
   const thumbnails = thumbnailEntries || images.map((image, index) => ({ image, index }));
   const hasThumbnails = thumbnails.length > 0;
+  const lockScrollableGalleryHeight = compact && fillSpace && thumbnails.length >= 7;
+  const stretchToSiblingColumn = fillSpace && !lockScrollableGalleryHeight;
   const heroHeight =
     compact && fillSpace
-      ? "h-[360px] sm:h-[500px] xl:h-full xl:min-h-0"
+      ? lockScrollableGalleryHeight
+        ? "h-[360px] sm:h-[500px] xl:h-[560px] 2xl:h-[590px]"
+        : "h-[360px] sm:h-[500px] xl:h-full xl:min-h-0"
       : compact
         ? "h-[300px] sm:h-[320px] xl:h-[340px]"
         : "h-[360px] sm:h-[500px] xl:h-[620px]";
   const thumbnailRailHeight =
-    compact && fillSpace ? "lg:max-h-[500px] xl:h-full xl:max-h-full" : compact ? "lg:max-h-[340px]" : "lg:max-h-[620px]";
+    compact && fillSpace
+      ? lockScrollableGalleryHeight
+        ? "lg:h-[500px] lg:max-h-[500px] xl:h-[560px] xl:max-h-[560px] 2xl:h-[590px] 2xl:max-h-[590px]"
+        : "lg:h-[500px] lg:max-h-[500px] xl:h-full xl:max-h-full"
+      : compact
+        ? "lg:h-[340px] lg:max-h-[340px]"
+        : "lg:h-[620px] lg:max-h-[620px]";
 
   return (
     <SectionCard
@@ -922,14 +932,14 @@ function Gallery({
       action={<StatusBadge tone={heroImage ? "green" : "yellow"}>{images.length} foto(s)</StatusBadge>}
       className={cn(
         "scroll-mt-40 min-h-0 self-start h-fit",
-        fillSpace && "xl:flex xl:h-full xl:self-stretch xl:flex-col"
+        stretchToSiblingColumn && "xl:flex xl:h-full xl:self-stretch xl:flex-col xl:overflow-hidden"
       )}
-      contentClassName={cn("p-3", fillSpace && "xl:flex xl:min-h-0 xl:flex-1")}
+      contentClassName={cn("p-3", stretchToSiblingColumn && "xl:flex xl:min-h-0 xl:flex-1 xl:overflow-hidden")}
     >
       <div
         className={cn(
           "grid w-full items-start gap-3",
-          fillSpace && "xl:h-full xl:min-h-0 xl:items-stretch",
+          stretchToSiblingColumn && "xl:h-full xl:min-h-0 xl:items-stretch",
           hasThumbnails && (compact ? "lg:grid-cols-[minmax(0,1fr)_164px]" : "lg:grid-cols-[minmax(0,1fr)_220px]")
         )}
       >
@@ -969,15 +979,15 @@ function Gallery({
         {hasThumbnails ? (
           <div
             className={cn(
-              "grid gap-2",
+              "grid content-start gap-2",
               compact
                 ? cn(
-                    "grid-cols-5 lg:grid-cols-1 lg:overflow-y-auto lg:pr-1",
+                    "grid-cols-5 lg:grid-cols-1 lg:overflow-y-auto lg:overscroll-contain lg:pr-1",
                     "lg:min-h-0",
                     thumbnailRailHeight
                   )
                 : cn(
-                    "grid-cols-4 lg:grid-cols-2 lg:overflow-y-auto lg:pr-1",
+                    "grid-cols-4 lg:grid-cols-2 lg:overflow-y-auto lg:overscroll-contain lg:pr-1",
                     "lg:min-h-0",
                     thumbnailRailHeight
                   )
@@ -1087,7 +1097,7 @@ function overviewThumbnailEntries(
     ({ image, index }) => index !== activeIndex && imageIdentity(image) !== activeIdentity
   );
   const propertyEntries = availableEntries.filter(({ image }) => !isDecorativeImage(image));
-  return (propertyEntries.length ? propertyEntries : availableEntries).slice(0, 8);
+  return propertyEntries.length ? propertyEntries : availableEntries;
 }
 
 function ExecutiveSummary({
