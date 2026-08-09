@@ -357,6 +357,37 @@ function normalizeAuditStatus(value: unknown, fallback: PropertyQualificationEvi
   return fallback;
 }
 
+function humanizeQualificationToken(value: string) {
+  const normalized = value
+    .replace(/^Trava atual:\s*/i, "")
+    .replace(/_/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .trim()
+    .toLowerCase();
+  const labels: Record<string, string> = {
+    appraisalvalue: "valor de avaliacao do leiloeiro",
+    "appraisal value": "valor de avaliacao do leiloeiro",
+    "valor de avaliacao": "valor de avaliacao do leiloeiro",
+    "confiança minima de 65%": "confianca minima de 65%",
+    "confianca minima de 65%": "confianca minima de 65%",
+    "ocupacao precisa validacao": "ocupacao precisa de validacao",
+    "debitos ou propter rem": "possiveis debitos ou obrigacoes propter rem",
+    "risco documental juridico": "risco documental para validacao juridica",
+    "minimo de 3 comparaveis de venda": "minimo de 3 comparaveis de venda",
+    "referencia direta de aluguel": "referencia direta de aluguel",
+  };
+  const compact = normalized.replace(/\s+/g, " ");
+  return labels[compact] || labels[compact.replace(/\s/g, "")] || compact;
+}
+
+function humanizedList(values: string[], fallback = "sem pendencia registrada") {
+  const items = values.map(humanizeQualificationToken).filter(Boolean);
+  if (!items.length) return fallback;
+  if (items.length === 1) return items[0];
+  if (items.length === 2) return `${items[0]} e ${items[1]}`;
+  return `${items.slice(0, -1).join(", ")} e ${items.at(-1)}`;
+}
+
 function scoreStatus(score: number, critical = false): PropertyQualificationEvidenceStatus {
   if (score >= 80) return "passed";
   if (score >= 50) return "warning";
@@ -517,7 +548,74 @@ function imageConclusionText(dossier: PropertyQualificationDossier) {
 
 function complianceConclusionText(dossier: PropertyQualificationDossier) {
   const flags = jsonTextList(dossier.complianceEvidence.flags);
-  return flags.length ? flags.slice(0, 4).join(", ") : "Sem alerta preliminar forte nesta camada.";
+  return flags.length ? humanizedList(flags.slice(0, 4)) : "Sem alerta preliminar forte nesta camada.";
+}
+
+function buildQualificationNarrative(dossier: PropertyQualificationDossier) {
+  const source = dossier.sourceSnapshot;
+  const adapter = jsonRecord(source.adapter);
+  const pageDiagnostics = jsonRecord(source.pageDiagnostics);
+  const market = dossier.marketEvidence;
+  const images = dossier.imageEvidence;
+  const documents = dossier.documentEvidence;
+  const compliance = dossier.complianceEvidence;
+  const qualityReview = jsonRecord(dossier.rawPayload.qualityReview);
+  const qualityGate = jsonRecord(dossier.rawPayload.qualityGate);
+  const searchedUrls = jsonArray<Record<string, unknown>>(jsonRecord(dossier.rawPayload.conclusionBasis).searchedUrls);
+  const missingFields = [
+    ...jsonTextList(qualityReview.missingFields),
+    ...jsonTextList(qualityGate.issues),
+    ...dossier.blockers,
+  ];
+  const cautionNotes = [
+    ...jsonTextList(compliance.cautionNotes),
+    ...jsonTextList(qualityReview.cautionNotes),
+  ];
+  const flags = jsonTextList(compliance.flags);
+  const sourceDomain = jsonText(source.sourceDomain, "a fonte original");
+  const adapterName = jsonText(adapter.name, jsonText(adapter.key, "adaptador automatico"));
+  const httpStatus = jsonText(pageDiagnostics.httpStatus, "nao informado");
+  const propertyType = dossier.propertyType || jsonText(dossier.identityEvidence.propertyType, "imovel");
+  const area = jsonNumber(dossier.identityEvidence.privateAreaM2) || jsonNumber(dossier.identityEvidence.builtAreaM2) || jsonNumber(dossier.identityEvidence.landAreaM2);
+  const city = jsonText(dossier.identityEvidence.city);
+  const state = jsonText(dossier.identityEvidence.state);
+  const saleComparables = jsonNumber(market.saleComparables);
+  const rentalComparables = jsonNumber(market.rentalComparables);
+  const marketSources = jsonNumber(market.sourceDiversity);
+  const marketValue = jsonNumber(market.marketValueBase);
+  const marketPrice = jsonNumber(market.marketPricePerM2);
+  const discount = jsonNumber(market.realDiscountPct);
+  const usableImages = jsonNumber(images.usableCount);
+  const mirroredImages = jsonNumber(images.mirroredCount);
+  const rawCandidates = jsonNumber(images.rawCandidateCount);
+  const documentCount = jsonNumber(documents.count);
+  const hasOfficialDocument = jsonText(documents.hasOfficialDocument);
+  const readiness = dossier.readinessStatus === "auto_candidate"
+    ? "o imovel entrou como candidato para liberacao automatica"
+    : dossier.readinessStatus === "blocked"
+      ? "o imovel ficou bloqueado para validacao humana"
+      : "o imovel continua exigindo revisao humana";
+
+  const intro = `A curadoria comecou pelo link original em ${sourceDomain}. O sistema abriu a pagina com o adaptador ${adapterName}, registrou resposta HTTP ${httpStatus} e separou os dados do lote antes de montar o dossie. Nesta etapa foram normalizados tipo, localizacao, area, valores, ocupacao, documentos, imagens e sinais de risco.`;
+  const identity = `Na identificacao do ativo, o sistema classificou o bem como ${propertyType}${city || state ? ` em ${[city, state].filter(Boolean).join("/")}` : ""}${area ? `, com area base de ${area.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} m2` : ""}. A nota de identidade ficou em ${dossier.identityScore}/100 porque os principais dados cadastrais foram confrontados com o texto capturado e com as regras do tipo de imovel.`;
+  const marketParagraph = `Para chegar ao valor de mercado, a pesquisa considerou ${saleComparables} comparavel(is) de venda e ${rentalComparables} referencia(s) de aluguel em ${marketSources} fonte(s). Com essa base, o valor de mercado usado no dossie ficou em ${formatCurrency(marketValue)}${marketPrice ? `, equivalente a ${pricePerM2(marketPrice)}` : ""}${discount ? `, com desconto preliminar de ${percent(discount)} contra o lance` : ""}. A nota de mercado ficou em ${dossier.marketScore}/100 porque o sistema pondera quantidade de comparaveis, qualidade, diversidade de fontes, preco por metro quadrado e aderencia ao tipo/localizacao do imovel.`;
+  const mediaDocs = `Na midia, foram avaliados ${rawCandidates} candidato(s) de imagem; ${usableImages} imagem(ns) foram consideradas uteis e ${mirroredImages} foram espelhada(s) no R2. A nota de imagens ficou em ${dossier.imageScore}/100, principalmente pela quantidade e variedade de fotos reais disponiveis. Em documentos, foram capturados ${documentCount} arquivo(s)${hasOfficialDocument ? " e houve indicio de documento oficial" : ""}, com nota ${dossier.documentationScore}/100.`;
+  const complianceText = flags.length
+    ? `O compliance preliminar marcou ${humanizedList(flags)}.`
+    : "O compliance preliminar nao encontrou alerta forte nesta camada.";
+  const conclusion = `A conclusao geral ficou em ${dossier.overallScore}/100 e ${readiness}. Isso aconteceu porque ainda existem lacunas como ${humanizedList(missingFields, "nenhuma trava critica")}.${
+    cautionNotes.length ? ` Observacoes adicionais: ${humanizedList(cautionNotes.slice(0, 3))}.` : ""
+  }`;
+
+  return {
+    intro,
+    identity,
+    market: marketParagraph,
+    mediaDocs,
+    compliance: complianceText,
+    conclusion,
+    searchedUrlsCount: searchedUrls.length,
+  };
 }
 
 function paymentLabel(value?: string) {
@@ -1634,6 +1732,7 @@ function QualificationResearchTrace({
 }) {
   const steps = buildQualificationAuditSteps(dossier);
   const sources = buildQualificationSources(dossier);
+  const narrative = buildQualificationNarrative(dossier);
   const visibleSteps = compact ? steps.slice(0, 5) : steps;
   const visibleSources = compact ? sources.slice(0, 5) : sources.slice(0, 12);
 
@@ -1649,32 +1748,53 @@ function QualificationResearchTrace({
         <StatusBadge tone="muted">{steps.length} etapa(s)</StatusBadge>
       </div>
 
-      <div className="grid gap-4 p-3 xl:grid-cols-[minmax(0,1fr)_420px]">
-        <div className="grid gap-2">
-          {visibleSteps.map((step, index) => (
-            <article
-              key={step.key}
-              className="grid gap-3 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card-2)] p-3 sm:grid-cols-[2.25rem_minmax(0,1fr)_auto] sm:items-start"
-            >
-              <div className={cn("grid size-8 place-items-center rounded-full border bg-white text-xs font-bold", toneBorder[evidenceStatusTone(step.status)], toneText[evidenceStatusTone(step.status)])}>
-                {index + 1}
-              </div>
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h4 className="text-sm font-semibold text-[var(--admin-foreground)]">{step.label}</h4>
-                  <StatusBadge tone={evidenceStatusTone(step.status)}>{evidenceStatusLabel(step.status)}</StatusBadge>
-                </div>
-                <p className="mt-1 text-xs leading-5 text-[var(--admin-muted)]">{step.summary}</p>
-                {step.sourceUrl ? (
-                  <Link className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-[var(--admin-cyan)] hover:underline" href={step.sourceUrl} target="_blank" rel="noreferrer">
-                    Ver fonte da etapa
-                    <ArrowUpRight size={12} />
-                  </Link>
-                ) : null}
-              </div>
-            </article>
-          ))}
+      <div className="grid gap-4 p-3">
+        <div className="rounded-lg border border-[rgba(200,90,31,0.24)] bg-[rgba(255,247,236,0.84)] p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h4 className="text-base font-semibold text-[var(--admin-foreground)]">Parecer explicativo da curadoria</h4>
+              <p className="mt-1 text-xs leading-5 text-[var(--admin-muted)]">
+                Texto para o operador entender a origem dos dados, o metodo da pesquisa e o motivo da decisao.
+              </p>
+            </div>
+            <StatusBadge tone={qualificationTone(dossier)}>{qualificationStatusLabel(dossier)}</StatusBadge>
+          </div>
+          <div className="mt-4 grid gap-3 text-sm leading-6 text-[var(--admin-soft)]">
+            <p>{narrative.intro}</p>
+            <p>{narrative.identity}</p>
+            <p>{narrative.market}</p>
+            <p>{narrative.mediaDocs}</p>
+            <p>{narrative.compliance}</p>
+            <p className="font-medium text-[var(--admin-foreground)]">{narrative.conclusion}</p>
+          </div>
         </div>
+
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
+          <div className="grid gap-2">
+            {visibleSteps.map((step, index) => (
+              <article
+                key={step.key}
+                className="grid gap-3 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card-2)] p-3 sm:grid-cols-[2.25rem_minmax(0,1fr)_auto] sm:items-start"
+              >
+                <div className={cn("grid size-8 place-items-center rounded-full border bg-white text-xs font-bold", toneBorder[evidenceStatusTone(step.status)], toneText[evidenceStatusTone(step.status)])}>
+                  {index + 1}
+                </div>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h4 className="text-sm font-semibold text-[var(--admin-foreground)]">{step.label}</h4>
+                    <StatusBadge tone={evidenceStatusTone(step.status)}>{evidenceStatusLabel(step.status)}</StatusBadge>
+                  </div>
+                  <p className="mt-1 text-xs leading-5 text-[var(--admin-muted)]">{step.summary}</p>
+                  {step.sourceUrl ? (
+                    <Link className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-[var(--admin-cyan)] hover:underline" href={step.sourceUrl} target="_blank" rel="noreferrer">
+                      Ver fonte da etapa
+                      <ArrowUpRight size={12} />
+                    </Link>
+                  ) : null}
+                </div>
+              </article>
+            ))}
+          </div>
 
         <div className="grid content-start gap-3">
           <div className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card-2)] p-3">
@@ -1719,11 +1839,12 @@ function QualificationResearchTrace({
               <InfoValue label="Compliance" value={complianceConclusionText(dossier)} />
               <InfoValue
                 label="Lacunas"
-                value={dossier.blockers.length ? dossier.blockers.slice(0, 3).join(", ") : "Sem bloqueio critico registrado."}
+                value={dossier.blockers.length ? humanizedList(dossier.blockers.slice(0, 3)) : "Sem bloqueio critico registrado."}
               />
             </div>
           </div>
         </div>
+      </div>
       </div>
     </div>
   );
