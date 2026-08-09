@@ -11,6 +11,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { adminRoleLabel } from "@/lib/admin/labels";
 import type { AdminSessionUser } from "@/lib/auth/types";
 
 function initials(name: string) {
@@ -54,7 +55,9 @@ export function UserMenu({ admin }: { admin: AdminSessionUser }) {
         <DropdownMenuLabel>
           <div className="text-sm">{admin.name}</div>
           <div className="mt-0.5 text-xs font-normal text-[var(--admin-muted)]">{admin.email}</div>
-          <div className="mt-1 text-[10px] uppercase tracking-[0.14em] text-[var(--admin-cyan)]">{admin.role}</div>
+          <div className="mt-1 text-[10px] uppercase tracking-[0.14em] text-[var(--admin-cyan)]">
+            {adminRoleLabel(admin.role)}
+          </div>
           <div className="mt-1 truncate text-[10px] text-[var(--admin-muted)]">{sectorLabel(admin)}</div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />

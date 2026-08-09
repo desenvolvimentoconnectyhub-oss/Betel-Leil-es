@@ -29,6 +29,7 @@ import {
   type AdminUserListItem,
   type AdminUserStatus,
 } from "@/lib/admin/repository";
+import { adminRoleLabel } from "@/lib/admin/labels";
 import { cn } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -287,11 +288,11 @@ export default async function AdminUsersPage({
                   defaultValue={editingUser?.role || "analyst"}
                   className="h-10 rounded-md border border-[var(--admin-border)] bg-[#050505] px-3 text-sm text-white outline-none transition focus:border-[var(--admin-cyan)]"
                 >
-                  <option value="owner">Owner</option>
-                  <option value="admin">Admin</option>
-                  <option value="manager">Manager</option>
-                  <option value="analyst">Analyst</option>
-                  <option value="viewer">Viewer</option>
+                  <option value="owner">{adminRoleLabel("owner")}</option>
+                  <option value="admin">{adminRoleLabel("admin")}</option>
+                  <option value="manager">{adminRoleLabel("manager")}</option>
+                  <option value="analyst">{adminRoleLabel("analyst")}</option>
+                  <option value="viewer">{adminRoleLabel("viewer")}</option>
                 </select>
               </div>
               <div className="grid gap-2">
@@ -422,7 +423,7 @@ export default async function AdminUsersPage({
                     </td>
                     <td className="border-t border-[var(--admin-border)] px-4 py-3">
                       <StatusBadge tone={user.role === "owner" || user.role === "admin" ? "cyan" : "muted"}>
-                        {user.role}
+                        {adminRoleLabel(user.role)}
                       </StatusBadge>
                     </td>
                     <td className="border-t border-[var(--admin-border)] px-4 py-3">
