@@ -300,6 +300,226 @@ function feedbackDecisionTone(value: PropertyQualificationFeedbackDecision): Res
   return "muted";
 }
 
+type QualificationAuditStepView = {
+  key: string;
+  label: string;
+  status: PropertyQualificationEvidenceStatus;
+  summary: string;
+  sourceUrl?: string;
+};
+
+type QualificationAuditSourceView = {
+  key: string;
+  category: string;
+  label: string;
+  url: string;
+  status: PropertyQualificationEvidenceStatus;
+  detail: string;
+};
+
+function jsonRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function jsonArray<T = unknown>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : [];
+}
+
+function jsonText(value: unknown, fallback = "") {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value === "boolean") return value ? "sim" : "nao";
+  return fallback;
+}
+
+function jsonNumber(value: unknown, fallback = 0) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
+function jsonTextList(value: unknown) {
+  return jsonArray(value)
+    .map((item) => {
+      if (typeof item === "string") return item.trim();
+      const record = jsonRecord(item);
+      return jsonText(record.detail) || jsonText(record.label) || jsonText(record.title) || jsonText(record.summary);
+    })
+    .filter(Boolean);
+}
+
+function normalizeAuditStatus(value: unknown, fallback: PropertyQualificationEvidenceStatus = "info") {
+  const status = jsonText(value).toLowerCase();
+  if (["passed", "warning", "blocked", "info"].includes(status)) return status as PropertyQualificationEvidenceStatus;
+  return fallback;
+}
+
+function scoreStatus(score: number, critical = false): PropertyQualificationEvidenceStatus {
+  if (score >= 80) return "passed";
+  if (score >= 50) return "warning";
+  return critical ? "blocked" : "warning";
+}
+
+function buildQualificationAuditSteps(dossier: PropertyQualificationDossier): QualificationAuditStepView[] {
+  const storedSteps = jsonArray<Record<string, unknown>>(dossier.rawPayload.auditTrail);
+  if (storedSteps.length) {
+    return storedSteps.map((item, index) => ({
+      key: jsonText(item.stepKey, `step-${index}`),
+      label: jsonText(item.label, `Etapa ${index + 1}`),
+      status: normalizeAuditStatus(item.status),
+      summary: jsonText(item.summary, "Sem resumo registrado."),
+      sourceUrl: jsonText(item.sourceUrl),
+    }));
+  }
+
+  const source = dossier.sourceSnapshot;
+  const adapter = jsonRecord(source.adapter);
+  const pageDiagnostics = jsonRecord(source.pageDiagnostics);
+  const market = dossier.marketEvidence;
+  const images = dossier.imageEvidence;
+  const documents = dossier.documentEvidence;
+  const compliance = dossier.complianceEvidence;
+  const qualityReview = jsonRecord(dossier.rawPayload.qualityReview);
+  const qualityGate = jsonRecord(dossier.rawPayload.qualityGate);
+  const missingFields = jsonTextList(qualityReview.missingFields);
+  const qualityIssues = jsonTextList(qualityGate.issues);
+  const saleComparables = jsonNumber(market.saleComparables);
+  const rentalComparables = jsonNumber(market.rentalComparables);
+  const marketSources = jsonNumber(market.sourceDiversity);
+  const usableImages = jsonNumber(images.usableCount);
+  const mirroredImages = jsonNumber(images.mirroredCount);
+  const failedImages = jsonNumber(images.failedCount);
+  const documentCount = jsonNumber(documents.count);
+  const flags = jsonTextList(compliance.flags);
+
+  return [
+    {
+      key: "fonte_original",
+      label: "Captura da fonte original",
+      status: jsonNumber(pageDiagnostics.httpStatus) >= 200 && jsonNumber(pageDiagnostics.httpStatus) < 400 ? "passed" : "warning",
+      summary: `${jsonText(source.sourceDomain, "Fonte")} lida com ${jsonText(adapter.name, jsonText(adapter.key, "adaptador automatico"))}; HTTP ${jsonText(pageDiagnostics.httpStatus, "nao informado")}.`,
+      sourceUrl: jsonText(source.sourceUrl),
+    },
+    {
+      key: "extracao",
+      label: "Extracao e normalizacao",
+      status: scoreStatus(dossier.identityScore, true),
+      summary: missingFields.length
+        ? `Identidade ${dossier.identityScore}/100; pendencias: ${missingFields.slice(0, 3).join(", ")}.`
+        : `Identidade ${dossier.identityScore}/100; dados principais normalizados.`,
+    },
+    {
+      key: "imagens",
+      label: "Curadoria de imagens",
+      status: scoreStatus(dossier.imageScore, true),
+      summary: `${usableImages} imagem(ns) util(is), ${mirroredImages} espelhada(s) no R2, ${failedImages} falha(s).`,
+    },
+    {
+      key: "mercado",
+      label: "Pesquisa de mercado",
+      status: scoreStatus(dossier.marketScore, true),
+      summary: `${saleComparables} comparavel(is) de venda, ${rentalComparables} de aluguel, ${marketSources} fonte(s); valor base ${formatCurrency(jsonNumber(market.marketValueBase))}.`,
+    },
+    {
+      key: "documentos_compliance",
+      label: "Documentos e compliance",
+      status: scoreStatus(dossier.complianceScore),
+      summary: `${documentCount} documento(s) capturado(s); ${flags.length ? flags.slice(0, 3).join(", ") : "sem alerta preliminar forte"}.`,
+    },
+    {
+      key: "conclusao",
+      label: "Criterios de conclusao",
+      status: dossier.readinessStatus === "auto_candidate" ? "passed" : dossier.readinessStatus === "blocked" ? "blocked" : "warning",
+      summary: qualityIssues.length
+        ? `${dossier.overallScore}/100; travas atuais: ${qualityIssues.slice(0, 3).join(", ")}.`
+        : `${dossier.overallScore}/100; status ${qualificationStatusLabel(dossier)}.`,
+    },
+  ];
+}
+
+function buildQualificationSources(dossier: PropertyQualificationDossier): QualificationAuditSourceView[] {
+  const storedSources = jsonArray<Record<string, unknown>>(dossier.rawPayload.sourceInventory);
+  const source = dossier.sourceSnapshot;
+  const documentLinks = jsonArray<Record<string, unknown>>(dossier.documentEvidence.links);
+  const candidates: QualificationAuditSourceView[] = [];
+
+  const pushSource = (input: Omit<QualificationAuditSourceView, "key">) => {
+    if (!input.url) return;
+    const key = input.url.toLowerCase();
+    if (candidates.some((item) => item.key === key)) return;
+    candidates.push({ ...input, key });
+  };
+
+  storedSources.forEach((item, index) => {
+    pushSource({
+      category: jsonText(item.category, "fonte"),
+      label: jsonText(item.label, `Fonte ${index + 1}`),
+      url: jsonText(item.url),
+      status: normalizeAuditStatus(item.status),
+      detail: jsonText(item.detail, "Fonte registrada na auditoria da pesquisa."),
+    });
+  });
+
+  pushSource({
+    category: "leilao",
+    label: jsonText(source.sourceDomain, "Fonte original"),
+    url: jsonText(source.sourceUrl),
+    status: "passed",
+    detail: "Link original do imovel no leiloeiro.",
+  });
+  pushSource({
+    category: "pagina",
+    label: "URL resolvida",
+    url: jsonText(jsonRecord(source.pageDiagnostics).resolvedSourceUrl),
+    status: normalizeAuditStatus(jsonRecord(source.pageDiagnostics).blockedByAntiBot ? "warning" : "passed"),
+    detail: "Pagina efetivamente aberta durante a coleta.",
+  });
+  documentLinks.forEach((document, index) => {
+    pushSource({
+      category: "documento",
+      label: jsonText(document.label, `Documento ${index + 1}`),
+      url: jsonText(document.url),
+      status: "info",
+      detail: jsonText(document.kind, "Documento encontrado na fonte."),
+    });
+  });
+  dossier.evidence.forEach((item) => {
+    pushSource({
+      category: evidenceCategoryLabel(item.category),
+      label: item.label,
+      url: item.sourceUrl,
+      status: item.status,
+      detail: item.details,
+    });
+  });
+
+  return candidates;
+}
+
+function marketConclusionText(dossier: PropertyQualificationDossier) {
+  const market = dossier.marketEvidence;
+  const value = jsonNumber(market.marketValueBase);
+  const priceM2 = jsonNumber(market.marketPricePerM2);
+  const sale = jsonNumber(market.saleComparables);
+  const rent = jsonNumber(market.rentalComparables);
+  const diversity = jsonNumber(market.sourceDiversity);
+
+  return `${formatCurrency(value)}${priceM2 ? ` (${pricePerM2(priceM2)})` : ""}; ${sale} venda, ${rent} aluguel, ${diversity} fonte(s).`;
+}
+
+function imageConclusionText(dossier: PropertyQualificationDossier) {
+  const images = dossier.imageEvidence;
+  return `${jsonNumber(images.usableCount)} util(is), ${jsonNumber(images.mirroredCount)} no R2, ${jsonNumber(images.rawCandidateCount)} candidato(s) bruto(s).`;
+}
+
+function complianceConclusionText(dossier: PropertyQualificationDossier) {
+  const flags = jsonTextList(dossier.complianceEvidence.flags);
+  return flags.length ? flags.slice(0, 4).join(", ") : "Sem alerta preliminar forte nesta camada.";
+}
+
 function paymentLabel(value?: string) {
   const normalized = compactText(value, "").toLowerCase();
   if (!normalized) return "validar edital";
@@ -1405,6 +1625,110 @@ function QualificationScoreCard({ label, score, tone = "muted" }: { label: strin
   );
 }
 
+function QualificationResearchTrace({
+  dossier,
+  compact = false,
+}: {
+  dossier: PropertyQualificationDossier;
+  compact?: boolean;
+}) {
+  const steps = buildQualificationAuditSteps(dossier);
+  const sources = buildQualificationSources(dossier);
+  const visibleSteps = compact ? steps.slice(0, 5) : steps;
+  const visibleSources = compact ? sources.slice(0, 5) : sources.slice(0, 12);
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-[var(--admin-border)] bg-white">
+      <div className="flex min-h-11 flex-wrap items-center justify-between gap-3 border-b border-[var(--admin-border)] px-3 py-2">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold text-[var(--admin-foreground)]">Como a analise foi feita</h3>
+          <p className="mt-1 text-xs leading-5 text-[var(--admin-muted)]">
+            Rastro da pesquisa, fontes usadas e motivos que sustentam a conclusao.
+          </p>
+        </div>
+        <StatusBadge tone="muted">{steps.length} etapa(s)</StatusBadge>
+      </div>
+
+      <div className="grid gap-4 p-3 xl:grid-cols-[minmax(0,1fr)_420px]">
+        <div className="grid gap-2">
+          {visibleSteps.map((step, index) => (
+            <article
+              key={step.key}
+              className="grid gap-3 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card-2)] p-3 sm:grid-cols-[2.25rem_minmax(0,1fr)_auto] sm:items-start"
+            >
+              <div className={cn("grid size-8 place-items-center rounded-full border bg-white text-xs font-bold", toneBorder[evidenceStatusTone(step.status)], toneText[evidenceStatusTone(step.status)])}>
+                {index + 1}
+              </div>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h4 className="text-sm font-semibold text-[var(--admin-foreground)]">{step.label}</h4>
+                  <StatusBadge tone={evidenceStatusTone(step.status)}>{evidenceStatusLabel(step.status)}</StatusBadge>
+                </div>
+                <p className="mt-1 text-xs leading-5 text-[var(--admin-muted)]">{step.summary}</p>
+                {step.sourceUrl ? (
+                  <Link className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-[var(--admin-cyan)] hover:underline" href={step.sourceUrl} target="_blank" rel="noreferrer">
+                    Ver fonte da etapa
+                    <ArrowUpRight size={12} />
+                  </Link>
+                ) : null}
+              </div>
+            </article>
+          ))}
+        </div>
+
+        <div className="grid content-start gap-3">
+          <div className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card-2)] p-3">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <FileSearch size={15} className="text-[var(--admin-cyan)]" />
+                <h4 className="text-sm font-semibold text-[var(--admin-foreground)]">Fontes consultadas</h4>
+              </div>
+              <StatusBadge tone="muted">{sources.length}</StatusBadge>
+            </div>
+            <div className="grid gap-2">
+              {visibleSources.length ? (
+                visibleSources.map((source) => (
+                  <div key={source.key} className="rounded-lg border border-[var(--admin-border)] bg-white px-3 py-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-xs font-semibold text-[var(--admin-foreground)]">{source.label}</p>
+                      <StatusBadge tone={evidenceStatusTone(source.status)}>{source.category}</StatusBadge>
+                    </div>
+                    <p className="mt-1 line-clamp-2 text-xs leading-5 text-[var(--admin-muted)]">{source.detail}</p>
+                    <Link className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-[var(--admin-cyan)] hover:underline" href={source.url} target="_blank" rel="noreferrer">
+                      Abrir fonte
+                      <ArrowUpRight size={12} />
+                    </Link>
+                  </div>
+                ))
+              ) : (
+                <p className="rounded-lg border border-[var(--admin-border)] bg-white px-3 py-2 text-xs leading-5 text-[var(--admin-muted)]">
+                  Nenhuma fonte individual registrada alem dos dados da captura.
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card-2)] p-3">
+            <div className="mb-3 flex items-center gap-2">
+              <ShieldCheck size={15} className="text-[var(--admin-green)]" />
+              <h4 className="text-sm font-semibold text-[var(--admin-foreground)]">Base da conclusao</h4>
+            </div>
+            <div className="grid gap-2">
+              <InfoValue label="Mercado" value={marketConclusionText(dossier)} />
+              <InfoValue label="Midia" value={imageConclusionText(dossier)} />
+              <InfoValue label="Compliance" value={complianceConclusionText(dossier)} />
+              <InfoValue
+                label="Lacunas"
+                value={dossier.blockers.length ? dossier.blockers.slice(0, 3).join(", ") : "Sem bloqueio critico registrado."}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function QualificationDossierPanel({
   opportunity,
   dossier,
@@ -1472,6 +1796,8 @@ function QualificationDossierPanel({
             </div>
           </div>
         </div>
+
+        <QualificationResearchTrace dossier={dossier} compact={compact} />
 
         <div className="grid gap-3 lg:grid-cols-2">
           <div className="rounded-lg border border-[var(--admin-border)] bg-white p-3">

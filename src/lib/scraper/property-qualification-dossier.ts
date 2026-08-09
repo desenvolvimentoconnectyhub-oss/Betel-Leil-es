@@ -40,6 +40,23 @@ type EvidenceItem = {
   rawPayload?: Record<string, unknown>;
 };
 
+type ResearchAuditStep = {
+  stepKey: string;
+  label: string;
+  status: EvidenceStatus;
+  summary: string;
+  sourceUrl?: string;
+  details?: Record<string, unknown>;
+};
+
+type ResearchAuditSource = {
+  category: string;
+  label: string;
+  url: string;
+  status: EvidenceStatus;
+  detail: string;
+};
+
 type PlaybookRule = {
   key: string;
   label: string;
@@ -72,6 +89,11 @@ type DossierBuildResult = {
     rules: PlaybookRule[];
   };
   evidence: EvidenceItem[];
+  audit: {
+    processSteps: ResearchAuditStep[];
+    sourceInventory: ResearchAuditSource[];
+    conclusionBasis: Record<string, unknown>;
+  };
   sections: {
     identity: Record<string, unknown>;
     market: Record<string, unknown>;
@@ -508,6 +530,171 @@ function buildImageSection(images: StoredImageAsset[], rawImageUrls: string[]) {
   };
 }
 
+function uniqueAuditSources(sources: ResearchAuditSource[]) {
+  const seen = new Set<string>();
+  return sources.filter((source) => {
+    if (!source.url) return false;
+    const key = normalizeText(source.url);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function buildResearchAudit(input: PersistPropertyQualificationDossierInput, context: {
+  propertyType: string;
+  identityScore: number;
+  market: ReturnType<typeof buildMarketScore>;
+  images: ReturnType<typeof buildImageSection>;
+  documentationScore: number;
+  complianceScore: number;
+  complianceFlags: string[];
+  blockers: string[];
+  recommendations: string[];
+  readinessStatus: Exclude<QualificationStatus, "shadow">;
+}) {
+  const documents = input.documents.slice(0, 12).map((document) => ({
+    category: "documento",
+    label: document.label || document.kind || "Documento capturado",
+    url: document.url,
+    status: "info" as EvidenceStatus,
+    detail: document.kind || "Documento localizado na fonte.",
+  }));
+  const searchedUrls = (input.marketResearch?.searchedUrls || []).slice(0, 16).map((source) => ({
+    category: source.kind === "rent" ? "aluguel" : "comparavel",
+    label: source.label || (source.kind === "rent" ? "Busca de aluguel" : "Busca de venda"),
+    url: source.url,
+    status: "info" as EvidenceStatus,
+    detail: source.kind === "rent" ? "Fonte usada para referencia de aluguel." : "Fonte usada para comparaveis de venda.",
+  }));
+  const comparableUrls = [
+    ...(input.marketResearch?.saleComparables || []),
+    ...(input.marketResearch?.rentalComparables || []),
+  ].slice(0, 18).map((comparable) => ({
+    category: comparable.listingType === "rent" ? "aluguel" : "comparavel",
+    label: comparable.sourceLabel || comparable.title || "Comparavel",
+    url: comparable.sourceUrl,
+    status: comparable.quality === "strong" ? "passed" as EvidenceStatus : comparable.quality === "weak" ? "warning" as EvidenceStatus : "info" as EvidenceStatus,
+    detail: `${comparable.city}/${comparable.state}; similaridade ${comparable.similarityScore}/100.`,
+  }));
+  const imageSources = input.images.slice(0, 12).map((image) => ({
+    category: "imagem",
+    label: image.alt || "Imagem do imovel",
+    url: image.sourceUrl || image.url,
+    status: image.status === "failed" ? "warning" as EvidenceStatus : "passed" as EvidenceStatus,
+    detail: image.status === "mirrored" ? "Imagem aceita e espelhada no R2." : `Status da imagem: ${image.status}.`,
+  }));
+
+  const sourceInventory = uniqueAuditSources([
+    {
+      category: "leilao",
+      label: input.sourceDomain || "Fonte original",
+      url: input.sourceUrl,
+      status: input.pageDiagnostics.httpStatus >= 200 && input.pageDiagnostics.httpStatus < 400 ? "passed" : "warning",
+      detail: `Link original processado com HTTP ${input.pageDiagnostics.httpStatus || "nao informado"}.`,
+    },
+    {
+      category: "pagina",
+      label: "URL resolvida",
+      url: input.pageDiagnostics.resolvedSourceUrl,
+      status: input.pageDiagnostics.blockedByAntiBot ? "warning" : "passed",
+      detail: input.pageDiagnostics.blockedByAntiBot ? "Pagina apresentou desafio ou bloqueio durante a coleta." : "Pagina aberta para coleta automatizada.",
+    },
+    ...documents,
+    ...searchedUrls,
+    ...comparableUrls,
+    ...imageSources,
+  ]);
+
+  const processSteps: ResearchAuditStep[] = [
+    {
+      stepKey: "fonte_original",
+      label: "Captura da fonte original",
+      status: input.pageDiagnostics.httpStatus >= 200 && input.pageDiagnostics.httpStatus < 400 ? "passed" : "warning",
+      summary: `${input.sourceDomain || "Fonte"} processada com adaptador ${input.adapter.name || input.adapter.key}.`,
+      sourceUrl: input.sourceUrl,
+      details: {
+        httpStatus: input.pageDiagnostics.httpStatus,
+        resolvedSourceUrl: input.pageDiagnostics.resolvedSourceUrl,
+        adapter: input.adapter,
+      },
+    },
+    {
+      stepKey: "extracao",
+      label: "Extracao e normalizacao",
+      status: context.identityScore >= 75 ? "passed" : context.identityScore >= 50 ? "warning" : "blocked",
+      summary: `${context.propertyType}; identidade ${context.identityScore}/100.`,
+      details: {
+        missingFields: input.qualityReview.missingFields,
+        qualityFlags: input.qualityReview.qualityFlags,
+        confidenceScore: input.qualityReview.confidenceScore,
+      },
+    },
+    {
+      stepKey: "imagens",
+      label: "Curadoria de imagens",
+      status: evidenceStatus(context.images.score, true),
+      summary: `${context.images.usableCount} imagem(ns) util(is), ${context.images.mirroredCount} espelhada(s) no R2, ${context.images.failedCount} falha(s).`,
+      details: {
+        rawCandidateCount: context.images.rawCandidateCount,
+        imageKinds: context.images.kinds,
+      },
+    },
+    {
+      stepKey: "mercado",
+      label: "Pesquisa de mercado",
+      status: evidenceStatus(context.market.score, true),
+      summary: `${input.marketResearch?.saleComparables.length || 0} comparavel(is) de venda, ${input.marketResearch?.rentalComparables.length || 0} de aluguel, ${context.market.diversity} fonte(s).`,
+      details: {
+        status: input.marketResearch?.status || "skipped",
+        searchedUrls: input.marketResearch?.searchedUrls || [],
+        searchQueries: input.marketResearch?.searchQueries || [],
+        marketValueBase: context.market.marketValueBase,
+        marketPricePerM2: context.market.marketPricePerM2,
+      },
+    },
+    {
+      stepKey: "documentos_compliance",
+      label: "Documentos e compliance",
+      status: evidenceStatus(context.complianceScore),
+      summary: `${input.documents.length} documento(s); ${context.complianceFlags.length ? context.complianceFlags.length : "nenhum"} alerta(s) preliminar(es).`,
+      details: {
+        documents: input.documents,
+        complianceFlags: context.complianceFlags,
+        cautionNotes: input.qualityReview.cautionNotes,
+      },
+    },
+    {
+      stepKey: "conclusao",
+      label: "Criterios de conclusao",
+      status: context.readinessStatus === "auto_candidate" ? "passed" : context.readinessStatus === "blocked" ? "blocked" : "warning",
+      summary: `Status ${context.readinessStatus}; ${context.blockers.length} bloqueio(s), ${context.recommendations.length} recomendacao(oes).`,
+      details: {
+        blockers: context.blockers,
+        recommendations: context.recommendations,
+        qualityGate: input.qualityGate,
+      },
+    },
+  ];
+
+  return {
+    processSteps,
+    sourceInventory,
+    conclusionBasis: {
+      market: context.market,
+      images: context.images,
+      documentationScore: context.documentationScore,
+      complianceScore: context.complianceScore,
+      complianceFlags: context.complianceFlags,
+      qualityGate: input.qualityGate,
+      qualityReview: input.qualityReview,
+      readinessStatus: context.readinessStatus,
+      blockers: context.blockers,
+      recommendations: context.recommendations,
+    },
+  };
+}
+
 function hasRiskText(input: PersistPropertyQualificationDossierInput, tokens: string[]) {
   const text = normalizeText([
     input.extraction.occupancy,
@@ -629,6 +816,18 @@ function buildDossier(input: PersistPropertyQualificationDossierInput, mode: Exc
       rawPayload: { adapter: input.adapter, pageDiagnostics: input.pageDiagnostics },
     },
   ];
+  const audit = buildResearchAudit(input, {
+    propertyType,
+    identityScore,
+    market,
+    images,
+    documentationScore,
+    complianceScore,
+    complianceFlags,
+    blockers,
+    recommendations,
+    readinessStatus,
+  });
 
   return {
     mode,
@@ -649,6 +848,7 @@ function buildDossier(input: PersistPropertyQualificationDossierInput, mode: Exc
     recommendations,
     playbook,
     evidence,
+    audit,
     sections: {
       identity: {
         title: input.title,
@@ -746,6 +946,9 @@ export async function persistPropertyQualificationDossier(input: PersistProperty
           marketResearchStatus: input.marketResearch?.status || "skipped",
           readinessStatus: dossier.readinessStatus,
           evidenceCount: dossier.evidence.length,
+          auditTrail: dossier.audit.processSteps,
+          sourceInventory: dossier.audit.sourceInventory,
+          conclusionBasis: dossier.audit.conclusionBasis,
         },
         updated_at: now,
       },
