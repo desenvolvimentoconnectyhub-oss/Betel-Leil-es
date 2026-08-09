@@ -30,7 +30,10 @@ import {
   UploadCloud,
   XCircle,
 } from "lucide-react";
-import { savePropertyMarketAnalysisAction } from "@/app/admin/oportunidades/actions";
+import {
+  savePropertyMarketAnalysisAction,
+  savePropertyQualificationFeedbackAction,
+} from "@/app/admin/oportunidades/actions";
 import { RiskBadge } from "@/components/admin/RiskBadge";
 import { ScoreBadge } from "@/components/admin/ScoreBadge";
 import { StatusBadge, getStatusTone } from "@/components/admin/StatusBadge";
@@ -44,6 +47,11 @@ import {
   type PropertyMarketAnalysis,
   type PropertyMarketComparable,
 } from "@/lib/admin/market-analysis";
+import type {
+  PropertyQualificationDossier,
+  PropertyQualificationEvidenceStatus,
+  PropertyQualificationFeedbackDecision,
+} from "@/lib/admin/repository/property-qualification";
 import {
   formatCurrency,
   formatDate,
@@ -66,7 +74,9 @@ type OpportunityTabId =
 type OpportunityDetailCenterProps = {
   opportunity: AuctionOpportunity;
   analysis: PropertyMarketAnalysis | null;
+  qualificationDossier?: PropertyQualificationDossier | null;
   reason?: string;
+  qualificationReason?: string;
   activeTab?: string;
   marketFilter?: string;
   marketSort?: string;
@@ -227,6 +237,67 @@ function shortText(value?: string, max = 180, fallback = "nao informado") {
 
 function statusLabel(value?: string) {
   return compactText(value, "pendente").replace(/_/g, " ");
+}
+
+function qualificationStatusLabel(dossier: PropertyQualificationDossier) {
+  if (dossier.mode === "shadow") return "Modo sombra";
+  if (dossier.readinessStatus === "auto_candidate") return "Candidato automatico";
+  if (dossier.readinessStatus === "blocked") return "Bloqueado";
+  return "Revisao humana";
+}
+
+function qualificationTone(dossier: PropertyQualificationDossier): ResourceTone {
+  if (dossier.readinessStatus === "auto_candidate") return "green";
+  if (dossier.readinessStatus === "blocked") return "red";
+  if (dossier.mode === "shadow") return "yellow";
+  return "purple";
+}
+
+function evidenceStatusLabel(status: PropertyQualificationEvidenceStatus) {
+  const labels: Record<PropertyQualificationEvidenceStatus, string> = {
+    passed: "Validado",
+    warning: "Atencao",
+    blocked: "Bloqueio",
+    info: "Info",
+  };
+  return labels[status];
+}
+
+function evidenceStatusTone(status: PropertyQualificationEvidenceStatus): ResourceTone {
+  if (status === "passed") return "green";
+  if (status === "warning") return "yellow";
+  if (status === "blocked") return "red";
+  return "muted";
+}
+
+function evidenceCategoryLabel(value: string) {
+  const labels: Record<string, string> = {
+    identity: "Identidade",
+    image: "Imagem",
+    market: "Mercado",
+    document: "Documento",
+    compliance: "Compliance",
+    risk: "Risco",
+    source: "Fonte",
+  };
+  return labels[value] || statusLabel(value);
+}
+
+function feedbackDecisionLabel(value: PropertyQualificationFeedbackDecision) {
+  const labels: Record<PropertyQualificationFeedbackDecision, string> = {
+    confirmado: "Confirmado",
+    corrigido: "Corrigido",
+    reprovado: "Reprovado",
+    pendente: "Pendente",
+  };
+  return labels[value];
+}
+
+function feedbackDecisionTone(value: PropertyQualificationFeedbackDecision): ResourceTone {
+  if (value === "confirmado") return "green";
+  if (value === "corrigido") return "yellow";
+  if (value === "reprovado") return "red";
+  return "muted";
 }
 
 function paymentLabel(value?: string) {
@@ -1274,6 +1345,8 @@ function TabContent({
   activeTab,
   opportunity,
   analysis,
+  qualificationDossier,
+  qualificationReason,
   reason,
   images,
   heroImage,
@@ -1298,13 +1371,258 @@ function TabContent({
     case "documentos":
       return <DocumentsTab opportunity={opportunity} analysis={analysis} />;
     case "revisao":
-      return <ReviewTab opportunity={opportunity} analysis={analysis} reason={reason} />;
+      return <ReviewTab opportunity={opportunity} analysis={analysis} qualificationDossier={qualificationDossier} qualificationReason={qualificationReason} reason={reason} />;
     case "historico":
       return <HistoryTab opportunity={opportunity} analysis={analysis} />;
     case "visao-geral":
     default:
-      return <OverviewTab opportunity={opportunity} analysis={analysis} images={images} heroImage={heroImage} selectedImageIndex={selectedImageIndex} reason={reason} />;
+      return (
+        <OverviewTab
+          opportunity={opportunity}
+          analysis={analysis}
+          images={images}
+          heroImage={heroImage}
+          selectedImageIndex={selectedImageIndex}
+          qualificationDossier={qualificationDossier}
+          qualificationReason={qualificationReason}
+          reason={reason}
+        />
+      );
   }
+}
+
+function QualificationScoreCard({ label, score, tone = "muted" }: { label: string; score: number; tone?: ResourceTone }) {
+  return (
+    <div className="rounded-lg border border-[var(--admin-border)] bg-white px-3 py-2">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--admin-muted)]">{label}</p>
+      <div className="mt-1 flex items-center justify-between gap-3">
+        <p className={cn("font-mono text-lg font-bold", toneText[tone])}>{score}</p>
+        <div className="h-1.5 w-20 overflow-hidden rounded-full bg-[var(--admin-card-2)]">
+          <div className={cn("h-full rounded-full bg-current", toneText[tone])} style={{ width: `${score}%` }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function QualificationDossierPanel({
+  opportunity,
+  dossier,
+  reason,
+  compact = false,
+}: {
+  opportunity: AuctionOpportunity;
+  dossier?: PropertyQualificationDossier | null;
+  reason?: string;
+  compact?: boolean;
+}) {
+  if (!dossier) {
+    return (
+      <SectionCard
+        title="Dossie profundo"
+        eyebrow="qualificacao v2"
+        action={<StatusBadge tone="yellow">Aguardando</StatusBadge>}
+      >
+        <EmptyState
+          title="Dossie ainda nao gerado"
+          detail={reason || "Ele sera criado no proximo processamento do lote, sem alterar a captura atual."}
+          icon={<FileCheck2 size={18} />}
+        />
+      </SectionCard>
+    );
+  }
+
+  const tone = qualificationTone(dossier);
+  const scoreTone: ResourceTone = dossier.overallScore >= 75 ? "green" : dossier.overallScore >= 55 ? "yellow" : "red";
+  const evidence = dossier.evidence.slice(0, compact ? 6 : 10);
+  const latestFeedback = dossier.feedback.slice(0, 4);
+  const hasBlockers = dossier.blockers.length > 0;
+  const hasRecommendations = dossier.recommendations.length > 0;
+
+  return (
+    <SectionCard
+      title="Dossie profundo"
+      eyebrow="qualificacao v2"
+      action={<StatusBadge tone={tone}>{qualificationStatusLabel(dossier)}</StatusBadge>}
+    >
+      <input name="qualificationDossierId" type="hidden" value={dossier.id} />
+      <input name="qualificationOpportunityId" type="hidden" value={dossier.opportunityId} />
+      <input name="qualificationOpportunityCode" type="hidden" value={opportunity.id} />
+
+      <div className="grid gap-4">
+        <div className={cn("rounded-lg border p-4", toneBorder[tone], toneBg[tone])}>
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-base font-semibold text-[var(--admin-foreground)]">Pronto para elevar o nivel da curadoria</h3>
+                <StatusBadge tone={scoreTone}>{dossier.overallScore}/100</StatusBadge>
+              </div>
+              <p className="mt-2 text-sm leading-6 text-[var(--admin-soft)]">
+                Versao {dossier.version || "qualification-v2"} em {dossier.mode === "shadow" ? "modo sombra" : "modo ativo"}.
+                A liberacao automatica continua bloqueada ate a operacao validar os criterios.
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:min-w-[440px]">
+              <QualificationScoreCard label="Geral" score={dossier.overallScore} tone={scoreTone} />
+              <QualificationScoreCard label="Identidade" score={dossier.identityScore} tone={dossier.identityScore >= 70 ? "green" : "yellow"} />
+              <QualificationScoreCard label="Mercado" score={dossier.marketScore} tone={dossier.marketScore >= 70 ? "green" : "yellow"} />
+              <QualificationScoreCard label="Imagens" score={dossier.imageScore} tone={dossier.imageScore >= 70 ? "green" : "yellow"} />
+              <QualificationScoreCard label="Documentos" score={dossier.documentationScore} tone={dossier.documentationScore >= 70 ? "green" : "yellow"} />
+              <QualificationScoreCard label="Compliance" score={dossier.complianceScore} tone={dossier.complianceScore >= 70 ? "green" : "yellow"} />
+            </div>
+          </div>
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-2">
+          <div className="rounded-lg border border-[var(--admin-border)] bg-white p-3">
+            <div className="mb-2 flex items-center gap-2">
+              {hasBlockers ? <XCircle size={16} className="text-[var(--admin-red)]" /> : <CheckCircle2 size={16} className="text-[var(--admin-green)]" />}
+              <h3 className="text-sm font-semibold text-[var(--admin-foreground)]">Bloqueios</h3>
+            </div>
+            <div className="grid gap-2">
+              {hasBlockers ? (
+                dossier.blockers.slice(0, 6).map((item) => (
+                  <p key={item} className="rounded-lg border border-[rgba(196,61,45,0.22)] bg-[rgba(196,61,45,0.06)] px-3 py-2 text-xs leading-5 text-[var(--admin-soft)]">
+                    {item}
+                  </p>
+                ))
+              ) : (
+                <p className="rounded-lg border border-[rgba(19,122,69,0.22)] bg-[rgba(19,122,69,0.06)] px-3 py-2 text-xs leading-5 text-[var(--admin-green)]">
+                  Nenhum bloqueio critico registrado no dossie.
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-[var(--admin-border)] bg-white p-3">
+            <div className="mb-2 flex items-center gap-2">
+              <Target size={16} className="text-[var(--admin-cyan)]" />
+              <h3 className="text-sm font-semibold text-[var(--admin-foreground)]">Proximos upgrades</h3>
+            </div>
+            <div className="grid gap-2">
+              {hasRecommendations ? (
+                dossier.recommendations.slice(0, 6).map((item) => (
+                  <p key={item} className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card-2)] px-3 py-2 text-xs leading-5 text-[var(--admin-soft)]">
+                    {item}
+                  </p>
+                ))
+              ) : (
+                <p className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card-2)] px-3 py-2 text-xs leading-5 text-[var(--admin-muted)]">
+                  Nenhuma recomendacao pendente.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="overflow-hidden rounded-lg border border-[var(--admin-border)] bg-white">
+          <div className="flex min-h-10 items-center justify-between gap-3 border-b border-[var(--admin-border)] px-3">
+            <h3 className="text-sm font-semibold text-[var(--admin-foreground)]">Evidencias da qualificacao</h3>
+            <StatusBadge tone="muted">{dossier.evidence.length}</StatusBadge>
+          </div>
+          {evidence.length ? (
+            <div className="divide-y divide-[var(--admin-border)]">
+              {evidence.map((item) => (
+                <div key={item.id || `${item.category}-${item.label}`} className="grid gap-3 px-3 py-3 md:grid-cols-[9rem_minmax(0,1fr)_7rem] md:items-start">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <StatusBadge tone={evidenceStatusTone(item.status)}>{evidenceStatusLabel(item.status)}</StatusBadge>
+                    <p className="text-xs font-semibold text-[var(--admin-muted)]">{evidenceCategoryLabel(item.category)}</p>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-[var(--admin-foreground)]">{item.label}</p>
+                    <p className="mt-1 line-clamp-2 text-xs leading-5 text-[var(--admin-muted)]">{item.details || "Sem detalhe adicional."}</p>
+                    {item.sourceUrl ? (
+                      <Link className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-[var(--admin-cyan)] hover:underline" href={item.sourceUrl} target="_blank" rel="noreferrer">
+                        Ver fonte
+                        <ArrowUpRight size={12} />
+                      </Link>
+                    ) : null}
+                  </div>
+                  <ScoreBadge score={item.score} />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="p-4">
+              <EmptyState title="Sem evidencias detalhadas" detail="O dossie existe, mas ainda nao recebeu itens de evidencia." />
+            </div>
+          )}
+        </div>
+
+        <div className="grid gap-3 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card-2)] p-3 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.45fr)]">
+          <div className="grid gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-[var(--admin-foreground)]">Feedback humano</h3>
+              <p className="mt-1 text-xs leading-5 text-[var(--admin-muted)]">
+                Registre se a curadoria confirmou, corrigiu ou reprovou o dossie. Isso vira base para melhorar os proximos lotes.
+              </p>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <SelectField
+                label="Decisao"
+                name="qualificationDecision"
+                defaultValue="confirmado"
+                options={[
+                  { value: "confirmado", label: "Confirmado" },
+                  { value: "corrigido", label: "Corrigido" },
+                  { value: "reprovado", label: "Reprovado" },
+                  { value: "pendente", label: "Pendente" },
+                ]}
+              />
+              <SelectField
+                label="Campo"
+                name="qualificationFieldKey"
+                defaultValue="geral"
+                options={[
+                  { value: "geral", label: "Geral" },
+                  { value: "identidade", label: "Identidade" },
+                  { value: "mercado", label: "Mercado" },
+                  { value: "imagem", label: "Imagem" },
+                  { value: "documentos", label: "Documentos" },
+                  { value: "compliance", label: "Compliance" },
+                  { value: "risco", label: "Risco" },
+                ]}
+              />
+            </div>
+            <TextField
+              label="Observacao"
+              name="qualificationNotes"
+              placeholder="Descreva o que foi confirmado ou qual correcao precisa virar criterio."
+            />
+            <Button
+              className="h-9 w-fit bg-[var(--admin-green)] text-white hover:bg-[#0f6a3b]"
+              formAction={savePropertyQualificationFeedbackAction}
+            >
+              <CheckCircle2 size={15} />
+              Registrar feedback
+            </Button>
+          </div>
+
+          <div className="rounded-lg border border-[var(--admin-border)] bg-white p-3">
+            <h3 className="text-sm font-semibold text-[var(--admin-foreground)]">Historico recente</h3>
+            <div className="mt-3 grid gap-2">
+              {latestFeedback.length ? (
+                latestFeedback.map((item) => (
+                  <div key={item.id} className="rounded-lg border border-[var(--admin-border)] px-3 py-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <StatusBadge tone={feedbackDecisionTone(item.decision)}>{feedbackDecisionLabel(item.decision)}</StatusBadge>
+                      <p className="text-[10px] text-[var(--admin-muted)]">{formatDateTime(item.createdAt)}</p>
+                    </div>
+                    <p className="mt-2 text-xs font-semibold text-[var(--admin-foreground)]">{item.reviewerName}</p>
+                    <p className="mt-1 line-clamp-2 text-xs leading-5 text-[var(--admin-muted)]">{item.notes || "Sem observacao."}</p>
+                  </div>
+                ))
+              ) : (
+                <p className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card-2)] px-3 py-2 text-xs leading-5 text-[var(--admin-muted)]">
+                  Nenhum feedback registrado ainda.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </SectionCard>
+  );
 }
 
 function OverviewTab({
@@ -1313,6 +1631,8 @@ function OverviewTab({
   images,
   heroImage,
   selectedImageIndex,
+  qualificationDossier,
+  qualificationReason,
   reason,
 }: {
   opportunity: AuctionOpportunity;
@@ -1320,6 +1640,8 @@ function OverviewTab({
   images: PropertyImageAsset[];
   heroImage?: PropertyImageAsset;
   selectedImageIndex?: number;
+  qualificationDossier?: PropertyQualificationDossier | null;
+  qualificationReason?: string;
   reason?: string;
 }) {
   const review = reviewedFieldsCount(opportunity, analysis);
@@ -1336,6 +1658,7 @@ function OverviewTab({
       />
       <RecommendedAction opportunity={opportunity} analysis={analysis} />
       <PipelineStepper opportunity={opportunity} analysis={analysis} />
+      <QualificationDossierPanel opportunity={opportunity} dossier={qualificationDossier} reason={qualificationReason} compact />
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
         <SectionCard title="Resumo da IA" eyebrow="visao geral" contentClassName="p-4">
@@ -1998,10 +2321,14 @@ function DocumentActions({ url }: { url?: string }) {
 function ReviewTab({
   opportunity,
   analysis,
+  qualificationDossier,
+  qualificationReason,
   reason,
 }: {
   opportunity: AuctionOpportunity;
   analysis: PropertyMarketAnalysis | null;
+  qualificationDossier?: PropertyQualificationDossier | null;
+  qualificationReason?: string;
   reason?: string;
 }) {
   if (!analysis) {
@@ -2183,6 +2510,12 @@ function ReviewTab({
         </div>
       </SectionCard>
 
+      <QualificationDossierPanel
+        opportunity={opportunity}
+        dossier={qualificationDossier}
+        reason={qualificationReason}
+      />
+
       <div className="sticky bottom-3 z-20 rounded-xl border border-[var(--admin-border)] bg-[rgba(255,255,255,0.96)] p-3 shadow-lg shadow-[rgba(81,60,36,0.12)] backdrop-blur">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
@@ -2258,7 +2591,9 @@ function HistoryTab({
 export function OpportunityDetailCenter({
   opportunity,
   analysis,
+  qualificationDossier,
   reason,
+  qualificationReason,
   activeTab,
   marketFilter,
   marketSort,
@@ -2282,6 +2617,8 @@ export function OpportunityDetailCenter({
         activeTab={tab}
         opportunity={opportunity}
         analysis={analysis}
+        qualificationDossier={qualificationDossier}
+        qualificationReason={qualificationReason}
         reason={reason}
         images={images}
         heroImage={heroImage}
@@ -2292,11 +2629,11 @@ export function OpportunityDetailCenter({
     </div>
   );
 
-  if (!analysis) return body;
+  if (!analysis && !qualificationDossier) return body;
 
   return (
     <form action={savePropertyMarketAnalysisAction} className="contents">
-      {tab !== "revisao" ? <HiddenReviewFields opportunity={opportunity} analysis={analysis} /> : null}
+      {analysis && tab !== "revisao" ? <HiddenReviewFields opportunity={opportunity} analysis={analysis} /> : null}
       {body}
     </form>
   );

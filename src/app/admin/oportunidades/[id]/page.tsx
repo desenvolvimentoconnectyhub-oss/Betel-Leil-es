@@ -1,6 +1,10 @@
 import { notFound } from "next/navigation";
 import { OpportunityDetailCenter } from "@/components/admin/opportunity-detail/OpportunityDetailCenter";
-import { getAuctionOpportunityByCode, getPropertyMarketAnalysisByOpportunityCode } from "@/lib/admin/repository";
+import {
+  getAuctionOpportunityByCode,
+  getPropertyMarketAnalysisByOpportunityCode,
+  getPropertyQualificationDossierByOpportunityCode,
+} from "@/lib/admin/repository";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -32,11 +36,15 @@ export default async function OpportunityDetailPage({
   const opportunity = opportunityResult.data;
   if (!opportunity) notFound();
 
+  const qualificationResult = await getPropertyQualificationDossierByOpportunityCode(opportunity.id);
+
   return (
     <OpportunityDetailCenter
       opportunity={opportunity}
       analysis={marketAnalysisResult.data}
       reason={marketAnalysisResult.reason}
+      qualificationDossier={qualificationResult.data}
+      qualificationReason={qualificationResult.reason}
       activeTab={firstQueryValue(query.tab)}
       marketFilter={firstQueryValue(query.marketFilter)}
       marketSort={firstQueryValue(query.marketSort)}

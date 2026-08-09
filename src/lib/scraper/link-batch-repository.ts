@@ -18,6 +18,7 @@ import { extractAuctionSiteContext, type AuctionSiteDocument, type AuctionSiteEx
 import { extractAuctionLinkWithGemini, type AuctionLinkExtraction } from "./auction-link-extractor";
 import { runDeepMarketResearch, type DeepMarketComparable, type DeepMarketResearchResult } from "./deep-market-research";
 import { auctionApiFetchHeaders, auctionPageFetchHeaders } from "./http";
+import { persistPropertyQualificationDossier } from "./property-qualification-dossier";
 import { cleanHtmlForLlm } from "./scraper-llm";
 import { collectImageUrlsFromSourceUrl, looksLikeBotChallenge } from "./scraper-strategies";
 import type { DataResult, MutationResult } from "@/lib/admin/repository/shared";
@@ -2626,6 +2627,37 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
       geminiError: gemini.error,
     });
 
+    const qualificationDossier = await persistPropertyQualificationDossier({
+      opportunityId: ingest.data.opportunityId,
+      opportunityCode,
+      scrapeRunId: runId,
+      sourceUrl: row.auctionUrl,
+      sourceDomain: domain,
+      analysisDepth,
+      title,
+      initialBid,
+      auctionAppraisalValue: appraisalValue,
+      marketValueBase,
+      extraction,
+      qualityReview,
+      qualityGate,
+      marketResearch,
+      images,
+      documents: documentLinks,
+      rawImageUrls,
+      adapter: {
+        key: siteContext.adapterKey,
+        name: siteContext.adapterName,
+        warnings: [...siteContext.warnings, ...supplement.warnings],
+        confidenceScore: siteContext.extraction.confidenceScore || 0,
+      },
+      pageDiagnostics: {
+        httpStatus: response.status,
+        resolvedSourceUrl,
+        blockedByAntiBot: pageBlocked,
+      },
+    });
+
     await supabase.from("auction_scrape_runs").update({
       opportunity_id: ingest.data.opportunityId,
       status: response.ok && qualityGate.passed ? "completed" : "partial",
@@ -2650,6 +2682,9 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
           requiresReview: qualityReview.requiresReview,
           minimumConfidence: profile.minimumConfidence,
           qualityGate,
+          qualificationDossier: qualificationDossier.ok
+            ? qualificationDossier.data || { skipped: qualificationDossier.skipped, mode: qualificationDossier.mode }
+            : { status: "not_persisted", mode: qualificationDossier.mode, error: qualificationDossier.error },
         },
         adapter: {
           key: siteContext.adapterKey,

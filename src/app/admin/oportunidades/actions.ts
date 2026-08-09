@@ -10,6 +10,7 @@ import {
   ingestAuctionOpportunityRecord,
   refreshOpportunityValidationPipelinesRecord,
   savePropertyMarketAnalysisRecord,
+  savePropertyQualificationFeedbackRecord,
   updateAuctionOpportunityRecord,
   type CreateAuctionOpportunityInput,
   type SavePropertyMarketAnalysisInput,
@@ -374,4 +375,35 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
   revalidatePath(detailPath);
 
   redirect(`${detailPath}?market=${approvalStatus ? "juridico" : "salva"}`);
+}
+
+export async function savePropertyQualificationFeedbackAction(formData: FormData) {
+  const admin = await requireCurrentAdmin();
+  const currentCode = normalizeCode(field(formData, "qualificationOpportunityCode") || field(formData, "opportunityCode"));
+  const detailPath = currentCode ? `/admin/oportunidades/${currentCode}` : "/admin/oportunidades";
+
+  const result = await savePropertyQualificationFeedbackRecord({
+    dossierId: field(formData, "qualificationDossierId"),
+    opportunityId: field(formData, "qualificationOpportunityId"),
+    adminUserId: admin.id,
+    reviewerName: admin.name,
+    decision: field(formData, "qualificationDecision", "confirmado"),
+    fieldKey: field(formData, "qualificationFieldKey", "geral"),
+    notes: field(formData, "qualificationNotes"),
+    rawPayload: {
+      source: "opportunity_detail",
+      opportunityCode: currentCode,
+      recordedAt: new Date().toISOString(),
+    },
+  });
+
+  if (!result.ok) {
+    errorRedirect(detailPath, result.error || "Nao foi possivel registrar o feedback do dossie.");
+  }
+
+  revalidatePath("/admin");
+  revalidatePath("/admin/oportunidades");
+  revalidatePath(detailPath);
+
+  redirect(`${detailPath}?tab=revisao&qualification=feedback`);
 }

@@ -8,4 +8,5 @@ export * from "./workflow";
 export * from "./validation-pipeline";
 export * from "./market-analysis";
 export * from "./messages";
+export * from "./property-qualification";
 export * from "./whatsapp-crm";
