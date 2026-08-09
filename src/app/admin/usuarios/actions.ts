@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { requireCurrentAdmin } from "@/lib/auth/admin";
 import {
   createAdminUserRecord,
+  deleteAdminUserRecord,
   defaultSectorKeysForRole,
   resendAdminUserInviteRecord,
   updateAdminUserRecord,
@@ -165,4 +166,26 @@ export async function updateAdminUserStatusAction(formData: FormData) {
 
   revalidatePath("/admin/usuarios");
   redirectWith("/admin/usuarios", "success", "Status do usuario atualizado.");
+}
+
+export async function deleteAdminUserAction(formData: FormData) {
+  const admin = await requireUserManager();
+  const id = field(formData, "id");
+
+  const result = await deleteAdminUserRecord(id, { id: admin.id, role: admin.role });
+
+  if (!result.ok) {
+    redirectWith("/admin/usuarios", "error", result.error || "Nao foi possivel remover o usuario.");
+  }
+
+  revalidatePath("/admin/usuarios");
+  if (result.data?.authDeleteError) {
+    redirectWith(
+      "/admin/usuarios",
+      "success",
+      `Usuario removido do painel. Aviso: nao foi possivel remover o acesso Auth automaticamente: ${result.data.authDeleteError}`
+    );
+  }
+
+  redirectWith("/admin/usuarios", "success", "Usuario removido do painel e do acesso Auth.");
 }

@@ -10,11 +10,13 @@ import {
   ShieldCheck,
   UserPlus,
   Users,
+  Trash2,
   X,
 } from "lucide-react";
 import Link from "next/link";
 import {
   createAdminUserAction,
+  deleteAdminUserAction,
   resendAdminUserInviteAction,
   updateAdminUserAction,
   updateAdminUserStatusAction,
@@ -30,6 +32,7 @@ import {
   type AdminUserStatus,
 } from "@/lib/admin/repository";
 import { adminRoleLabel } from "@/lib/admin/labels";
+import { requireCurrentAdmin } from "@/lib/auth/admin";
 import { cn } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -159,13 +162,38 @@ function EditUserAction({ user }: { user: AdminUserListItem }) {
   );
 }
 
+function DeleteUserAction({ user, currentAdminId }: { user: AdminUserListItem; currentAdminId: string }) {
+  if (user.id === currentAdminId) return null;
+
+  return (
+    <form action={deleteAdminUserAction}>
+      <input type="hidden" name="id" value={user.id} />
+      <Button
+        type="submit"
+        size="sm"
+        variant="destructive"
+        title={`Remover ${user.displayName}`}
+        className="h-7 rounded-md border-[rgba(239,68,68,0.26)] text-xs text-red-100"
+      >
+        <Trash2 size={13} />
+        Remover
+      </Button>
+    </form>
+  );
+}
+
 export default async function AdminUsersPage({
   searchParams,
 }: {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const paramsPromise: Promise<Record<string, string | string[] | undefined>> = searchParams || Promise.resolve({});
-  const [usersResult, sectorsResult, params] = await Promise.all([listAdminUsers(), listAdminSectors(), paramsPromise]);
+  const [usersResult, sectorsResult, params, currentAdmin] = await Promise.all([
+    listAdminUsers(),
+    listAdminSectors(),
+    paramsPromise,
+    requireCurrentAdmin(),
+  ]);
   const users = usersResult.data;
   const sectors = sectorsResult.data;
   const status = typeof params.status === "string" ? params.status : undefined;
@@ -475,6 +503,7 @@ export default async function AdminUsersPage({
                         ) : (
                           <StatusAction user={user} nextStatus="active" label="Ativar" />
                         )}
+                        <DeleteUserAction user={user} currentAdminId={currentAdmin.id} />
                       </div>
                     </td>
                   </tr>

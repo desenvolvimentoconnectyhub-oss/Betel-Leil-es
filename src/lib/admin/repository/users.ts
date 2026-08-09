@@ -60,6 +60,11 @@ export type CreateBootstrapAdminAccountInput = {
   password: string;
 };
 
+export type DeleteAdminUserActor = {
+  id: string;
+  role: string;
+};
+
 type AdminInviteLinkKind = "invite" | "recovery";
 
 type AdminInviteDeliveryResult = {
@@ -1025,4 +1030,78 @@ export async function updateAdminUserStatusRecord(
 
   if (error) return { ok: false, error: error.message };
   return { ok: true, data: { id, status: nextStatus } };
+}
+
+export async function deleteAdminUserRecord(
+  id: string,
+  actor?: DeleteAdminUserActor
+): Promise<MutationResult<{ id: string; authDeleted: boolean; authDeleteError?: string }>> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return { ok: false, error: "Supabase admin nao configurado." };
+
+  const adminUserId = id.trim();
+  if (!adminUserId) return { ok: false, error: "Usuario nao informado." };
+  if (actor?.id && actor.id === adminUserId) {
+    return { ok: false, error: "Voce nao pode remover o proprio usuario logado." };
+  }
+
+  const { data: row, error: rowError } = await supabase
+    .from("admin_users")
+    .select("id,auth_user_id,email,role,status")
+    .eq("id", adminUserId)
+    .maybeSingle();
+
+  if (rowError) return { ok: false, error: rowError.message };
+  if (!row) return { ok: false, error: "Usuario administrativo nao encontrado." };
+
+  const targetRole = normalizeRole(String(row.role || "analyst"));
+  if (targetRole === "owner" && actor?.role !== "owner") {
+    return { ok: false, error: "Somente um super admin pode remover outro super admin." };
+  }
+
+  if (targetRole === "owner") {
+    const { count, error: ownerCountError } = await supabase
+      .from("admin_users")
+      .select("id", { count: "exact", head: true })
+      .eq("role", "owner")
+      .eq("status", "active")
+      .neq("id", adminUserId);
+
+    if (ownerCountError) return { ok: false, error: ownerCountError.message };
+    if (!count) {
+      return { ok: false, error: "Cadastre outro super admin ativo antes de remover este usuario." };
+    }
+  }
+
+  const authUserId = typeof row.auth_user_id === "string" ? row.auth_user_id : "";
+
+  const { error: membershipError } = await supabase
+    .from("admin_user_sector_memberships")
+    .delete()
+    .eq("admin_user_id", adminUserId);
+
+  if (membershipError) return { ok: false, error: membershipError.message };
+
+  const { error: deleteError } = await supabase
+    .from("admin_users")
+    .delete()
+    .eq("id", adminUserId);
+
+  if (deleteError) return { ok: false, error: deleteError.message };
+
+  if (!authUserId) return { ok: true, data: { id: adminUserId, authDeleted: false } };
+
+  const { error: authDeleteError } = await supabase.auth.admin.deleteUser(authUserId);
+  if (authDeleteError) {
+    return {
+      ok: true,
+      data: {
+        id: adminUserId,
+        authDeleted: false,
+        authDeleteError: authDeleteError.message,
+      },
+    };
+  }
+
+  return { ok: true, data: { id: adminUserId, authDeleted: true } };
 }

@@ -2,8 +2,8 @@ import { Suspense } from "react";
 import { LoginPage } from "@/components/public/LoginPage";
 
 export const metadata = {
-  title: "Entrar | Betel Leiloes",
-  description: "Acesse sua conta para ver oportunidades de leilao.",
+  title: "Acesso CRM | Betel Leiloes",
+  description: "Acesso interno para operadores do sistema Betel.",
 };
 
 export default function LoginRoute() {
