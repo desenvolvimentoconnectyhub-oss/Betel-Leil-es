@@ -910,13 +910,13 @@ function Gallery({
       title="Fotos do imovel"
       eyebrow="galeria / r2"
       action={<StatusBadge tone={heroImage ? "green" : "yellow"}>{images.length} foto(s)</StatusBadge>}
-      className={cn("scroll-mt-40", fillHeight ? "flex h-full self-stretch flex-col" : "self-start h-fit")}
-      contentClassName={cn("p-3", fillHeight && "flex flex-1")}
+      className={cn("scroll-mt-40 min-h-0", fillHeight ? "flex h-full self-stretch flex-col" : "self-start h-fit")}
+      contentClassName={cn("p-3", fillHeight && "flex min-h-0 flex-1")}
     >
       <div
         className={cn(
           "grid w-full items-start gap-3",
-          fillHeight && "lg:h-full lg:items-stretch",
+          fillHeight && "lg:h-full lg:min-h-0 lg:items-stretch",
           compact ? "lg:grid-cols-[1fr_164px]" : "lg:grid-cols-[minmax(0,1fr)_220px]"
         )}
       >
@@ -962,8 +962,14 @@ function Gallery({
           className={cn(
             "grid gap-2",
             compact
-              ? cn("grid-cols-5 lg:grid-cols-1 lg:overflow-y-auto lg:pr-1", fillHeight ? "lg:h-full lg:max-h-none" : thumbnailRailHeight)
-              : cn("grid-cols-4 lg:grid-cols-2 lg:overflow-y-auto lg:pr-1", fillHeight ? "lg:h-full lg:max-h-none" : thumbnailRailHeight)
+              ? cn(
+                  "grid-cols-5 lg:grid-cols-1 lg:overflow-y-auto lg:pr-1",
+                  fillHeight ? "lg:h-full lg:min-h-0 lg:max-h-full" : thumbnailRailHeight
+                )
+              : cn(
+                  "grid-cols-4 lg:grid-cols-2 lg:overflow-y-auto lg:pr-1",
+                  fillHeight ? "lg:h-full lg:min-h-0 lg:max-h-full" : thumbnailRailHeight
+                )
           )}
         >
           {images.map((image, index) => (
