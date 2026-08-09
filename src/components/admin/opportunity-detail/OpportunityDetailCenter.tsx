@@ -901,7 +901,7 @@ function Gallery({
       : heroImage
         ? images.findIndex((image) => image.url === heroImage.url)
         : -1;
-  const heroHeight = fillHeight ? "h-full min-h-[360px] sm:min-h-[500px] xl:min-h-[620px]" : "h-[360px] sm:h-[500px] xl:h-[620px]";
+  const heroHeight = fillHeight ? "h-[360px] sm:h-[500px] lg:h-full lg:min-h-0" : "h-[360px] sm:h-[500px] xl:h-[620px]";
   const thumbnailRailHeight = "lg:max-h-[620px]";
 
   return (
@@ -945,7 +945,7 @@ function Gallery({
           <div
             className={cn(
               "grid aspect-[16/9] min-h-56 place-items-center rounded-lg border border-[var(--admin-border)] bg-[#fbf6e9] text-center",
-              fillHeight && "lg:h-full lg:min-h-[620px]"
+              fillHeight && "lg:h-full lg:min-h-0"
             )}
           >
             <div>
