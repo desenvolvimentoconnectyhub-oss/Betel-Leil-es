@@ -13,7 +13,8 @@ function field(formData: FormData, name: string, fallback = "") {
 }
 
 function redirectWith(status: "success" | "error", message: string): never {
-  redirect(`/admin/whatsapp/remetente?status=${status}&message=${encodeURIComponent(message)}`);
+  const params = new URLSearchParams({ tab: "remetente", status, message });
+  redirect(`/admin/mensagens?${params.toString()}`);
 }
 
 async function requireWhatsAppManager() {

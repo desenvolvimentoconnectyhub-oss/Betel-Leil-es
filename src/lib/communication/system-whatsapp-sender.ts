@@ -131,7 +131,9 @@ export async function listSystemWhatsAppSenderOptions(): Promise<SystemWhatsAppS
     .limit(80);
 
   if (error) return [];
-  return ((data || []) as DbRow[]).map(normalizeSender).filter((sender) => sender.id && sender.providerInstanceId);
+  return ((data || []) as DbRow[])
+    .map(normalizeSender)
+    .filter((sender) => sender.id && sender.providerInstanceId && sender.connected);
 }
 
 export async function getSystemWhatsAppSenderConfig(): Promise<SystemWhatsAppSenderConfig> {

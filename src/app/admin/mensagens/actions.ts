@@ -33,8 +33,28 @@ function booleanField(formData: FormData, name: string) {
   return typeof value === "string" && ["1", "true", "on", "yes", "sim"].includes(value.toLowerCase());
 }
 
-function redirectWith(status: "success" | "error", message: string): never {
-  redirect(`/admin/mensagens?status=${status}&message=${encodeURIComponent(message)}`);
+function safeQueryValue(value: string) {
+  return value.replace(/[^\w.:-]/g, "").slice(0, 120);
+}
+
+function redirectWith(
+  status: "success" | "error",
+  message: string,
+  context?: { tab?: string; template?: string; route?: string }
+): never {
+  const params = new URLSearchParams({ status, message });
+  if (context?.tab) params.set("tab", safeQueryValue(context.tab));
+  if (context?.template) params.set("template", safeQueryValue(context.template));
+  if (context?.route) params.set("route", safeQueryValue(context.route));
+  redirect(`/admin/mensagens?${params.toString()}`);
+}
+
+function redirectContext(formData: FormData) {
+  return {
+    tab: field(formData, "returnTab"),
+    template: field(formData, "returnTemplate"),
+    route: field(formData, "returnRoute"),
+  };
 }
 
 async function requireMessageManager() {
@@ -54,6 +74,7 @@ function revalidateMessages() {
 
 export async function saveMessageTemplateAction(formData: FormData) {
   const admin = await requireMessageManager();
+  const context = redirectContext(formData);
   const statusValue = field(formData, "status", "active");
   const status = statusValues.has(statusValue) ? (statusValue as "draft" | "active" | "archived") : "draft";
   const result = await saveMessageTemplateRecord({
@@ -74,13 +95,14 @@ export async function saveMessageTemplateAction(formData: FormData) {
     operatorLabel: admin.name || admin.email || "Admin Betel",
   });
 
-  if (!result.ok) redirectWith("error", result.error || "Nao foi possivel salvar o template.");
+  if (!result.ok) redirectWith("error", result.error || "Nao foi possivel salvar o template.", context);
   revalidateMessages();
-  redirectWith("success", "Template de mensagem salvo.");
+  redirectWith("success", "Template de mensagem salvo.", context);
 }
 
 export async function saveMessageRouteAction(formData: FormData) {
   const admin = await requireMessageManager();
+  const context = redirectContext(formData);
   const parsed = parseRouteFormRecipients({
     segmentKeys: listField(formData, "recipientSegmentKeys"),
     recipientKeys: listField(formData, "recipientKeys"),
@@ -99,13 +121,14 @@ export async function saveMessageRouteAction(formData: FormData) {
     operatorLabel: admin.name || admin.email || "Admin Betel",
   });
 
-  if (!result.ok) redirectWith("error", result.error || "Nao foi possivel salvar a rota.");
+  if (!result.ok) redirectWith("error", result.error || "Nao foi possivel salvar a rota.", context);
   revalidateMessages();
-  redirectWith("success", "Rota de destinatarios salva.");
+  redirectWith("success", "Rota de destinatarios salva.", context);
 }
 
 export async function queueDirectMessageAction(formData: FormData) {
   const admin = await requireMessageManager();
+  const context = redirectContext(formData);
   const parsed = parseRouteFormRecipients({
     segmentKeys: listField(formData, "recipientSegmentKeys"),
     recipientKeys: listField(formData, "recipientKeys"),
@@ -130,12 +153,12 @@ export async function queueDirectMessageAction(formData: FormData) {
     operatorLabel: admin.name || admin.email || "Admin Betel",
   });
 
-  if (!result.ok) redirectWith("error", result.error || "Nao foi possivel criar a mensagem.");
+  if (!result.ok) redirectWith("error", result.error || "Nao foi possivel criar a mensagem.", context);
   revalidateMessages();
 
   if (!result.data?.outboxCount) {
-    redirectWith("error", result.data?.skippedReason || "Nenhum destinatario elegivel.");
+    redirectWith("error", result.data?.skippedReason || "Nenhum destinatario elegivel.", context);
   }
 
-  redirectWith("success", `${result.data.outboxCount} mensagem(ns) criada(s) no outbox.`);
+  redirectWith("success", `${result.data.outboxCount} mensagem(ns) criada(s) no outbox.`, context);
 }

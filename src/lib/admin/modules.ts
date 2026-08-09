@@ -1141,7 +1141,7 @@ export const adminNavGroups: AdminNavGroup[] = [
         label: "Agentes WhatsApp",
         icon: "MessageCircle",
         children: [
-          { href: "/admin/whatsapp/remetente", label: "Remetente do sistema", icon: "Smartphone" },
+          { href: "/admin/mensagens", label: "Mensagens e remetente", icon: "MessageSquareText" },
         ],
       },
       { href: "/admin/central-inteligencia", label: "Central de Inteligencia", icon: "BrainCircuit", badge: "Em breve" },
@@ -1194,7 +1194,7 @@ export function getAdminStaticSlugs() {
 
 export function getCanonicalAdminHref(pathname: string) {
   if (pathname === "/admin") return "/admin";
-  if (pathname === "/admin/whatsapp/remetente") return pathname;
+  if (pathname === "/admin/whatsapp/remetente") return "/admin/mensagens";
   const slug = pathname.split("/").filter(Boolean)[1];
   if (!slug) return "/admin";
   return getAdminModule(slug)?.href || pathname;
