@@ -1170,7 +1170,7 @@ export const adminNavGroups: AdminNavGroup[] = [
   {
     label: "Conta",
     items: [
-      { href: "/admin/usuarios", label: "Usuarios", icon: "Users", badge: "Em breve" },
+      { href: "/admin/usuarios", label: "Usuarios", icon: "Users" },
     ],
   },
 ];
