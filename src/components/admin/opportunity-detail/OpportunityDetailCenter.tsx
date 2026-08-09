@@ -141,7 +141,7 @@ function tabHref(tab: OpportunityTabId, extra?: Record<string, string | undefine
 }
 
 function imageHref(tab: OpportunityTabId, imageIndex: number) {
-  return `${tabHref(tab, { photo: String(imageIndex + 1) })}#fotos`;
+  return tabHref(tab, { photo: String(imageIndex + 1) });
 }
 
 function normalizePhotoIndex(value: string | undefined, imageCount: number) {
@@ -885,7 +885,8 @@ function Gallery({
   currentTab,
   selectedImageIndex,
   compact = false,
-  fillHeight = false,
+  thumbnailEntries,
+  fillSpace = false,
 }: {
   images: PropertyImageAsset[];
   heroImage?: PropertyImageAsset;
@@ -893,7 +894,8 @@ function Gallery({
   currentTab: OpportunityTabId;
   selectedImageIndex?: number;
   compact?: boolean;
-  fillHeight?: boolean;
+  thumbnailEntries?: GalleryImageEntry[];
+  fillSpace?: boolean;
 }) {
   const activeIndex =
     typeof selectedImageIndex === "number"
@@ -901,8 +903,16 @@ function Gallery({
       : heroImage
         ? images.findIndex((image) => image.url === heroImage.url)
         : -1;
-  const heroHeight = fillHeight ? "h-[360px] sm:h-[500px] lg:h-full lg:min-h-0" : "h-[360px] sm:h-[500px] xl:h-[620px]";
-  const thumbnailRailHeight = "lg:max-h-[620px]";
+  const thumbnails = thumbnailEntries || images.map((image, index) => ({ image, index }));
+  const hasThumbnails = thumbnails.length > 0;
+  const heroHeight =
+    compact && fillSpace
+      ? "h-[360px] sm:h-[500px] xl:h-full xl:min-h-0"
+      : compact
+        ? "h-[300px] sm:h-[320px] xl:h-[340px]"
+        : "h-[360px] sm:h-[500px] xl:h-[620px]";
+  const thumbnailRailHeight =
+    compact && fillSpace ? "lg:max-h-[500px] xl:h-full xl:max-h-full" : compact ? "lg:max-h-[340px]" : "lg:max-h-[620px]";
 
   return (
     <SectionCard
@@ -910,14 +920,17 @@ function Gallery({
       title="Fotos do imovel"
       eyebrow="galeria / r2"
       action={<StatusBadge tone={heroImage ? "green" : "yellow"}>{images.length} foto(s)</StatusBadge>}
-      className={cn("scroll-mt-40 min-h-0", fillHeight ? "flex h-full self-stretch flex-col" : "self-start h-fit")}
-      contentClassName={cn("p-3", fillHeight && "flex min-h-0 flex-1")}
+      className={cn(
+        "scroll-mt-40 min-h-0 self-start h-fit",
+        fillSpace && "xl:flex xl:h-full xl:self-stretch xl:flex-col"
+      )}
+      contentClassName={cn("p-3", fillSpace && "xl:flex xl:min-h-0 xl:flex-1")}
     >
       <div
         className={cn(
           "grid w-full items-start gap-3",
-          fillHeight && "lg:h-full lg:min-h-0 lg:items-stretch",
-          compact ? "lg:grid-cols-[1fr_164px]" : "lg:grid-cols-[minmax(0,1fr)_220px]"
+          fillSpace && "xl:h-full xl:min-h-0 xl:items-stretch",
+          hasThumbnails && (compact ? "lg:grid-cols-[minmax(0,1fr)_164px]" : "lg:grid-cols-[minmax(0,1fr)_220px]")
         )}
       >
         {heroImage ? (
@@ -942,12 +955,7 @@ function Gallery({
             </span>
           </a>
         ) : (
-          <div
-            className={cn(
-              "grid aspect-[16/9] min-h-56 place-items-center rounded-lg border border-[var(--admin-border)] bg-[#fbf6e9] text-center",
-              fillHeight && "lg:h-full lg:min-h-0"
-            )}
-          >
+          <div className="grid aspect-[16/9] min-h-56 place-items-center rounded-lg border border-[var(--admin-border)] bg-[#fbf6e9] text-center">
             <div>
               <ImageOff className="mx-auto text-[var(--admin-muted)]" size={36} />
               <p className="mt-3 font-mono text-xs font-semibold uppercase tracking-[0.14em] text-[var(--admin-yellow)]">
@@ -958,48 +966,128 @@ function Gallery({
           </div>
         )}
 
-        <div
-          className={cn(
-            "grid gap-2",
-            compact
-              ? cn(
-                  "grid-cols-5 lg:grid-cols-1 lg:overflow-y-auto lg:pr-1",
-                  fillHeight ? "lg:h-full lg:min-h-0 lg:max-h-full" : thumbnailRailHeight
-                )
-              : cn(
-                  "grid-cols-4 lg:grid-cols-2 lg:overflow-y-auto lg:pr-1",
-                  fillHeight ? "lg:h-full lg:min-h-0 lg:max-h-full" : thumbnailRailHeight
-                )
+        {hasThumbnails ? (
+          <div
+            className={cn(
+              "grid gap-2",
+              compact
+                ? cn(
+                    "grid-cols-5 lg:grid-cols-1 lg:overflow-y-auto lg:pr-1",
+                    "lg:min-h-0",
+                    thumbnailRailHeight
+                  )
+                : cn(
+                    "grid-cols-4 lg:grid-cols-2 lg:overflow-y-auto lg:pr-1",
+                    "lg:min-h-0",
+                    thumbnailRailHeight
+                  )
           )}
-        >
-          {images.map((image, index) => (
-            <Link
-              key={`${image.url}-${index}`}
-              href={imageHref(currentTab, index)}
-              scroll={false}
-              className={cn(
-                "group relative block aspect-[4/3] overflow-hidden rounded-lg border bg-[var(--admin-card-2)] transition focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-[rgba(200,90,31,0.2)]",
-                activeIndex === index
-                  ? "border-[rgba(200,90,31,0.75)] ring-2 ring-[rgba(200,90,31,0.18)]"
-                  : "border-[var(--admin-border)] hover:border-[rgba(200,90,31,0.5)]"
-              )}
-              aria-label={`Selecionar foto ${index + 1} de ${title}`}
-            >
-              <img
-                src={image.url}
-                alt={image.alt || `${title} foto ${index + 1}`}
-                loading="lazy"
-                className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.04]"
+          >
+            {thumbnails.map(({ image, index }) => (
+              <GalleryThumbnail
+                key={`${image.url}-${index}`}
+                image={image}
+                index={index}
+                activeIndex={activeIndex}
+                currentTab={currentTab}
+                title={title}
               />
-              <span className="absolute left-1.5 top-1.5 grid size-6 place-items-center rounded-full bg-black/58 font-mono text-[10px] font-semibold text-white">
-                {index + 1}
-              </span>
-            </Link>
-          ))}
-        </div>
+            ))}
+          </div>
+        ) : null}
       </div>
     </SectionCard>
   );
+}
+
+function GalleryThumbnail({
+  image,
+  index,
+  activeIndex,
+  currentTab,
+  title,
+  fill = false,
+}: {
+  image: PropertyImageAsset;
+  index: number;
+  activeIndex: number;
+  currentTab: OpportunityTabId;
+  title: string;
+  fill?: boolean;
+}) {
+  return (
+    <Link
+      href={imageHref(currentTab, index)}
+      scroll={false}
+      className={cn(
+        "group relative block overflow-hidden rounded-lg border bg-[var(--admin-card-2)] transition focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-[rgba(200,90,31,0.2)]",
+        fill ? "min-h-0" : "aspect-[4/3]",
+        activeIndex === index
+          ? "border-[rgba(200,90,31,0.75)] ring-2 ring-[rgba(200,90,31,0.18)]"
+          : "border-[var(--admin-border)] hover:border-[rgba(200,90,31,0.5)]"
+      )}
+      aria-label={`Selecionar foto ${index + 1} de ${title}`}
+    >
+      <img
+        src={image.url}
+        alt={image.alt || `${title} foto ${index + 1}`}
+        loading="lazy"
+        className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.04]"
+      />
+      <span className="absolute left-1.5 top-1.5 grid size-6 place-items-center rounded-full bg-black/58 font-mono text-[10px] font-semibold text-white">
+        {index + 1}
+      </span>
+    </Link>
+  );
+}
+
+type GalleryImageEntry = {
+  image: PropertyImageAsset;
+  index: number;
+};
+
+function imageIdentity(image: PropertyImageAsset) {
+  const raw = (image.sourceUrl || image.url || "").toLowerCase().split(/[?#]/)[0];
+  return raw.replace(/\.(webp|jpe?g|png|gif)$/i, "");
+}
+
+function isDecorativeImage(image: PropertyImageAsset) {
+  const source = `${image.url} ${image.sourceUrl || ""} ${image.alt || ""}`.toLowerCase();
+  return ["/comitentes/", "assets/images", "feedback", "load-btn", "bradesco"].some((marker) =>
+    source.includes(marker)
+  );
+}
+
+function uniqueImageEntries(images: PropertyImageAsset[]) {
+  const seen = new Set<string>();
+  return images
+    .map((image, index) => ({ image, index }))
+    .filter(({ image }) => {
+      const identity = imageIdentity(image);
+      if (!identity || seen.has(identity)) return false;
+      seen.add(identity);
+      return true;
+    });
+}
+
+function overviewThumbnailEntries(
+  images: PropertyImageAsset[],
+  heroImage?: PropertyImageAsset,
+  selectedImageIndex?: number
+) {
+  const activeIndex =
+    typeof selectedImageIndex === "number"
+      ? selectedImageIndex
+      : heroImage
+        ? images.findIndex((image) => image.url === heroImage.url)
+        : -1;
+  const activeIdentity = activeIndex >= 0 ? imageIdentity(images[activeIndex]) : "";
+  const uniqueEntries = uniqueImageEntries(images);
+  const availableEntries = uniqueEntries.filter(
+    ({ image, index }) => index !== activeIndex && imageIdentity(image) !== activeIdentity
+  );
+  const propertyEntries = availableEntries.filter(({ image }) => !isDecorativeImage(image));
+  return (propertyEntries.length ? propertyEntries : availableEntries).slice(0, 8);
 }
 
 function ExecutiveSummary({
@@ -1019,6 +1107,7 @@ function ExecutiveSummary({
   const primaryCeiling = analysis?.ceilingTargets[0]?.value || analysis?.suggestedCeilingBid || 0;
   const totalCosts = analysis?.estimatedCosts.reduce((sum, item) => sum + item.value, 0) || 0;
   const areaBase = subject?.privateAreaM2 || subject?.builtAreaM2 || subject?.landAreaM2 || 0;
+  const thumbnailEntries = overviewThumbnailEntries(images, heroImage, selectedImageIndex);
 
   return (
     <section className="grid items-stretch gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(420px,1.05fr)]">
@@ -1029,7 +1118,8 @@ function ExecutiveSummary({
         title={opportunity.title}
         currentTab="visao-geral"
         compact
-        fillHeight
+        fillSpace
+        thumbnailEntries={thumbnailEntries}
       />
 
       <div className="grid content-start gap-4">
@@ -2173,7 +2263,7 @@ export function OpportunityDetailCenter({
   const heroImage = selectedImageIndex >= 0 ? images[selectedImageIndex] : undefined;
   const body = (
     <div id="topo-oportunidade" className="mx-auto grid max-w-[1600px] gap-4 px-3 py-3 lg:px-5">
-      <div className="sticky top-16 z-10">
+      <div>
         <OpportunityHeader opportunity={opportunity} analysis={analysis} />
         <OpportunityTabs activeTab={tab} />
       </div>
