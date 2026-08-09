@@ -6,6 +6,12 @@ import { sendGlobalWhatsAppText } from "@/lib/communication/connectyhub-client";
 import { renderMessageTemplate } from "@/lib/communication/message-templates";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { DataResult, MutationResult } from "./shared";
+import {
+  defaultSectorKeysForRole,
+  listAdminUserSectorMemberships,
+  setAdminUserSectorMemberships,
+  type AdminSectorMembership,
+} from "./workflow";
 
 export type AdminUserRole = "owner" | "admin" | "manager" | "analyst" | "viewer";
 export type AdminUserStatus = "active" | "invited" | "suspended" | "disabled";
@@ -27,6 +33,7 @@ export type AdminUserListItem = {
   invitedAt: string | null;
   invitedByAdminUserId: string | null;
   lastSeenAt: string | null;
+  sectors: AdminSectorMembership[];
   createdAt: string;
   updatedAt: string;
 };
@@ -39,6 +46,7 @@ export type CreateAdminUserInput = {
   status: AdminUserStatus;
   organizationName?: string;
   invitedByAdminId?: string | null;
+  sectorKeys?: string[];
 };
 
 export type UpdateAdminUserInput = CreateAdminUserInput & {
@@ -264,6 +272,138 @@ async function sendAdminInviteWhatsApp(input: {
   return { ok: true };
 }
 
+function buildAdminPanelLoginUrl() {
+  const baseUrl = publicAppUrl() || "http://localhost:3000";
+
+  try {
+    const url = new URL("/login", baseUrl);
+    url.searchParams.set("next", adminDefaultNextPath);
+    return url.toString();
+  } catch {
+    return `${baseUrl.replace(/\/+$/g, "")}/login?next=%2Fadmin`;
+  }
+}
+
+export async function sendAdminPasswordReadyWhatsAppRecord(input: {
+  authUserId?: string;
+  email?: string;
+  force?: boolean;
+}): Promise<MutationResult<{ id: string; status: "sent" | "failed"; skipped?: boolean }>> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return { ok: false, error: "Supabase admin nao configurado." };
+
+  const authUserId = input.authUserId?.trim() || "";
+  const email = input.email?.trim().toLowerCase() || "";
+  if (!authUserId && !email) return { ok: false, error: "Usuario nao informado para envio do acesso." };
+
+  const query = supabase
+    .from("admin_users")
+    .select("id,auth_user_id,display_name,email,phone,role,status,password_ready_status,password_ready_sent_at")
+    .eq("status", "active")
+    .limit(1);
+  const { data: row, error: rowError } = authUserId
+    ? await query.eq("auth_user_id", authUserId).maybeSingle()
+    : await query.ilike("email", email).maybeSingle();
+
+  if (rowError) return { ok: false, error: rowError.message };
+  if (!row) return { ok: false, error: "Usuario administrativo ativo nao encontrado." };
+
+  const adminUserId = String(row.id || "");
+  const displayName = String(row.display_name || row.email || "Admin Betel").trim();
+  const recipientEmail = String(row.email || email).trim().toLowerCase();
+  const phone = normalizePhone(String(row.phone || ""));
+  const alreadySent = row.password_ready_status === "sent" && row.password_ready_sent_at;
+
+  if (alreadySent && !input.force) {
+    return { ok: true, data: { id: adminUserId, status: "sent", skipped: true } };
+  }
+
+  if (!phone || phone.length < 10) {
+    await supabase
+      .from("admin_users")
+      .update({
+        password_ready_status: "failed",
+        password_ready_error: "Usuario sem telefone valido para WhatsApp.",
+        password_ready_last_attempt_at: new Date().toISOString(),
+      })
+      .eq("id", adminUserId);
+    return { ok: false, error: "Usuario sem telefone valido para WhatsApp." };
+  }
+
+  const panelUrl = buildAdminPanelLoginUrl();
+  const rendered = await renderMessageTemplate({
+    templateKey: "admin.password_ready",
+    channel: "whatsapp",
+    audienceKey: "admin",
+    variables: {
+      recipient_name: displayName,
+      recipient_first_name: firstName(displayName),
+      recipient_email: recipientEmail,
+      recipient_phone: phone,
+      recipient_role: String(row.role || "admin"),
+      panel_url: panelUrl,
+    },
+  });
+  const messageCode = makeAdminInviteMessageCode(recipientEmail || adminUserId).replace("ADMIN-INVITE", "ADMIN-PANEL");
+  const delivery = await sendGlobalWhatsAppText({
+    messageCode,
+    runCode: `ADMIN-PASSWORD-READY-${messageCode}`,
+    subject: rendered.subject || `Oi, ${firstName(displayName)}. Seu acesso ao painel Betel esta pronto.`,
+    messagePreview:
+      rendered.body ||
+      [
+        "Sua senha foi cadastrada com sucesso.",
+        "",
+        `Use seu email ${recipientEmail} e a senha que voce acabou de criar para entrar no painel.`,
+        "",
+        "Toque no botao abaixo para acessar.",
+      ].join("\n"),
+    guardrailSummary: rendered.guardrailSummary,
+    actionButton: {
+      label: rendered.actionButton?.label || "Abrir painel",
+      url: panelUrl,
+      footerText: rendered.actionButton?.footerText || "Acesso seguro Betel Leiloes",
+    },
+    payload: {
+      eventType: "admin_password_ready",
+      template: {
+        key: rendered.template.templateKey,
+        version: rendered.template.version,
+        missingVariables: rendered.missingVariables,
+      },
+      recipient: {
+        name: displayName,
+        email: recipientEmail,
+        phone,
+      },
+      auth: {
+        panelUrl,
+        passwordUrl: adminPasswordPath,
+      },
+    },
+  });
+
+  await supabase
+    .from("admin_users")
+    .update({
+      password_ready_status: delivery.ok ? "sent" : "failed",
+      password_ready_error: delivery.ok ? null : delivery.errorMessage || `ConnectyHub nao aceitou o WhatsApp (${delivery.providerStatus}).`,
+      password_ready_sent_at: delivery.ok ? new Date().toISOString() : null,
+      password_ready_last_attempt_at: new Date().toISOString(),
+    })
+    .eq("id", adminUserId);
+
+  if (!delivery.ok) {
+    return {
+      ok: false,
+      error: delivery.errorMessage || `ConnectyHub nao aceitou o WhatsApp (${delivery.providerStatus}).`,
+      data: { id: adminUserId, status: "failed" },
+    };
+  }
+
+  return { ok: true, data: { id: adminUserId, status: "sent" } };
+}
+
 async function generateAdminPasswordLink(
   supabase: SupabaseClient,
   input: {
@@ -398,7 +538,7 @@ async function findAuthUserByEmail(supabase: SupabaseClient, email: string): Pro
   return null;
 }
 
-function normalizeAdminUser(row: AdminUserDbRow): AdminUserListItem {
+function normalizeAdminUser(row: AdminUserDbRow, sectors: AdminSectorMembership[] = []): AdminUserListItem {
   return {
     id: row.id,
     organizationId: row.organization_id,
@@ -415,6 +555,7 @@ function normalizeAdminUser(row: AdminUserDbRow): AdminUserListItem {
     invitedAt: row.invited_at,
     invitedByAdminUserId: row.invited_by_admin_user_id,
     lastSeenAt: row.last_seen_at,
+    sectors,
     createdAt: row.created_at || "",
     updatedAt: row.updated_at || "",
   };
@@ -473,8 +614,11 @@ export async function listAdminUsers(limit = 80): Promise<DataResult<AdminUserLi
     };
   }
 
+  const rows = (data || []) as AdminUserDbRow[];
+  const memberships = await listAdminUserSectorMemberships(rows.map((row) => row.id));
+
   return {
-    data: (data || []).map((row) => normalizeAdminUser(row as AdminUserDbRow)),
+    data: rows.map((row) => normalizeAdminUser(row, memberships.get(row.id) || [])),
     source: "supabase",
   };
 }
@@ -497,6 +641,7 @@ export async function createAdminUserRecord(
   const phone = normalizePhone(input.phone || "");
   const role = normalizeRole(input.role);
   const status = normalizeStatus(input.status);
+  const sectorKeys = input.sectorKeys ?? defaultSectorKeysForRole(role);
 
   if (!displayName) return { ok: false, error: "Informe o nome do usuario." };
   if (!email || !email.includes("@")) return { ok: false, error: "Informe um email valido." };
@@ -545,6 +690,10 @@ export async function createAdminUserRecord(
   if (existing?.id) {
     const { error } = await supabase.from("admin_users").update(payload).eq("id", existing.id);
     if (error) return { ok: false, error: error.message };
+    const sectorResult = await setAdminUserSectorMemberships(existing.id, sectorKeys);
+    if (!sectorResult.ok) {
+      return { ok: false, error: `Usuario salvo, mas os setores nao foram atualizados: ${sectorResult.error}` };
+    }
     return {
       ok: true,
       data: {
@@ -563,6 +712,10 @@ export async function createAdminUserRecord(
     .single();
 
   if (error || !data?.id) return { ok: false, error: error?.message || "Nao foi possivel cadastrar o usuario." };
+  const sectorResult = await setAdminUserSectorMemberships(data.id, sectorKeys);
+  if (!sectorResult.ok) {
+    return { ok: false, error: `Usuario cadastrado, mas os setores nao foram atualizados: ${sectorResult.error}` };
+  }
   return {
     ok: true,
     data: {
@@ -592,6 +745,7 @@ export async function updateAdminUserRecord(
   const phone = normalizePhone(input.phone || "");
   const role = normalizeRole(input.role);
   const status = normalizeStatus(input.status);
+  const sectorKeys = input.sectorKeys ?? defaultSectorKeysForRole(role);
 
   if (!adminUserId) return { ok: false, error: "Usuario nao informado." };
   if (!displayName) return { ok: false, error: "Informe o nome do usuario." };
@@ -666,6 +820,11 @@ export async function updateAdminUserRecord(
     .eq("id", adminUserId);
 
   if (updateError) return { ok: false, error: updateError.message };
+
+  const sectorResult = await setAdminUserSectorMemberships(adminUserId, sectorKeys);
+  if (!sectorResult.ok) {
+    return { ok: false, error: `Usuario atualizado, mas os setores nao foram salvos: ${sectorResult.error}` };
+  }
 
   return {
     ok: true,

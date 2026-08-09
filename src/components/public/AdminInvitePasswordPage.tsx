@@ -201,9 +201,35 @@ export function AdminInvitePasswordPage() {
       return;
     }
 
-    setStatusMessage("Senha cadastrada. Abrindo o painel...");
-    router.replace(nextPath.startsWith("/") ? nextPath : "/admin");
-    router.refresh();
+    try {
+      const notificationResponse = await fetch("/api/auth/admin-password-ready", {
+        method: "POST",
+        credentials: "same-origin",
+      });
+      const notificationPayload = (await notificationResponse.json().catch(() => ({}))) as {
+        error?: string;
+        data?: { skipped?: boolean };
+      };
+
+      if (!notificationResponse.ok) {
+        setStatusMessage(
+          `Senha cadastrada. Nao foi possivel enviar o WhatsApp de acesso agora: ${
+            notificationPayload.error || "erro desconhecido"
+          }. Abrindo o painel...`
+        );
+      } else if (notificationPayload.data?.skipped) {
+        setStatusMessage("Senha cadastrada. O WhatsApp de acesso ja tinha sido enviado. Abrindo o painel...");
+      } else {
+        setStatusMessage("Senha cadastrada. Enviamos no WhatsApp o botao de acesso ao painel. Abrindo...");
+      }
+    } catch {
+      setStatusMessage("Senha cadastrada. Nao foi possivel confirmar o WhatsApp de acesso agora. Abrindo o painel...");
+    }
+
+    window.setTimeout(() => {
+      router.replace(nextPath.startsWith("/") ? nextPath : "/admin");
+      router.refresh();
+    }, 900);
   }
 
   return (

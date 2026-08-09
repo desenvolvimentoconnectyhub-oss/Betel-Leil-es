@@ -10,18 +10,12 @@ export const linkBatchScraperFunction = inngest.createFunction(
   async ({ event, step }) => {
     const data = event.data as {
       batchId?: string;
-      whatsappAgentKey?: string;
-      whatsappInstanceId?: string;
-      notificationRecipientId?: string;
       analysisDepth?: string;
     };
 
     const result = await step.run("process-link-batch", () =>
       startLinkScraperBatch({
         batchId: String(data.batchId || ""),
-        whatsappAgentKey: String(data.whatsappAgentKey || ""),
-        whatsappInstanceId: String(data.whatsappInstanceId || ""),
-        notificationRecipientId: String(data.notificationRecipientId || ""),
         analysisDepth: String(data.analysisDepth || "deep"),
       })
     );

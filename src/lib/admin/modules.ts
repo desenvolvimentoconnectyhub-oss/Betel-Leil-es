@@ -835,12 +835,6 @@ export const adminModules: AdminModule[] = [
         status: "Ativo",
         owner: "Analise de Mercado",
       },
-      {
-        title: "Limpeza do legado",
-        meta: "Dry-run, arquivamento seguro e exclusao controlada",
-        status: "Controlado",
-        owner: "Operacao",
-      },
     ],
   }),
   createAdminModule({
@@ -1142,7 +1136,14 @@ export const adminNavGroups: AdminNavGroup[] = [
     label: "Inteligencia",
     items: [
       { href: "/admin/agentes-ia", label: "Escritorio de Agentes IA", icon: "GitCompareArrows", badge: "Em breve" },
-      { href: "/admin/whatsapp", label: "Agentes WhatsApp", icon: "MessageCircle" },
+      {
+        href: "/admin/whatsapp",
+        label: "Agentes WhatsApp",
+        icon: "MessageCircle",
+        children: [
+          { href: "/admin/whatsapp/remetente", label: "Remetente do sistema", icon: "Smartphone" },
+        ],
+      },
       { href: "/admin/central-inteligencia", label: "Central de Inteligencia", icon: "BrainCircuit", badge: "Em breve" },
     ],
   },
@@ -1193,6 +1194,7 @@ export function getAdminStaticSlugs() {
 
 export function getCanonicalAdminHref(pathname: string) {
   if (pathname === "/admin") return "/admin";
+  if (pathname === "/admin/whatsapp/remetente") return pathname;
   const slug = pathname.split("/").filter(Boolean)[1];
   if (!slug) return "/admin";
   return getAdminModule(slug)?.href || pathname;

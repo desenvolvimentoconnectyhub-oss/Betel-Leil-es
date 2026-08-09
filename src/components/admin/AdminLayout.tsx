@@ -8,7 +8,7 @@ export async function AdminLayout({ children }: { children: ReactNode }) {
 
   return (
     <div className="betel-admin-light min-h-screen bg-[var(--admin-bg)] text-[var(--admin-foreground)]">
-      <AdminSidebar />
+      <AdminSidebar admin={admin} />
       <div className="min-h-screen lg:pl-[272px]">
         <AdminTopbar admin={admin} />
         <main className="relative">

@@ -56,7 +56,7 @@ export function AdminTopbar({ admin }: { admin: AdminSessionUser }) {
             <SheetHeader className="sr-only">
               <SheetTitle>Menu administrativo</SheetTitle>
             </SheetHeader>
-            <AdminSidebarContent activeHref={activeHref} />
+            <AdminSidebarContent activeHref={activeHref} admin={admin} />
           </SheetContent>
         </Sheet>
 

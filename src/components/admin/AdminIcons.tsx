@@ -27,6 +27,7 @@ import {
   ScrollText,
   Settings,
   ShieldCheck,
+  Smartphone,
   Users,
 } from "lucide-react";
 
@@ -58,6 +59,7 @@ const iconMap: Record<string, LucideIcon> = {
   ScrollText,
   Settings,
   ShieldCheck,
+  Smartphone,
   Users,
 };
 

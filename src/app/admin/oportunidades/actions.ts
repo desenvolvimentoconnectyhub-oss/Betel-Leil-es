@@ -2,7 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { requireCurrentAdmin } from "@/lib/auth/admin";
 import {
+  adminCanApproveWorkflowStage,
+  advanceOpportunityAfterMarketApprovalRecord,
   createAuctionOpportunityRecord,
   ingestAuctionOpportunityRecord,
   refreshOpportunityValidationPipelinesRecord,
@@ -329,18 +332,46 @@ export async function refreshOpportunityValidationPipelineAction() {
 }
 
 export async function savePropertyMarketAnalysisAction(formData: FormData) {
+  const admin = await requireCurrentAdmin();
   const currentCode = normalizeCode(field(formData, "opportunityCode"));
   const detailPath = currentCode ? `/admin/oportunidades/${currentCode}` : "/admin/oportunidades";
   const payload = parseMarketAnalysisForm(formData, detailPath);
+  const approvalStatus = payload.status === "approved" || payload.status === "approved_with_notes";
+
+  if (approvalStatus) {
+    const canApprove = await adminCanApproveWorkflowStage(admin, "market_review");
+    if (!canApprove) {
+      errorRedirect(detailPath, "Seu usuario nao pode aprovar a etapa de analise de mercado.");
+    }
+  }
+
   const result = await savePropertyMarketAnalysisRecord(payload);
 
   if (!result.data) {
     errorRedirect(detailPath, result.reason || "Nao foi possivel salvar a analise de mercado.");
   }
 
+  if (approvalStatus) {
+    const workflowResult = await advanceOpportunityAfterMarketApprovalRecord({
+      opportunityCode: currentCode,
+      decision: payload.status === "approved_with_notes" ? "approved_with_notes" : "approved",
+      approvedByAdminUserId: admin.id,
+      approvedByName: admin.name,
+      notes: payload.cautionNotes || payload.decisionReason,
+    });
+
+    if (!workflowResult.ok) {
+      errorRedirect(
+        detailPath,
+        workflowResult.error || "Analise aprovada, mas nao foi possivel enviar a oportunidade para o Juridico."
+      );
+    }
+  }
+
   revalidatePath("/admin");
   revalidatePath("/admin/oportunidades");
+  revalidatePath("/admin/fontes/capturas");
   revalidatePath(detailPath);
 
-  redirect(`${detailPath}?market=salva`);
+  redirect(`${detailPath}?market=${approvalStatus ? "juridico" : "salva"}`);
 }

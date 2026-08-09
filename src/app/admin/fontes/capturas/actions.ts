@@ -2,7 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { requireCurrentAdmin } from "@/lib/auth/admin";
 import {
+  adminCanApproveWorkflowStage,
+  advanceOpportunityAfterLegalApprovalRecord,
   processComplianceFromSnapshotRecord,
   enqueueHiddenRiskFromSnapshotRecord,
   enqueueHumanReviewFromSnapshotRecord,
@@ -194,19 +197,26 @@ export async function enqueueHumanReviewAction(formData: FormData) {
 }
 
 export async function resolveHumanReviewAction(formData: FormData) {
+  const admin = await requireCurrentAdmin();
   const snapshotCode = field(formData, "snapshotCode");
   const humanHandoffRunCode = field(formData, "humanHandoffRunCode");
   const decision = field(formData, "decision", "approved");
+  const approvalDecision = decision === "approved" || decision === "approved_with_notes";
 
   if (!snapshotCode || !humanHandoffRunCode) {
     redirect(returnPath(formData, "error", "Abra a revisao humana antes de registrar a decisao."));
+  }
+
+  const canApprove = await adminCanApproveWorkflowStage(admin, "legal_review");
+  if (!canApprove) {
+    redirect(returnPath(formData, "error", "Seu usuario nao pode registrar decisao na etapa juridica."));
   }
 
   const result = await resolveHumanReviewFromSnapshotRecord({
     snapshotCode,
     humanHandoffRunCode,
     decision,
-    reviewerLabel: field(formData, "reviewerLabel", "Juridico Betel"),
+    reviewerLabel: field(formData, "reviewerLabel", admin.name || "Juridico Betel"),
     notes: field(formData, "notes"),
   });
 
@@ -216,6 +226,26 @@ export async function resolveHumanReviewAction(formData: FormData) {
 
   if (!result.ok || !result.data) {
     redirect(returnPath(formData, "error", result.error || "Nao foi possivel registrar a decisao humana."));
+  }
+
+  if (approvalDecision) {
+    const workflowResult = await advanceOpportunityAfterLegalApprovalRecord({
+      opportunityCode: result.data.opportunityCode,
+      decision: decision === "approved_with_notes" ? "approved_with_notes" : "approved",
+      approvedByAdminUserId: admin.id,
+      approvedByName: admin.name,
+      notes: field(formData, "notes"),
+    });
+
+    if (!workflowResult.ok) {
+      redirect(
+        returnPath(
+          formData,
+          "error",
+          workflowResult.error || "Decisao juridica salva, mas nao foi possivel abrir a etapa de validacao."
+        )
+      );
+    }
   }
 
   redirect(

@@ -115,7 +115,7 @@ export async function listAuctionOpportunities(limit = 50): Promise<DataResult<A
     return {
       data: [],
       source: "supabase",
-      reason: "Nenhum imovel cadastrado apos a limpeza da fase antiga.",
+      reason: "Nenhum imovel cadastrado apos a limpeza de testes.",
     };
   }
 

@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
+import { resolveSystemWhatsAppSender } from "./system-whatsapp-sender";
 import type { WhatsAppAgentInstanceSummary, WillianConnectionInfo, WillianInstanceState } from "./willian-types";
 
 export const WILLIAN_AGENT_KEY = "multichannel-dispatch";
@@ -3023,6 +3024,8 @@ export type GlobalWhatsAppTextInput = {
   payload: Record<string, unknown>;
   actionButton?: WhatsAppActionButtonInput;
   sendOptions?: WhatsAppAgentSendOptions;
+  senderAgentKey?: string;
+  senderInstanceId?: string;
 };
 
 export async function sendGlobalWhatsAppText(input: GlobalWhatsAppTextInput): Promise<ConnectyHubDeliveryResult> {
@@ -3031,18 +3034,39 @@ export async function sendGlobalWhatsAppText(input: GlobalWhatsAppTextInput): Pr
   const recipient = asRecord(input.payload.recipient);
   const phone = normalizeWhatsAppNumber(cleanString(recipient.phone));
   const config = await getWillianConfig();
-  const instanceId = config.apiToken ? await resolveConnectyHubInstanceId(config).catch(() => "") : "";
+  const systemSender = config.apiToken
+    ? await resolveSystemWhatsAppSender({
+        senderAgentKey: input.senderAgentKey,
+        senderInstanceId: input.senderInstanceId,
+      }).catch((error) => ({
+        configured: true,
+        localInstanceId: "",
+        agentKey: "",
+        providerInstanceId: "",
+        label: "",
+        error: error instanceof Error ? error.message : "Erro ao resolver remetente WhatsApp do sistema.",
+      }))
+    : null;
+  const instanceId = config.apiToken
+    ? systemSender?.providerInstanceId ||
+      (!systemSender?.configured ? await resolveConnectyHubInstanceId(config).catch(() => "") : "")
+    : "";
 
   if (!config.apiToken || !instanceId) {
+    const senderError = systemSender?.configured ? systemSender.error || "Remetente WhatsApp do sistema sem instancia valida." : "";
     return {
       ok: false,
-      providerStatus: !config.apiToken ? "missing_connectyhub_token" : "missing_connectyhub_instance",
+      providerStatus: !config.apiToken
+        ? "missing_connectyhub_token"
+        : systemSender?.configured
+          ? "missing_system_whatsapp_sender"
+          : "missing_connectyhub_instance",
       endpointConfigured: false,
       latencyMs: Date.now() - startedMs,
       processedAt,
       errorMessage: !config.apiToken
         ? "CONNECTYHUB_API_TOKEN nao configurado."
-        : "Instancia ConnectyHub do WhatsApp Global nao configurada.",
+        : senderError || "Instancia ConnectyHub do WhatsApp Global nao configurada.",
     };
   }
 

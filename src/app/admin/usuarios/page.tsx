@@ -22,7 +22,13 @@ import {
 import { DashboardCard } from "@/components/admin/DashboardCard";
 import { StatusBadge } from "@/components/admin/StatusBadge";
 import { Button } from "@/components/ui/button";
-import { listAdminUsers, type AdminUserListItem, type AdminUserStatus } from "@/lib/admin/repository";
+import {
+  defaultSectorKeysForRole,
+  listAdminSectors,
+  listAdminUsers,
+  type AdminUserListItem,
+  type AdminUserStatus,
+} from "@/lib/admin/repository";
 import { cn } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -158,8 +164,9 @@ export default async function AdminUsersPage({
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const paramsPromise: Promise<Record<string, string | string[] | undefined>> = searchParams || Promise.resolve({});
-  const [usersResult, params] = await Promise.all([listAdminUsers(), paramsPromise]);
+  const [usersResult, sectorsResult, params] = await Promise.all([listAdminUsers(), listAdminSectors(), paramsPromise]);
   const users = usersResult.data;
+  const sectors = sectorsResult.data;
   const status = typeof params.status === "string" ? params.status : undefined;
   const message = typeof params.message === "string" ? params.message : undefined;
   const activeCount = countBy(users, (user) => user.status === "active");
@@ -174,6 +181,9 @@ export default async function AdminUsersPage({
     <Pencil size={18} className="text-[var(--admin-cyan)]" />
   ) : (
     <UserPlus size={18} className="text-[var(--admin-cyan)]" />
+  );
+  const checkedSectorKeys = new Set(
+    editingUser ? editingUser.sectors.map((sector) => sector.sectorKey) : defaultSectorKeysForRole("analyst")
   );
 
   return (
@@ -193,6 +203,7 @@ export default async function AdminUsersPage({
               Supabase Auth.
             </p>
             {usersResult.reason && <p className="mt-2 text-xs text-[var(--admin-yellow)]">{usersResult.reason}</p>}
+            {sectorsResult.reason && <p className="mt-2 text-xs text-[var(--admin-yellow)]">{sectorsResult.reason}</p>}
           </div>
           <div className="grid grid-cols-3 gap-2 text-right">
             <div className="rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] px-3 py-2">
@@ -273,7 +284,7 @@ export default async function AdminUsersPage({
                 <select
                   id="role"
                   name="role"
-                  defaultValue={editingUser?.role || "admin"}
+                  defaultValue={editingUser?.role || "analyst"}
                   className="h-10 rounded-md border border-[var(--admin-border)] bg-[#050505] px-3 text-sm text-white outline-none transition focus:border-[var(--admin-cyan)]"
                 >
                   <option value="owner">Owner</option>
@@ -300,6 +311,29 @@ export default async function AdminUsersPage({
                 </select>
               </div>
             </div>
+            <fieldset className="grid gap-3 rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] p-3">
+              <legend className="px-1 text-xs font-semibold text-[var(--admin-soft)]">Setores do pipeline</legend>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {sectors.map((sector) => (
+                  <label
+                    key={sector.key}
+                    className="flex min-h-12 items-start gap-2 rounded-md border border-[var(--admin-border)] bg-[rgba(0,0,0,0.18)] px-3 py-2 text-sm text-white"
+                  >
+                    <input
+                      type="checkbox"
+                      name="sectorKeys"
+                      value={sector.key}
+                      defaultChecked={checkedSectorKeys.has(sector.key)}
+                      className="mt-1 accent-[var(--admin-cyan)]"
+                    />
+                    <span className="min-w-0">
+                      <span className="block font-semibold">{sector.name}</span>
+                      <span className="mt-0.5 block truncate text-xs text-[var(--admin-muted)]">{sector.defaultRoute}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
             <div className="grid gap-2">
               <label htmlFor="organizationName" className="text-xs font-semibold text-[var(--admin-soft)]">
                 Organizacao
@@ -344,6 +378,10 @@ export default async function AdminUsersPage({
               <Link2 size={15} className="mt-0.5 shrink-0 text-[var(--admin-cyan)]" />
               <span>O usuario recebe no WhatsApp um link seguro para definir a senha e acessar o painel.</span>
             </div>
+            <div className="flex items-start gap-2">
+              <Users size={15} className="mt-0.5 shrink-0 text-[var(--admin-yellow)]" />
+              <span>Os setores definem em qual etapa do pipeline o usuario recebe tarefas e notificacoes.</span>
+            </div>
           </div>
         </DashboardCard>
 
@@ -359,6 +397,7 @@ export default async function AdminUsersPage({
                 <tr className="border-b border-[var(--admin-border)] text-[10px] uppercase tracking-[0.14em] text-[var(--admin-muted)]">
                   <th className="px-4 py-3 font-semibold">Usuario</th>
                   <th className="px-4 py-3 font-semibold">Papel</th>
+                  <th className="px-4 py-3 font-semibold">Setores</th>
                   <th className="px-4 py-3 font-semibold">Acesso</th>
                   <th className="px-4 py-3 font-semibold">Convite</th>
                   <th className="px-4 py-3 font-semibold">Ultimo acesso</th>
@@ -385,6 +424,16 @@ export default async function AdminUsersPage({
                       <StatusBadge tone={user.role === "owner" || user.role === "admin" ? "cyan" : "muted"}>
                         {user.role}
                       </StatusBadge>
+                    </td>
+                    <td className="border-t border-[var(--admin-border)] px-4 py-3">
+                      <div className="flex max-w-[280px] flex-wrap gap-1.5">
+                        {user.sectors.map((sector) => (
+                          <StatusBadge key={sector.id || sector.sectorKey} tone={sector.canApprove ? "green" : "muted"}>
+                            {sector.sectorName}
+                          </StatusBadge>
+                        ))}
+                        {!user.sectors.length && <span className="text-xs text-[var(--admin-muted)]">Sem setor</span>}
+                      </div>
                     </td>
                     <td className="border-t border-[var(--admin-border)] px-4 py-3">
                       <div className="flex flex-wrap items-center gap-2">
@@ -431,7 +480,7 @@ export default async function AdminUsersPage({
                 ))}
                 {!users.length && (
                   <tr>
-                    <td colSpan={6} className="px-4 py-10 text-center text-sm text-[var(--admin-muted)]">
+                    <td colSpan={7} className="px-4 py-10 text-center text-sm text-[var(--admin-muted)]">
                       Nenhum usuario administrativo cadastrado.
                     </td>
                   </tr>

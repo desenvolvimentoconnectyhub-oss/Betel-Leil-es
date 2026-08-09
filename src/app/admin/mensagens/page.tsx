@@ -4,7 +4,11 @@ import { StatusBadge } from "@/components/admin/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { getMessagingAdminData, type MessagingRecipientOption } from "@/lib/admin/repository";
 import { cn } from "@/lib/utils";
-import { queueDirectMessageAction, saveMessageRouteAction, saveMessageTemplateAction } from "./actions";
+import {
+  queueDirectMessageAction,
+  saveMessageRouteAction,
+  saveMessageTemplateAction,
+} from "./actions";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";

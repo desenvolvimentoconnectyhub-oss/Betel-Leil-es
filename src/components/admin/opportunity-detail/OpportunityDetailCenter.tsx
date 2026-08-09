@@ -1348,7 +1348,7 @@ function OverviewTab({
                 </div>
                 <p className="mt-3 text-sm leading-6 text-[var(--admin-soft)]">{shortText(analysis.summary, 520)}</p>
               </div>
-              <TextDisclosure label="Ler analise completa">
+              <TextDisclosure label="Ler analise completa" defaultOpen>
                 <p>{compactText(analysis.decisionReason || analysis.summary)}</p>
                 {analysis.cautionNotes ? <p className="mt-3">{compactText(analysis.cautionNotes)}</p> : null}
               </TextDisclosure>

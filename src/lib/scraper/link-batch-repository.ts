@@ -12,7 +12,7 @@ import {
 } from "@/lib/admin/market-analysis";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { ingestAuctionOpportunityRecord } from "@/lib/admin/repository/pipeline";
-import { sendWhatsAppAgentReply, sendWhatsAppDestinationText } from "@/lib/communication/connectyhub-client";
+import { openMarketReviewTasksForBatchRecord } from "@/lib/admin/repository/workflow";
 import { deletePublicR2Object, mirrorRemoteImagesToR2, type StoredImageAsset } from "@/lib/storage/r2";
 import { extractAuctionSiteContext, type AuctionSiteDocument, type AuctionSiteExtractionPatch } from "./auction-site-adapters";
 import { extractAuctionLinkWithGemini, type AuctionLinkExtraction } from "./auction-link-extractor";
@@ -144,18 +144,6 @@ export type LinkScraperRow = {
   qualityFlags?: string[];
 };
 
-export type ScraperNotificationRecipient = {
-  id: string;
-  sectorName: string;
-  recipientName: string;
-  recipientType: string;
-  whatsappNumber: string;
-  whatsappJid: string;
-  isGroup: boolean;
-  isActive: boolean;
-  notes: string;
-};
-
 export type WhatsappAgentOption = {
   id: string;
   agentKey: string;
@@ -168,7 +156,6 @@ export type WhatsappAgentOption = {
 
 export type LinkScraperDashboardData = {
   batches: LinkScraperBatch[];
-  recipients: ScraperNotificationRecipient[];
   whatsappAgents: WhatsappAgentOption[];
   metrics: {
     totalBatches: number;
@@ -176,35 +163,7 @@ export type LinkScraperDashboardData = {
     readyRows: number;
     failedRows: number;
     processingBatches: number;
-    legacyCandidates: number;
   };
-  legacyPreview: ScraperLegacyCleanupPreview;
-};
-
-export type ScraperLegacyCleanupPreview = {
-  matchedOpportunities: number;
-  blockedOpportunities: number;
-  archivedOpportunities: number;
-  readyToArchiveOpportunities: number;
-  readyToDeleteOpportunities: number;
-  sample: Array<{
-    id: string;
-    code: string;
-    title: string;
-    ownerName: string;
-    stage: string;
-    reason: string;
-  }>;
-};
-
-export type ScraperLegacyCleanupExecutionSummary = {
-  runId: string;
-  matchedOpportunities: number;
-  blockedOpportunities: number;
-  archivedOpportunities: number;
-  alreadyArchivedOpportunities: number;
-  deletedOpportunities: number;
-  readyToDeleteOpportunities: number;
 };
 
 export type MarketAnalysisResetSummary = {
@@ -228,14 +187,6 @@ export type MarketAnalysisResetSummary = {
   marketComparablesDeleted: number;
   relatedRowsDeleted: number;
   failures: string[];
-};
-
-type LegacyCleanupCandidate = {
-  row: DbRow;
-  reason: string;
-  blocked: boolean;
-  blockReasons: string[];
-  related: Record<string, DbRow[]>;
 };
 
 type ZipEntry = {
@@ -733,20 +684,6 @@ function normalizeBatch(row: DbRow, rows: LinkScraperRow[] = []): LinkScraperBat
   };
 }
 
-function normalizeRecipient(row: DbRow): ScraperNotificationRecipient {
-  return {
-    id: cleanString(row.id),
-    sectorName: cleanString(row.sector_name),
-    recipientName: cleanString(row.recipient_name),
-    recipientType: cleanString(row.recipient_type, "sector"),
-    whatsappNumber: cleanString(row.whatsapp_number),
-    whatsappJid: cleanString(row.whatsapp_jid),
-    isGroup: row.is_group === true,
-    isActive: row.is_active !== false,
-    notes: cleanString(row.notes),
-  };
-}
-
 function normalizeWhatsappAgent(row: DbRow): WhatsappAgentOption {
   const status = cleanString(row.status);
   const normalizedStatus = status.toLowerCase();
@@ -784,220 +721,19 @@ async function listWhatsappAgents(): Promise<WhatsappAgentOption[]> {
   return ((data || []) as DbRow[]).map(normalizeWhatsappAgent).filter(isUsableWhatsappAgent);
 }
 
-async function resolveProviderInstanceId(localInstanceId: string) {
-  const instanceId = cleanString(localInstanceId);
-  const supabase = getSupabaseAdminClient();
-  if (!supabase || !instanceId) return "";
-
-  const { data } = await supabase
-    .from("whatsapp_instances")
-    .select("provider_instance_id")
-    .eq("id", instanceId)
-    .maybeSingle();
-
-  return cleanString((data as DbRow | null)?.provider_instance_id);
-}
-
-async function listRecipients(): Promise<ScraperNotificationRecipient[]> {
-  const supabase = getSupabaseAdminClient();
-  if (!supabase) return [];
-  const { data, error } = await supabase
-    .from("scraper_notification_recipients")
-    .select("*")
-    .eq("is_active", true)
-    .order("sector_name", { ascending: true });
-  if (error) return [];
-  return ((data || []) as DbRow[]).map(normalizeRecipient);
-}
-
-const LEGACY_CLEANUP_FILTERS = ["raw_payload.collectionMode=scraper_target", "raw_payload.targetCode exists", "owner antigo"];
-
-const LEGACY_USAGE_TABLES = [
-  "opportunity_matches",
-  "bid_strategies",
-  "auction_sessions",
-  "post_auction_cases",
-  "dossiers",
-  "legal_reviews",
-  "property_market_analyses",
-  "opportunity_validation_runs",
-  "opportunity_validation_steps",
-  "subscriber_opportunity_access",
-  "advisory_contracts",
-] as const;
-
-const LEGACY_ARCHIVE_RELATED_TABLES = [
-  "source_snapshots",
-  "ai_analysis_runs",
-  "legal_reviews",
-  "dossiers",
-  "opportunity_matches",
-  "bid_strategies",
-  "auction_sessions",
-  "post_auction_cases",
-  "property_market_analyses",
-  "opportunity_validation_runs",
-  "opportunity_validation_steps",
-  "audit_logs",
-] as const;
-
-function legacyCandidateReason(row: DbRow) {
-  const raw = asRecord(row.raw_payload);
-  const ownerName = cleanString(row.owner_name);
-  const collectionMode = cleanString(raw.collectionMode);
-  const hasTargetCode = Boolean(raw.targetCode);
-  if (collectionMode === "scraper_target") return "collectionMode=scraper_target";
-  if (hasTargetCode) return "raw_payload.targetCode";
-  if (ownerName === "Renata - Buscadora de Imoveis") return "owner antigo";
-  return "";
-}
-
-function stageBlockReason(row: DbRow) {
-  const stage = cleanString(row.stage).toLowerCase();
-  if (stage.includes("contrato")) return "etapa com contrato";
-  if (stage.includes("aprovado")) return "etapa aprovada";
-  if (stage.includes("investidor")) return "etapa com investidor";
-  if (stage.includes("arremat")) return "etapa pos-arrematacao";
-  return "";
-}
-
-function groupRowsByOpportunity(rows: DbRow[]) {
-  const grouped = new Map<string, DbRow[]>();
-  rows.forEach((row) => {
-    const opportunityId = cleanString(row.opportunity_id);
-    if (!opportunityId) return;
-    const list = grouped.get(opportunityId) || [];
-    list.push(row);
-    grouped.set(opportunityId, list);
-  });
-  return grouped;
-}
-
-async function safeRelatedRows(table: string, opportunityIds: string[]) {
-  const supabase = getSupabaseAdminClient();
-  if (!supabase || !opportunityIds.length) return [] as DbRow[];
-  try {
-    const { data, error } = await supabase.from(table).select("*").in("opportunity_id", opportunityIds).limit(5000);
-    if (error) return [];
-    return (data || []) as DbRow[];
-  } catch {
-    return [];
-  }
-}
-
-async function safeArchivedIds(opportunityIds: string[]) {
-  const supabase = getSupabaseAdminClient();
-  if (!supabase || !opportunityIds.length) return new Set<string>();
-  try {
-    const { data, error } = await supabase
-      .from("scraper_legacy_archives")
-      .select("opportunity_id, archive_status")
-      .in("opportunity_id", opportunityIds)
-      .in("archive_status", ["archived", "deleted"]);
-    if (error) return new Set<string>();
-    return new Set(((data || []) as DbRow[]).map((row) => cleanString(row.opportunity_id)).filter(Boolean));
-  } catch {
-    return new Set<string>();
-  }
-}
-
-async function getLegacyCleanupCandidates(): Promise<LegacyCleanupCandidate[]> {
-  const supabase = getSupabaseAdminClient();
-  if (!supabase) return [];
-
-  const { data, error } = await supabase
-    .from("auction_opportunities")
-    .select("*")
-    .order("updated_at", { ascending: false })
-    .limit(5000);
-  if (error) return [];
-
-  const base = ((data || []) as DbRow[])
-    .map((row) => ({ row, reason: legacyCandidateReason(row) }))
-    .filter((item) => item.reason);
-  const opportunityIds = base.map((item) => cleanString(item.row.id)).filter(Boolean);
-  const usageEntries = await Promise.all(
-    LEGACY_USAGE_TABLES.map(async (table) => [table, groupRowsByOpportunity(await safeRelatedRows(table, opportunityIds))] as const)
-  );
-
-  return base.map((item) => {
-    const opportunityId = cleanString(item.row.id);
-    const related: Record<string, DbRow[]> = {};
-    const blockReasons = [stageBlockReason(item.row)].filter(Boolean);
-
-    usageEntries.forEach(([table, grouped]) => {
-      const rows = grouped.get(opportunityId) || [];
-      related[table] = rows;
-      if (rows.length) blockReasons.push(`${table}:${rows.length}`);
-    });
-
-    return {
-      row: item.row,
-      reason: item.reason,
-      blocked: blockReasons.length > 0,
-      blockReasons,
-      related,
-    };
-  });
-}
-
-export async function getScraperLegacyCleanupPreview(): Promise<ScraperLegacyCleanupPreview> {
-  const empty: ScraperLegacyCleanupPreview = {
-    matchedOpportunities: 0,
-    blockedOpportunities: 0,
-    archivedOpportunities: 0,
-    readyToArchiveOpportunities: 0,
-    readyToDeleteOpportunities: 0,
-    sample: [],
-  };
-  const candidates = await getLegacyCleanupCandidates();
-  if (!candidates.length) return empty;
-
-  const opportunityIds = candidates.map((item) => cleanString(item.row.id)).filter(Boolean);
-  const archivedIds = await safeArchivedIds(opportunityIds);
-  const blocked = candidates.filter((item) => item.blocked);
-
-  return {
-    matchedOpportunities: candidates.length,
-    blockedOpportunities: blocked.length,
-    archivedOpportunities: archivedIds.size,
-    readyToArchiveOpportunities: candidates.filter((item) => !item.blocked && !archivedIds.has(cleanString(item.row.id))).length,
-    readyToDeleteOpportunities: candidates.filter((item) => !item.blocked && archivedIds.has(cleanString(item.row.id))).length,
-    sample: candidates.slice(0, 12).map((item) => ({
-      id: cleanString(item.row.id),
-      code: cleanString(item.row.code),
-      title: cleanString(item.row.title),
-      ownerName: cleanString(item.row.owner_name),
-      stage: cleanString(item.row.stage),
-      reason: item.blocked ? `${item.reason} | bloqueado: ${item.blockReasons.join(", ")}` : item.reason,
-    })),
-  };
-}
-
 export async function getLinkScraperDashboardData(): Promise<DataResult<LinkScraperDashboardData>> {
   const supabase = getSupabaseAdminClient();
   const empty: LinkScraperDashboardData = {
     batches: [],
-    recipients: [],
     whatsappAgents: [],
-    metrics: { totalBatches: 0, totalRows: 0, readyRows: 0, failedRows: 0, processingBatches: 0, legacyCandidates: 0 },
-    legacyPreview: {
-      matchedOpportunities: 0,
-      blockedOpportunities: 0,
-      archivedOpportunities: 0,
-      readyToArchiveOpportunities: 0,
-      readyToDeleteOpportunities: 0,
-      sample: [],
-    },
+    metrics: { totalBatches: 0, totalRows: 0, readyRows: 0, failedRows: 0, processingBatches: 0 },
   };
 
   if (!supabase) return { data: empty, source: "mock", reason: "Supabase admin nao configurado." };
 
-  const [batchResult, recipients, whatsappAgents, legacyPreview] = await Promise.all([
+  const [batchResult, whatsappAgents] = await Promise.all([
     supabase.from("market_analysis_import_batches").select("*").order("created_at", { ascending: false }).limit(20),
-    listRecipients(),
     listWhatsappAgents(),
-    getScraperLegacyCleanupPreview(),
   ]);
 
   if (batchResult.error) {
@@ -1042,62 +778,21 @@ export async function getLinkScraperDashboardData(): Promise<DataResult<LinkScra
   return {
     data: {
       batches,
-      recipients,
       whatsappAgents,
-      legacyPreview,
       metrics: {
         totalBatches: batches.length,
         totalRows: allRows.length,
         readyRows: allRows.filter((row) => row.status === "pronto_para_revisao").length,
         failedRows: allRows.filter((row) => row.status === "falha" || row.status === "url_invalida").length,
         processingBatches: batches.filter((batch) => batch.status === "processando").length,
-        legacyCandidates: legacyPreview.matchedOpportunities,
       },
     },
     source: "supabase",
   };
 }
 
-export async function createScraperNotificationRecipient(input: {
-  sectorName: string;
-  recipientName?: string;
-  whatsappNumber?: string;
-  whatsappJid?: string;
-  isGroup?: boolean;
-  notes?: string;
-}): Promise<MutationResult<{ id: string }>> {
-  const supabase = getSupabaseAdminClient();
-  if (!supabase) return { ok: false, error: "Supabase admin nao configurado." };
-
-  const sectorName = cleanString(input.sectorName);
-  const whatsappNumber = cleanString(input.whatsappNumber).replace(/\D/g, "");
-  const whatsappJid = cleanString(input.whatsappJid);
-  if (!sectorName) return { ok: false, error: "Informe o setor." };
-  if (!whatsappNumber && !whatsappJid) return { ok: false, error: "Informe o numero ou JID do WhatsApp." };
-
-  const { data, error } = await supabase
-    .from("scraper_notification_recipients")
-    .insert({
-      sector_name: sectorName,
-      recipient_name: cleanString(input.recipientName) || sectorName,
-      recipient_type: input.isGroup ? "group" : "sector",
-      whatsapp_number: whatsappNumber || null,
-      whatsapp_jid: whatsappJid || null,
-      is_group: input.isGroup === true,
-      notes: cleanString(input.notes) || null,
-    })
-    .select("id")
-    .single();
-
-  if (error) return { ok: false, error: error.message };
-  return { ok: true, data: { id: cleanString(data?.id) } };
-}
-
 export async function createLinkScraperBatch(input: {
   parsed: ParsedLinkImportFile;
-  whatsappAgentKey?: string;
-  whatsappInstanceId?: string;
-  notificationRecipientId?: string;
   analysisDepth?: LinkAnalysisDepth | string;
 }): Promise<MutationResult<{ batchId: string; rowsCreated: number }>> {
   const supabase = getSupabaseAdminClient();
@@ -1117,9 +812,6 @@ export async function createLinkScraperBatch(input: {
       valid_row_count: input.parsed.validRowCount,
       invalid_row_count: input.parsed.invalidRowCount,
       status: "aguardando_inicio",
-      whatsapp_agent_key: cleanString(input.whatsappAgentKey) || null,
-      whatsapp_instance_id: cleanString(input.whatsappInstanceId) || null,
-      notification_recipient_id: cleanString(input.notificationRecipientId) || null,
       mapping_payload: {
         analysisDepth,
         analysisLabel: ANALYSIS_DEPTH_LABELS[analysisDepth],
@@ -3015,112 +2707,21 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
   }
 }
 
-function buildBatchMessage(batch: LinkScraperBatch, rows: LinkScraperRow[]) {
-  const readyRows = rows.filter((row) => row.status === "pronto_para_revisao");
-  const success = readyRows.length;
-  const failed = rows.filter((row) => row.status === "falha" || row.status === "url_invalida").length;
-  const pending = rows.filter((row) => !["pronto_para_revisao", "falha", "url_invalida"].includes(row.status)).length;
-  const withRealPhoto = readyRows.filter((row) => (row.imageCount || 0) > 0).length;
-  const withoutRealPhoto = Math.max(success - withRealPhoto, 0);
-  const withoutMarketValue = readyRows.filter((row) => !(row.appraisalValue || 0)).length;
-  const readyWithQualityIssues = readyRows.filter((row) =>
-    row.errorMessage.toLowerCase().includes("trava de qualidade") ||
-    (row.qualityFlags || []).length > 0
-  ).length;
-  const readyNeedingReview = readyRows.filter((row) => (row.imageCount || 0) <= 0 || !(row.appraisalValue || 0)).length;
-  const needsReview = readyNeedingReview + failed + pending;
-  const qualityBlockedRow = rows.find((row) =>
-    row.status === "falha" && row.errorMessage.toLowerCase().includes("trava de qualidade")
-  );
-  const domains = [...new Set(rows.filter((row) => row.status === "falha").map((row) => row.sourceDomain).filter(Boolean))].slice(0, 6);
-  return [
-    qualityBlockedRow ? "Betel AI - analise pausada por dados incompletos" : "Betel AI - analise de mercado concluida",
-    `Arquivo/lote: ${batch.originalFilename || batch.id}`,
-    `Modo: ${ANALYSIS_DEPTH_LABELS[batch.analysisDepth || DEFAULT_ANALYSIS_DEPTH]}`,
-    `Links: ${rows.length}`,
-    `Imoveis analisados: ${success}`,
-    `Com foto real: ${withRealPhoto}`,
-    withoutRealPhoto ? `Sem foto real: ${withoutRealPhoto}` : "",
-    withoutMarketValue ? `Sem valor de mercado: ${withoutMarketValue}` : "",
-    readyWithQualityIssues ? `Com pendencias de curadoria: ${readyWithQualityIssues}` : "",
-    `Falhas: ${failed}`,
-    `Pendentes: ${pending}`,
-    `Precisam revisao: ${needsReview}`,
-    qualityBlockedRow ? `Processo parado na linha ${qualityBlockedRow.rowNumber}: ${qualityBlockedRow.errorMessage}` : "",
-    domains.length ? `Dominios com falha: ${domains.join(", ")}` : "",
-    "Acesse Analise de mercado > Imoveis analisados para revisar os resultados.",
-  ].filter(Boolean).join("\n");
-}
-
-async function sendBatchNotification(batchId: string, batch: LinkScraperBatch, rows: LinkScraperRow[]) {
-  const supabase = getSupabaseAdminClient();
-  if (!supabase) return;
-  const recipient = batch.notificationRecipientId
-    ? (await supabase.from("scraper_notification_recipients").select("*").eq("id", batch.notificationRecipientId).maybeSingle()).data as DbRow | null
-    : null;
-  const normalizedRecipient = recipient ? normalizeRecipient(recipient) : null;
-  const messageText = buildBatchMessage(batch, rows);
-  const recipientNumber = normalizedRecipient?.whatsappNumber || "";
-  const recipientJid = normalizedRecipient?.whatsappJid || "";
-  const agentKey = batch.whatsappAgentKey || "multichannel-dispatch";
-  const providerInstanceId = await resolveProviderInstanceId(batch.whatsappInstanceId);
-
-  if (!recipientNumber && !recipientJid) {
-    await supabase.from("scraper_process_notifications").insert({
-      batch_id: batchId,
-      whatsapp_agent_key: agentKey,
-      whatsapp_instance_id: batch.whatsappInstanceId || null,
-      recipient_id: batch.notificationRecipientId || null,
-      message_text: messageText,
-      status: "skipped",
-      error_message: "Destinatario WhatsApp nao configurado.",
-    });
-    return;
-  }
-
-  const trackId = `SCR-BATCH-${batchId}`;
-  const delivery = recipientJid
-    ? await sendWhatsAppDestinationText({
-        agentKey,
-        instanceId: providerInstanceId || undefined,
-        destinationJid: recipientJid,
-        text: messageText,
-        trackId,
-      })
-    : await sendWhatsAppAgentReply({
-        agentKey,
-        instanceId: providerInstanceId || undefined,
-        number: recipientNumber,
-        text: messageText,
-        trackId,
-      });
-
-  await supabase.from("scraper_process_notifications").insert({
-    batch_id: batchId,
-    whatsapp_agent_key: agentKey,
-    whatsapp_instance_id: batch.whatsappInstanceId || null,
-    recipient_id: batch.notificationRecipientId || null,
-    recipient_number: recipientNumber || null,
-    recipient_jid: recipientJid || null,
-    message_text: messageText,
-    status: delivery.ok ? "sent" : "failed",
-    provider: "connectyhub",
-    provider_message_id: delivery.externalDeliveryId || null,
-    provider_response: delivery,
-    error_message: delivery.errorMessage || null,
-    sent_at: delivery.ok ? new Date().toISOString() : null,
-  });
-
-  await supabase.from("market_analysis_import_batches").update({
-    notification_status: delivery.ok ? "sent" : "failed",
-  }).eq("id", batchId);
+function workflowNotificationStatus(
+  result: Awaited<ReturnType<typeof openMarketReviewTasksForBatchRecord>> | null | undefined
+) {
+  if (!result?.ok) return "failed";
+  const notification = result.data?.notification;
+  if (!notification) return "skipped";
+  if (notification.sent > 0 && notification.failed > 0) return "partial";
+  if (notification.sent > 0) return "sent";
+  if (notification.failed > 0) return "failed";
+  if (notification.skipped > 0) return "skipped";
+  return "workflow";
 }
 
 export async function startLinkScraperBatch(input: {
   batchId: string;
-  whatsappAgentKey?: string;
-  whatsappInstanceId?: string;
-  notificationRecipientId?: string;
   analysisDepth?: LinkAnalysisDepth | string;
 }): Promise<MutationResult<{ processed: number; failed: number; stoppedByQualityGate?: boolean; stopReason?: string }>> {
   const supabase = getSupabaseAdminClient();
@@ -3138,10 +2739,7 @@ export async function startLinkScraperBatch(input: {
   await supabase.from("market_analysis_import_batches").update({
     status: "processando",
     started_at: new Date().toISOString(),
-    whatsapp_agent_key: cleanString(input.whatsappAgentKey) || cleanString(batchRow.whatsapp_agent_key) || null,
-    whatsapp_instance_id: cleanString(input.whatsappInstanceId) || cleanString(batchRow.whatsapp_instance_id) || null,
-    notification_recipient_id: cleanString(input.notificationRecipientId) || cleanString(batchRow.notification_recipient_id) || null,
-    notification_status: "pending",
+    notification_status: "workflow_pending",
     mapping_payload: {
       ...batchPayload,
       analysisDepth,
@@ -3210,19 +2808,6 @@ export async function startLinkScraperBatch(input: {
     });
     normalizedRows = normalizedRows.map((row) => mergeRowExtraction(row, latestRunByRow.get(row.id)));
   }
-  const finalBatch = normalizeBatch({
-    ...asRecord(batchRow),
-    mapping_payload: {
-      ...batchPayload,
-      analysisDepth,
-      analysisLabel: ANALYSIS_DEPTH_LABELS[analysisDepth],
-      profile: analysisDepthProfile(analysisDepth),
-    },
-    whatsapp_agent_key: cleanString(input.whatsappAgentKey) || cleanString(batchRow.whatsapp_agent_key),
-    whatsapp_instance_id: cleanString(input.whatsappInstanceId) || cleanString(batchRow.whatsapp_instance_id),
-    notification_recipient_id: cleanString(input.notificationRecipientId) || cleanString(batchRow.notification_recipient_id),
-  }, normalizedRows);
-
   const readyRows = normalizedRows.filter((row) => row.status === "pronto_para_revisao");
   const readyWithRealPhoto = readyRows.filter((row) => (row.imageCount || 0) > 0).length;
   const readyWithoutMarketValue = readyRows.filter((row) => !(row.appraisalValue || 0)).length;
@@ -3245,15 +2830,16 @@ export async function startLinkScraperBatch(input: {
     },
   }).eq("id", input.batchId);
 
-  await sendBatchNotification(input.batchId, finalBatch, normalizedRows);
+  const workflowResult = await openMarketReviewTasksForBatchRecord({ batchId: input.batchId }).catch(() => null);
+  await supabase
+    .from("market_analysis_import_batches")
+    .update({ notification_status: workflowNotificationStatus(workflowResult) })
+    .eq("id", input.batchId);
   return { ok: true, data: { processed, failed, stoppedByQualityGate, stopReason } };
 }
 
 export async function queueLinkScraperBatch(input: {
   batchId: string;
-  whatsappAgentKey?: string;
-  whatsappInstanceId?: string;
-  notificationRecipientId?: string;
   analysisDepth?: LinkAnalysisDepth | string;
 }): Promise<MutationResult<{ batchId: string; queuedRows: number }>> {
   const supabase = getSupabaseAdminClient();
@@ -3264,7 +2850,7 @@ export async function queueLinkScraperBatch(input: {
 
   const { data: batchRow, error: batchError } = await supabase
     .from("market_analysis_import_batches")
-    .select("id, status, whatsapp_agent_key, whatsapp_instance_id, notification_recipient_id, mapping_payload")
+    .select("id, status, mapping_payload")
     .eq("id", batchId)
     .maybeSingle();
   if (batchError || !batchRow) return { ok: false, error: batchError?.message || "Lote nao encontrado." };
@@ -3274,10 +2860,7 @@ export async function queueLinkScraperBatch(input: {
   await supabase.from("market_analysis_import_batches").update({
     status: "processando",
     started_at: new Date().toISOString(),
-    whatsapp_agent_key: cleanString(input.whatsappAgentKey) || cleanString(batchRow.whatsapp_agent_key) || null,
-    whatsapp_instance_id: cleanString(input.whatsappInstanceId) || cleanString(batchRow.whatsapp_instance_id) || null,
-    notification_recipient_id: cleanString(input.notificationRecipientId) || cleanString(batchRow.notification_recipient_id) || null,
-    notification_status: "queued",
+    notification_status: "workflow_queued",
     mapping_payload: {
       ...batchPayload,
       analysisDepth,
@@ -3320,171 +2903,6 @@ export async function retryLinkScraperRow(input: {
   if (!result.ok) return { ok: false, error: result.error || "Falha no retry." };
 
   return { ok: true, data: { rowId: row.id } };
-}
-
-export async function recordLegacyCleanupDryRun(): Promise<MutationResult<ScraperLegacyCleanupPreview>> {
-  const supabase = getSupabaseAdminClient();
-  if (!supabase) return { ok: false, error: "Supabase admin nao configurado." };
-  const preview = await getScraperLegacyCleanupPreview();
-  const { error } = await supabase.from("scraper_legacy_cleanup_runs").insert({
-    mode: "dry_run",
-    status: "completed",
-    filter_payload: {
-      filters: LEGACY_CLEANUP_FILTERS,
-    },
-    matched_opportunities_count: preview.matchedOpportunities,
-    matched_snapshots_count: 0,
-    matched_runs_count: 0,
-    archived_opportunities_count: preview.archivedOpportunities,
-    started_at: new Date().toISOString(),
-    completed_at: new Date().toISOString(),
-  });
-  if (error) return { ok: false, error: error.message };
-  return { ok: true, data: preview };
-}
-
-async function createCleanupRun(mode: "archive" | "delete") {
-  const supabase = getSupabaseAdminClient();
-  if (!supabase) return { runId: "", error: "Supabase admin nao configurado." };
-  const { data, error } = await supabase
-    .from("scraper_legacy_cleanup_runs")
-    .insert({
-      mode,
-      status: "running",
-      filter_payload: { filters: LEGACY_CLEANUP_FILTERS },
-      started_at: new Date().toISOString(),
-    })
-    .select("id")
-    .single();
-  return { runId: cleanString(data?.id), error: error?.message || "" };
-}
-
-async function finishCleanupRun(input: {
-  runId: string;
-  status: "completed" | "failed";
-  matched: number;
-  blocked: number;
-  archived?: number;
-  deleted?: number;
-  errorMessage?: string;
-}) {
-  const supabase = getSupabaseAdminClient();
-  if (!supabase || !input.runId) return;
-  await supabase.from("scraper_legacy_cleanup_runs").update({
-    status: input.status,
-    matched_opportunities_count: input.matched,
-    archived_opportunities_count: input.archived || 0,
-    deleted_opportunities_count: input.deleted || 0,
-    error_message: input.errorMessage || null,
-    completed_at: new Date().toISOString(),
-    filter_payload: {
-      filters: LEGACY_CLEANUP_FILTERS,
-      blockedOpportunities: input.blocked,
-    },
-  }).eq("id", input.runId);
-}
-
-async function archiveRelatedByTable(opportunityIds: string[]) {
-  const entries = await Promise.all(
-    LEGACY_ARCHIVE_RELATED_TABLES.map(async (table) => [table, await safeRelatedRows(table, opportunityIds)] as const)
-  );
-  return Object.fromEntries(entries.map(([table, rows]) => [table, groupRowsByOpportunity(rows)])) as Record<string, Map<string, DbRow[]>>;
-}
-
-export async function archiveLegacyScraperOpportunities(input: {
-  confirmation: string;
-}): Promise<MutationResult<ScraperLegacyCleanupExecutionSummary>> {
-  const supabase = getSupabaseAdminClient();
-  if (!supabase) return { ok: false, error: "Supabase admin nao configurado." };
-  if (cleanString(input.confirmation).toUpperCase() !== "ARQUIVAR LEGADO") {
-    return { ok: false, error: "Digite ARQUIVAR LEGADO para confirmar o arquivamento." };
-  }
-
-  const { runId, error: runError } = await createCleanupRun("archive");
-  if (!runId) return { ok: false, error: runError || "Nao foi possivel criar o run de limpeza." };
-
-  try {
-    const candidates = await getLegacyCleanupCandidates();
-    const opportunityIds = candidates.map((item) => cleanString(item.row.id)).filter(Boolean);
-    const archivedIds = await safeArchivedIds(opportunityIds);
-    const eligible = candidates.filter((item) => !item.blocked && !archivedIds.has(cleanString(item.row.id)));
-    const relatedByTable = await archiveRelatedByTable(eligible.map((item) => cleanString(item.row.id)).filter(Boolean));
-
-    const archiveRows = eligible.map((item) => {
-      const opportunityId = cleanString(item.row.id);
-      return {
-        cleanup_run_id: runId,
-        opportunity_id: opportunityId,
-        opportunity_code: cleanString(item.row.code),
-        title: cleanString(item.row.title),
-        owner_name: cleanString(item.row.owner_name),
-        stage: cleanString(item.row.stage),
-        reason: item.reason,
-        blocked: false,
-        archive_status: "archived",
-        opportunity_snapshot: item.row,
-        source_snapshots: relatedByTable.source_snapshots?.get(opportunityId) || [],
-        ai_analysis_runs: relatedByTable.ai_analysis_runs?.get(opportunityId) || [],
-        legal_reviews: relatedByTable.legal_reviews?.get(opportunityId) || [],
-        dossiers: relatedByTable.dossiers?.get(opportunityId) || [],
-        opportunity_matches: relatedByTable.opportunity_matches?.get(opportunityId) || [],
-        bid_strategies: relatedByTable.bid_strategies?.get(opportunityId) || [],
-        auction_sessions: relatedByTable.auction_sessions?.get(opportunityId) || [],
-        post_auction_cases: relatedByTable.post_auction_cases?.get(opportunityId) || [],
-        property_market_analyses: relatedByTable.property_market_analyses?.get(opportunityId) || [],
-        validation_pipelines: relatedByTable.opportunity_validation_runs?.get(opportunityId) || [],
-        validation_steps: relatedByTable.opportunity_validation_steps?.get(opportunityId) || [],
-        audit_logs: relatedByTable.audit_logs?.get(opportunityId) || [],
-        archived_at: new Date().toISOString(),
-      };
-    });
-
-    if (archiveRows.length) {
-      const { error } = await supabase
-        .from("scraper_legacy_archives")
-        .upsert(archiveRows, { onConflict: "opportunity_id" });
-      if (error) throw new Error(error.message);
-
-      await supabase
-        .from("auction_opportunities")
-        .update({
-          stage: "Legado scraper arquivado",
-          next_action: "Registro arquivado para limpeza segura do scraper legado.",
-          updated_at: new Date().toISOString(),
-        })
-        .in("id", archiveRows.map((row) => row.opportunity_id));
-    }
-
-    const summary: ScraperLegacyCleanupExecutionSummary = {
-      runId,
-      matchedOpportunities: candidates.length,
-      blockedOpportunities: candidates.filter((item) => item.blocked).length,
-      archivedOpportunities: archiveRows.length,
-      alreadyArchivedOpportunities: archivedIds.size,
-      deletedOpportunities: 0,
-      readyToDeleteOpportunities: archiveRows.length + archivedIds.size,
-    };
-    await finishCleanupRun({
-      runId,
-      status: "completed",
-      matched: summary.matchedOpportunities,
-      blocked: summary.blockedOpportunities,
-      archived: summary.archivedOpportunities,
-    });
-    return { ok: true, data: summary };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Falha ao arquivar legado.";
-    await finishCleanupRun({ runId, status: "failed", matched: 0, blocked: 0, errorMessage: message });
-    return { ok: false, error: message };
-  }
-}
-
-async function safeDeleteByOpportunity(table: string, opportunityIds: string[]) {
-  const supabase = getSupabaseAdminClient();
-  if (!supabase || !opportunityIds.length) return;
-  try {
-    await supabase.from(table).delete().in("opportunity_id", opportunityIds);
-  } catch {}
 }
 
 function isMarketAnalysisUploadedOpportunity(row: DbRow) {
@@ -3701,7 +3119,6 @@ export async function resetMarketAnalysisTestData(input: {
       "intelligence_reports",
       "advisory_contracts",
       "audit_logs",
-      "scraper_legacy_archives",
     ]) {
       relatedRowsDeleted += await optionalDeleteByIds(table, "opportunity_id", opportunityIds);
     }
@@ -3734,71 +3151,6 @@ export async function resetMarketAnalysisTestData(input: {
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Falha ao limpar analises de mercado.";
-    return { ok: false, error: message };
-  }
-}
-
-export async function deleteArchivedLegacyScraperOpportunities(input: {
-  confirmation: string;
-}): Promise<MutationResult<ScraperLegacyCleanupExecutionSummary>> {
-  const supabase = getSupabaseAdminClient();
-  if (!supabase) return { ok: false, error: "Supabase admin nao configurado." };
-  if (cleanString(input.confirmation).toUpperCase() !== "DELETAR LEGADO ARQUIVADO") {
-    return { ok: false, error: "Digite DELETAR LEGADO ARQUIVADO para confirmar a exclusao." };
-  }
-
-  const { runId, error: runError } = await createCleanupRun("delete");
-  if (!runId) return { ok: false, error: runError || "Nao foi possivel criar o run de delete." };
-
-  try {
-    const candidates = await getLegacyCleanupCandidates();
-    const candidateIds = new Set(candidates.filter((item) => !item.blocked).map((item) => cleanString(item.row.id)).filter(Boolean));
-    const { data: archiveRows, error } = await supabase
-      .from("scraper_legacy_archives")
-      .select("id, opportunity_id")
-      .eq("archive_status", "archived")
-      .eq("blocked", false)
-      .limit(5000);
-    if (error) throw new Error(error.message);
-
-    const eligibleArchives = ((archiveRows || []) as DbRow[]).filter((row) => candidateIds.has(cleanString(row.opportunity_id)));
-    const opportunityIds = eligibleArchives.map((row) => cleanString(row.opportunity_id)).filter(Boolean);
-
-    await safeDeleteByOpportunity("source_snapshots", opportunityIds);
-    await safeDeleteByOpportunity("auction_scrape_assets", opportunityIds);
-    await safeDeleteByOpportunity("auction_scrape_runs", opportunityIds);
-
-    if (opportunityIds.length) {
-      const { error: deleteError } = await supabase.from("auction_opportunities").delete().in("id", opportunityIds);
-      if (deleteError) throw new Error(deleteError.message);
-
-      await supabase.from("scraper_legacy_archives").update({
-        archive_status: "deleted",
-        deleted_at: new Date().toISOString(),
-        delete_run_id: runId,
-      }).in("opportunity_id", opportunityIds);
-    }
-
-    const summary: ScraperLegacyCleanupExecutionSummary = {
-      runId,
-      matchedOpportunities: candidates.length,
-      blockedOpportunities: candidates.filter((item) => item.blocked).length,
-      archivedOpportunities: eligibleArchives.length,
-      alreadyArchivedOpportunities: eligibleArchives.length,
-      deletedOpportunities: opportunityIds.length,
-      readyToDeleteOpportunities: Math.max(0, eligibleArchives.length - opportunityIds.length),
-    };
-    await finishCleanupRun({
-      runId,
-      status: "completed",
-      matched: summary.matchedOpportunities,
-      blocked: summary.blockedOpportunities,
-      deleted: summary.deletedOpportunities,
-    });
-    return { ok: true, data: summary };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Falha ao deletar legado arquivado.";
-    await finishCleanupRun({ runId, status: "failed", matched: 0, blocked: 0, errorMessage: message });
     return { ok: false, error: message };
   }
 }

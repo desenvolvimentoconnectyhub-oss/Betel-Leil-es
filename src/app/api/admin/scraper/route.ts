@@ -2,14 +2,10 @@ import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 import { inngest } from "@/inngest/client";
 import {
-  archiveLegacyScraperOpportunities,
   createLinkScraperBatch,
-  createScraperNotificationRecipient,
-  deleteArchivedLegacyScraperOpportunities,
   getLinkScraperDashboardData,
   parsePropertyLinkImportFile,
   queueLinkScraperBatch,
-  recordLegacyCleanupDryRun,
   resetMarketAnalysisTestData,
   retryLinkScraperRow,
   startLinkScraperBatch,
@@ -20,10 +16,6 @@ export const runtime = "nodejs";
 
 function cleanString(value: unknown, fallback = "") {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
-}
-
-function asBoolean(value: unknown) {
-  return value === true || value === "true" || value === "1" || value === "on";
 }
 
 function revalidateScraper() {
@@ -51,9 +43,6 @@ async function handleFormData(request: Request) {
     const parsed = await parsePropertyLinkImportFile(file);
     const result = await createLinkScraperBatch({
       parsed,
-      whatsappAgentKey: cleanString(formData.get("whatsappAgentKey")),
-      whatsappInstanceId: cleanString(formData.get("whatsappInstanceId")),
-      notificationRecipientId: cleanString(formData.get("notificationRecipientId")),
       analysisDepth: cleanString(formData.get("analysisDepth"), "deep"),
     });
 
@@ -88,9 +77,6 @@ export async function POST(request: Request) {
     if (action === "start_batch") {
       const startPayload = {
         batchId: cleanString(body.batchId),
-        whatsappAgentKey: cleanString(body.whatsappAgentKey),
-        whatsappInstanceId: cleanString(body.whatsappInstanceId),
-        notificationRecipientId: cleanString(body.notificationRecipientId),
         analysisDepth: cleanString(body.analysisDepth, "deep"),
       };
       const queued = await queueLinkScraperBatch(startPayload);
@@ -116,23 +102,7 @@ export async function POST(request: Request) {
     if (action === "start_batch_sync") {
       const result = await startLinkScraperBatch({
         batchId: cleanString(body.batchId),
-        whatsappAgentKey: cleanString(body.whatsappAgentKey),
-        whatsappInstanceId: cleanString(body.whatsappInstanceId),
-        notificationRecipientId: cleanString(body.notificationRecipientId),
         analysisDepth: cleanString(body.analysisDepth, "deep"),
-      });
-      revalidateScraper();
-      return NextResponse.json(result, { status: result.ok ? 200 : 400 });
-    }
-
-    if (action === "create_recipient") {
-      const result = await createScraperNotificationRecipient({
-        sectorName: cleanString(body.sectorName),
-        recipientName: cleanString(body.recipientName),
-        whatsappNumber: cleanString(body.whatsappNumber),
-        whatsappJid: cleanString(body.whatsappJid),
-        isGroup: asBoolean(body.isGroup),
-        notes: cleanString(body.notes),
       });
       revalidateScraper();
       return NextResponse.json(result, { status: result.ok ? 200 : 400 });
@@ -148,28 +118,6 @@ export async function POST(request: Request) {
 
     if (action === "market_analysis_reset") {
       const result = await resetMarketAnalysisTestData({
-        confirmation: cleanString(body.confirmation),
-      });
-      revalidateScraper();
-      return NextResponse.json(result, { status: result.ok ? 200 : 400 });
-    }
-
-    if (action === "legacy_cleanup_dry_run") {
-      const result = await recordLegacyCleanupDryRun();
-      revalidateScraper();
-      return NextResponse.json(result, { status: result.ok ? 200 : 400 });
-    }
-
-    if (action === "legacy_cleanup_archive") {
-      const result = await archiveLegacyScraperOpportunities({
-        confirmation: cleanString(body.confirmation),
-      });
-      revalidateScraper();
-      return NextResponse.json(result, { status: result.ok ? 200 : 400 });
-    }
-
-    if (action === "legacy_cleanup_delete_archived") {
-      const result = await deleteArchivedLegacyScraperOpportunities({
         confirmation: cleanString(body.confirmation),
       });
       revalidateScraper();

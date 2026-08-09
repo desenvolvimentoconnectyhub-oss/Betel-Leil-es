@@ -1,6 +1,7 @@
 import "server-only";
 
 import { redirect } from "next/navigation";
+import { getAdminUserSectorMemberships } from "@/lib/admin/repository/workflow";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { AdminSessionUser } from "@/lib/auth/types";
 
@@ -29,11 +30,21 @@ export async function getCurrentAdmin(): Promise<AdminSessionUser | null> {
 
   if (error || !data) return null;
 
+  const sectors = await getAdminUserSectorMemberships(data.id).catch(() => []);
+
   return {
     id: data.id,
     email: data.email || user.email || "",
     name: data.display_name || user.email || "Admin",
     role: data.role,
+    sectors: sectors.map((membership) => ({
+      key: membership.sectorKey,
+      name: membership.sectorName,
+      role: membership.roleInSector,
+      canReview: membership.canReview,
+      canApprove: membership.canApprove,
+      isPrimary: membership.isPrimary,
+    })),
   };
 }
 

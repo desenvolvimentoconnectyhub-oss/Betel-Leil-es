@@ -5,11 +5,55 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Activity, ChevronDown, HeartPulse } from "lucide-react";
 import { adminNavGroups, getCanonicalAdminHref } from "@/lib/admin/modules";
+import type { AdminSessionUser } from "@/lib/auth/types";
 import { AdminNavGroup } from "./AdminNavGroup";
 
 const logoUrl = "https://pub-3b8a3e7613ad4776be18e72d6d78207f.r2.dev/logo-betel.png";
 
-export function AdminSidebarContent({ activeHref }: { activeHref: string }) {
+function canAccessHref(admin: AdminSessionUser | undefined, href: string) {
+  if (!admin || admin.role === "owner" || admin.role === "admin") return true;
+
+  const sectorKeys = new Set((admin.sectors || []).map((sector) => sector.key));
+  if (!sectorKeys.size) return true;
+  if (href === "/admin") return true;
+  if (sectorKeys.has("operations")) return true;
+
+  if (sectorKeys.has("market_analysis")) {
+    return href.startsWith("/admin/oportunidades") || href.startsWith("/admin/scraper") || href.startsWith("/admin/fontes");
+  }
+
+  if (sectorKeys.has("legal") || sectorKeys.has("validation")) {
+    return href.startsWith("/admin/oportunidades") || href.startsWith("/admin/fontes");
+  }
+
+  if (sectorKeys.has("creative")) {
+    return href.startsWith("/admin/oportunidades") || href.startsWith("/admin/meta-whatsapp");
+  }
+
+  if (sectorKeys.has("communication")) {
+    return href.startsWith("/admin/oportunidades") || href.startsWith("/admin/whatsapp") || href.startsWith("/admin/meta-whatsapp");
+  }
+
+  return false;
+}
+
+function visibleNavGroups(admin: AdminSessionUser | undefined) {
+  return adminNavGroups
+    .map((group) => ({
+      ...group,
+      items: group.items
+        .map((item) => ({
+          ...item,
+          children: item.children?.filter((child) => canAccessHref(admin, child.href)),
+        }))
+        .filter((item) => canAccessHref(admin, item.href) || Boolean(item.children?.length)),
+    }))
+    .filter((group) => group.items.length);
+}
+
+export function AdminSidebarContent({ activeHref, admin }: { activeHref: string; admin?: AdminSessionUser }) {
+  const groups = visibleNavGroups(admin);
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--admin-sidebar)] text-[var(--admin-foreground)]">
       <div className="flex min-h-16 items-center gap-3 border-b border-[var(--admin-border)] px-4">
@@ -29,7 +73,7 @@ export function AdminSidebarContent({ activeHref }: { activeHref: string }) {
       </div>
 
       <nav className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
-        {adminNavGroups.map((group) => (
+        {groups.map((group) => (
           <AdminNavGroup key={group.label} group={group} activeHref={activeHref} />
         ))}
         <div className="mt-3 border-t border-[var(--admin-border)] pt-3">
@@ -60,13 +104,13 @@ export function AdminSidebarContent({ activeHref }: { activeHref: string }) {
   );
 }
 
-export function AdminSidebar() {
+export function AdminSidebar({ admin }: { admin?: AdminSessionUser }) {
   const pathname = usePathname();
   const activeHref = getCanonicalAdminHref(pathname);
 
   return (
     <aside className="fixed inset-y-0 left-0 z-30 hidden w-[272px] border-r border-[var(--admin-border)] lg:block">
-      <AdminSidebarContent activeHref={activeHref} />
+      <AdminSidebarContent activeHref={activeHref} admin={admin} />
     </aside>
   );
 }

@@ -22,6 +22,12 @@ function initials(name: string) {
   return `${parts[0] || "B"}${parts[1] || "A"}`.toUpperCase();
 }
 
+function sectorLabel(admin: AdminSessionUser) {
+  const sectors = admin.sectors || [];
+  if (!sectors.length) return "Sem setor";
+  return sectors.map((sector) => sector.name).join(", ");
+}
+
 export function UserMenu({ admin }: { admin: AdminSessionUser }) {
   const [isSigningOut, setIsSigningOut] = useState(false);
 
@@ -49,6 +55,7 @@ export function UserMenu({ admin }: { admin: AdminSessionUser }) {
           <div className="text-sm">{admin.name}</div>
           <div className="mt-0.5 text-xs font-normal text-[var(--admin-muted)]">{admin.email}</div>
           <div className="mt-1 text-[10px] uppercase tracking-[0.14em] text-[var(--admin-cyan)]">{admin.role}</div>
+          <div className="mt-1 truncate text-[10px] text-[var(--admin-muted)]">{sectorLabel(admin)}</div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuItem className="gap-2 text-[var(--admin-soft)]">

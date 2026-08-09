@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { requireCurrentAdmin } from "@/lib/auth/admin";
 import {
   createAdminUserRecord,
+  defaultSectorKeysForRole,
   resendAdminUserInviteRecord,
   updateAdminUserRecord,
   updateAdminUserStatusRecord,
@@ -19,6 +20,13 @@ const allowedStatuses = new Set(["active", "invited", "suspended", "disabled"]);
 function field(formData: FormData, name: string, fallback = "") {
   const value = formData.get(name);
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function sectorKeys(formData: FormData) {
+  return formData
+    .getAll("sectorKeys")
+    .map((value) => (typeof value === "string" ? value.trim() : ""))
+    .filter(Boolean);
 }
 
 function redirectWith(path: string, status: "success" | "error", message: string): never {
@@ -41,6 +49,7 @@ export async function createAdminUserAction(formData: FormData) {
   const statusValue = field(formData, "status", "active");
   const role = (allowedRoles.has(roleValue) ? roleValue : "analyst") as AdminUserRole;
   const status = (allowedStatuses.has(statusValue) ? statusValue : "active") as AdminUserStatus;
+  const selectedSectorKeys = sectorKeys(formData);
 
   const result = await createAdminUserRecord({
     displayName: field(formData, "displayName"),
@@ -50,6 +59,7 @@ export async function createAdminUserAction(formData: FormData) {
     status,
     organizationName: field(formData, "organizationName", "Betel Leiloes"),
     invitedByAdminId: admin.id,
+    sectorKeys: selectedSectorKeys.length ? selectedSectorKeys : defaultSectorKeysForRole(role),
   });
 
   if (!result.ok) {
@@ -84,6 +94,7 @@ export async function updateAdminUserAction(formData: FormData) {
   const statusValue = field(formData, "status", "active");
   const role = (allowedRoles.has(roleValue) ? roleValue : "analyst") as AdminUserRole;
   const status = (allowedStatuses.has(statusValue) ? statusValue : "active") as AdminUserStatus;
+  const selectedSectorKeys = sectorKeys(formData);
 
   const result = await updateAdminUserRecord({
     id,
@@ -94,6 +105,7 @@ export async function updateAdminUserAction(formData: FormData) {
     status,
     organizationName: field(formData, "organizationName", "Betel Leiloes"),
     invitedByAdminId: admin.id,
+    sectorKeys: selectedSectorKeys,
   });
 
   if (!result.ok) {
