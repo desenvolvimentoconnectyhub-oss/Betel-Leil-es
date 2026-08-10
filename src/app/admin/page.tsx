@@ -13,6 +13,7 @@ import {
   type AuctionOpportunity,
   type ResourceTone,
 } from "@/lib/admin/repository";
+import { adminCanUploadMarketAnalysisBatches } from "@/lib/admin/access";
 import { requireCurrentAdmin } from "@/lib/auth/admin";
 import { getLinkScraperDashboardData, type LinkScraperBatch } from "@/lib/scraper";
 import { RiskBadge } from "@/components/admin/RiskBadge";
@@ -90,6 +91,7 @@ export default async function AdminDashboard() {
   const appraisalValue = opportunities.reduce((sum, item) => sum + item.appraisalValue, 0);
   const failedBatches = scraper.batches.filter((batch) => batch.status === "falha" || batch.rows.some((row) => row.status === "falha")).length;
   const latestBatch = scraper.batches[0];
+  const canUploadMarketAnalysisBatches = adminCanUploadMarketAnalysisBatches(admin);
   const avgDiscount = average(opportunities.map((item) => item.discountPct));
   const valueRatio = pipelineValue > 0 ? appraisalValue / pipelineValue : 0;
   const dataTone = opportunitiesResult.source === "supabase" || scraperResult.source === "supabase" ? "green" : "yellow";
@@ -239,6 +241,7 @@ export default async function AdminDashboard() {
             failedBatches={failedBatches}
             readyRows={scraper.metrics.readyRows}
             totalRows={scraper.metrics.totalRows}
+            canOpenImporter={canUploadMarketAnalysisBatches}
           />
         </DashboardPanel>
 
@@ -520,11 +523,13 @@ function ScraperSummary({
   failedBatches,
   readyRows,
   totalRows,
+  canOpenImporter,
 }: {
   latestBatch?: LinkScraperBatch;
   failedBatches: number;
   readyRows: number;
   totalRows: number;
+  canOpenImporter: boolean;
 }) {
   return (
     <div className="grid gap-4">
@@ -546,13 +551,15 @@ function ScraperSummary({
         </p>
       </div>
 
-      <Link
-        href="/admin/scraper"
-        className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-[var(--admin-border)] text-xs font-semibold text-[var(--admin-soft)] transition hover:border-[var(--admin-cyan)] hover:text-white"
-      >
-        Abrir analise
-        <ArrowUpRight size={14} />
-      </Link>
+      {canOpenImporter ? (
+        <Link
+          href="/admin/scraper"
+          className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-[var(--admin-border)] text-xs font-semibold text-[var(--admin-soft)] transition hover:border-[var(--admin-cyan)] hover:text-white"
+        >
+          Abrir analise
+          <ArrowUpRight size={14} />
+        </Link>
+      ) : null}
     </div>
   );
 }

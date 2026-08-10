@@ -574,8 +574,10 @@ function ProgressBar({ value, tone = "green" }: { value: number; tone?: Resource
 
 function MoreActionsMenu({
   onExport,
+  canManageImports,
 }: {
   onExport: () => void;
+  canManageImports: boolean;
 }) {
   return (
     <details className="relative">
@@ -584,16 +586,22 @@ function MoreActionsMenu({
         Mais acoes
       </summary>
       <div className="absolute right-0 z-20 mt-2 w-64 rounded-lg border border-[var(--admin-border)] bg-white p-2 shadow-xl shadow-[rgba(81,60,36,0.12)]">
-        <MenuLink href="/admin/scraper" icon={<TimerReset size={14} />} label="Analise de mercado" />
+        {canManageImports ? (
+          <MenuLink href="/admin/scraper" icon={<TimerReset size={14} />} label="Analise de mercado" />
+        ) : null}
         <form action={backfillOpportunityImagesAction}>
           <MenuButton type="submit" icon={<Camera size={14} />} label="Atualizar fotos" />
         </form>
         <form action={refreshOpportunityValidationPipelineAction}>
           <MenuButton type="submit" icon={<ListChecks size={14} />} label="Atualizar validacao" />
         </form>
-        <MenuLink href="/admin/fontes/capturas" icon={<UploadCloud size={14} />} label="Importar imoveis" />
+        {canManageImports ? (
+          <MenuLink href="/admin/fontes/capturas" icon={<UploadCloud size={14} />} label="Importar imoveis" />
+        ) : null}
         <MenuButton type="button" onClick={onExport} icon={<Download size={14} />} label="Exportar dados" />
-        <MenuLink href="/admin/fontes" icon={<Settings2 size={14} />} label="Configurar captura" />
+        {canManageImports ? (
+          <MenuLink href="/admin/fontes" icon={<Settings2 size={14} />} label="Configurar captura" />
+        ) : null}
       </div>
     </details>
   );
@@ -1153,6 +1161,7 @@ export function OpportunityWorkspacePage({
   validations,
   source,
   reason,
+  canManageImports,
 }: {
   module: WorkspaceModule;
   opportunities: WorkspaceOpportunity[];
@@ -1160,6 +1169,7 @@ export function OpportunityWorkspacePage({
   validations: WorkspaceValidationRun[];
   source: string;
   reason?: string;
+  canManageImports: boolean;
 }) {
   const searchParams = useSearchParams();
   const requestedPipelineStage = pipelineStageFromParam(searchParams.get("pipeline"));
@@ -1423,7 +1433,7 @@ export function OpportunityWorkspacePage({
               <RefreshCcw size={15} />
               Atualizar dados
             </Button>
-            <MoreActionsMenu onExport={() => exportCsv(filteredOpportunities)} />
+            <MoreActionsMenu canManageImports={canManageImports} onExport={() => exportCsv(filteredOpportunities)} />
           </div>
         </div>
       </section>

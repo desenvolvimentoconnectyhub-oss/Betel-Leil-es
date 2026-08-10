@@ -1,6 +1,8 @@
 import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 import { inngest } from "@/inngest/client";
+import { adminCanUploadMarketAnalysisBatches } from "@/lib/admin/access";
+import { requireAdminApi } from "@/lib/auth/admin-api";
 import {
   createLinkScraperBatch,
   getLinkScraperDashboardData,
@@ -25,7 +27,24 @@ function revalidateScraper() {
   revalidatePath("/api/admin/scraper");
 }
 
+async function requireScraperManagerApi() {
+  const authorization = await requireAdminApi();
+  if (authorization.response || !authorization.admin) return authorization.response;
+
+  if (!adminCanUploadMarketAnalysisBatches(authorization.admin)) {
+    return NextResponse.json(
+      { ok: false, error: "Apenas administradores ou usuarios da Operacao podem importar e processar lotes." },
+      { status: 403 }
+    );
+  }
+
+  return null;
+}
+
 export async function GET() {
+  const forbidden = await requireScraperManagerApi();
+  if (forbidden) return forbidden;
+
   const data = await getLinkScraperDashboardData();
   return NextResponse.json({ ...data });
 }
@@ -64,6 +83,9 @@ async function handleFormData(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const forbidden = await requireScraperManagerApi();
+  if (forbidden) return forbidden;
+
   const contentType = request.headers.get("content-type") || "";
 
   try {

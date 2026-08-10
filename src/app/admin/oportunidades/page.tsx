@@ -1,4 +1,5 @@
 import { OpportunityWorkspacePage } from "@/components/admin/OpportunityWorkspacePage";
+import { adminCanUploadMarketAnalysisBatches } from "@/lib/admin/access";
 import { getAdminModule } from "@/lib/admin/modules";
 import { listAuctionOpportunitiesForAdmin, listOpportunityValidationPipelines, listSourceSnapshots } from "@/lib/admin/repository";
 import { requireCurrentAdmin } from "@/lib/auth/admin";
@@ -26,6 +27,7 @@ export default async function OpportunitiesPage() {
       validations={visibleValidations}
       source={opportunities.source}
       reason={opportunities.reason || snapshots.reason || validations.reason}
+      canManageImports={adminCanUploadMarketAnalysisBatches(admin)}
     />
   );
 }

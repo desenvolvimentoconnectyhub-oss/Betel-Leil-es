@@ -4,55 +4,29 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Activity, ChevronDown, HeartPulse } from "lucide-react";
+import { adminCanAccessHref } from "@/lib/admin/access";
 import { adminNavGroups, getCanonicalAdminHref } from "@/lib/admin/modules";
 import type { AdminSessionUser } from "@/lib/auth/types";
 import { AdminNavGroup } from "./AdminNavGroup";
 
 const logoUrl = "https://pub-3b8a3e7613ad4776be18e72d6d78207f.r2.dev/logo-betel.png";
 
-function visibleSectorKeys(admin: AdminSessionUser | undefined) {
-  const sectors = admin?.sectors || [];
-  const scoped = sectors.some((sector) => sector.isPrimary) ? sectors.filter((sector) => sector.isPrimary) : sectors;
-  return new Set(scoped.map((sector) => sector.key));
-}
-
-function canAccessHref(admin: AdminSessionUser | undefined, href: string) {
-  if (!admin || admin.role === "owner" || admin.role === "admin") return true;
-
-  const sectorKeys = visibleSectorKeys(admin);
-  if (href === "/admin") return true;
-  if (!sectorKeys.size) return false;
-  if (sectorKeys.has("operations")) return true;
-
-  if (sectorKeys.has("market_analysis")) {
-    return href.startsWith("/admin/oportunidades") || href.startsWith("/admin/scraper") || href.startsWith("/admin/fontes");
-  }
-
-  if (sectorKeys.has("legal") || sectorKeys.has("validation")) {
-    return href.startsWith("/admin/oportunidades") || href.startsWith("/admin/fontes");
-  }
-
-  if (sectorKeys.has("creative")) {
-    return href.startsWith("/admin/oportunidades") || href.startsWith("/admin/meta-whatsapp");
-  }
-
-  if (sectorKeys.has("communication")) {
-    return href.startsWith("/admin/oportunidades") || href.startsWith("/admin/whatsapp") || href.startsWith("/admin/meta-whatsapp");
-  }
-
-  return false;
-}
-
 function visibleNavGroups(admin: AdminSessionUser | undefined) {
   return adminNavGroups
     .map((group) => ({
       ...group,
       items: group.items
-        .map((item) => ({
-          ...item,
-          children: item.children?.filter((child) => canAccessHref(admin, child.href)),
-        }))
-        .filter((item) => canAccessHref(admin, item.href) || Boolean(item.children?.length)),
+        .map((item) => {
+          const canAccessItem = adminCanAccessHref(admin, item.href);
+          const children = item.children?.filter((child) => adminCanAccessHref(admin, child.href));
+
+          return {
+            ...item,
+            href: canAccessItem ? item.href : children?.[0]?.href || item.href,
+            children,
+          };
+        })
+        .filter((item) => adminCanAccessHref(admin, item.href) || Boolean(item.children?.length)),
     }))
     .filter((group) => group.items.length);
 }
