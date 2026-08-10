@@ -30,6 +30,12 @@ function sectorKeys(formData: FormData) {
     .filter(Boolean);
 }
 
+function resolveSectorKeysForRole(role: AdminUserRole, selectedSectorKeys: string[]) {
+  if (selectedSectorKeys.length) return selectedSectorKeys;
+  if (role === "owner" || role === "admin") return defaultSectorKeysForRole(role);
+  return [];
+}
+
 function redirectWith(path: string, status: "success" | "error", message: string): never {
   redirect(`${path}?status=${status}&message=${encodeURIComponent(message)}`);
 }
@@ -51,6 +57,11 @@ export async function createAdminUserAction(formData: FormData) {
   const role = (allowedRoles.has(roleValue) ? roleValue : "analyst") as AdminUserRole;
   const status = (allowedStatuses.has(statusValue) ? statusValue : "active") as AdminUserStatus;
   const selectedSectorKeys = sectorKeys(formData);
+  const resolvedSectorKeys = resolveSectorKeysForRole(role, selectedSectorKeys);
+
+  if (!resolvedSectorKeys.length) {
+    redirectWith("/admin/usuarios", "error", "Selecione o setor do pipeline deste usuario.");
+  }
 
   const result = await createAdminUserRecord({
     displayName: field(formData, "displayName"),
@@ -60,7 +71,7 @@ export async function createAdminUserAction(formData: FormData) {
     status,
     organizationName: field(formData, "organizationName", "Betel Leiloes"),
     invitedByAdminId: admin.id,
-    sectorKeys: selectedSectorKeys.length ? selectedSectorKeys : defaultSectorKeysForRole(role),
+    sectorKeys: resolvedSectorKeys,
   });
 
   if (!result.ok) {
@@ -96,6 +107,11 @@ export async function updateAdminUserAction(formData: FormData) {
   const role = (allowedRoles.has(roleValue) ? roleValue : "analyst") as AdminUserRole;
   const status = (allowedStatuses.has(statusValue) ? statusValue : "active") as AdminUserStatus;
   const selectedSectorKeys = sectorKeys(formData);
+  const resolvedSectorKeys = resolveSectorKeysForRole(role, selectedSectorKeys);
+
+  if (!resolvedSectorKeys.length) {
+    redirectWith("/admin/usuarios", "error", "Selecione o setor do pipeline deste usuario.");
+  }
 
   const result = await updateAdminUserRecord({
     id,
@@ -106,7 +122,7 @@ export async function updateAdminUserAction(formData: FormData) {
     status,
     organizationName: field(formData, "organizationName", "Betel Leiloes"),
     invitedByAdminId: admin.id,
-    sectorKeys: selectedSectorKeys,
+    sectorKeys: resolvedSectorKeys,
   });
 
   if (!result.ok) {

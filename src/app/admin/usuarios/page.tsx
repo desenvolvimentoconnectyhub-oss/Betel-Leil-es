@@ -25,7 +25,6 @@ import { DashboardCard } from "@/components/admin/DashboardCard";
 import { StatusBadge } from "@/components/admin/StatusBadge";
 import { Button } from "@/components/ui/button";
 import {
-  defaultSectorKeysForRole,
   listAdminSectors,
   listAdminUsers,
   type AdminUserListItem,
@@ -212,7 +211,7 @@ export default async function AdminUsersPage({
     <UserPlus size={18} className="text-[var(--admin-cyan)]" />
   );
   const checkedSectorKeys = new Set(
-    editingUser ? editingUser.sectors.map((sector) => sector.sectorKey) : defaultSectorKeysForRole("analyst")
+    editingUser ? editingUser.sectors.map((sector) => sector.sectorKey) : []
   );
 
   return (

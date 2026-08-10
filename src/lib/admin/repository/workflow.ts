@@ -303,9 +303,12 @@ export function workflowStageKeysForAdmin(admin: AdminSessionUser) {
   if (adminHasFullOpportunityVisibility(admin)) return [];
 
   const memberships = admin.sectors || [];
+  const scopedMemberships = memberships.some((membership) => membership.isPrimary)
+    ? memberships.filter((membership) => membership.isPrimary)
+    : memberships;
   const stageKeys = new Set<string>();
 
-  for (const membership of memberships) {
+  for (const membership of scopedMemberships) {
     const key = cleanString(membership.key) as AdminSectorKey;
     for (const stageKey of sectorStageKeys[key] || []) {
       stageKeys.add(stageKey);

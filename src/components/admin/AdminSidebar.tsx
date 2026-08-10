@@ -10,12 +10,18 @@ import { AdminNavGroup } from "./AdminNavGroup";
 
 const logoUrl = "https://pub-3b8a3e7613ad4776be18e72d6d78207f.r2.dev/logo-betel.png";
 
+function visibleSectorKeys(admin: AdminSessionUser | undefined) {
+  const sectors = admin?.sectors || [];
+  const scoped = sectors.some((sector) => sector.isPrimary) ? sectors.filter((sector) => sector.isPrimary) : sectors;
+  return new Set(scoped.map((sector) => sector.key));
+}
+
 function canAccessHref(admin: AdminSessionUser | undefined, href: string) {
   if (!admin || admin.role === "owner" || admin.role === "admin") return true;
 
-  const sectorKeys = new Set((admin.sectors || []).map((sector) => sector.key));
-  if (!sectorKeys.size) return true;
+  const sectorKeys = visibleSectorKeys(admin);
   if (href === "/admin") return true;
+  if (!sectorKeys.size) return false;
   if (sectorKeys.has("operations")) return true;
 
   if (sectorKeys.has("market_analysis")) {
