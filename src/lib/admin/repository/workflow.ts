@@ -97,6 +97,17 @@ type SectorRecipient = {
   role: string;
 };
 
+export const openWorkflowTaskStatuses: WorkflowTaskStatus[] = ["pending", "in_progress", "blocked"];
+
+const sectorStageKeys: Record<AdminSectorKey, string[]> = {
+  operations: [],
+  market_analysis: ["market_review"],
+  legal: ["legal_review"],
+  validation: ["validation"],
+  creative: ["creative"],
+  communication: ["communication"],
+};
+
 const defaultSectors: AdminSector[] = [
   {
     id: "",
@@ -282,6 +293,30 @@ export function defaultSectorKeysForRole(role: string) {
   if (role === "manager") return ["operations", "market_analysis"];
   if (role === "analyst") return ["market_analysis"];
   return [];
+}
+
+export function adminHasFullOpportunityVisibility(admin: AdminSessionUser) {
+  return admin.role === "owner" || admin.role === "admin";
+}
+
+export function workflowStageKeysForAdmin(admin: AdminSessionUser) {
+  if (adminHasFullOpportunityVisibility(admin)) return [];
+
+  const memberships = admin.sectors || [];
+  const stageKeys = new Set<string>();
+
+  for (const membership of memberships) {
+    const key = cleanString(membership.key) as AdminSectorKey;
+    for (const stageKey of sectorStageKeys[key] || []) {
+      stageKeys.add(stageKey);
+    }
+  }
+
+  if (!stageKeys.size && ["manager", "analyst"].includes(admin.role)) {
+    stageKeys.add("market_review");
+  }
+
+  return [...stageKeys];
 }
 
 export async function listAdminSectors(): Promise<DataResult<AdminSector[]>> {

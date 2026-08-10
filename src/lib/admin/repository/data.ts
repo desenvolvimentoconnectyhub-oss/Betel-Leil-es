@@ -1,5 +1,11 @@
 import "server-only";
 
+import type { AdminSessionUser } from "@/lib/auth/types";
+import {
+  adminHasFullOpportunityVisibility,
+  openWorkflowTaskStatuses,
+  workflowStageKeysForAdmin,
+} from "./workflow";
 import type { OpportunityRow } from "@/lib/admin/mock-data";
 import {
   type CreateAuctionOpportunityInput, type UpdateAuctionOpportunityInput,
@@ -100,6 +106,67 @@ export function shouldShowInPortfolio(row: OpportunityDbRow) {
   return hasPortfolioValue(row) && hasPortfolioImage(row);
 }
 
+type WorkflowOpportunityTaskRow = {
+  opportunity_id?: string | null;
+  stage_key?: string | null;
+  updated_at?: string | null;
+};
+
+const stageFallbackTerms: Record<string, string[]> = {
+  market_review: ["Revisao de mercado", "Analise de mercado"],
+  legal_review: ["Revisao juridica", "Aguardando revisao juridica", "Juridico"],
+  validation: ["Validacao"],
+  creative: ["Criativos"],
+  communication: ["Comunicacao"],
+};
+
+function stageFilterExpressionForTerms(terms: string[]) {
+  return terms
+    .flatMap((term) => [
+      `stage.ilike.%${term}%`,
+      `owner_name.ilike.%${term}%`,
+      `next_action.ilike.%${term}%`,
+      `legal_status.ilike.%${term}%`,
+    ])
+    .join(",");
+}
+
+function opportunityMatchesWorkflowStage(row: OpportunityDbRow, stageKeys: string[]) {
+  const haystack = [
+    asString(row.stage),
+    asString(row.owner_name),
+    asString(row.next_action),
+    asString(row.legal_status),
+  ]
+    .join(" ")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+
+  return stageKeys.some((stageKey) =>
+    (stageFallbackTerms[stageKey] || []).some((term) =>
+      haystack.includes(
+        term
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .toLowerCase()
+      )
+    )
+  );
+}
+
+function uniqueOpportunityRows(rows: OpportunityDbRow[]) {
+  const byId = new Map<string, OpportunityDbRow>();
+
+  for (const row of rows) {
+    const id = asString(row.id);
+    if (!id || byId.has(id)) continue;
+    byId.set(id, row);
+  }
+
+  return [...byId.values()];
+}
+
 export async function listAuctionOpportunities(limit = 50): Promise<DataResult<AuctionOpportunity[]>> {
   const supabase = getSupabaseAdminClient();
   if (!supabase) return fallbackOpportunities("Supabase admin nao configurado.", limit);
@@ -124,6 +191,88 @@ export async function listAuctionOpportunities(limit = 50): Promise<DataResult<A
   return {
     data: visibleRows.map((row) => normalizeOpportunity(row)),
     source: "supabase",
+  };
+}
+
+export async function listAuctionOpportunitiesForAdmin(
+  admin: AdminSessionUser,
+  limit = 50
+): Promise<DataResult<AuctionOpportunity[]>> {
+  if (adminHasFullOpportunityVisibility(admin)) return listAuctionOpportunities(limit);
+
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) {
+    return {
+      data: [],
+      source: "mock",
+      reason: "Supabase admin nao configurado. Fila por setor exige dados reais do workflow.",
+    };
+  }
+
+  const stageKeys = workflowStageKeysForAdmin(admin);
+  if (!stageKeys.length) {
+    return {
+      data: [],
+      source: "supabase",
+      reason: "Este usuario nao possui setor do pipeline vinculado a uma fila de imoveis.",
+    };
+  }
+
+  const safeLimit = Math.min(Math.max(limit, 1), 200);
+  const taskLimit = Math.max(safeLimit * 4, 100);
+  const { data: taskData, error: taskError } = await supabase
+    .from("opportunity_workflow_tasks")
+    .select("opportunity_id,stage_key,updated_at")
+    .in("stage_key", stageKeys)
+    .in("status", openWorkflowTaskStatuses)
+    .order("updated_at", { ascending: false })
+    .limit(taskLimit);
+
+  const taskRows = (taskError ? [] : (taskData || [])) as WorkflowOpportunityTaskRow[];
+  const taskOpportunityIds = [
+    ...new Set(taskRows.map((row) => asString(row.opportunity_id)).filter(Boolean)),
+  ];
+
+  const taskOpportunityRows = taskOpportunityIds.length
+    ? await supabase
+        .from("auction_opportunities")
+        .select("*")
+        .in("id", taskOpportunityIds)
+        .order("updated_at", { ascending: false })
+        .limit(safeLimit)
+    : { data: [] as OpportunityDbRow[], error: null };
+
+  const fallbackResults = await Promise.all(
+    stageKeys.map(async (stageKey) => {
+      const expression = stageFilterExpressionForTerms(stageFallbackTerms[stageKey] || []);
+      if (!expression) return [] as OpportunityDbRow[];
+
+      const { data, error } = await supabase
+        .from("auction_opportunities")
+        .select("*")
+        .or(expression)
+        .order("updated_at", { ascending: false })
+        .limit(safeLimit);
+
+      return error ? ([] as OpportunityDbRow[]) : ((data || []) as OpportunityDbRow[]);
+    })
+  );
+
+  const rows = uniqueOpportunityRows([
+    ...(((taskOpportunityRows as { data?: unknown[] }).data || []) as OpportunityDbRow[]),
+    ...fallbackResults.flat(),
+  ])
+    .filter(shouldShowInPortfolio)
+    .filter((row) => taskOpportunityIds.includes(asString(row.id)) || opportunityMatchesWorkflowStage(row, stageKeys))
+    .slice(0, safeLimit);
+
+  return {
+    data: rows.map((row) => normalizeOpportunity(row)),
+    source: "supabase",
+    reason:
+      taskError?.message ||
+      (taskOpportunityRows.error ? taskOpportunityRows.error.message : undefined) ||
+      (rows.length ? undefined : "Nenhuma oportunidade aberta para o setor deste usuario."),
   };
 }
 

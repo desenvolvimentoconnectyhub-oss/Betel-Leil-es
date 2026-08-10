@@ -9,10 +9,11 @@ import {
 } from "lucide-react";
 import {
   formatCurrency,
-  listAuctionOpportunities,
+  listAuctionOpportunitiesForAdmin,
   type AuctionOpportunity,
   type ResourceTone,
 } from "@/lib/admin/repository";
+import { requireCurrentAdmin } from "@/lib/auth/admin";
 import { getLinkScraperDashboardData, type LinkScraperBatch } from "@/lib/scraper";
 import { RiskBadge } from "@/components/admin/RiskBadge";
 import { ScoreBadge } from "@/components/admin/ScoreBadge";
@@ -71,8 +72,9 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export default async function AdminDashboard() {
+  const admin = await requireCurrentAdmin();
   const [opportunitiesResult, scraperResult] = await Promise.all([
-    listAuctionOpportunities(100),
+    listAuctionOpportunitiesForAdmin(admin, 100),
     getLinkScraperDashboardData(),
   ]);
 
