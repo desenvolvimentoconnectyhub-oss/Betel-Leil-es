@@ -112,61 +112,6 @@ type WorkflowOpportunityTaskRow = {
   updated_at?: string | null;
 };
 
-const stageFallbackTerms: Record<string, string[]> = {
-  market_review: ["Revisao de mercado", "Analise de mercado"],
-  legal_review: ["Revisao juridica", "Aguardando revisao juridica", "Juridico"],
-  validation: ["Validacao"],
-  creative: ["Criativos"],
-  communication: ["Comunicacao"],
-};
-
-function stageFilterExpressionForTerms(terms: string[]) {
-  return terms
-    .flatMap((term) => [
-      `stage.ilike.%${term}%`,
-      `owner_name.ilike.%${term}%`,
-      `next_action.ilike.%${term}%`,
-      `legal_status.ilike.%${term}%`,
-    ])
-    .join(",");
-}
-
-function opportunityMatchesWorkflowStage(row: OpportunityDbRow, stageKeys: string[]) {
-  const haystack = [
-    asString(row.stage),
-    asString(row.owner_name),
-    asString(row.next_action),
-    asString(row.legal_status),
-  ]
-    .join(" ")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-
-  return stageKeys.some((stageKey) =>
-    (stageFallbackTerms[stageKey] || []).some((term) =>
-      haystack.includes(
-        term
-          .normalize("NFD")
-          .replace(/[\u0300-\u036f]/g, "")
-          .toLowerCase()
-      )
-    )
-  );
-}
-
-function uniqueOpportunityRows(rows: OpportunityDbRow[]) {
-  const byId = new Map<string, OpportunityDbRow>();
-
-  for (const row of rows) {
-    const id = asString(row.id);
-    if (!id || byId.has(id)) continue;
-    byId.set(id, row);
-  }
-
-  return [...byId.values()];
-}
-
 export async function listAuctionOpportunities(limit = 50): Promise<DataResult<AuctionOpportunity[]>> {
   const supabase = getSupabaseAdminClient();
   if (!supabase) return fallbackOpportunities("Supabase admin nao configurado.", limit);
@@ -233,46 +178,38 @@ export async function listAuctionOpportunitiesForAdmin(
     ...new Set(taskRows.map((row) => asString(row.opportunity_id)).filter(Boolean)),
   ];
 
-  const taskOpportunityRows = taskOpportunityIds.length
-    ? await supabase
-        .from("auction_opportunities")
-        .select("*")
-        .in("id", taskOpportunityIds)
-        .order("updated_at", { ascending: false })
-        .limit(safeLimit)
-    : { data: [] as OpportunityDbRow[], error: null };
+  if (taskError || !taskOpportunityIds.length) {
+    return {
+      data: [],
+      source: "supabase",
+      reason: taskError?.message || "Nenhuma oportunidade aberta para o setor deste usuario.",
+    };
+  }
 
-  const fallbackResults = await Promise.all(
-    stageKeys.map(async (stageKey) => {
-      const expression = stageFilterExpressionForTerms(stageFallbackTerms[stageKey] || []);
-      if (!expression) return [] as OpportunityDbRow[];
+  const { data, error } = await supabase
+    .from("auction_opportunities")
+    .select("*")
+    .in("id", taskOpportunityIds)
+    .order("updated_at", { ascending: false })
+    .limit(safeLimit);
 
-      const { data, error } = await supabase
-        .from("auction_opportunities")
-        .select("*")
-        .or(expression)
-        .order("updated_at", { ascending: false })
-        .limit(safeLimit);
+  if (error) {
+    return {
+      data: [],
+      source: "supabase",
+      reason: error.message,
+    };
+  }
 
-      return error ? ([] as OpportunityDbRow[]) : ((data || []) as OpportunityDbRow[]);
-    })
-  );
-
-  const rows = uniqueOpportunityRows([
-    ...(((taskOpportunityRows as { data?: unknown[] }).data || []) as OpportunityDbRow[]),
-    ...fallbackResults.flat(),
-  ])
-    .filter(shouldShowInPortfolio)
-    .filter((row) => taskOpportunityIds.includes(asString(row.id)) || opportunityMatchesWorkflowStage(row, stageKeys))
+  const allowedOpportunityIds = new Set(taskOpportunityIds);
+  const rows = ((data || []) as OpportunityDbRow[])
+    .filter((row) => allowedOpportunityIds.has(asString(row.id)))
     .slice(0, safeLimit);
 
   return {
     data: rows.map((row) => normalizeOpportunity(row)),
     source: "supabase",
-    reason:
-      taskError?.message ||
-      (taskOpportunityRows.error ? taskOpportunityRows.error.message : undefined) ||
-      (rows.length ? undefined : "Nenhuma oportunidade aberta para o setor deste usuario."),
+    reason: rows.length ? undefined : "Nenhuma oportunidade aberta para o setor deste usuario.",
   };
 }
 
