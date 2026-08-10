@@ -28,6 +28,10 @@ import {
   type PropertyMarketComparable,
   type PropertyMarketSubject,
 } from "@/lib/admin/market-analysis";
+import {
+  buildOpportunityEvaluation,
+  marketDecisionFromRecommendation,
+} from "@/lib/domain/opportunity-evaluation";
 
 export type SavePropertyMarketComparableInput = {
   sourceLabel: string;
@@ -288,12 +292,13 @@ function buildPaymentSimulation(raw: Record<string, unknown> = {}): MarketPaymen
 }
 
 function decideFromNumbers(realDiscountPct: number, riskScore: number, confidenceScore: number): MarketAnalysisDecision {
-  if (confidenceScore < 45) return "review";
-  if (riskScore >= 75) return "review";
-  if (realDiscountPct >= 40 && riskScore <= 60) return "excellent";
-  if (realDiscountPct >= 30) return "good";
-  if (realDiscountPct >= 20) return "caution";
-  return "review";
+  const evaluation = buildOpportunityEvaluation({
+    realDiscountPct,
+    riskScore,
+    confidenceScore,
+    marketConfidenceScore: confidenceScore,
+  });
+  return marketDecisionFromRecommendation(evaluation);
 }
 
 function buildFallbackMarketAnalysis(
@@ -391,6 +396,7 @@ function buildFallbackMarketAnalysis(
       { label: "Fonte do leilao", url: firstUrl(rawPayload.sourceUrl, asRecord(rawPayload.candidate).sourceUrl, rawPayload.targetUrl) },
       { label: "Referencia", url: firstUrl(market.referenceUrl) },
     ].filter((item) => item.url),
+    rawPayload,
     updatedAt: asString(market.updatedAt, new Date().toISOString()),
   };
 }
@@ -487,6 +493,7 @@ function normalizePersistedAnalysis(
     sourceLinks: asArray<Record<string, unknown>>(row.source_links, [])
       .map((item) => ({ label: asString(item.label), url: firstUrl(item.url) }))
       .filter((item) => item.label && item.url),
+    rawPayload,
     updatedAt: asString(row.updated_at),
   };
 }

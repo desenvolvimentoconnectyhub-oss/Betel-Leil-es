@@ -7,9 +7,14 @@ import {
   calculateMarketDiscount,
   calculatePricePerM2,
   clampMarketScore,
-  type MarketAnalysisDecision,
   type MarketCostItem,
 } from "@/lib/admin/market-analysis";
+import {
+  buildOpportunityEvaluation,
+  countComparableQualities,
+  countComparableSources,
+  marketDecisionFromRecommendation,
+} from "@/lib/domain/opportunity-evaluation";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { ingestAuctionOpportunityRecord } from "@/lib/admin/repository/pipeline";
 import { openMarketReviewTasksForBatchRecord } from "@/lib/admin/repository/workflow";
@@ -2115,14 +2120,6 @@ function evaluateLinkAnalysisQualityGate(input: {
   } satisfies LinkAnalysisQualityGate;
 }
 
-function decidePreliminaryMarket(realDiscountPct: number, confidenceScore: number): MarketAnalysisDecision {
-  if (confidenceScore < 35) return "review";
-  if (realDiscountPct >= 45) return "excellent";
-  if (realDiscountPct >= 32) return "good";
-  if (realDiscountPct >= 20) return "caution";
-  return "review";
-}
-
 function marketSourceLinks(input: {
   auctionUrl: string;
   marketResearch: DeepMarketResearchResult | null;
@@ -2254,9 +2251,9 @@ async function upsertPreliminaryMarketAnalysis(input: {
       input.extraction.confidenceScore ||
       (marketValueBase && input.initialBid && areaM2 ? 52 : marketValueBase && input.initialBid ? 42 : 25)
   );
-  const decision = decidePreliminaryMarket(realDiscountPct, confidenceScore);
   const ceilingTargets = buildCeilingTargets(marketValueBase);
   const estimatedCosts = input.marketResearch?.estimatedCosts || [];
+  const estimatedCostsTotal = estimatedCostTotal(estimatedCosts);
   const rentalEstimate = buildRentalEstimatePayload({
     marketResearch: input.marketResearch,
     marketValueBase,
@@ -2268,6 +2265,41 @@ async function upsertPreliminaryMarketAnalysis(input: {
   if (!areaM2) missing.add("area");
   marketAnalysisMissingFields(input.qualityReview.missingFields).forEach((field) => missing.add(field));
   const sourceLinks = marketSourceLinks({ auctionUrl: input.auctionUrl, marketResearch: input.marketResearch });
+  const saleComparables = input.marketResearch?.saleComparables || [];
+  const rentalComparables = input.marketResearch?.rentalComparables || [];
+  const comparableQualities = countComparableQualities(saleComparables);
+  const occupancyText = cleanString(input.extraction.occupancy).toLowerCase();
+  const opportunityEvaluation = buildOpportunityEvaluation({
+    initialBid: input.initialBid,
+    marketValueBase,
+    realDiscountPct,
+    estimatedCostsTotal,
+    estimatedNetMargin: marketValueBase && input.initialBid ? Math.round(marketValueBase - input.initialBid - estimatedCostsTotal) : 0,
+    rentalMonthlyRent: rentalEstimate.monthlyRent,
+    saleComparables: saleComparables.length,
+    rentalComparables: rentalComparables.length,
+    strongSaleComparables: comparableQualities.strong,
+    mediumSaleComparables: comparableQualities.medium,
+    weakSaleComparables: comparableQualities.weak,
+    sourceDiversity: countComparableSources(saleComparables),
+    marketConfidenceScore: input.marketResearch?.confidenceScore || confidenceScore,
+    confidenceScore,
+    marketScore: input.marketResearch?.liquidityScore || 0,
+    areaM2,
+    locationConfirmed: Boolean(input.extraction.city && input.extraction.state),
+    documentsCount: input.documentCount,
+    hasOfficialDocument: input.documentCount > 0,
+    occupancyKnown: Boolean(
+      occupancyText &&
+        !["nao informado", "nao informada", "nao se aplica", "n/a", "-"].includes(occupancyText)
+    ),
+    riskScore: input.qualityReview.requiresReview ? 65 : 40,
+    complianceScore: input.qualityReview.requiresReview ? 55 : 78,
+    missingFields: Array.from(missing),
+    qualityFlags: input.qualityReview.qualityFlags,
+    cautionNotes: input.qualityReview.cautionNotes,
+  });
+  const decision = marketDecisionFromRecommendation(opportunityEvaluation);
 
   try {
     const { data: analysisRow } = await supabase.from("property_market_analyses").upsert(
@@ -2296,7 +2328,7 @@ async function upsertPreliminaryMarketAnalysis(input: {
         initial_bid_price_per_m2: calculatePricePerM2(input.initialBid, areaM2),
         real_discount_pct: realDiscountPct,
         estimated_costs: estimatedCosts,
-        estimated_net_margin: marketValueBase && input.initialBid ? Math.round(marketValueBase - input.initialBid - estimatedCostTotal(estimatedCosts)) : 0,
+        estimated_net_margin: opportunityEvaluation.financialPotential.level === "nao_calculado" ? 0 : Math.round(marketValueBase - input.initialBid - estimatedCostsTotal),
         suggested_ceiling_bid: ceilingTargets[0]?.value || 0,
         ceiling_targets: ceilingTargets,
         liquidity_score: input.marketResearch?.liquidityScore || 0,
@@ -2308,6 +2340,8 @@ async function upsertPreliminaryMarketAnalysis(input: {
           `Fonte do mercado: ${marketValueSource}.`,
           input.marketResearch ? `Comparaveis venda: ${input.marketResearch.saleComparables.length}; aluguel: ${input.marketResearch.rentalComparables.length}.` : "",
           realDiscountPct ? `Desconto preliminar sobre mercado: ${realDiscountPct}%.` : "",
+          `Recomendacao v2: ${opportunityEvaluation.finalRecommendation.label}.`,
+          opportunityEvaluation.finalRecommendation.explanation,
           input.qualityReview.qualityFlags.length ? `Flags de curadoria: ${input.qualityReview.qualityFlags.join(", ")}.` : "",
           missing.size ? `Pendencias: ${Array.from(missing).join(", ")}.` : "",
         ].filter(Boolean).join(" "),
@@ -2329,6 +2363,8 @@ async function upsertPreliminaryMarketAnalysis(input: {
           marketValueSource,
           auctionAppraisalValue: input.auctionAppraisalValue,
           rentalEstimate,
+          opportunityEvaluation,
+          evaluationRuleVersion: opportunityEvaluation.ruleVersion,
           marketResearch: input.marketResearch,
           qualityReview: input.qualityReview,
           extraction: input.extraction,
@@ -2485,6 +2521,48 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
     const qualityGateMessage = qualityGate.passed
       ? ""
       : `Trava de qualidade: analise incompleta. Campos pendentes: ${qualityGate.issues.join(", ")}.`;
+    const saleComparablesForEvaluation = marketResearch?.saleComparables || [];
+    const rentalComparablesForEvaluation = marketResearch?.rentalComparables || [];
+    const comparableQualitiesForEvaluation = countComparableQualities(saleComparablesForEvaluation);
+    const estimatedCostsForEvaluation = marketResearch?.estimatedCosts || [];
+    const estimatedCostsTotalForEvaluation = estimatedCostTotal(estimatedCostsForEvaluation);
+    const areaM2ForEvaluation = firstPositive(extraction.privateAreaM2, extraction.builtAreaM2, extraction.landAreaM2);
+    const occupancyTextForEvaluation = cleanString(extraction.occupancy).toLowerCase();
+    const importEvaluation = buildOpportunityEvaluation({
+      initialBid,
+      marketValueBase,
+      realDiscountPct: discount,
+      estimatedCostsTotal: estimatedCostsTotalForEvaluation,
+      estimatedNetMargin: marketValueBase && initialBid ? Math.round(marketValueBase - initialBid - estimatedCostsTotalForEvaluation) : 0,
+      rentalMonthlyRent: marketResearch?.rentalMonthlyRent || 0,
+      saleComparables: saleComparablesForEvaluation.length,
+      rentalComparables: rentalComparablesForEvaluation.length,
+      strongSaleComparables: comparableQualitiesForEvaluation.strong,
+      mediumSaleComparables: comparableQualitiesForEvaluation.medium,
+      weakSaleComparables: comparableQualitiesForEvaluation.weak,
+      sourceDiversity: countComparableSources(saleComparablesForEvaluation),
+      marketConfidenceScore: marketResearch?.confidenceScore || qualityReview.confidenceScore,
+      confidenceScore: qualityReview.confidenceScore,
+      marketScore: marketResearch?.liquidityScore || 0,
+      areaM2: areaM2ForEvaluation,
+      locationConfirmed: Boolean(extraction.city && extraction.state),
+      documentsCount: documentLinks.length,
+      hasOfficialDocument: documentLinks.length > 0,
+      occupancyKnown: Boolean(
+        occupancyTextForEvaluation &&
+          !["nao informado", "nao informada", "nao se aplica", "n/a", "-"].includes(occupancyTextForEvaluation)
+      ),
+      riskScore: !qualityGate.passed || qualityReview.requiresReview ? 65 : 40,
+      complianceScore: response.ok && qualityGate.passed && !qualityReview.requiresReview ? 78 : 55,
+      missingFields: uniqueStrings([...qualityReview.missingFields, ...qualityGate.issues], 40),
+      qualityFlags: qualityReview.qualityFlags,
+      cautionNotes: qualityReview.cautionNotes,
+    });
+    const importScore = clampMarketScore(
+      importEvaluation.financialPotential.score * 0.35 +
+        importEvaluation.researchQuality.score * 0.45 +
+        Math.max(0, 100 - importEvaluation.risk.score) * 0.2
+    );
     extraction.confidenceScore = qualityReview.confidenceScore;
     extraction.missingFields = qualityReview.missingFields;
     extraction.cautionNotes = uniqueStrings([
@@ -2505,16 +2583,16 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
       initialBid,
       appraisalValue: marketValueBase,
       discountPct: discount,
-      opportunityScore: Math.max(20, (discount > 0 ? Math.min(95, 45 + discount) : 50) - qualityReview.qualityFlags.length * 3),
-      riskScore: !qualityGate.passed || qualityReview.requiresReview ? 65 : 50,
-      complianceScore: response.ok && qualityGate.passed && !qualityReview.requiresReview ? 72 : 45,
+      opportunityScore: importScore,
+      riskScore: importEvaluation.risk.score,
+      complianceScore: importEvaluation.researchQuality.score,
       aiStatus: analysisDepth === "deep" ? "Analise profunda" : "Fila IA",
       legalStatus: extraction.legalSignal ? "Informado na fonte" : "Nao avaliado nesta fase",
       stage: !qualityGate.passed || qualityReview.requiresReview ? "Revisao humana" : "Entrada",
       nextAction: !qualityGate.passed
         ? `Completar campos obrigatorios antes de aprovar a analise: ${qualityGate.issues.join(", ")}.`
         : qualityReview.requiresReview
-        ? "Completar curadoria de mercado: valores, fotos reais, area e comparaveis antes de liberar decisao."
+        ? `${importEvaluation.finalRecommendation.label}: ${importEvaluation.finalRecommendation.explanation}`
         : "Revisar captura por link e completar analise de mercado.",
       owner: "Upload de Links - Analise de Mercado",
       auctionDate: firstText(extraction.auctionDate, row.auctionDateHint),
@@ -2538,6 +2616,8 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
         marketResearch,
         qualityReview,
         qualityGate,
+        opportunityEvaluation: importEvaluation,
+        evaluationRuleVersion: importEvaluation.ruleVersion,
         sourceUrl: row.auctionUrl,
         sourceDomain: domain,
         httpStatus: response.status,

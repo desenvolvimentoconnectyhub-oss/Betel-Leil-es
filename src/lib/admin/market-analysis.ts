@@ -123,6 +123,7 @@ export type PropertyMarketAnalysis = {
   cautionNotes: string;
   comparables: PropertyMarketComparable[];
   sourceLinks: Array<{ label: string; url: string }>;
+  rawPayload?: Record<string, unknown>;
   updatedAt: string;
 };
 

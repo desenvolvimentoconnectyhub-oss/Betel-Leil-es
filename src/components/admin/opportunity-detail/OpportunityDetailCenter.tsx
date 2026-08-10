@@ -42,11 +42,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  decisionTone,
   statusTone,
   type PropertyMarketAnalysis,
   type PropertyMarketComparable,
 } from "@/lib/admin/market-analysis";
+import {
+  buildOpportunityEvaluation,
+  buildOpportunityEvaluationInputFromAnalysis,
+  type OpportunityEvaluation,
+  type OpportunityEvaluationInput,
+} from "@/lib/domain/opportunity-evaluation";
 import type {
   PropertyQualificationDossier,
   PropertyQualificationEvidenceStatus,
@@ -398,25 +403,16 @@ function humanizeQualificationToken(value: string) {
 }
 
 function humanizedList(values: string[], fallback = "sem pendencia registrada") {
-  const seen = new Set<string>();
-  const items = values
-    .map(humanizeQualificationToken)
-    .filter(Boolean)
-    .filter((item) => {
-      const key = item.toLowerCase();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+  const items = humanizedItems(values);
   if (!items.length) return fallback;
   if (items.length === 1) return items[0];
   if (items.length === 2) return `${items[0]} e ${items[1]}`;
   return `${items.slice(0, -1).join(", ")} e ${items.at(-1)}`;
 }
 
-function compactHumanizedList(values: string[], limit = 4, fallback = "sem pendencia registrada") {
+function humanizedItems(values: string[], limit = 12) {
   const seen = new Set<string>();
-  const items = values
+  return values
     .map(humanizeQualificationToken)
     .filter(Boolean)
     .filter((item) => {
@@ -426,8 +422,10 @@ function compactHumanizedList(values: string[], limit = 4, fallback = "sem pende
       return true;
     })
     .slice(0, limit);
+}
 
-  return humanizedList(items, fallback);
+function compactHumanizedList(values: string[], limit = 4, fallback = "sem pendencia registrada") {
+  return humanizedList(humanizedItems(values, limit), fallback);
 }
 
 function scoreStatus(score: number, critical = false): PropertyQualificationEvidenceStatus {
@@ -668,52 +666,543 @@ function sourceUrlFor(analysis: PropertyMarketAnalysis, labels: string[]) {
   })?.url || "";
 }
 
-function fieldQualityTone(value: boolean): ResourceTone {
-  return value ? "green" : "yellow";
+function knownOccupancy(value?: string) {
+  const normalized = compactText(value, "").toLowerCase();
+  return Boolean(normalized && !["nao informado", "nao informada", "n/a", "-"].includes(normalized));
 }
 
-function recommendationTone(opportunity: AuctionOpportunity, analysis: PropertyMarketAnalysis | null): ResourceTone {
-  if (opportunity.riskScore >= 70 || opportunity.complianceScore < 50) return "red";
-  if (!analysis || analysis.status === "human_review" || analysis.status === "insufficient_data") return "yellow";
-  if (analysis.decision === "excellent" || analysis.decision === "good") return "green";
-  return "yellow";
+function buildDetailOpportunityEvaluation(
+  opportunity: AuctionOpportunity,
+  analysis: PropertyMarketAnalysis | null,
+  dossier?: PropertyQualificationDossier | null
+): OpportunityEvaluation {
+  const baseInput = buildOpportunityEvaluationInputFromAnalysis(opportunity, analysis);
+  if (!dossier) return buildOpportunityEvaluation(baseInput);
+
+  const market = dossier.marketEvidence;
+  const identity = dossier.identityEvidence;
+  const documents = dossier.documentEvidence;
+  const compliance = dossier.complianceEvidence;
+  const qualityCounts = jsonRecord(market.qualityCounts);
+  const qualityReview = jsonRecord(dossier.rawPayload.qualityReview);
+  const qualityGate = jsonRecord(dossier.rawPayload.qualityGate);
+  const mergedInput: OpportunityEvaluationInput = {
+    ...baseInput,
+    marketValueBase: jsonNumber(market.marketValueBase, baseInput.marketValueBase ?? 0),
+    realDiscountPct: jsonNumber(market.realDiscountPct, baseInput.realDiscountPct ?? 0),
+    saleComparables: jsonNumber(market.saleComparables, baseInput.saleComparables ?? 0),
+    rentalComparables: jsonNumber(market.rentalComparables, baseInput.rentalComparables ?? 0),
+    strongSaleComparables: jsonNumber(qualityCounts.strong, baseInput.strongSaleComparables ?? 0),
+    mediumSaleComparables: jsonNumber(qualityCounts.medium, baseInput.mediumSaleComparables ?? 0),
+    weakSaleComparables: jsonNumber(qualityCounts.weak, baseInput.weakSaleComparables ?? 0),
+    sourceDiversity: jsonNumber(market.sourceDiversity, baseInput.sourceDiversity ?? 0),
+    marketConfidenceScore: dossier.confidenceScore || baseInput.marketConfidenceScore,
+    confidenceScore: dossier.confidenceScore || baseInput.confidenceScore,
+    marketScore: dossier.marketScore || baseInput.marketScore,
+    areaM2:
+      jsonNumber(identity.privateAreaM2) ||
+      jsonNumber(identity.builtAreaM2) ||
+      jsonNumber(identity.landAreaM2) ||
+      baseInput.areaM2,
+    locationConfirmed: Boolean(jsonText(identity.city, opportunity.city) && jsonText(identity.state, opportunity.state)),
+    documentsCount: jsonNumber(documents.count, baseInput.documentsCount ?? 0),
+    hasOfficialDocument: jsonBoolean(documents.hasOfficialDocument, baseInput.hasOfficialDocument ?? false),
+    occupancyKnown: knownOccupancy(jsonText(compliance.occupancy, opportunity.occupancy)) || baseInput.occupancyKnown,
+    riskScore: dossier.riskScore || baseInput.riskScore,
+    complianceScore: dossier.complianceScore || baseInput.complianceScore,
+    missingFields: [
+      ...(baseInput.missingFields || []),
+      ...jsonTextList(qualityReview.missingFields),
+      ...jsonTextList(qualityGate.issues),
+      ...dossier.blockers,
+    ],
+    qualityFlags: [
+      ...(baseInput.qualityFlags || []),
+      ...jsonTextList(qualityReview.qualityFlags),
+      ...jsonTextList(compliance.flags),
+    ],
+    cautionNotes: [
+      ...(baseInput.cautionNotes || []),
+      ...jsonTextList(qualityReview.cautionNotes),
+      ...jsonTextList(compliance.cautionNotes),
+    ],
+  };
+
+  return buildOpportunityEvaluation(mergedInput);
 }
 
-function recommendedAction(opportunity: AuctionOpportunity, analysis: PropertyMarketAnalysis | null) {
-  if (!analysis) {
-    return {
-      title: "Criar analise de mercado",
-      detail: "A oportunidade ainda nao possui analise estruturada para decisao.",
-      action: "Abrir revisao",
-      href: tabHref("revisao"),
-    };
-  }
+function mainRecommendationTitle(evaluation: OpportunityEvaluation) {
+  const labels: Record<OpportunityEvaluation["finalRecommendation"]["status"], string> = {
+    recomendado_para_avancar: "Recomendamos avancar",
+    avancar_com_ressalvas: "Avancar com ressalvas",
+    investigar_antes_de_avancar: "Investigar antes de avancar",
+    nao_recomendado: "Nao recomendamos avancar agora",
+    analise_inconclusiva: "Analise inconclusiva",
+  };
+  return labels[evaluation.finalRecommendation.status];
+}
 
-  const missing = getReviewIssues(opportunity, analysis);
-  if (missing.length) {
-    return {
-      title: "Completar campos obrigatorios",
-      detail: missing.slice(0, 4).join(", "),
-      action: "Revisar campos",
-      href: tabHref("revisao"),
-    };
+function recommendationComplement(evaluation: OpportunityEvaluation) {
+  if (evaluation.finalRecommendation.status === "recomendado_para_avancar") {
+    return "A recomendacao ainda deve ser registrada no painel para manter o historico da decisao.";
   }
+  if (evaluation.finalRecommendation.status === "nao_recomendado") {
+    return "A recomendacao podera mudar depois que as pendencias forem verificadas.";
+  }
+  return "A conclusao pode mudar quando as pendencias forem confirmadas ou corrigidas.";
+}
 
-  if (analysis.decision === "excellent" || analysis.decision === "good") {
-    return {
-      title: "Aprovar oportunidade",
-      detail: "Os dados principais estao preenchidos e a analise indica potencial favoravel.",
-      action: "Decidir agora",
-      href: tabHref("revisao"),
-    };
-  }
+function subjectAreaM2(opportunity: AuctionOpportunity, analysis: PropertyMarketAnalysis | null, dossier?: PropertyQualificationDossier | null) {
+  const subject = analysis?.subject;
+  const identity = dossier?.identityEvidence || {};
+  return (
+    subject?.privateAreaM2 ||
+    subject?.builtAreaM2 ||
+    subject?.landAreaM2 ||
+    jsonNumber(identity.privateAreaM2) ||
+    jsonNumber(identity.builtAreaM2) ||
+    jsonNumber(identity.landAreaM2) ||
+    0
+  );
+}
+
+function moneyOrPending(value?: number) {
+  return value ? formatCurrency(value) : "pendente";
+}
+
+function executivePotentialText(opportunity: AuctionOpportunity, analysis: PropertyMarketAnalysis | null) {
+  const bid = analysis?.initialBid || opportunity.initialBid;
+  const marketValue = analysis?.marketValueBase || opportunity.appraisalValue;
+  const discount = analysis?.realDiscountPct || opportunity.discountPct;
+  if (!bid || !marketValue) return "Ainda falta lance ou valor de mercado para calcular o potencial financeiro.";
+  return `O lance de ${formatCurrency(bid)} esta ${percent(discount)} abaixo do valor de mercado preliminar de ${formatCurrency(marketValue)}.`;
+}
+
+function executiveResearchText(evaluation: OpportunityEvaluation, analysis: PropertyMarketAnalysis | null, dossier?: PropertyQualificationDossier | null) {
+  const market = dossier?.marketEvidence || {};
+  const saleCount = jsonNumber(market.saleComparables, analysis?.comparables.filter((item) => !item.listingType.toLowerCase().includes("aluguel")).length || 0);
+  const rentalCount = jsonNumber(market.rentalComparables, analysis?.comparables.filter((item) => item.listingType.toLowerCase().includes("aluguel")).length || 0);
+  if (!saleCount && !rentalCount) return "Ainda nao existem comparaveis suficientes persistidos para defender o valor.";
+  return `Foram utilizados ${saleCount} imovel(is) a venda e ${rentalCount} referencia(s) de aluguel. A pesquisa e ${evaluation.researchQuality.label.toLowerCase()} e ainda deve ser conferida localmente.`;
+}
+
+function signalTexts(
+  opportunity: AuctionOpportunity,
+  evaluation: OpportunityEvaluation,
+  dossier?: PropertyQualificationDossier | null
+) {
+  const compliance = dossier?.complianceEvidence || {};
+  const qualityReview = jsonRecord(dossier?.rawPayload.qualityReview);
+  return humanizedItems([
+    ...evaluation.risk.missingItems,
+    ...evaluation.risk.reasons,
+    ...jsonTextList(compliance.flags),
+    ...jsonTextList(compliance.cautionNotes),
+    ...jsonTextList(qualityReview.cautionNotes),
+    ...opportunity.riskFlags.map((item) => item.label),
+  ], 12);
+}
+
+function executiveAlertText(
+  opportunity: AuctionOpportunity,
+  evaluation: OpportunityEvaluation,
+  dossier?: PropertyQualificationDossier | null
+) {
+  const signals = signalTexts(opportunity, evaluation, dossier);
+  const occupancy = knownOccupancy(opportunity.occupancy) ? `O imovel esta com ocupacao informada como ${opportunity.occupancy}.` : "";
+  const detail = signals.length ? ` Existem pontos a conferir: ${signals.slice(0, 4).join(", ")}.` : "";
+  return `${occupancy || "Existem pontos de risco que ainda precisam de confirmacao."}${detail}`.trim();
+}
+
+function executiveNextStepText(evaluation: OpportunityEvaluation) {
+  const actions = evaluation.finalRecommendation.nextActions.slice(0, 4);
+  return actions.length ? `Confirmar ${actions.join(", ")}.` : "Registrar a revisao humana e enviar para a proxima etapa quando os dados estiverem completos.";
+}
+
+function buildRecommendationReasons(
+  opportunity: AuctionOpportunity,
+  analysis: PropertyMarketAnalysis | null,
+  evaluation: OpportunityEvaluation,
+  dossier?: PropertyQualificationDossier | null
+) {
+  const market = dossier?.marketEvidence || {};
+  const documents = dossier?.documentEvidence || {};
+  const images = dossier?.imageEvidence || {};
+  const saleCount = jsonNumber(market.saleComparables, analysis?.comparables.filter((item) => !item.listingType.toLowerCase().includes("aluguel")).length || 0);
+  const rentalCount = jsonNumber(market.rentalComparables, analysis?.comparables.filter((item) => item.listingType.toLowerCase().includes("aluguel")).length || 0);
+  const occupancy = compactText(opportunity.occupancy, "").toLowerCase();
+  const imageCount = jsonNumber(images.usableCount, opportunity.images?.filter((item) => item.status !== "failed").length || 0);
+  const favorable = [
+    (analysis?.realDiscountPct || opportunity.discountPct) ? `desconto aparente de ${percent(analysis?.realDiscountPct || opportunity.discountPct)}` : "",
+    analysis?.marketValueBase || opportunity.appraisalValue ? `lance inferior ao mercado preliminar de ${formatCurrency(analysis?.marketValueBase || opportunity.appraisalValue)}` : "",
+    saleCount ? `${saleCount} comparavel(is) de venda encontrado(s)` : "",
+    rentalCount ? `${rentalCount} referencia(s) de aluguel encontrada(s)` : "",
+  ].filter(Boolean);
+  const blockers = humanizedItems([
+    occupancy.includes("ocupad") ? "imovel ocupado" : "",
+    !jsonBoolean(documents.hasOfficialDocument) ? "matricula ou documento oficial nao confirmado" : "",
+    imageCount > 0 && imageCount < 3 ? `somente ${imageCount} foto(s) util(is) disponivel(is)` : "",
+    ...evaluation.researchQuality.missingItems,
+    ...evaluation.risk.missingItems,
+    ...signalTexts(opportunity, evaluation, dossier),
+    ...(dossier?.blockers || []),
+  ], 10);
 
   return {
-    title: "Validar ressalvas antes da decisao",
-    detail: compactText(analysis.cautionNotes || opportunity.nextAction),
-    action: "Abrir revisao",
-    href: tabHref("revisao"),
+    favorable: favorable.length ? favorable : ["nenhum fator favoravel forte foi persistido ainda"],
+    blockers: blockers.length ? blockers : ["nenhum impedimento critico persistido nesta camada"],
   };
+}
+
+type ComparableView = {
+  key: string;
+  listingType: string;
+  title: string;
+  sourceLabel: string;
+  sourceUrl: string;
+  propertyType: string;
+  neighborhood: string;
+  city: string;
+  state: string;
+  areaM2: number;
+  price: number;
+  pricePerM2: number;
+  bedrooms: number;
+  parkingSpaces: number;
+  similarityScore: number;
+  quality: string;
+  notes: string;
+  collectedAt: string;
+  discarded: boolean;
+};
+
+function rawMarketResearch(analysis: PropertyMarketAnalysis | null) {
+  return jsonRecord(analysis?.rawPayload?.marketResearch);
+}
+
+function normalizeComparableView(item: Record<string, unknown>, fallbackIndex: number, fallbackListingType = "sale"): ComparableView {
+  const listingType = jsonText(item.listingType, jsonText(item.listing_type, fallbackListingType));
+  const monthlyRent = jsonNumber(item.monthlyRent, jsonNumber(item.monthly_rent));
+  const askingPrice = jsonNumber(item.askingPrice, jsonNumber(item.asking_price));
+  const soldPrice = jsonNumber(item.soldPrice, jsonNumber(item.sold_price));
+  const price = monthlyRent || soldPrice || askingPrice;
+  const sourceUrl = jsonText(item.sourceUrl, jsonText(item.source_url));
+  const title = jsonText(item.title) || jsonText(item.address) || jsonText(item.sourceLabel, jsonText(item.source_label, `Comparavel ${fallbackIndex + 1}`));
+
+  return {
+    key: sourceUrl || `${title}-${fallbackIndex}`,
+    listingType,
+    title,
+    sourceLabel: jsonText(item.sourceLabel, jsonText(item.source_label, "Fonte")),
+    sourceUrl,
+    propertyType: jsonText(item.propertyType, jsonText(item.property_type, "imovel")),
+    neighborhood: jsonText(item.neighborhood, jsonText(item.bairro)),
+    city: jsonText(item.city, jsonText(item.cidade)),
+    state: jsonText(item.state, jsonText(item.uf)).toUpperCase(),
+    areaM2: jsonNumber(item.areaM2, jsonNumber(item.area_m2)),
+    price,
+    pricePerM2: jsonNumber(item.pricePerM2, jsonNumber(item.price_per_m2)),
+    bedrooms: jsonNumber(item.bedrooms, jsonNumber(item.dormitorios)),
+    parkingSpaces: jsonNumber(item.parkingSpaces, jsonNumber(item.garagens)),
+    similarityScore: jsonNumber(item.similarityScore, jsonNumber(item.similarity_score)),
+    quality: jsonText(item.quality, "medium"),
+    notes: jsonText(item.notes),
+    collectedAt: jsonText(item.collectedAt, jsonText(item.collected_at)),
+    discarded: jsonText(item.quality).toLowerCase() === "discarded" || jsonBoolean(item.discarded),
+  };
+}
+
+function comparableViewsFromAnalysis(analysis: PropertyMarketAnalysis | null) {
+  if (!analysis) return [] as ComparableView[];
+  const marketResearch = rawMarketResearch(analysis);
+  const rawSales = jsonArray<Record<string, unknown>>(marketResearch.saleComparables);
+  const rawRentals = jsonArray<Record<string, unknown>>(marketResearch.rentalComparables);
+  const rawComparables = [...rawSales.map((item) => ({ ...item, listingType: jsonText(item.listingType, "sale") })), ...rawRentals.map((item) => ({ ...item, listingType: jsonText(item.listingType, "rent") }))];
+  const sourceRows = rawComparables.length
+    ? rawComparables
+    : analysis.comparables.map((item) => ({
+        sourceLabel: item.sourceLabel,
+        sourceUrl: item.sourceUrl,
+        listingType: item.listingType,
+        propertyType: item.propertyType,
+        address: item.address,
+        neighborhood: item.neighborhood,
+        city: item.city,
+        state: item.state,
+        areaM2: item.areaM2,
+        askingPrice: item.askingPrice,
+        soldPrice: item.soldPrice,
+        pricePerM2: item.pricePerM2,
+        distanceKm: item.distanceKm,
+        similarityScore: item.similarityScore,
+        quality: item.quality,
+        notes: item.notes,
+        collectedAt: item.collectedAt,
+      }));
+  const seen = new Set<string>();
+  return sourceRows
+    .map((item, index) => normalizeComparableView(item, index))
+    .filter((item) => {
+      const key = item.sourceUrl || item.title;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function queryViewsFromAnalysis(analysis: PropertyMarketAnalysis | null, dossier?: PropertyQualificationDossier | null) {
+  const marketResearch = rawMarketResearch(analysis);
+  const rawQueries = jsonArray<unknown>(marketResearch.searchQueries);
+  const auditSteps = jsonArray<Record<string, unknown>>(dossier?.rawPayload.auditTrail);
+  const auditMarketStep = auditSteps.find((item) => jsonText(item.stepKey) === "mercado");
+  const auditQueries = jsonArray<unknown>(jsonRecord(auditMarketStep?.details).searchQueries);
+  const searchedUrls = jsonArray<Record<string, unknown>>(marketResearch.searchedUrls).length
+    ? jsonArray<Record<string, unknown>>(marketResearch.searchedUrls)
+    : jsonArray<Record<string, unknown>>(jsonRecord(auditMarketStep?.details).searchedUrls);
+  const queries = (rawQueries.length ? rawQueries : auditQueries)
+    .map((item) => jsonText(item))
+    .filter(Boolean);
+
+  return queries.map((query) => {
+    const related = searchedUrls.filter((source) => jsonText(source.label).toLowerCase().includes(query.toLowerCase()));
+    const providers = related
+      .map((source) => jsonText(source.label).split(":")[0]?.trim())
+      .filter(Boolean);
+    return {
+      query,
+      mechanism: providers.length ? Array.from(new Set(providers)).join(", ") : "registrado na execucao",
+      date: analysis?.updatedAt || "",
+      resultsFound: related.length,
+      resultsUsed: related.filter((source) => jsonText(source.kind).toLowerCase() !== "discarded").length,
+    };
+  });
+}
+
+type SearchSourceView = {
+  key: string;
+  label: string;
+  url: string;
+  kind: string;
+};
+
+function searchSourceViewsFromAnalysis(analysis: PropertyMarketAnalysis | null, dossier?: PropertyQualificationDossier | null) {
+  const marketResearch = rawMarketResearch(analysis);
+  const auditSteps = jsonArray<Record<string, unknown>>(dossier?.rawPayload.auditTrail);
+  const auditMarketStep = auditSteps.find((item) => jsonText(item.stepKey) === "mercado");
+  const rawSources = jsonArray<Record<string, unknown>>(marketResearch.searchedUrls).length
+    ? jsonArray<Record<string, unknown>>(marketResearch.searchedUrls)
+    : jsonArray<Record<string, unknown>>(jsonRecord(auditMarketStep?.details).searchedUrls);
+
+  const seen = new Set<string>();
+  return rawSources
+    .map((source, index): SearchSourceView => ({
+      key: jsonText(source.url, `${jsonText(source.label, "fonte")}-${index}`),
+      label: jsonText(source.label, `Fonte ${index + 1}`),
+      url: jsonText(source.url),
+      kind: listingLabel(jsonText(source.kind)),
+    }))
+    .filter((source) => source.url)
+    .filter((source) => {
+      if (seen.has(source.url)) return false;
+      seen.add(source.url);
+      return true;
+    });
+}
+
+function plainRiskText(evaluation: OpportunityEvaluation) {
+  if (evaluation.risk.level === "baixo") return "Nao apareceu alerta operacional relevante nesta camada.";
+  if (evaluation.risk.level === "moderado") return "Existem pontos de atencao, mas ainda nao ha impedimento definitivo.";
+  if (evaluation.risk.level === "alto") return "Existe alerta que pode mudar a decisao e precisa ser tratado antes de avancar.";
+  return "O risco ainda nao esta fechado porque faltam confirmacoes essenciais.";
+}
+
+function buildResearchSteps(
+  opportunity: AuctionOpportunity,
+  analysis: PropertyMarketAnalysis | null,
+  evaluation: OpportunityEvaluation,
+  dossier?: PropertyQualificationDossier | null
+) {
+  const market = dossier?.marketEvidence || {};
+  const images = dossier?.imageEvidence || {};
+  const documents = dossier?.documentEvidence || {};
+  const sourceDomain = jsonText(dossier?.sourceSnapshot.sourceDomain, opportunity.sourceName || "fonte original");
+  const saleCount = jsonNumber(market.saleComparables, analysis?.comparables.filter((item) => !item.listingType.toLowerCase().includes("aluguel")).length || 0);
+  const rentalCount = jsonNumber(market.rentalComparables, analysis?.comparables.filter((item) => item.listingType.toLowerCase().includes("aluguel")).length || 0);
+  const sourceCount = jsonNumber(market.sourceDiversity, countUniqueSourceHosts(analysis?.comparables.map((item) => item.sourceUrl) || []));
+  const opportunityImages = opportunity.images || [];
+  const usableImages = jsonNumber(images.usableCount, opportunityImages.filter((item) => item.status !== "failed").length);
+  const candidateImages = jsonNumber(images.rawCandidateCount, opportunityImages.length);
+  const documentCount = jsonNumber(documents.count, opportunity.documents.length);
+  const officialDocument = jsonBoolean(documents.hasOfficialDocument);
+  const marketValue = analysis?.marketValueBase || opportunity.appraisalValue;
+  const bid = analysis?.initialBid || opportunity.initialBid;
+  const discount = analysis?.realDiscountPct || opportunity.discountPct;
+
+  return [
+    {
+      title: "1. Partimos da fonte do leilao",
+      text: `O sistema abriu ${sourceDomain}, capturou os dados do anuncio e normalizou tipo, cidade, area e lance. Nesta etapa ainda estamos lendo o anuncio, nao aprovando o imovel.`,
+    },
+    {
+      title: "2. Separamos midia e documentos",
+      text: `Foram processadas ${candidateImages} imagem(ns) e ${usableImages} ficaram como foto(s) util(is). Tambem foram encontrados ${documentCount} documento(s)${officialDocument ? ", com indicio de documento essencial" : ", mas sem documento essencial confirmado"}. Processado significa encontrado; validado significa conferido por uma pessoa ou regra juridica.`,
+    },
+    {
+      title: "3. Buscamos referencias de mercado",
+      text: saleCount || rentalCount
+        ? `A pesquisa persistida encontrou ${saleCount} comparavel(is) de venda e ${rentalCount} referencia(s) de aluguel em ${sourceCount} fonte(s).`
+        : "A pesquisa ainda nao persistiu comparaveis suficientes para defender o valor de mercado.",
+    },
+    {
+      title: "4. Comparamos valor, desconto e risco",
+      text: marketValue && bid
+        ? `Com base no mercado preliminar de ${formatCurrency(marketValue)} e no lance de ${formatCurrency(bid)}, o desconto aparente ficou em ${percent(discount)}. ${plainRiskText(evaluation)}`
+        : `Ainda faltam valores para fechar o calculo financeiro. ${plainRiskText(evaluation)}`,
+    },
+    {
+      title: "5. Geramos a decisao operacional",
+      text: `${evaluation.finalRecommendation.explanation} Proximo passo: ${executiveNextStepText(evaluation)}`,
+    },
+  ];
+}
+
+function countUniqueSourceHosts(urls: string[]) {
+  const hosts = new Set<string>();
+  urls.forEach((url) => {
+    if (!url) return;
+    try {
+      hosts.add(new URL(url).hostname.replace(/^www\./, ""));
+    } catch {
+      hosts.add(url.toLowerCase());
+    }
+  });
+  return hosts.size;
+}
+
+function qualityLabel(value: string) {
+  const normalized = value.toLowerCase();
+  if (normalized === "strong") return "alta semelhanca";
+  if (normalized === "medium") return "semelhanca media";
+  if (normalized === "weak") return "semelhanca baixa";
+  if (normalized === "discarded") return "descartado";
+  return normalized || "nao classificado";
+}
+
+function listingLabel(value: string) {
+  const normalized = value.toLowerCase();
+  if (normalized.includes("rent") || normalized.includes("aluguel") || normalized.includes("locacao")) return "Aluguel";
+  return "Venda";
+}
+
+type PendingActionView = {
+  title: string;
+  why: string;
+  how: string;
+  status: string;
+};
+
+const pendingActionRules: Array<{ tokens: string[]; action: PendingActionView }> = [
+  {
+    tokens: ["matricula", "documento oficial", "risco documental"],
+    action: {
+      title: "Matricula nao confirmada",
+      why: "Confirma propriedade, descricao, onus e individualizacao do imovel.",
+      how: "Solicitar matricula atualizada no Registro de Imoveis e anexar ao dossie.",
+      status: "Pendente",
+    },
+  },
+  {
+    tokens: ["ocupacao", "ocupado", "posse", "desocupacao"],
+    action: {
+      title: "Ocupacao precisa ser confirmada",
+      why: "Ocupacao pode gerar custo, prazo judicial e dificuldade de revenda.",
+      how: "Validar edital, fotos, contato local ou vistoria antes de aprovar.",
+      status: "Pendente",
+    },
+  },
+  {
+    tokens: ["debito", "propter", "condominio", "iptu"],
+    action: {
+      title: "Debitos e obrigacoes nao fechados",
+      why: "Debitos podem reduzir ou eliminar a vantagem financeira.",
+      how: "Levantar IPTU, condominio, taxas e obrigacoes propter rem antes do juridico.",
+      status: "Pendente",
+    },
+  },
+  {
+    tokens: ["acesso", "infraestrutura", "zoneamento", "rural", "ambiental"],
+    action: {
+      title: "Acesso e infraestrutura precisam ser verificados",
+      why: "A liquidez depende de acesso, uso permitido e infraestrutura local.",
+      how: "Conferir mapa, zoneamento, rua, energia, agua e restricoes locais.",
+      status: "Pendente",
+    },
+  },
+  {
+    tokens: ["lote", "individualizacao", "divisao", "area base"],
+    action: {
+      title: "Divisao ou area do imovel precisa ser validada",
+      why: "A estimativa de valor muda se area, lote ou individualizacao estiverem incorretos.",
+      how: "Comparar edital, matricula e descricao do leiloeiro com a area usada no calculo.",
+      status: "Pendente",
+    },
+  },
+  {
+    tokens: ["custo", "regularizacao", "reforma", "reserva"],
+    action: {
+      title: "Custos de regularizacao nao calculados",
+      why: "Custos extras impactam margem, teto de lance e decisao de avancar.",
+      how: "Estimar regularizacao, desocupacao, taxas, registro e reserva operacional.",
+      status: "Pendente",
+    },
+  },
+  {
+    tokens: ["foto", "imagem", "visual"],
+    action: {
+      title: "Cobertura visual insuficiente",
+      why: "Fotos insuficientes dificultam validar estado, acesso e padrao do imovel.",
+      how: "Buscar fotos adicionais na fonte, em mapas ou por vistoria local.",
+      status: "Pendente",
+    },
+  },
+  {
+    tokens: ["comparaveis", "mercado", "aluguel", "fonte"],
+    action: {
+      title: "Pesquisa de mercado precisa de reforco",
+      why: "Comparaveis fracos podem distorcer o valor de mercado preliminar.",
+      how: "Adicionar comparaveis de mesma tipologia, localizacao e area semelhante.",
+      status: "Pendente",
+    },
+  },
+];
+
+function buildPendingActions(
+  opportunity: AuctionOpportunity,
+  evaluation: OpportunityEvaluation,
+  dossier?: PropertyQualificationDossier | null
+) {
+  const signals = humanizedItems([
+    ...evaluation.finalRecommendation.nextActions,
+    ...evaluation.researchQuality.missingItems,
+    ...evaluation.risk.missingItems,
+    ...signalTexts(opportunity, evaluation, dossier),
+    ...(dossier?.blockers || []),
+  ], 20);
+  const matched: PendingActionView[] = [];
+
+  pendingActionRules.forEach((rule) => {
+    if (signals.some((signal) => rule.tokens.some((token) => signal.includes(token)))) {
+      matched.push(rule.action);
+    }
+  });
+
+  const unique = new Map<string, PendingActionView>();
+  matched.forEach((item) => unique.set(item.title, item));
+  return Array.from(unique.values()).slice(0, 8);
+}
+
+function fieldQualityTone(value: boolean): ResourceTone {
+  return value ? "green" : "yellow";
 }
 
 function getReviewIssues(opportunity: AuctionOpportunity, analysis: PropertyMarketAnalysis | null) {
@@ -1080,16 +1569,18 @@ function CheckboxField({
 function OpportunityHeader({
   opportunity,
   analysis,
+  qualificationDossier,
 }: {
   opportunity: AuctionOpportunity;
   analysis: PropertyMarketAnalysis | null;
+  qualificationDossier?: PropertyQualificationDossier | null;
 }) {
-  const action = recommendedAction(opportunity, analysis);
+  const evaluation = buildDetailOpportunityEvaluation(opportunity, analysis, qualificationDossier);
   const canSubmit = Boolean(analysis?.marketValueBase);
   const updatedAt = analysis?.updatedAt || opportunity.timeline.at(-1)?.time;
   const compactTitle = opportunity.title.length > 92 ? `${opportunity.title.slice(0, 92).trim()}...` : opportunity.title;
   const highlightedAction =
-    analysis && analysis.confidenceScore >= 65 && opportunity.riskScore < 70 ? "approved" : "human_review";
+    analysis && evaluation.finalRecommendation.status === "recomendado_para_avancar" ? "approved" : "human_review";
 
   return (
     <section className="rounded-xl border border-[var(--admin-border)] bg-[rgba(255,255,255,0.96)] p-3 shadow-sm shadow-[rgba(81,60,36,0.07)] backdrop-blur">
@@ -1131,10 +1622,31 @@ function OpportunityHeader({
               </p>
             </div>
 
-            <div className="grid grid-cols-3 gap-2 sm:min-w-[320px]">
-              <MiniScore label="Score" value={opportunity.opportunityScore} kind="score" />
-              <MiniScore label="Risco" value={opportunity.riskScore} kind="risk" />
-              <MiniScore label="Conf." value={analysis?.confidenceScore || opportunity.complianceScore} kind="score" />
+            <div className="grid grid-cols-2 gap-2 sm:min-w-[520px] xl:grid-cols-4">
+              <EvaluationMiniCard
+                label="Potencial"
+                value={evaluation.financialPotential.label}
+                detail="financeiro"
+                tone={evaluation.financialPotential.tone}
+              />
+              <EvaluationMiniCard
+                label="Pesquisa"
+                value={evaluation.researchQuality.label}
+                detail="qualidade da base"
+                tone={evaluation.researchQuality.tone}
+              />
+              <EvaluationMiniCard
+                label="Nivel de risco"
+                value={evaluation.risk.label}
+                detail="operacional"
+                tone={evaluation.risk.tone}
+              />
+              <EvaluationMiniCard
+                label="Recomendacao"
+                value={evaluation.finalRecommendation.label}
+                detail="decisao atual"
+                tone={evaluation.finalRecommendation.tone}
+              />
             </div>
           </div>
         </div>
@@ -1190,29 +1702,38 @@ function OpportunityHeader({
         </div>
       </div>
 
-      <div className="mt-3 grid gap-2 border-t border-[var(--admin-border)] pt-3 text-xs text-[var(--admin-muted)] md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
-        <p className="line-clamp-2">
-          <span className="font-semibold text-[var(--admin-foreground)]">Proxima acao:</span> {action.title} - {action.detail}
-        </p>
+      <div className="mt-3 grid gap-2 border-t border-[var(--admin-border)] pt-3 text-xs text-[var(--admin-muted)] lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+        <div className="grid gap-1">
+          <p className="text-sm font-semibold text-[var(--admin-foreground)]">{mainRecommendationTitle(evaluation)}</p>
+          <p className="max-w-5xl leading-5">
+            {evaluation.finalRecommendation.explanation} {recommendationComplement(evaluation)}
+          </p>
+          <p className="leading-5">
+            <span className="font-semibold text-[var(--admin-foreground)]">Proximo passo:</span> {executiveNextStepText(evaluation)}
+          </p>
+        </div>
         <p>Atualizado: {formatDateTime(updatedAt)}</p>
       </div>
     </section>
   );
 }
 
-function MiniScore({
+function EvaluationMiniCard({
   label,
   value,
-  kind,
+  detail,
+  tone,
 }: {
   label: string;
-  value: number;
-  kind: "score" | "risk";
+  value: string;
+  detail: string;
+  tone: ResourceTone;
 }) {
   return (
-    <div className="rounded-lg border border-[var(--admin-border)] bg-white px-3 py-2">
+    <div className={cn("min-h-[76px] rounded-lg border bg-white px-3 py-2", toneBorder[tone])}>
       <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--admin-muted)]">{label}</p>
-      <div className="mt-1">{kind === "risk" ? <RiskBadge score={value} /> : <ScoreBadge score={value} />}</div>
+      <p className={cn("mt-1 line-clamp-2 text-sm font-semibold leading-5", toneText[tone])}>{value}</p>
+      <p className="mt-1 text-[10px] font-medium text-[var(--admin-muted)]">{detail}</p>
     </div>
   );
 }
@@ -1538,6 +2059,7 @@ function ExecutiveSummary({
   const subject = analysis?.subject;
   const primaryCeiling = analysis?.ceilingTargets[0]?.value || analysis?.suggestedCeilingBid || 0;
   const totalCosts = analysis?.estimatedCosts.reduce((sum, item) => sum + item.value, 0) || 0;
+  const totalInvestment = (analysis?.initialBid || opportunity.initialBid) + totalCosts;
   const areaBase = subject?.privateAreaM2 || subject?.builtAreaM2 || subject?.landAreaM2 || 0;
   const thumbnailEntries = overviewThumbnailEntries(images, heroImage, selectedImageIndex);
 
@@ -1555,7 +2077,7 @@ function ExecutiveSummary({
       />
 
       <div className="grid content-start gap-4">
-        <SectionCard title="Resumo executivo" eyebrow="imovel / decisao" contentClassName="p-4">
+        <SectionCard title="Dados base" eyebrow="imovel" contentClassName="p-4">
           <div className="grid gap-3">
             <div className="grid gap-2 md:grid-cols-2">
               <InfoValue label="Endereco" value={opportunity.address || subject?.address || "nao informado"} className="md:col-span-2" />
@@ -1598,9 +2120,9 @@ function ExecutiveSummary({
           />
           <KpiCard label="Teto Betel" value={formatCurrency(primaryCeiling)} detail="investimento maximo sugerido" tone="green" />
           <KpiCard label="Custo total" value={formatCurrency(totalCosts)} detail={`${analysis?.estimatedCosts.length || 0} custo(s) mapeado(s)`} tone={totalCosts ? "yellow" : "muted"} />
+          <KpiCard label="Investimento" value={formatCurrency(totalInvestment)} detail="lance + custos mapeados" tone="purple" />
           <KpiCard label="Margem" value={formatCurrency(analysis?.estimatedNetMargin || 0)} detail="potencial antes da decisao final" tone={(analysis?.estimatedNetMargin || 0) > 0 ? "green" : "yellow"} />
           <KpiCard label="Aluguel" value={analysis?.rentalEstimate.monthlyRent ? formatCurrency(analysis.rentalEstimate.monthlyRent) : "pendente"} detail={rentalDetail(analysis)} tone={analysis?.rentalEstimate.monthlyRent ? "cyan" : "muted"} />
-          <KpiCard label="Confianca" value={`${analysis?.confidenceScore || 0}%`} detail={`${analysis?.comparables.length || 0} comparavel(is)`} tone={(analysis?.confidenceScore || 0) >= 65 ? "green" : "yellow"} />
         </div>
       </div>
     </section>
@@ -1620,75 +2142,542 @@ function rentalDetail(analysis: PropertyMarketAnalysis | null) {
   return `${percent(rental.monthlyYieldOnMarketPct)} a.m. mercado / ${percent(rental.monthlyYieldOnBidPct)} a.m. lance`;
 }
 
-function RecommendedAction({
+function ExecutiveBriefPanel({
   opportunity,
   analysis,
+  evaluation,
+  qualificationDossier,
 }: {
   opportunity: AuctionOpportunity;
   analysis: PropertyMarketAnalysis | null;
+  evaluation: OpportunityEvaluation;
+  qualificationDossier?: PropertyQualificationDossier | null;
 }) {
-  const action = recommendedAction(opportunity, analysis);
-  const tone = recommendationTone(opportunity, analysis);
-  const alerts = [
-    ...getReviewIssues(opportunity, analysis).map((issue) => ({
-      label: issue,
-      detail: "Campo essencial para decisao operacional.",
-      tone: "yellow" as ResourceTone,
-    })),
-    ...opportunity.riskFlags.map((risk) => ({ label: risk.label, detail: risk.detail, tone: risk.severity })),
+  const items = [
+    {
+      label: "Potencial",
+      value: executivePotentialText(opportunity, analysis),
+      tone: evaluation.financialPotential.tone,
+      icon: <CircleDollarSign size={16} />,
+    },
+    {
+      label: "Alerta principal",
+      value: executiveAlertText(opportunity, evaluation, qualificationDossier),
+      tone: evaluation.risk.tone,
+      icon: <ShieldCheck size={16} />,
+    },
+    {
+      label: "Qualidade da pesquisa",
+      value: executiveResearchText(evaluation, analysis, qualificationDossier),
+      tone: evaluation.researchQuality.tone,
+      icon: <FileSearch size={16} />,
+    },
+    {
+      label: "Proximo passo",
+      value: executiveNextStepText(evaluation),
+      tone: "cyan" as ResourceTone,
+      icon: <Target size={16} />,
+    },
   ];
-  const criticalAlerts = alerts.slice(0, 3);
-  const hiddenCount = Math.max(0, alerts.length - criticalAlerts.length);
 
   return (
-    <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.55fr)]">
-      <div className={cn("rounded-xl border bg-white p-4 shadow-sm", toneBorder[tone])}>
-        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-          <div className="min-w-0">
-            <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--admin-muted)]">
-              proxima acao recomendada
-            </p>
-            <h2 className="mt-1 flex items-center gap-2 text-lg font-semibold text-[var(--admin-foreground)]">
-              <Target size={18} className={toneText[tone]} />
-              {action.title}
-            </h2>
-            <p className="mt-2 max-w-4xl text-sm leading-6 text-[var(--admin-soft)]">{action.detail}</p>
-            <p className="mt-2 text-xs text-[var(--admin-muted)]">
-              Responsavel: {opportunity.owner} {opportunity.auctionDate ? `| Prazo: ${safeDate(opportunity.auctionDate)}` : ""}
-            </p>
+    <SectionCard title="Resumo executivo" eyebrow="curadoria" contentClassName="p-3">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {items.map((item) => (
+          <article key={item.label} className={cn("rounded-lg border bg-white p-3", toneBorder[item.tone])}>
+            <div className="flex items-center gap-2">
+              <span className={cn("shrink-0", toneText[item.tone])}>{item.icon}</span>
+              <h3 className="text-sm font-semibold text-[var(--admin-foreground)]">{item.label}</h3>
+            </div>
+            <p className="mt-2 text-sm leading-6 text-[var(--admin-soft)]">{item.value}</p>
+          </article>
+        ))}
+      </div>
+    </SectionCard>
+  );
+}
+
+function EvaluationOverviewPanel({ evaluation }: { evaluation: OpportunityEvaluation }) {
+  const cards = [
+    {
+      label: "Potencial financeiro",
+      value: evaluation.financialPotential.label,
+      detail: evaluation.financialPotential.explanation,
+      reason: humanizedList(evaluation.financialPotential.reasons, "dados financeiros ainda incompletos"),
+      tone: evaluation.financialPotential.tone,
+      icon: <CircleDollarSign size={16} />,
+    },
+    {
+      label: "Qualidade da pesquisa",
+      value: evaluation.researchQuality.label,
+      detail: evaluation.researchQuality.explanation,
+      reason: humanizedList(evaluation.researchQuality.reasons, "pesquisa de mercado ainda sem base persistida"),
+      tone: evaluation.researchQuality.tone,
+      icon: <FileSearch size={16} />,
+    },
+    {
+      label: "Risco",
+      value: evaluation.risk.label,
+      detail: plainRiskText(evaluation),
+      reason: humanizedList([...evaluation.risk.reasons, ...evaluation.risk.missingItems], "sem alerta relevante registrado"),
+      tone: evaluation.risk.tone,
+      icon: <ShieldCheck size={16} />,
+    },
+    {
+      label: "Decisao atual",
+      value: evaluation.finalRecommendation.label,
+      detail: evaluation.finalRecommendation.explanation,
+      reason: executiveNextStepText(evaluation),
+      tone: evaluation.finalRecommendation.tone,
+      icon: <Target size={16} />,
+    },
+  ];
+
+  return (
+    <SectionCard title="Leitura em quatro pontos" eyebrow="decisao" contentClassName="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      {cards.map((item) => (
+        <article key={item.label} className={cn("rounded-lg border bg-white p-3", toneBorder[item.tone])}>
+          <div className="flex items-center gap-2">
+            <span className={cn("shrink-0", toneText[item.tone])}>{item.icon}</span>
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--admin-muted)]">{item.label}</p>
           </div>
-          <Button asChild className="h-9 bg-[var(--admin-cyan)] text-white hover:bg-[#a54a18]">
-            <Link href={action.href}>{action.action}</Link>
-          </Button>
+          <h3 className={cn("mt-2 text-base font-semibold", toneText[item.tone])}>{item.value}</h3>
+          <p className="mt-2 text-sm leading-6 text-[var(--admin-soft)]">{item.detail}</p>
+          <p className="mt-3 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card-2)] px-3 py-2 text-xs leading-5 text-[var(--admin-muted)]">
+            {item.reason}
+          </p>
+        </article>
+      ))}
+    </SectionCard>
+  );
+}
+
+function RecommendationReasonsPanel({
+  opportunity,
+  analysis,
+  evaluation,
+  qualificationDossier,
+}: {
+  opportunity: AuctionOpportunity;
+  analysis: PropertyMarketAnalysis | null;
+  evaluation: OpportunityEvaluation;
+  qualificationDossier?: PropertyQualificationDossier | null;
+}) {
+  const reasons = buildRecommendationReasons(opportunity, analysis, evaluation, qualificationDossier);
+
+  return (
+    <SectionCard title="Motivos da recomendacao" eyebrow="evidencias" contentClassName="grid gap-3 lg:grid-cols-2">
+      <div className="rounded-lg border border-[rgba(19,122,69,0.24)] bg-[rgba(19,122,69,0.06)] p-3">
+        <div className="mb-2 flex items-center gap-2">
+          <CheckCircle2 size={16} className="text-[var(--admin-green)]" />
+          <h3 className="text-sm font-semibold text-[var(--admin-foreground)]">O que favorece</h3>
         </div>
+        <ul className="grid gap-2">
+          {reasons.favorable.map((item) => (
+            <li key={item} className="text-sm leading-6 text-[var(--admin-soft)]">- {item}</li>
+          ))}
+        </ul>
       </div>
 
-      <div className="rounded-xl border border-[var(--admin-border)] bg-white p-4 shadow-sm">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold text-[var(--admin-foreground)]">Alertas criticos</h3>
-          {hiddenCount ? <StatusBadge tone="yellow">+{hiddenCount}</StatusBadge> : null}
+      <div className="rounded-lg border border-[rgba(196,61,45,0.24)] bg-[rgba(196,61,45,0.06)] p-3">
+        <div className="mb-2 flex items-center gap-2">
+          <XCircle size={16} className="text-[var(--admin-red)]" />
+          <h3 className="text-sm font-semibold text-[var(--admin-foreground)]">O que impede avancar</h3>
         </div>
-        <div className="grid gap-2">
-          {criticalAlerts.length ? (
-            criticalAlerts.map((alert) => (
-              <div key={`${alert.label}-${alert.detail}`} className={cn("rounded-lg border px-3 py-2", toneBorder[alert.tone], toneBg[alert.tone])}>
-                <p className="text-sm font-semibold text-[var(--admin-foreground)]">{alert.label}</p>
-                <p className="mt-1 line-clamp-2 text-xs leading-5 text-[var(--admin-muted)]">{alert.detail}</p>
-              </div>
+        <ul className="grid gap-2">
+          {reasons.blockers.map((item) => (
+            <li key={item} className="text-sm leading-6 text-[var(--admin-soft)]">- {item}</li>
+          ))}
+        </ul>
+      </div>
+    </SectionCard>
+  );
+}
+
+function MarketValueCalculationPanel({
+  opportunity,
+  analysis,
+  qualificationDossier,
+}: {
+  opportunity: AuctionOpportunity;
+  analysis: PropertyMarketAnalysis | null;
+  qualificationDossier?: PropertyQualificationDossier | null;
+}) {
+  const areaBase = subjectAreaM2(opportunity, analysis, qualificationDossier);
+  const marketValue = analysis?.marketValueBase || opportunity.appraisalValue;
+  const bid = analysis?.initialBid || opportunity.initialBid;
+  const priceM2 = analysis?.marketPricePerM2 || (marketValue && areaBase ? Math.round(marketValue / areaBase) : 0);
+  const difference = marketValue && bid ? marketValue - bid : 0;
+  const discount = analysis?.realDiscountPct || opportunity.discountPct;
+
+  return (
+    <SectionCard title={marketValue ? `Como estimamos ${formatCurrency(marketValue)}` : "Como estimamos o valor"} eyebrow="calculo" contentClassName="grid gap-3">
+      {marketValue && areaBase && priceM2 ? (
+        <>
+          <p className="max-w-5xl text-sm leading-6 text-[var(--admin-soft)]">
+            O sistema usou os comparaveis persistidos para chegar a um preco preliminar por metro quadrado. Esse valor foi multiplicado pela area anunciada para formar o valor de mercado usado na analise.
+          </p>
+          <div className="grid gap-2 md:grid-cols-3">
+            <InfoValue label="Valor por m2" value={pricePerM2(priceM2)} />
+            <InfoValue label="Area usada" value={area(areaBase)} />
+            <InfoValue label="Valor preliminar" value={formatCurrency(marketValue)} />
+          </div>
+          <div className="grid gap-2 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card-2)] p-3 text-sm leading-6 text-[var(--admin-soft)]">
+            <p className="font-mono text-[var(--admin-foreground)]">{pricePerM2(priceM2)} x {area(areaBase)} = {formatCurrency(marketValue)}</p>
+            {difference ? <p className="font-mono text-[var(--admin-foreground)]">{formatCurrency(marketValue)} - {formatCurrency(bid)} = {formatCurrency(difference)}</p> : null}
+            {discount ? <p>Desconto aparente: {percent(discount)}</p> : null}
+          </div>
+          <p className="rounded-lg border border-[var(--admin-border)] bg-white px-3 py-2 text-xs leading-5 text-[var(--admin-muted)]">
+            Esta nao e uma avaliacao imobiliaria oficial. O valor pode mudar apos vistoria, validacao local e revisao juridica.
+          </p>
+        </>
+      ) : (
+        <EmptyState title="Calculo ainda incompleto" detail="A formula sera exibida quando valor de mercado, lance e area estiverem persistidos." />
+      )}
+    </SectionCard>
+  );
+}
+
+function ComparableCard({ comparable }: { comparable: ComparableView }) {
+  return (
+    <article className="grid gap-3 rounded-lg border border-[var(--admin-border)] bg-white p-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <h3 className="line-clamp-2 text-sm font-semibold text-[var(--admin-foreground)]">{comparable.title}</h3>
+          <p className="mt-1 text-xs text-[var(--admin-muted)]">
+            {[comparable.neighborhood, comparable.city, comparable.state].filter(Boolean).join(" / ") || "localizacao nao informada"}
+          </p>
+        </div>
+        <StatusBadge tone={comparable.quality === "strong" ? "green" : comparable.quality === "weak" ? "yellow" : "muted"}>
+          {qualityLabel(comparable.quality)}
+        </StatusBadge>
+      </div>
+
+      <div className="grid gap-2 sm:grid-cols-2">
+        <InfoValue label="Tipo" value={`${listingLabel(comparable.listingType)} - ${comparable.propertyType}`} />
+        <InfoValue label="Preco" value={moneyOrPending(comparable.price)} />
+        <InfoValue label="Area" value={area(comparable.areaM2)} />
+        <InfoValue label="Preco por m2" value={pricePerM2(comparable.pricePerM2)} />
+        <InfoValue label="Quartos / vagas" value={`${comparable.bedrooms || "-"} / ${comparable.parkingSpaces || "-"}`} />
+        <InfoValue label="Aderencia" value={qualityLabel(comparable.quality)} />
+      </div>
+
+      {comparable.notes ? (
+        <p className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card-2)] px-3 py-2 text-xs leading-5 text-[var(--admin-muted)]">
+          {compactText(comparable.notes, "Sem observacao registrada.")}
+        </p>
+      ) : null}
+
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[var(--admin-muted)]">
+        <span>{comparable.sourceLabel}</span>
+        <span>{formatDateTime(comparable.collectedAt)}</span>
+        {comparable.sourceUrl ? (
+          <Link className="inline-flex items-center gap-1 font-semibold text-[var(--admin-cyan)] hover:underline" href={comparable.sourceUrl} target="_blank" rel="noreferrer">
+            Abrir fonte
+            <ArrowUpRight size={12} />
+          </Link>
+        ) : null}
+      </div>
+    </article>
+  );
+}
+
+function MarketComparablesPanel({ analysis }: { analysis: PropertyMarketAnalysis | null }) {
+  const comparables = comparableViewsFromAnalysis(analysis);
+  const usedSales = comparables.filter((item) => listingLabel(item.listingType) === "Venda" && !item.discarded).slice(0, 3);
+  const usedRentals = comparables.filter((item) => listingLabel(item.listingType) === "Aluguel" && !item.discarded).slice(0, 1);
+  const discarded = comparables.filter((item) => item.discarded);
+  const used = [...usedSales, ...usedRentals];
+
+  return (
+    <SectionCard title="Comparaveis usados na estimativa" eyebrow="mercado" contentClassName="grid gap-3">
+      <p className="max-w-5xl text-sm leading-6 text-[var(--admin-soft)]">
+        Estes sao os imoveis parecidos que ficaram persistidos como base da pesquisa. A tela mostra apenas referencias salvas pelo sistema.
+      </p>
+
+      {used.length ? (
+        <div className="grid gap-3 xl:grid-cols-2">
+          {used.map((comparable) => (
+            <ComparableCard key={comparable.key} comparable={comparable} />
+          ))}
+        </div>
+      ) : (
+        <EmptyState title="Comparaveis nao localizados" detail="Nenhum comparavel persistido foi encontrado para esta analise." />
+      )}
+
+      <details className="group rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card-2)]">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2">
+          <span className="text-sm font-semibold text-[var(--admin-foreground)]">Resultados que nao entraram no calculo</span>
+          <span className="flex items-center gap-2">
+            <StatusBadge tone="muted">{discarded.length}</StatusBadge>
+            <ChevronDown size={16} className="text-[var(--admin-muted)] transition group-open:rotate-180" />
+          </span>
+        </summary>
+        <div className="grid gap-2 border-t border-[var(--admin-border)] p-3">
+          {discarded.length ? (
+            discarded.map((comparable) => (
+              <ComparableCard key={comparable.key} comparable={comparable} />
             ))
           ) : (
-            <p className="rounded-lg border border-[var(--admin-border)] bg-[rgba(19,122,69,0.06)] px-3 py-2 text-sm text-[var(--admin-green)]">
-              Nenhum alerta critico encontrado.
+            <p className="rounded-lg border border-[var(--admin-border)] bg-white px-3 py-2 text-xs leading-5 text-[var(--admin-muted)]">
+              Nenhum resultado descartado foi persistido nesta execucao.
             </p>
           )}
-          {hiddenCount ? (
-            <Link className="text-xs font-semibold text-[var(--admin-cyan)] hover:underline" href={tabHref("revisao")}>
-              Ver todos os alertas
-            </Link>
-          ) : null}
+        </div>
+      </details>
+    </SectionCard>
+  );
+}
+
+function ResearchMethodPanel({
+  opportunity,
+  analysis,
+  evaluation,
+  qualificationDossier,
+}: {
+  opportunity: AuctionOpportunity;
+  analysis: PropertyMarketAnalysis | null;
+  evaluation: OpportunityEvaluation;
+  qualificationDossier?: PropertyQualificationDossier | null;
+}) {
+  const subject = analysis?.subject;
+  const areaBase = subjectAreaM2(opportunity, analysis, qualificationDossier);
+  const queries = queryViewsFromAnalysis(analysis, qualificationDossier);
+  const sources = searchSourceViewsFromAnalysis(analysis, qualificationDossier);
+  const steps = buildResearchSteps(opportunity, analysis, evaluation, qualificationDossier);
+
+  return (
+    <SectionCard title="Como a pesquisa foi feita" eyebrow="curadoria" contentClassName="grid gap-3">
+      <div className="grid gap-2 md:grid-cols-4">
+        <InfoValue label="Tipo" value={subject?.propertyType || opportunity.propertyType || "nao informado"} />
+        <InfoValue label="Cidade" value={[subject?.city || opportunity.city, subject?.state || opportunity.state].filter(Boolean).join("/") || "nao informado"} />
+        <InfoValue label="Endereco" value={opportunity.address || subject?.address || "nao informado"} className="md:col-span-2" />
+        <InfoValue label="Area" value={area(areaBase)} />
+        <InfoValue label="Quartos" value={subject?.bedrooms || "-"} />
+        <InfoValue label="Vagas" value={subject?.parkingSpaces || "-"} />
+        <InfoValue label="Lance" value={formatCurrency(analysis?.initialBid || opportunity.initialBid)} />
+      </div>
+
+      <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-5">
+        {steps.map((step) => (
+          <article key={step.title} className="rounded-lg border border-[var(--admin-border)] bg-white p-3">
+            <h3 className="text-sm font-semibold text-[var(--admin-foreground)]">{step.title}</h3>
+            <p className="mt-2 text-xs leading-5 text-[var(--admin-soft)]">{step.text}</p>
+          </article>
+        ))}
+      </div>
+
+      <details className="group rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card-2)]">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <FileSearch size={15} className="shrink-0 text-[var(--admin-cyan)]" />
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-[var(--admin-foreground)]">Termos e fontes consultadas</p>
+              <p className="text-xs leading-5 text-[var(--admin-muted)]">
+                Abre apenas os registros salvos nesta execucao.
+              </p>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <StatusBadge tone="muted">{queries.length} termo(s)</StatusBadge>
+            <StatusBadge tone="muted">{sources.length} fonte(s)</StatusBadge>
+            <ChevronDown size={16} className="text-[var(--admin-muted)] transition group-open:rotate-180" />
+          </div>
+        </summary>
+
+        <div className="grid gap-3 border-t border-[var(--admin-border)] p-3 lg:grid-cols-2">
+          <div className="min-w-0">
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--admin-muted)]">Termos pesquisados</h3>
+            <div className="grid max-h-64 gap-2 overflow-y-auto pr-1">
+              {queries.length ? (
+                queries.slice(0, 12).map((query) => (
+                  <div key={query.query} className="rounded-lg border border-[var(--admin-border)] bg-white px-3 py-2">
+                    <p className="text-sm font-semibold text-[var(--admin-foreground)]">Termo: {query.query}</p>
+                    <p className="mt-1 text-xs leading-5 text-[var(--admin-muted)]">
+                      {query.mechanism} | {query.resultsFound} resultado(s) encontrado(s), {query.resultsUsed} usado(s).
+                    </p>
+                  </div>
+                ))
+              ) : (
+                <p className="rounded-lg border border-[var(--admin-border)] bg-white px-3 py-2 text-xs leading-5 text-[var(--admin-muted)]">
+                  Nenhum termo de busca foi persistido. A tela nao reconstruiu termos automaticamente.
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="min-w-0">
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--admin-muted)]">Fontes abertas</h3>
+            <div className="grid max-h-64 gap-2 overflow-y-auto pr-1">
+              {sources.length ? (
+                sources.slice(0, 12).map((source) => (
+                  <div key={source.key} className="rounded-lg border border-[var(--admin-border)] bg-white px-3 py-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="min-w-0 truncate text-sm font-semibold text-[var(--admin-foreground)]">{source.label}</p>
+                      <StatusBadge tone="muted">{source.kind}</StatusBadge>
+                    </div>
+                    <Link className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-[var(--admin-cyan)] hover:underline" href={source.url} target="_blank" rel="noreferrer">
+                      Abrir fonte
+                      <ArrowUpRight size={12} />
+                    </Link>
+                  </div>
+                ))
+              ) : (
+                <p className="rounded-lg border border-[var(--admin-border)] bg-white px-3 py-2 text-xs leading-5 text-[var(--admin-muted)]">
+                  Nenhuma URL de pesquisa foi persistida nesta execucao.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      </details>
+    </SectionCard>
+  );
+}
+
+function PendingActionsPanel({
+  opportunity,
+  evaluation,
+  qualificationDossier,
+}: {
+  opportunity: AuctionOpportunity;
+  evaluation: OpportunityEvaluation;
+  qualificationDossier?: PropertyQualificationDossier | null;
+}) {
+  const actions = buildPendingActions(opportunity, evaluation, qualificationDossier);
+
+  return (
+    <SectionCard title="O que falta confirmar" eyebrow="pendencias" contentClassName="grid gap-3 md:grid-cols-2">
+      {actions.length ? (
+        actions.map((action) => (
+          <article key={action.title} className="rounded-lg border border-[rgba(183,121,17,0.28)] bg-[rgba(183,121,17,0.06)] p-3">
+            <div className="flex items-start justify-between gap-3">
+              <h3 className="text-sm font-semibold text-[var(--admin-foreground)]">{action.title}</h3>
+              <StatusBadge tone="yellow">{action.status}</StatusBadge>
+            </div>
+            <p className="mt-2 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--admin-muted)]">Por que importa</p>
+            <p className="mt-1 text-sm leading-6 text-[var(--admin-soft)]">{action.why}</p>
+            <p className="mt-3 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--admin-muted)]">Como resolver</p>
+            <p className="mt-1 text-sm leading-6 text-[var(--admin-soft)]">{action.how}</p>
+          </article>
+        ))
+      ) : (
+        <EmptyState title="Sem pendencias acionaveis" detail="A curadoria nao encontrou uma acao pendente estruturada para esta etapa." />
+      )}
+    </SectionCard>
+  );
+}
+
+function NextStepsPanel({
+  evaluation,
+  qualificationDossier,
+}: {
+  evaluation: OpportunityEvaluation;
+  qualificationDossier?: PropertyQualificationDossier | null;
+}) {
+  const actions = humanizedItems(evaluation.finalRecommendation.nextActions, 5);
+  const recommendations = humanizedItems(qualificationDossier?.recommendations || [], 5);
+  const items = actions.length ? actions : recommendations;
+
+  return (
+    <SectionCard
+      title="Proximo passo"
+      eyebrow="operacao"
+      action={<StatusBadge tone={evaluation.finalRecommendation.tone}>{evaluation.finalRecommendation.label}</StatusBadge>}
+      contentClassName="grid gap-3"
+    >
+      <div className={cn("rounded-lg border p-4", toneBorder[evaluation.finalRecommendation.tone], toneBg[evaluation.finalRecommendation.tone])}>
+        <h3 className="text-base font-semibold text-[var(--admin-foreground)]">Acao recomendada agora</h3>
+        <p className="mt-2 text-sm leading-6 text-[var(--admin-soft)]">{evaluation.finalRecommendation.explanation}</p>
+      </div>
+
+      <div className="grid gap-2 md:grid-cols-2">
+        {(items.length ? items : ["registrar a revisao humana no painel"]).map((item) => (
+          <div key={item} className="flex gap-2 rounded-lg border border-[var(--admin-border)] bg-white px-3 py-2 text-sm leading-6 text-[var(--admin-soft)]">
+            <CheckCircle2 size={15} className="mt-1 shrink-0 text-[var(--admin-green)]" />
+            <span>{item}</span>
+          </div>
+        ))}
+      </div>
+    </SectionCard>
+  );
+}
+
+function PropertyBasicsPanel({
+  opportunity,
+  analysis,
+  qualificationDossier,
+}: {
+  opportunity: AuctionOpportunity;
+  analysis: PropertyMarketAnalysis | null;
+  qualificationDossier?: PropertyQualificationDossier | null;
+}) {
+  const subject = analysis?.subject;
+  const documents = qualificationDossier?.documentEvidence || {};
+  const images = qualificationDossier?.imageEvidence || {};
+  const legalValidated = analysis?.status === "approved" || analysis?.status === "approved_with_notes";
+
+  return (
+    <SectionCard title="Dados do imovel" eyebrow="cadastro" contentClassName="grid gap-2 md:grid-cols-4">
+      <InfoValue label="Tipo" value={subject?.propertyType || opportunity.propertyType || "nao informado"} />
+      <InfoValue label="Ocupacao" value={opportunity.occupancy || "nao informado"} />
+      <InfoValue label="Area" value={area(subjectAreaM2(opportunity, analysis, qualificationDossier))} />
+      <InfoValue label="Fonte" value={opportunity.sourceName} />
+      <InfoValue label="Arquivos processados" value={`${jsonNumber(documents.count, opportunity.documents.length)} arquivo(s)`} />
+      <InfoValue label="Cobertura documental" value={jsonBoolean(documents.hasOfficialDocument) ? "documento essencial encontrado" : "incompleta"} />
+      <InfoValue label="Validacao juridica" value={legalValidated ? "registrada" : "pendente"} />
+      <InfoValue label="Cobertura visual" value={jsonNumber(images.usableCount, opportunity.images?.length || 0) >= 3 ? "suficiente" : "insuficiente"} />
+    </SectionCard>
+  );
+}
+
+function TechnicalAuditPanel({
+  opportunity,
+  analysis,
+  qualificationDossier,
+  qualificationReason,
+}: {
+  opportunity: AuctionOpportunity;
+  analysis: PropertyMarketAnalysis | null;
+  qualificationDossier?: PropertyQualificationDossier | null;
+  qualificationReason?: string;
+}) {
+  const review = reviewedFieldsCount(opportunity, analysis);
+
+  return (
+    <details className="group overflow-hidden rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)]">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
+        <div>
+          <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--admin-muted)]">admin / interno</p>
+          <h2 className="text-sm font-semibold text-[var(--admin-foreground)]">Auditoria tecnica</h2>
+        </div>
+        <div className="flex items-center gap-2">
+          <StatusBadge tone="muted">detalhes</StatusBadge>
+          <ChevronDown size={16} className="text-[var(--admin-muted)] transition group-open:rotate-180" />
+        </div>
+      </summary>
+      <div className="grid gap-4 border-t border-[var(--admin-border)] p-4">
+        <PipelineStepper opportunity={opportunity} analysis={analysis} />
+        <QualificationDossierPanel opportunity={opportunity} dossier={qualificationDossier} reason={qualificationReason} compact />
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
+          <SectionCard title="Progresso da analise" eyebrow="revisao" contentClassName="p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-2xl font-semibold text-[var(--admin-foreground)]">
+                  {review.done} de {review.total}
+                </p>
+                <p className="text-sm text-[var(--admin-muted)]">campos revisados</p>
+              </div>
+              <ScoreBadge score={Math.round((review.done / review.total) * 100)} />
+            </div>
+            <div className="mt-3 h-2 overflow-hidden rounded-full bg-[var(--admin-card-2)]">
+              <div className="h-full rounded-full bg-[var(--admin-cyan)]" style={{ width: `${Math.round((review.done / review.total) * 100)}%` }} />
+            </div>
+          </SectionCard>
+          <ActivityMiniTimeline opportunity={opportunity} />
         </div>
       </div>
-    </section>
+    </details>
   );
 }
 
@@ -1772,6 +2761,13 @@ function QualificationResearchTrace({
   const images = dossier.imageEvidence;
   const documents = dossier.documentEvidence;
   const comparablesCount = jsonNumber(market.saleComparables) + jsonNumber(market.rentalComparables);
+  const stepCards = [
+    { label: "Identificacao", detail: narrative.identity },
+    { label: "Pesquisa", detail: narrative.market },
+    { label: "Avaliacao", detail: `O valor de mercado preliminar ficou em ${formatCurrency(jsonNumber(market.marketValueBase))}.` },
+    { label: "Riscos", detail: narrative.compliance },
+    { label: "Conclusao", detail: narrative.conclusion },
+  ];
 
   return (
     <div className="overflow-hidden rounded-lg border border-[var(--admin-border)] bg-white">
@@ -1789,33 +2785,27 @@ function QualificationResearchTrace({
         <div className="rounded-lg border border-[rgba(200,90,31,0.24)] bg-[rgba(255,247,236,0.84)] p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
-              <h4 className="text-base font-semibold text-[var(--admin-foreground)]">Parecer para aprovacao</h4>
+              <h4 className="text-base font-semibold text-[var(--admin-foreground)]">Etapas da curadoria</h4>
               <p className="mt-1 text-xs leading-5 text-[var(--admin-muted)]">
-                O que foi pesquisado, como o valor foi formado e o que precisa ser conferido.
+                Resumo curto do caminho usado antes da decisao.
               </p>
             </div>
             <StatusBadge tone="muted">{narrative.searchedUrlsCount || sources.length} fonte(s)</StatusBadge>
           </div>
 
-          <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-            <div className="grid gap-3 text-sm leading-6 text-[var(--admin-soft)]">
-              <p>
-                <span className="font-semibold text-[var(--admin-foreground)]">1. Identificacao: </span>
-                {narrative.identity}
-              </p>
-              <p>
-                <span className="font-semibold text-[var(--admin-foreground)]">2. Pesquisa de preco: </span>
-                {narrative.market}
-              </p>
-              <p>
-                <span className="font-semibold text-[var(--admin-foreground)]">3. Fotos e documentos: </span>
-                {narrative.mediaDocs}
-              </p>
-              <p>
-                <span className="font-semibold text-[var(--admin-foreground)]">4. Risco: </span>
-                {narrative.compliance}
-              </p>
-              <p className="font-medium text-[var(--admin-foreground)]">{narrative.conclusion}</p>
+          <div className="mt-4 grid gap-3">
+            <div className="grid gap-2 md:grid-cols-5">
+              {stepCards.map((step, index) => (
+                <article key={step.label} className="rounded-lg border border-[var(--admin-border)] bg-white/80 p-3">
+                  <div className="mb-2 flex items-center gap-2">
+                    <span className="grid size-6 place-items-center rounded-full border border-[var(--admin-border)] bg-white text-[10px] font-bold text-[var(--admin-cyan)]">
+                      {index + 1}
+                    </span>
+                    <h5 className="text-sm font-semibold text-[var(--admin-foreground)]">{step.label}</h5>
+                  </div>
+                  <p className="line-clamp-4 text-xs leading-5 text-[var(--admin-soft)]">{step.detail}</p>
+                </article>
+              ))}
             </div>
 
             <div className="rounded-lg border border-[var(--admin-border)] bg-white/80 p-3">
@@ -1951,8 +2941,8 @@ function QualificationDossierPanel({
   const scoreTone: ResourceTone = dossier.overallScore >= 75 ? "green" : dossier.overallScore >= 55 ? "yellow" : "red";
   const evidence = dossier.evidence.slice(0, compact ? 6 : 10);
   const latestFeedback = dossier.feedback.slice(0, 4);
-  const hasBlockers = dossier.blockers.length > 0;
-  const hasRecommendations = dossier.recommendations.length > 0;
+  const blockerItems = humanizedItems(dossier.blockers, compact ? 4 : 8);
+  const hasBlockers = blockerItems.length > 0;
 
   return (
     <SectionCard
@@ -1990,45 +2980,29 @@ function QualificationDossierPanel({
 
         <QualificationResearchTrace dossier={dossier} compact={compact} />
 
-        <div className="grid gap-3 lg:grid-cols-2">
-          <div className="rounded-lg border border-[var(--admin-border)] bg-white p-3">
-            <div className="mb-2 flex items-center gap-2">
+        <div className="rounded-lg border border-[var(--admin-border)] bg-white p-3">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
               {hasBlockers ? <XCircle size={16} className="text-[var(--admin-red)]" /> : <CheckCircle2 size={16} className="text-[var(--admin-green)]" />}
-              <h3 className="text-sm font-semibold text-[var(--admin-foreground)]">Bloqueios</h3>
+              <h3 className="text-sm font-semibold text-[var(--admin-foreground)]">Pendencias para aprovar</h3>
             </div>
-            <div className="grid gap-2">
-              {hasBlockers ? (
-                dossier.blockers.slice(0, 6).map((item) => (
-                  <p key={item} className="rounded-lg border border-[rgba(196,61,45,0.22)] bg-[rgba(196,61,45,0.06)] px-3 py-2 text-xs leading-5 text-[var(--admin-soft)]">
-                    {item}
-                  </p>
-                ))
-              ) : (
-                <p className="rounded-lg border border-[rgba(19,122,69,0.22)] bg-[rgba(19,122,69,0.06)] px-3 py-2 text-xs leading-5 text-[var(--admin-green)]">
-                  Nenhum bloqueio critico registrado no dossie.
-                </p>
-              )}
-            </div>
+            <StatusBadge tone={hasBlockers ? "red" : "green"}>{hasBlockers ? `${blockerItems.length} pendencia(s)` : "Sem pendencia"}</StatusBadge>
           </div>
-
-          <div className="rounded-lg border border-[var(--admin-border)] bg-white p-3">
-            <div className="mb-2 flex items-center gap-2">
-              <Target size={16} className="text-[var(--admin-cyan)]" />
-              <h3 className="text-sm font-semibold text-[var(--admin-foreground)]">Proximos upgrades</h3>
-            </div>
-            <div className="grid gap-2">
-              {hasRecommendations ? (
-                dossier.recommendations.slice(0, 6).map((item) => (
-                  <p key={item} className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card-2)] px-3 py-2 text-xs leading-5 text-[var(--admin-soft)]">
-                    {item}
-                  </p>
-                ))
-              ) : (
-                <p className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card-2)] px-3 py-2 text-xs leading-5 text-[var(--admin-muted)]">
-                  Nenhuma recomendacao pendente.
+          <p className="mb-3 text-xs leading-5 text-[var(--admin-muted)]">
+            Estes sao os pontos que a operacao precisa conferir antes de liberar o imovel para a proxima etapa.
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {hasBlockers ? (
+              blockerItems.map((item) => (
+                <p key={item} className="rounded-lg border border-[rgba(196,61,45,0.22)] bg-[rgba(196,61,45,0.06)] px-3 py-2 text-xs leading-5 text-[var(--admin-soft)]">
+                  {item}
                 </p>
-              )}
-            </div>
+              ))
+            ) : (
+              <p className="rounded-lg border border-[rgba(19,122,69,0.22)] bg-[rgba(19,122,69,0.06)] px-3 py-2 text-xs leading-5 text-[var(--admin-green)] sm:col-span-2">
+                Nenhuma pendencia critica registrada no dossie.
+              </p>
+            )}
           </div>
         </div>
 
@@ -2161,11 +3135,17 @@ function OverviewTab({
   qualificationReason?: string;
   reason?: string;
 }) {
-  const review = reviewedFieldsCount(opportunity, analysis);
-  const subject = analysis?.subject;
+  const evaluation = buildDetailOpportunityEvaluation(opportunity, analysis, qualificationDossier);
 
   return (
     <div className="grid gap-4">
+      <ExecutiveBriefPanel
+        opportunity={opportunity}
+        analysis={analysis}
+        evaluation={evaluation}
+        qualificationDossier={qualificationDossier}
+      />
+      <EvaluationOverviewPanel evaluation={evaluation} />
       <ExecutiveSummary
         opportunity={opportunity}
         analysis={analysis}
@@ -2173,58 +3153,30 @@ function OverviewTab({
         heroImage={heroImage}
         selectedImageIndex={selectedImageIndex}
       />
-      <RecommendedAction opportunity={opportunity} analysis={analysis} />
-      <PipelineStepper opportunity={opportunity} analysis={analysis} />
-      <QualificationDossierPanel opportunity={opportunity} dossier={qualificationDossier} reason={qualificationReason} compact />
-
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
-        <SectionCard title="Resumo da IA" eyebrow="visao geral" contentClassName="p-4">
-          {analysis ? (
-            <div className="grid gap-3">
-              <div className={cn("rounded-lg border p-4", toneBorder[decisionTone(analysis.decision)], toneBg[decisionTone(analysis.decision)])}>
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <h3 className="text-base font-semibold text-[var(--admin-foreground)]">{analysis.decisionLabel}</h3>
-                  <ScoreBadge score={analysis.liquidityScore} />
-                </div>
-                <p className="mt-3 text-sm leading-6 text-[var(--admin-soft)]">{shortText(analysis.summary, 520)}</p>
-              </div>
-              <TextDisclosure label="Ler analise completa" defaultOpen>
-                <p>{compactText(analysis.decisionReason || analysis.summary)}</p>
-                {analysis.cautionNotes ? <p className="mt-3">{compactText(analysis.cautionNotes)}</p> : null}
-              </TextDisclosure>
-              {reason ? <p className="text-xs leading-5 text-[var(--admin-muted)]">{reason}</p> : null}
-            </div>
-          ) : (
-            <EmptyState title="Analise nao localizada" detail="A oportunidade existe, mas a analise de mercado ainda nao foi estruturada." />
-          )}
-        </SectionCard>
-
-        <div className="grid content-start gap-4">
-          <SectionCard title="Dados essenciais" eyebrow="imovel" contentClassName="grid gap-2">
-            <InfoValue label="Tipo" value={subject?.propertyType || opportunity.propertyType} />
-            <InfoValue label="Ocupacao" value={opportunity.occupancy || "nao informado"} />
-            <InfoValue label="Area" value={area(subject?.privateAreaM2 || subject?.builtAreaM2 || subject?.landAreaM2 || 0)} />
-            <InfoValue label="Fonte" value={opportunity.sourceName} />
-          </SectionCard>
-
-          <SectionCard title="Progresso da analise" eyebrow="revisao" contentClassName="p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-2xl font-semibold text-[var(--admin-foreground)]">
-                  {review.done} de {review.total}
-                </p>
-                <p className="text-sm text-[var(--admin-muted)]">campos revisados</p>
-              </div>
-              <ScoreBadge score={Math.round((review.done / review.total) * 100)} />
-            </div>
-            <div className="mt-3 h-2 overflow-hidden rounded-full bg-[var(--admin-card-2)]">
-              <div className="h-full rounded-full bg-[var(--admin-cyan)]" style={{ width: `${Math.round((review.done / review.total) * 100)}%` }} />
-            </div>
-          </SectionCard>
-
-          <ActivityMiniTimeline opportunity={opportunity} />
-        </div>
-      </div>
+      <RecommendationReasonsPanel
+        opportunity={opportunity}
+        analysis={analysis}
+        evaluation={evaluation}
+        qualificationDossier={qualificationDossier}
+      />
+      <MarketValueCalculationPanel opportunity={opportunity} analysis={analysis} qualificationDossier={qualificationDossier} />
+      <MarketComparablesPanel analysis={analysis} />
+      <ResearchMethodPanel
+        opportunity={opportunity}
+        analysis={analysis}
+        evaluation={evaluation}
+        qualificationDossier={qualificationDossier}
+      />
+      <PendingActionsPanel opportunity={opportunity} evaluation={evaluation} qualificationDossier={qualificationDossier} />
+      <NextStepsPanel evaluation={evaluation} qualificationDossier={qualificationDossier} />
+      <PropertyBasicsPanel opportunity={opportunity} analysis={analysis} qualificationDossier={qualificationDossier} />
+      <TechnicalAuditPanel
+        opportunity={opportunity}
+        analysis={analysis}
+        qualificationDossier={qualificationDossier}
+        qualificationReason={qualificationReason}
+      />
+      {reason ? <p className="text-xs leading-5 text-[var(--admin-muted)]">{reason}</p> : null}
     </div>
   );
 }
@@ -3126,7 +4078,7 @@ export function OpportunityDetailCenter({
   const body = (
     <div id="topo-oportunidade" className="mx-auto grid max-w-[1600px] gap-4 px-3 py-3 lg:px-5">
       <div>
-        <OpportunityHeader opportunity={opportunity} analysis={analysis} />
+        <OpportunityHeader opportunity={opportunity} analysis={analysis} qualificationDossier={qualificationDossier} />
         <OpportunityTabs activeTab={tab} />
       </div>
 
