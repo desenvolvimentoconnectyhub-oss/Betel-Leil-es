@@ -1716,8 +1716,8 @@ function OpportunityHeader({
   const whatsappPreview = buildWhatsAppPreview(opportunity, analysis);
 
   return (
-    <section className="rounded-xl border border-[var(--admin-border)] bg-[rgba(255,255,255,0.96)] p-3 shadow-sm shadow-[rgba(81,60,36,0.07)] backdrop-blur">
-      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
+    <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_520px] xl:items-start">
+      <section className="rounded-xl border border-[var(--admin-border)] bg-[rgba(255,255,255,0.96)] p-3 shadow-sm shadow-[rgba(81,60,36,0.07)] backdrop-blur">
         <div className="min-w-0">
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <Button
@@ -1784,78 +1784,78 @@ function OpportunityHeader({
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2 xl:max-w-[520px] xl:justify-end">
-          {analysis ? (
-            <OpportunityWhatsAppSendPanel
-              canSubmit={canSubmit}
-              opportunityCode={analysis.opportunityCode || opportunity.id}
-              options={whatsappPublicationOptions}
-              preview={whatsappPreview}
-            />
-          ) : null}
-          <Button
-            asChild
-            variant="outline"
-            className="h-9 border-[var(--admin-border)] bg-white text-[var(--admin-foreground)]"
-          >
-            <Link href={`/admin/oportunidades/${opportunity.id}/editar`}>
-              <Pencil size={14} />
-              Editar imovel
-            </Link>
-          </Button>
-          {analysis ? (
-            <>
-              <HeaderActionButton disabled={!canSubmit} tone={highlightedAction === "human_review" ? "primary" : "neutral"} value="human_review">
-                <Save size={14} />
-                Salvar revisao
-              </HeaderActionButton>
-              <HeaderActionButton disabled={!canSubmit} tone={highlightedAction === "approved" ? "green" : "neutral"} value="approved">
-                <CheckCircle2 size={14} />
-                Aprovar sem envio
-              </HeaderActionButton>
-              <HeaderActionButton disabled={!canSubmit} tone="red" value="rejected">
-                <XCircle size={14} />
-                Reprovar
-              </HeaderActionButton>
-              <details className="relative">
-                <summary className="inline-flex h-9 cursor-pointer list-none items-center gap-1.5 rounded-lg border border-[var(--admin-border)] bg-white px-2.5 text-sm font-medium text-[var(--admin-foreground)] transition hover:bg-[var(--admin-card-2)]">
-                  <MoreHorizontal size={14} />
-                  Mais acoes
-                </summary>
-                <div className="absolute right-0 z-30 mt-2 grid min-w-56 gap-2 rounded-lg border border-[var(--admin-border)] bg-white p-2 shadow-lg">
-                  <HeaderActionButton disabled={!canSubmit} tone="yellow" value="approved_with_notes">
-                    <ShieldCheck size={14} />
-                    Aprovar ressalvas sem envio
-                  </HeaderActionButton>
-                  <Button className="h-9 border-[var(--admin-border)] bg-white text-[var(--admin-foreground)] hover:bg-[var(--admin-card-2)]" type="button">
-                    <FileCheck2 size={14} />
-                    Criar dossie
-                  </Button>
-                </div>
-              </details>
-            </>
-          ) : (
-            <Button className="h-9 bg-[var(--admin-cyan)] text-white hover:bg-[#a54a18]" type="button">
-              <FileCheck2 size={14} />
-              Criar dossie
-            </Button>
-          )}
+        <div className="mt-3 grid gap-2 border-t border-[var(--admin-border)] pt-3 text-xs text-[var(--admin-muted)] lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+          <div className="grid gap-1">
+            <p className="text-sm font-semibold text-[var(--admin-foreground)]">{mainRecommendationTitle(evaluation)}</p>
+            <p className="max-w-5xl leading-5">
+              {evaluation.finalRecommendation.explanation} {recommendationComplement(evaluation)}
+            </p>
+            <p className="leading-5">
+              <span className="font-semibold text-[var(--admin-foreground)]">Proximo passo:</span> {executiveNextStepText(evaluation)}
+            </p>
+          </div>
+          <p>Atualizado: {formatDateTime(updatedAt)}</p>
         </div>
-      </div>
+      </section>
 
-      <div className="mt-3 grid gap-2 border-t border-[var(--admin-border)] pt-3 text-xs text-[var(--admin-muted)] lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
-        <div className="grid gap-1">
-          <p className="text-sm font-semibold text-[var(--admin-foreground)]">{mainRecommendationTitle(evaluation)}</p>
-          <p className="max-w-5xl leading-5">
-            {evaluation.finalRecommendation.explanation} {recommendationComplement(evaluation)}
-          </p>
-          <p className="leading-5">
-            <span className="font-semibold text-[var(--admin-foreground)]">Proximo passo:</span> {executiveNextStepText(evaluation)}
-          </p>
-        </div>
-        <p>Atualizado: {formatDateTime(updatedAt)}</p>
-      </div>
-    </section>
+      <aside className="flex flex-wrap gap-2 xl:max-w-[520px] xl:justify-end">
+        {analysis ? (
+          <OpportunityWhatsAppSendPanel
+            canSubmit={canSubmit}
+            opportunityCode={analysis.opportunityCode || opportunity.id}
+            options={whatsappPublicationOptions}
+            preview={whatsappPreview}
+          />
+        ) : null}
+        <Button
+          asChild
+          variant="outline"
+          className="h-9 border-[var(--admin-border)] bg-white text-[var(--admin-foreground)]"
+        >
+          <Link href={`/admin/oportunidades/${opportunity.id}/editar`}>
+            <Pencil size={14} />
+            Editar imovel
+          </Link>
+        </Button>
+        {analysis ? (
+          <>
+            <HeaderActionButton disabled={!canSubmit} tone={highlightedAction === "human_review" ? "primary" : "neutral"} value="human_review">
+              <Save size={14} />
+              Salvar revisao
+            </HeaderActionButton>
+            <HeaderActionButton disabled={!canSubmit} tone={highlightedAction === "approved" ? "green" : "neutral"} value="approved">
+              <CheckCircle2 size={14} />
+              Aprovar sem envio
+            </HeaderActionButton>
+            <HeaderActionButton disabled={!canSubmit} tone="red" value="rejected">
+              <XCircle size={14} />
+              Reprovar
+            </HeaderActionButton>
+            <details className="relative">
+              <summary className="inline-flex h-9 cursor-pointer list-none items-center gap-1.5 rounded-lg border border-[var(--admin-border)] bg-white px-2.5 text-sm font-medium text-[var(--admin-foreground)] transition hover:bg-[var(--admin-card-2)]">
+                <MoreHorizontal size={14} />
+                Mais acoes
+              </summary>
+              <div className="absolute right-0 z-30 mt-2 grid min-w-56 gap-2 rounded-lg border border-[var(--admin-border)] bg-white p-2 shadow-lg">
+                <HeaderActionButton disabled={!canSubmit} tone="yellow" value="approved_with_notes">
+                  <ShieldCheck size={14} />
+                  Aprovar ressalvas sem envio
+                </HeaderActionButton>
+                <Button className="h-9 border-[var(--admin-border)] bg-white text-[var(--admin-foreground)] hover:bg-[var(--admin-card-2)]" type="button">
+                  <FileCheck2 size={14} />
+                  Criar dossie
+                </Button>
+              </div>
+            </details>
+          </>
+        ) : (
+          <Button className="h-9 bg-[var(--admin-cyan)] text-white hover:bg-[#a54a18]" type="button">
+            <FileCheck2 size={14} />
+            Criar dossie
+          </Button>
+        )}
+      </aside>
+    </div>
   );
 }
 

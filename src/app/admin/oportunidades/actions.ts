@@ -439,8 +439,8 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
       errorRedirect(detailPath, "Seu usuario nao pode aprovar a etapa atual desta oportunidade.");
     }
 
-    if (publicationMode && approvalStageKey !== "market_review") {
-      errorRedirect(detailPath, "Envio WhatsApp so pode ser solicitado na aprovacao da analise de mercado.");
+    if (publicationMode && approvalStageKey !== "market_review" && approvalStageKey !== "communication") {
+      errorRedirect(detailPath, "Envio WhatsApp so pode ser solicitado na aprovacao de mercado ou na etapa de divulgacao WhatsApp.");
     }
   } else if (sendTestOnly) {
     const canSendTest =
@@ -478,6 +478,41 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
     publicationCampaignId = publicationResult.data.campaignId;
   }
 
+  async function scheduleApprovedWhatsAppPublication() {
+    if (!publicationMode || publicationMode === "test_number") return;
+    const destinationId =
+      publicationMode === "default_group"
+        ? field(formData, "whatsappDefaultGroupId")
+        : publicationMode === "specific_group"
+          ? field(formData, "whatsappSpecificGroupId")
+          : publicationMode === "channel"
+            ? field(formData, "whatsappChannelId")
+            : "";
+
+    const publicationResult = await scheduleOpportunityWhatsAppPublication({
+      opportunityCode: currentCode,
+      mode: publicationMode,
+      agentKey: field(formData, "whatsappAgentKey"),
+      destinationId,
+      broadcastSourceDestinationId: field(formData, "whatsappBroadcastSourceGroupId"),
+      broadcastTargets: parseBroadcastTargets(field(formData, "whatsappBroadcastNumbers")),
+      approvedByAdminUserId: admin.id,
+      approvedByName: admin.name,
+    });
+
+    if (!publicationResult.ok || !publicationResult.data) {
+      errorRedirect(
+        detailPath,
+        publicationResult.error || "Analise aprovada, mas nao foi possivel agendar a publicacao WhatsApp."
+      );
+    }
+
+    publicationStatusParam = publicationResult.data.skipped
+      ? "whatsapp-ja-agendado"
+      : "whatsapp-agendado";
+    publicationCampaignId = publicationResult.data.campaignId;
+  }
+
   if (shouldAdvanceWorkflow) {
     const workflowDecision = payload.status === "approved_with_notes" ? "approved_with_notes" : "approved";
     const workflowNotes = payload.cautionNotes || payload.decisionReason;
@@ -498,39 +533,7 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
         );
       }
 
-      if (publicationMode) {
-        const destinationId =
-          publicationMode === "default_group"
-            ? field(formData, "whatsappDefaultGroupId")
-            : publicationMode === "specific_group"
-              ? field(formData, "whatsappSpecificGroupId")
-              : publicationMode === "channel"
-                ? field(formData, "whatsappChannelId")
-                : "";
-
-        const publicationResult = await scheduleOpportunityWhatsAppPublication({
-          opportunityCode: currentCode,
-          mode: publicationMode,
-          agentKey: field(formData, "whatsappAgentKey"),
-          destinationId,
-          broadcastSourceDestinationId: field(formData, "whatsappBroadcastSourceGroupId"),
-          broadcastTargets: parseBroadcastTargets(field(formData, "whatsappBroadcastNumbers")),
-          approvedByAdminUserId: admin.id,
-          approvedByName: admin.name,
-        });
-
-        if (!publicationResult.ok || !publicationResult.data) {
-          errorRedirect(
-            detailPath,
-            publicationResult.error || "Analise aprovada, mas nao foi possivel agendar a publicacao WhatsApp."
-          );
-        }
-
-        publicationStatusParam = publicationResult.data.skipped
-          ? "whatsapp-ja-agendado"
-          : "whatsapp-agendado";
-        publicationCampaignId = publicationResult.data.campaignId;
-      }
+      await scheduleApprovedWhatsAppPublication();
     } else if (approvalStageKey === "legal_review") {
       const workflowResult = await advanceOpportunityAfterLegalApprovalRecord({
         opportunityCode: currentCode,
@@ -561,6 +564,10 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
           detailPath,
           workflowResult.error || "Etapa aprovada, mas nao foi possivel enviar a oportunidade para o proximo setor."
         );
+      }
+
+      if (approvalStageKey === "communication") {
+        await scheduleApprovedWhatsAppPublication();
       }
     } else {
       errorRedirect(detailPath, "Etapa atual nao reconhecida para avancar o workflow.");
