@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useRouter } from "next/navigation";
 import {
   AlertCircle,
   CheckCircle2,
@@ -112,6 +113,8 @@ function mergePhoneLists(currentValue: string, importedNumbers: string[]) {
   return Array.from(nextNumbers).join("\n");
 }
 
+type AutoSyncState = "idle" | "syncing" | "done" | "error";
+
 export function OpportunityWhatsAppSendPanel({
   canSubmit,
   opportunityCode,
@@ -123,6 +126,7 @@ export function OpportunityWhatsAppSendPanel({
   options?: OpportunityWhatsAppPublicationOptions;
   preview: WhatsAppPreview;
 }) {
+  const router = useRouter();
   const agents = options?.agents || [];
   const defaultAgentKey = options?.defaultAgentKey || agents[0]?.agentKey || "";
   const [agentKey, setAgentKey] = useState(defaultAgentKey);
@@ -147,6 +151,59 @@ export function OpportunityWhatsAppSendPanel({
   const [broadcastNumbers, setBroadcastNumbers] = useState("");
   const [contactImportMessage, setContactImportMessage] = useState("");
   const [contactImportOk, setContactImportOk] = useState(true);
+  const [autoSyncState, setAutoSyncState] = useState<AutoSyncState>("idle");
+  const [autoSyncMessage, setAutoSyncMessage] = useState("");
+  const [modeManuallySelected, setModeManuallySelected] = useState(false);
+
+  useEffect(() => {
+    if (!agentKey) return;
+
+    const storageKey = `betel-wa-auto-sync:${opportunityCode}:${agentKey}`;
+    const lastSync = Number(window.sessionStorage.getItem(storageKey) || "0");
+    if (Date.now() - lastSync < 15000) return;
+
+    let cancelled = false;
+    window.sessionStorage.setItem(storageKey, String(Date.now()));
+    setAutoSyncState("syncing");
+    setAutoSyncMessage("Atualizando grupos automaticamente...");
+
+    fetch("/api/admin/whatsapp/groups", {
+      body: JSON.stringify({
+        action: "sync",
+        agentKey,
+        force: true,
+        noParticipants: false,
+      }),
+      cache: "no-store",
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    })
+      .then(async (response) => {
+        const payload = (await response.json().catch(() => ({}))) as {
+          success?: boolean;
+          data?: { synced?: number; groups?: number };
+          error?: string;
+        };
+        if (!response.ok || !payload.success) {
+          throw new Error(payload.error || "Nao foi possivel atualizar os grupos.");
+        }
+        if (cancelled) return;
+        const groups = Number(payload.data?.groups || 0);
+        const synced = Number(payload.data?.synced || 0);
+        setAutoSyncState("done");
+        setAutoSyncMessage(`${groups} grupo(s) encontrados; ${synced} destino(s) sincronizado(s).`);
+        router.refresh();
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setAutoSyncState("error");
+        setAutoSyncMessage(error instanceof Error ? error.message : "Nao foi possivel atualizar os grupos automaticamente.");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [agentKey, opportunityCode, router]);
 
   useEffect(() => {
     setGroupId((current) => (groups.some((group) => group.id === current) ? current : groups[0]?.id || ""));
@@ -156,6 +213,11 @@ export function OpportunityWhatsAppSendPanel({
   useEffect(() => {
     setChannelId((current) => (channels.some((channel) => channel.id === current) ? current : channels[0]?.id || ""));
   }, [channels]);
+
+  useEffect(() => {
+    if (modeManuallySelected) return;
+    setMode(groups.length ? "group" : channels.length ? "channel" : "test");
+  }, [channels.length, groups.length, modeManuallySelected]);
 
   const selectedDestination =
     mode === "group"
@@ -217,15 +279,15 @@ export function OpportunityWhatsAppSendPanel({
         </div>
         <Button
           className="h-9 border-[var(--admin-border)] bg-white text-[var(--admin-foreground)] hover:bg-[var(--admin-card-2)]"
-          disabled={!agents.length}
+          disabled={!agents.length || autoSyncState === "syncing"}
           formAction={syncOpportunityWhatsAppGroupsAction}
           name="submitStatus"
           type="submit"
           value="sync_whatsapp_groups"
           variant="outline"
         >
-          <RefreshCcw size={14} />
-          Sincronizar grupos
+          <RefreshCcw size={14} className={autoSyncState === "syncing" ? "animate-spin" : ""} />
+          {autoSyncState === "syncing" ? "Atualizando..." : "Atualizar grupos"}
         </Button>
       </div>
 
@@ -234,7 +296,15 @@ export function OpportunityWhatsAppSendPanel({
       <div className="mt-3 grid gap-3">
         <label className="grid gap-1">
           <span className={labelClass}>Agente remetente</span>
-          <select className={selectClass} name="whatsappAgentKey" value={agentKey} onChange={(event) => setAgentKey(event.target.value)}>
+          <select
+            className={selectClass}
+            name="whatsappAgentKey"
+            value={agentKey}
+            onChange={(event) => {
+              setAgentKey(event.target.value);
+              setModeManuallySelected(false);
+            }}
+          >
             {agents.length ? null : <option value="">Nenhum agente conectado</option>}
             {agents.map((agent) => (
               <option key={agent.instanceId || agent.agentKey} value={agent.agentKey}>
@@ -245,14 +315,22 @@ export function OpportunityWhatsAppSendPanel({
         </label>
 
         <div className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card-2)] px-3 py-2 text-xs leading-5 text-[var(--admin-muted)]">
-          {syncedCount ? (
+          {autoSyncState === "syncing" ? (
+            <span className="inline-flex items-start gap-2" aria-live="polite">
+              <RefreshCcw size={14} className="mt-0.5 shrink-0 animate-spin text-[var(--admin-cyan)]" />
+              {autoSyncMessage}
+            </span>
+          ) : syncedCount ? (
             <span>
               {syncedCount} destino(s) sincronizado(s), {availableCount} disponivel(is) para envio manual.
+              {autoSyncState === "done" && autoSyncMessage ? ` Atualizacao automatica: ${autoSyncMessage}` : ""}
             </span>
           ) : (
             <span className="inline-flex items-start gap-2">
               <AlertCircle size={14} className="mt-0.5 shrink-0 text-[var(--admin-yellow)]" />
-              Nenhum grupo ou canal apareceu para este agente. Sincronize novamente; se continuar 0, confira se a instancia acima e a mesma que esta nos grupos.
+              {autoSyncState === "error" && autoSyncMessage
+                ? `${autoSyncMessage} Use o botao Atualizar grupos para tentar novamente.`
+                : "Nenhum grupo ou canal apareceu para este agente. A pagina tenta atualizar automaticamente; se continuar 0, confira se a instancia acima e a mesma que esta nos grupos."}
             </span>
           )}
         </div>
@@ -276,7 +354,10 @@ export function OpportunityWhatsAppSendPanel({
                   disabled={disabled}
                   key={item}
                   type="button"
-                  onClick={() => setMode(item)}
+                  onClick={() => {
+                    setMode(item);
+                    setModeManuallySelected(true);
+                  }}
                 >
                   <span className="flex items-center gap-2 text-sm font-semibold text-[var(--admin-foreground)]">
                     <Icon size={15} className={selected ? "text-[var(--admin-cyan)]" : "text-[var(--admin-muted)]"} />
