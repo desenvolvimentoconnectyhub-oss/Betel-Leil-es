@@ -177,7 +177,8 @@ function parseComparableQuality(value: string): MarketComparableQuality {
 }
 
 function parseMarketStatus(value: string): MarketAnalysisStatus {
-  if (publicationModeFromSubmitStatus(value)) return "approved";
+  const publicationMode = publicationModeFromSubmitStatus(value);
+  if (publicationMode && publicationMode !== "test_number") return "approved";
 
   if (["pending", "in_analysis", "human_review", "approved", "approved_with_notes", "rejected", "insufficient_data"].includes(value)) {
     return value as MarketAnalysisStatus;
@@ -213,10 +214,12 @@ function parseMarketAnalysisForm(formData: FormData, errorPath: string): SavePro
 
   const marketValueBase = numberField(formData, "marketValueBase");
   if (!marketValueBase) errorRedirect(errorPath, "Informe o valor de mercado base.");
+  const submitStatus = field(formData, "submitStatus", field(formData, "status", "human_review"));
+  const statusValue = submitStatus === "approve_send_test_number" ? field(formData, "status", "human_review") : submitStatus;
 
   return {
     opportunityCode,
-    status: parseMarketStatus(field(formData, "submitStatus", field(formData, "status", "human_review"))),
+    status: parseMarketStatus(statusValue),
     analystName: field(formData, "analystName", "Analise Betel"),
     paymentCondition: field(formData, "paymentCondition", "A vista"),
     paymentSimulation: {
@@ -375,13 +378,15 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
   const previousMarketStatus = field(formData, "status");
   const submitStatus = field(formData, "submitStatus", previousMarketStatus);
   const publicationMode = publicationModeFromSubmitStatus(submitStatus);
+  const sendTestOnly = publicationMode === "test_number";
   const payload = parseMarketAnalysisForm(formData, detailPath);
   const approvalStatus = payload.status === "approved" || payload.status === "approved_with_notes";
+  const shouldAdvanceWorkflow = approvalStatus && !sendTestOnly;
   let approvalStageKey = "";
   let publicationStatusParam = "";
   let publicationCampaignId = "";
 
-  if (approvalStatus) {
+  if (shouldAdvanceWorkflow) {
     const openTaskResult = await getOpenOpportunityWorkflowTaskForAdminRecord({
       opportunityCode: currentCode,
       admin,
@@ -405,6 +410,13 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
     if (publicationMode && approvalStageKey !== "market_review") {
       errorRedirect(detailPath, "Envio WhatsApp so pode ser solicitado na aprovacao da analise de mercado.");
     }
+  } else if (sendTestOnly) {
+    const canSendTest =
+      (await adminCanApproveWorkflowStage(admin, "market_review")) ||
+      (await adminCanApproveWorkflowStage(admin, "communication"));
+    if (!canSendTest) {
+      errorRedirect(detailPath, "Seu usuario nao pode enviar teste WhatsApp desta oportunidade.");
+    }
   }
 
   const result = await savePropertyMarketAnalysisRecord(payload);
@@ -413,7 +425,29 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
     errorRedirect(detailPath, result.reason || "Nao foi possivel salvar a analise de mercado.");
   }
 
-  if (approvalStatus) {
+  if (sendTestOnly) {
+    const publicationResult = await scheduleOpportunityWhatsAppPublication({
+      opportunityCode: currentCode,
+      mode: "test_number",
+      agentKey: field(formData, "whatsappAgentKey"),
+      broadcastTargets: parseBroadcastTargets(field(formData, "whatsappTestNumber")),
+      approvedByAdminUserId: admin.id,
+      approvedByName: admin.name,
+      sendImmediately: true,
+    });
+
+    if (!publicationResult.ok || !publicationResult.data) {
+      errorRedirect(
+        detailPath,
+        publicationResult.error || "Nao foi possivel enviar o teste WhatsApp."
+      );
+    }
+
+    publicationStatusParam = "whatsapp-teste-enviado";
+    publicationCampaignId = publicationResult.data.campaignId;
+  }
+
+  if (shouldAdvanceWorkflow) {
     const workflowDecision = payload.status === "approved_with_notes" ? "approved_with_notes" : "approved";
     const workflowNotes = payload.cautionNotes || payload.decisionReason;
 
@@ -449,10 +483,7 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
           agentKey: field(formData, "whatsappAgentKey"),
           destinationId,
           broadcastSourceDestinationId: field(formData, "whatsappBroadcastSourceGroupId"),
-          broadcastTargets:
-            publicationMode === "test_number"
-              ? parseBroadcastTargets(field(formData, "whatsappTestNumber"))
-              : parseBroadcastTargets(field(formData, "whatsappBroadcastNumbers")),
+          broadcastTargets: parseBroadcastTargets(field(formData, "whatsappBroadcastNumbers")),
           approvedByAdminUserId: admin.id,
           approvedByName: admin.name,
         });
@@ -466,9 +497,7 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
 
         publicationStatusParam = publicationResult.data.skipped
           ? "whatsapp-ja-agendado"
-          : publicationMode === "test_number"
-            ? "whatsapp-teste-agendado"
-            : "whatsapp-agendado";
+          : "whatsapp-agendado";
         publicationCampaignId = publicationResult.data.campaignId;
       }
     } else if (approvalStageKey === "legal_review") {
@@ -516,7 +545,11 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
   if (currentCode) revalidatePath(`/oportunidades/${currentCode}`);
 
   const params = new URLSearchParams({
-    market: approvalStatus ? publicationStatusParam || workflowApprovalParam(approvalStageKey) : "salva",
+    market: sendTestOnly
+      ? publicationStatusParam || "whatsapp-teste-enviado"
+      : shouldAdvanceWorkflow
+        ? publicationStatusParam || workflowApprovalParam(approvalStageKey)
+        : "salva",
   });
   if (publicationCampaignId) params.set("campaign", publicationCampaignId);
 

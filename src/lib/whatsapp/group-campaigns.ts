@@ -812,17 +812,21 @@ function campaignButtonText(campaignRow: Record<string, unknown>) {
   );
 }
 
-export async function processWhatsAppCommunityCampaigns(input: { limit?: number; dryRun?: boolean } = {}) {
+export async function processWhatsAppCommunityCampaigns(input: { limit?: number; dryRun?: boolean; campaignId?: string } = {}) {
   const supabase = getSupabaseAdminClient();
   if (!supabase) return { ok: false, processed: 0, sent: 0, failed: 0, error: "Supabase service role nao configurado." };
 
   const now = new Date();
-  const campaignsResult = await supabase
+  let campaignsQuery = supabase
     .from("whatsapp_group_campaigns")
     .select("*")
     .in("status", ["scheduled", "running"])
-    .order("updated_at", { ascending: true })
-    .limit(Math.max(1, Math.min(50, input.limit || 10)));
+    .order("updated_at", { ascending: true });
+
+  const requestedCampaignId = cleanString(input.campaignId);
+  if (requestedCampaignId) campaignsQuery = campaignsQuery.eq("id", requestedCampaignId);
+
+  const campaignsResult = await campaignsQuery.limit(Math.max(1, Math.min(50, input.limit || 10)));
   if (campaignsResult.error) {
     return { ok: false, processed: 0, sent: 0, failed: 0, error: campaignsResult.error.message };
   }
@@ -839,8 +843,18 @@ export async function processWhatsAppCommunityCampaigns(input: { limit?: number;
     if (!dueTime || dueTime > now.getTime()) continue;
 
     processed += 1;
+    const campaignMetadata = asRecord(campaignRow.metadata);
+    const humanOpportunityPublication = cleanString(campaignMetadata.createdFrom) === "market_approval";
     const config = await getWhatsAppAgentConfig(agentKey).catch(() => null);
-    if (!config?.behavior.campaignEnabled) {
+    if (!config) {
+      failed += 1;
+      await supabase
+        .from("whatsapp_group_campaigns")
+        .update({ status: "failed", metadata: { ...campaignMetadata, error: "Configuracao do agente WhatsApp nao encontrada." } })
+        .eq("id", campaignId);
+      continue;
+    }
+    if (!config?.behavior.campaignEnabled && !humanOpportunityPublication) {
       await supabase
         .from("agent_runtime_events")
         .insert({
