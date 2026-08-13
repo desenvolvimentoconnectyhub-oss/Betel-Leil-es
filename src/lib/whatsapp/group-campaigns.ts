@@ -822,10 +822,12 @@ export async function processWhatsAppCommunityCampaigns(input: { limit?: number;
     .from("whatsapp_group_campaigns")
     .select("*")
     .in("status", ["scheduled", "running"])
+    .order("next_run_at", { ascending: true })
     .order("updated_at", { ascending: true });
 
   const requestedCampaignId = cleanString(input.campaignId);
   if (requestedCampaignId) campaignsQuery = campaignsQuery.eq("id", requestedCampaignId);
+  else campaignsQuery = campaignsQuery.lte("next_run_at", now.toISOString());
 
   const campaignsResult = await campaignsQuery.limit(Math.max(1, Math.min(50, input.limit || 10)));
   if (campaignsResult.error) {

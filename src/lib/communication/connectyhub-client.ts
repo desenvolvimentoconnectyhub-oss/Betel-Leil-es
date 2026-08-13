@@ -1212,12 +1212,13 @@ function normalizeConnectyHubGroup(value: unknown): ConnectyHubWhatsAppGroupSumm
   const participants = firstArrayPayload(record, ["participants", "members", "users"]).map(normalizeGroupParticipant);
   const jid = groupJidFromRecord(record);
   const adminCount = participants.filter((participant) => participant.isAdmin || participant.isSuperAdmin).length;
+  const remoteParticipantCount = readNumberLike(recordValue(record, ["size", "participantCount", "participantsCount"]));
 
   return {
     jid,
     name: cleanString(recordValue(record, ["subject", "name", "title", "groupName", "pushName"]), jid || "Grupo WhatsApp"),
     description: cleanString(recordValue(record, ["desc", "description", "groupDescription", "topic"])),
-    participantCount: readNumberLike(recordValue(record, ["size", "participantCount", "participantsCount"]), participants.length),
+    participantCount: Math.max(remoteParticipantCount, participants.length),
     adminCount: readNumberLike(recordValue(record, ["adminCount", "adminsCount"]), adminCount),
     isAnnouncement: Boolean(recordValue(record, ["announce", "isAnnouncement", "announcement", "isAnnounce"])),
     isCommunity: Boolean(recordValue(record, ["isCommunity", "community", "isCommunityAnnounce", "isParent"])),

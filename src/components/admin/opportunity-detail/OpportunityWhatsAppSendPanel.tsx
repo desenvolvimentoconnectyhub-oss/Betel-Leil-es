@@ -136,7 +136,7 @@ export function OpportunityWhatsAppSendPanel({
   );
   const groups = destinationsForAgent.filter((destination) => destination.destinationType === "group");
   const channels = destinationsForAgent.filter((destination) => destination.destinationType === "channel");
-  const activeCount = destinationsForAgent.filter((destination) => destination.status === "active").length;
+  const availableCount = destinationsForAgent.filter((destination) => destination.status === "active" || destination.status === "paused").length;
   const syncedCount = destinationsForAgent.length;
   const initialMode: SendMode = groups.length ? "group" : channels.length ? "channel" : "test";
   const [mode, setMode] = useState<SendMode>(initialMode);
@@ -247,7 +247,7 @@ export function OpportunityWhatsAppSendPanel({
         <div className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card-2)] px-3 py-2 text-xs leading-5 text-[var(--admin-muted)]">
           {syncedCount ? (
             <span>
-              {syncedCount} destino(s) sincronizado(s), {activeCount} ativo(s), para este agente.
+              {syncedCount} destino(s) sincronizado(s), {availableCount} disponivel(is) para envio manual.
             </span>
           ) : (
             <span className="inline-flex items-start gap-2">

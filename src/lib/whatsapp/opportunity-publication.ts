@@ -452,6 +452,7 @@ export async function scheduleOpportunityWhatsAppPublication(input: {
       .select("id")
       .eq("agent_key", agentKey)
       .eq("product_ref", post.opportunityCode)
+      .in("status", ["draft", "scheduled", "running", "paused"])
       .contains("metadata", { publicationKey })
       .maybeSingle();
 
