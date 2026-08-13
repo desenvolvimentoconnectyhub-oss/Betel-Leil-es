@@ -22,22 +22,19 @@ import {
   MoreHorizontal,
   Pencil,
   RefreshCcw,
-  Radio,
   Save,
   Scale,
-  Send,
   ShieldCheck,
   Sparkles,
   Target,
   UploadCloud,
-  Users,
   XCircle,
 } from "lucide-react";
 import {
   savePropertyMarketAnalysisAction,
   savePropertyQualificationFeedbackAction,
-  syncOpportunityWhatsAppGroupsAction,
 } from "@/app/admin/oportunidades/actions";
+import { OpportunityWhatsAppSendPanel } from "@/components/admin/opportunity-detail/OpportunityWhatsAppSendPanel";
 import { RiskBadge } from "@/components/admin/RiskBadge";
 import { ScoreBadge } from "@/components/admin/ScoreBadge";
 import { StatusBadge, getStatusTone } from "@/components/admin/StatusBadge";
@@ -194,6 +191,30 @@ function numberValue(value: number) {
 
 function pricePerM2(value: number) {
   return value ? `${formatCurrency(value)}/m2` : "nao calculado";
+}
+
+function formatCurrencyOrBlank(value: number) {
+  return value ? formatCurrency(value) : "";
+}
+
+function primaryOpportunityImageUrl(images?: PropertyImageAsset[]) {
+  const usable = (images || []).filter((image) => image.url && image.status !== "failed");
+  return (
+    usable.find((image) => image.status === "mirrored")?.url ||
+    usable.find((image) => /^https?:\/\//i.test(image.url))?.url ||
+    ""
+  );
+}
+
+function buildWhatsAppPreview(opportunity: AuctionOpportunity, analysis: PropertyMarketAnalysis | null) {
+  return {
+    title: opportunity.title,
+    location: [opportunity.city, opportunity.state].filter(Boolean).join("/"),
+    imageUrl: primaryOpportunityImageUrl(opportunity.images),
+    marketValue: formatCurrencyOrBlank(analysis?.marketValueBase || opportunity.appraisalValue),
+    bid: formatCurrencyOrBlank(analysis?.initialBid || opportunity.initialBid),
+    discount: analysis?.realDiscountPct || opportunity.discountPct ? percent(analysis?.realDiscountPct || opportunity.discountPct) : "",
+  };
 }
 
 function safeDate(value?: string) {
@@ -1339,139 +1360,6 @@ function HeaderActionButton({
   );
 }
 
-function destinationLabel(destination: OpportunityWhatsAppPublicationOptions["destinations"][number]) {
-  const typeLabel =
-    destination.destinationType === "channel"
-      ? "Canal"
-      : destination.destinationType === "contact_list"
-        ? "Lista"
-        : "Grupo";
-  const participants = destination.participantCount ? ` - ${destination.participantCount} contatos` : "";
-  return `${typeLabel}: ${destination.name} - ${destination.agentKey}${participants}`;
-}
-
-function DestinationSelect({
-  label,
-  name,
-  destinations,
-  defaultValue,
-}: {
-  label: string;
-  name: string;
-  destinations: OpportunityWhatsAppPublicationOptions["destinations"];
-  defaultValue?: string;
-}) {
-  return (
-    <label className="grid gap-1">
-      <span className={labelClass}>{label}</span>
-      <select className={selectClass} defaultValue={defaultValue || ""} name={name}>
-        <option value="">Selecionar</option>
-        {destinations.map((destination) => (
-          <option key={destination.id} value={destination.id}>
-            {destinationLabel(destination)}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-function WhatsAppPublicationControls({
-  options,
-  canSubmit,
-  opportunityCode,
-}: {
-  options?: OpportunityWhatsAppPublicationOptions;
-  canSubmit: boolean;
-  opportunityCode: string;
-}) {
-  const agents = options?.agents || [];
-  const activeDestinations = (options?.destinations || []).filter((destination) => destination.status === "active");
-  const groups = activeDestinations.filter((destination) => destination.destinationType === "group");
-  const channels = activeDestinations.filter((destination) => destination.destinationType === "channel");
-  const defaultAgentKey = options?.defaultAgentKey || agents[0]?.agentKey || "";
-  const defaultGroupId = options?.defaultGroupId || groups[0]?.id || "";
-
-  return (
-    <details className="w-full rounded-lg border border-[var(--admin-border)] bg-white p-2 text-left" open>
-      <summary className="flex cursor-pointer list-none items-center gap-2 text-xs font-semibold text-[var(--admin-foreground)]">
-        <Send size={14} className="text-[var(--admin-cyan)]" />
-        Destino do envio WhatsApp
-      </summary>
-      <div className="mt-3 grid gap-3">
-        <HiddenInput name="opportunityCode" value={opportunityCode} />
-        <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
-          <label className="grid gap-1">
-            <span className={labelClass}>Agente remetente</span>
-            <select className={selectClass} defaultValue={defaultAgentKey} name="whatsappAgentKey">
-              {agents.length ? null : <option value="">Nenhum agente conectado</option>}
-              {agents.map((agent) => (
-                <option key={agent.instanceId || agent.agentKey} value={agent.agentKey}>
-                  {agent.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <Button
-            className="h-10 min-w-36 border-[var(--admin-border)] bg-white text-[var(--admin-foreground)] hover:bg-[var(--admin-card-2)]"
-            disabled={!agents.length}
-            formAction={syncOpportunityWhatsAppGroupsAction}
-            name="submitStatus"
-            type="submit"
-            value="sync_whatsapp_groups"
-            variant="outline"
-          >
-            <RefreshCcw size={14} />
-            Atualizar grupos
-          </Button>
-        </div>
-
-        <p className="text-xs leading-5 text-[var(--admin-muted)]">
-          {groups.length} grupo(s) e {channels.length} canal(is) ativos para envio.
-        </p>
-
-        <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
-          <label className="grid gap-1">
-            <span className={labelClass}>Numero para teste</span>
-            <Input
-              className={inputClass}
-              inputMode="tel"
-              name="whatsappTestNumber"
-              placeholder="Ex: 5547999999999"
-            />
-          </label>
-          <Button
-            className="h-10 min-w-32 bg-[var(--admin-green)] text-white hover:bg-[#0f6338]"
-            disabled={!canSubmit || !agents.length}
-            name="submitStatus"
-            type="submit"
-            value="approve_send_test_number"
-          >
-            <Send size={14} />
-            Enviar teste
-          </Button>
-        </div>
-
-        <div className="grid gap-2 md:grid-cols-2">
-          <DestinationSelect label="Grupo padrao" name="whatsappDefaultGroupId" destinations={groups} defaultValue={defaultGroupId} />
-          <DestinationSelect label="Grupo especifico" name="whatsappSpecificGroupId" destinations={groups} />
-          <DestinationSelect label="Canal WhatsApp" name="whatsappChannelId" destinations={channels} />
-          <DestinationSelect label="Grupo origem da lista" name="whatsappBroadcastSourceGroupId" destinations={groups} />
-        </div>
-
-        <label className="grid gap-1">
-          <span className={labelClass}>Numeros extras da lista</span>
-          <Textarea
-            className="min-h-16 border-[var(--admin-border)] bg-white text-xs text-[var(--admin-foreground)] placeholder:text-[var(--admin-muted)]"
-            name="whatsappBroadcastNumbers"
-            placeholder="Um telefone por linha, ou separados por virgula"
-          />
-        </label>
-      </div>
-    </details>
-  );
-}
-
 function OpportunityActionNotice({
   status,
   remoteGroups,
@@ -1490,6 +1378,11 @@ function OpportunityActionNotice({
       title: "Grupos WhatsApp atualizados",
       detail: `${remoteGroups || "0"} grupo(s) encontrados na ConnectyHub; ${syncedGroups || "0"} destino(s) salvos no sistema.`,
       tone: "green",
+    },
+    "whatsapp-grupos-vazio": {
+      title: "Nenhum grupo retornado pela ConnectyHub",
+      detail: "A sincronizacao consultou a instancia selecionada, mas nao encontrou grupos/canais. Confirme se esse agente e a instancia que esta nos grupos e tente sincronizar de novo.",
+      tone: "yellow",
     },
     "whatsapp-agendado": {
       title: "Envio WhatsApp agendado",
@@ -1820,10 +1713,7 @@ function OpportunityHeader({
   const compactTitle = opportunity.title.length > 92 ? `${opportunity.title.slice(0, 92).trim()}...` : opportunity.title;
   const highlightedAction =
     analysis && evaluation.finalRecommendation.status === "recomendado_para_avancar" ? "approved" : "human_review";
-  const activeDestinations = (whatsappPublicationOptions?.destinations || []).filter((destination) => destination.status === "active");
-  const hasWhatsappAgent = Boolean((whatsappPublicationOptions?.agents || []).length);
-  const hasActiveGroup = activeDestinations.some((destination) => destination.destinationType === "group");
-  const hasActiveChannel = activeDestinations.some((destination) => destination.destinationType === "channel");
+  const whatsappPreview = buildWhatsAppPreview(opportunity, analysis);
 
   return (
     <section className="rounded-xl border border-[var(--admin-border)] bg-[rgba(255,255,255,0.96)] p-3 shadow-sm shadow-[rgba(81,60,36,0.07)] backdrop-blur">
@@ -1896,10 +1786,11 @@ function OpportunityHeader({
 
         <div className="flex flex-wrap gap-2 xl:max-w-[520px] xl:justify-end">
           {analysis ? (
-            <WhatsAppPublicationControls
+            <OpportunityWhatsAppSendPanel
               canSubmit={canSubmit}
               opportunityCode={analysis.opportunityCode || opportunity.id}
               options={whatsappPublicationOptions}
+              preview={whatsappPreview}
             />
           ) : null}
           <Button
@@ -1918,13 +1809,13 @@ function OpportunityHeader({
                 <Save size={14} />
                 Salvar revisao
               </HeaderActionButton>
-              <HeaderActionButton
-                disabled={!canSubmit || !hasWhatsappAgent || !hasActiveGroup}
-                tone={highlightedAction === "approved" ? "green" : "neutral"}
-                value="approve_send_default_group"
-              >
-                <Send size={14} />
-                Aprovar e enviar
+              <HeaderActionButton disabled={!canSubmit} tone={highlightedAction === "approved" ? "green" : "neutral"} value="approved">
+                <CheckCircle2 size={14} />
+                Aprovar sem envio
+              </HeaderActionButton>
+              <HeaderActionButton disabled={!canSubmit} tone="red" value="rejected">
+                <XCircle size={14} />
+                Reprovar
               </HeaderActionButton>
               <details className="relative">
                 <summary className="inline-flex h-9 cursor-pointer list-none items-center gap-1.5 rounded-lg border border-[var(--admin-border)] bg-white px-2.5 text-sm font-medium text-[var(--admin-foreground)] transition hover:bg-[var(--admin-card-2)]">
@@ -1935,30 +1826,6 @@ function OpportunityHeader({
                   <HeaderActionButton disabled={!canSubmit} tone="yellow" value="approved_with_notes">
                     <ShieldCheck size={14} />
                     Aprovar ressalvas sem envio
-                  </HeaderActionButton>
-                  <HeaderActionButton disabled={!canSubmit} tone="neutral" value="approved">
-                    <CheckCircle2 size={14} />
-                    Aprovar sem envio
-                  </HeaderActionButton>
-                  <HeaderActionButton disabled={!canSubmit || !hasWhatsappAgent || !hasActiveGroup} tone="green" value="approve_send_specific_group">
-                    <Users size={14} />
-                    Aprovar e enviar grupo especifico
-                  </HeaderActionButton>
-                  <HeaderActionButton disabled={!canSubmit || !hasWhatsappAgent || !hasActiveChannel} tone="green" value="approve_send_channel">
-                    <Radio size={14} />
-                    Aprovar e enviar canal
-                  </HeaderActionButton>
-                  <HeaderActionButton disabled={!canSubmit || !hasWhatsappAgent} tone="green" value="approve_send_broadcast">
-                    <ListChecks size={14} />
-                    Aprovar e enviar lista
-                  </HeaderActionButton>
-                  <HeaderActionButton disabled={!canSubmit || !hasWhatsappAgent} tone="green" value="approve_send_test_number">
-                    <Send size={14} />
-                    Aprovar e enviar teste
-                  </HeaderActionButton>
-                  <HeaderActionButton disabled={!canSubmit} tone="red" value="rejected">
-                    <XCircle size={14} />
-                    Reprovar
                   </HeaderActionButton>
                   <Button className="h-9 border-[var(--admin-border)] bg-white text-[var(--admin-foreground)] hover:bg-[var(--admin-card-2)]" type="button">
                     <FileCheck2 size={14} />

@@ -247,6 +247,10 @@ function normalizeDestinationOption(row: DbRow): OpportunityWhatsAppDestinationO
   };
 }
 
+function canUseDestinationForManualPublication(destination: OpportunityWhatsAppDestinationOption) {
+  return destination.status === "active" || destination.status === "paused";
+}
+
 export async function getOpportunityWhatsAppPublicationOptions(): Promise<OpportunityWhatsAppPublicationOptions> {
   const supabase = getSupabaseAdminClient();
   const agents = (await listSystemWhatsAppSenderOptions()).map(normalizeAgentOption);
@@ -272,7 +276,9 @@ export async function getOpportunityWhatsAppPublicationOptions(): Promise<Opport
 
   const { data, error } = await query;
   const destinations = error ? [] : ((data || []) as DbRow[]).map(normalizeDestinationOption).filter((item) => item.id && item.jid);
-  const activeGroup = destinations.find((destination) => destination.status === "active" && destination.destinationType === "group");
+  const activeGroup = destinations.find(
+    (destination) => canUseDestinationForManualPublication(destination) && destination.destinationType === "group"
+  );
 
   return {
     agents,
@@ -314,7 +320,7 @@ async function defaultGroupForAgent(agentKey: string) {
     .select("id,agent_key,destination_type,jid,name,status,participant_count")
     .eq("agent_key", cleanString(agentKey, WILLIAN_AGENT_KEY))
     .eq("destination_type", "group")
-    .eq("status", "active")
+    .in("status", ["active", "paused"])
     .order("updated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -380,7 +386,7 @@ export async function scheduleOpportunityWhatsAppPublication(input: {
     if (!destination || destination.destinationType !== "group") {
       return { ok: false, error: "Nenhum grupo padrao ativo encontrado para este agente." };
     }
-    if (destination.status !== "active") return { ok: false, error: "O grupo selecionado nao esta ativo." };
+    if (!canUseDestinationForManualPublication(destination)) return { ok: false, error: "O grupo selecionado nao esta disponivel para envio." };
     agentKey = cleanString(destination.agentKey, agentKey);
     destinationIds = [destination.id];
     targetKey = destination.id;
@@ -392,7 +398,7 @@ export async function scheduleOpportunityWhatsAppPublication(input: {
     if (!destination || destination.destinationType !== expectedType) {
       return { ok: false, error: input.mode === "channel" ? "Canal WhatsApp invalido." : "Grupo WhatsApp invalido." };
     }
-    if (destination.status !== "active") return { ok: false, error: "O destino selecionado nao esta ativo." };
+    if (!canUseDestinationForManualPublication(destination)) return { ok: false, error: "O destino selecionado nao esta disponivel para envio." };
     if (agentKey && destination.agentKey !== agentKey) {
       return { ok: false, error: "O destino selecionado pertence a outro agente WhatsApp." };
     }
@@ -405,7 +411,7 @@ export async function scheduleOpportunityWhatsAppPublication(input: {
     const sourceDestination = await loadDestinationById(cleanString(input.broadcastSourceDestinationId));
     if (input.mode === "broadcast_list" && sourceDestination) {
       if (sourceDestination.destinationType !== "group") return { ok: false, error: "A lista so pode ser montada a partir de um grupo." };
-      if (sourceDestination.status !== "active") return { ok: false, error: "O grupo de origem da lista nao esta ativo." };
+      if (!canUseDestinationForManualPublication(sourceDestination)) return { ok: false, error: "O grupo de origem da lista nao esta disponivel para envio." };
       if (agentKey && sourceDestination.agentKey !== agentKey) {
         return { ok: false, error: "O grupo de origem pertence a outro agente WhatsApp." };
       }

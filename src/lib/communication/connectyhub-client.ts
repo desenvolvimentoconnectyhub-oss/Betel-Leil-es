@@ -1114,10 +1114,18 @@ function firstArrayPayload(payload: unknown, keys: string[]): unknown[] {
   for (const key of keys) {
     const value = record[key];
     if (Array.isArray(value)) return value;
+    if (value && typeof value === "object") {
+      const values = Object.values(asRecord(value)).filter((item) => item && typeof item === "object");
+      if (values.length) return values;
+    }
   }
   for (const [key, value] of Object.entries(record)) {
     if (keys.some((candidate) => candidate.toLowerCase() === key.toLowerCase()) && Array.isArray(value)) {
       return value;
+    }
+    if (keys.some((candidate) => candidate.toLowerCase() === key.toLowerCase()) && value && typeof value === "object") {
+      const values = Object.values(asRecord(value)).filter((item) => item && typeof item === "object");
+      if (values.length) return values;
     }
   }
   for (const value of Object.values(record)) {
@@ -1134,6 +1142,20 @@ function readNumberLike(value: unknown, fallback = 0) {
   return Number.isFinite(numeric) ? Math.trunc(numeric) : fallback;
 }
 
+function recordValue(record: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    if (record[key] !== undefined && record[key] !== null) return record[key];
+  }
+
+  const entries = Object.entries(record);
+  for (const key of keys) {
+    const match = entries.find(([candidate]) => candidate.toLowerCase() === key.toLowerCase());
+    if (match && match[1] !== undefined && match[1] !== null) return match[1];
+  }
+
+  return undefined;
+}
+
 function normalizeWhatsappJid(value: unknown) {
   const clean = cleanString(value);
   if (!clean) return "";
@@ -1145,53 +1167,90 @@ function normalizeWhatsappJid(value: unknown) {
 function normalizeGroupParticipant(value: unknown): ConnectyHubWhatsAppGroupParticipant {
   const record = asRecord(value);
   const jid = normalizeWhatsappJid(
-    record.id ||
-      record.jid ||
-      record.participant ||
-      record.user ||
-      record.phone ||
-      record.number
+    recordValue(record, ["id", "jid", "participant", "user", "phone", "number"])
   );
-  const participantPhone = normalizeWhatsAppNumber(jid.replace(/@.+$/, "") || cleanString(record.phone || record.number));
-  const role = cleanString(record.role || record.type || record.admin).toLowerCase();
+  const participantPhone = normalizeWhatsAppNumber(jid.replace(/@.+$/, "") || cleanString(recordValue(record, ["phone", "number"])));
+  const role = cleanString(recordValue(record, ["role", "type", "admin"])).toLowerCase();
 
   return {
     jid,
     phone: participantPhone,
-    displayName: cleanString(record.name || record.pushName || record.displayName || record.notifyName),
-    isAdmin: record.isAdmin === true || role === "admin" || role === "superadmin" || role === "super_admin",
-    isSuperAdmin: record.isSuperAdmin === true || role === "superadmin" || role === "super_admin" || role === "owner",
+    displayName: cleanString(recordValue(record, ["name", "pushName", "displayName", "notifyName"])),
+    isAdmin: recordValue(record, ["isAdmin"]) === true || role === "admin" || role === "superadmin" || role === "super_admin",
+    isSuperAdmin: recordValue(record, ["isSuperAdmin"]) === true || role === "superadmin" || role === "super_admin" || role === "owner",
     raw: sanitizePayload(value),
   };
+}
+
+function groupJidFromRecord(record: Record<string, unknown>) {
+  const key = asRecord(record.key);
+  const candidates = [
+    recordValue(record, ["jid", "groupJid", "group_jid", "remoteJid", "remote_jid", "chatId", "chatid", "wa_chatid"]),
+    recordValue(key, ["remoteJid", "remote_jid"]),
+    recordValue(record, ["id"]),
+  ];
+  const explicit = candidates.map(normalizeWhatsappJid).find((jid) => jid.includes("@g.us") || jid.includes("@newsletter"));
+  return explicit || normalizeWhatsappJid(candidates.find(Boolean));
+}
+
+function looksLikeWhatsAppGroup(value: unknown) {
+  const record = asRecord(value);
+  const jid = groupJidFromRecord(record);
+  const type = cleanString(recordValue(record, ["type", "kind", "chatType", "chat_type"])).toLowerCase();
+  return (
+    jid.includes("@g.us") ||
+    jid.includes("@newsletter") ||
+    recordValue(record, ["isGroup", "is_group", "group"]) === true ||
+    type.includes("group") ||
+    type.includes("newsletter") ||
+    type.includes("channel")
+  );
 }
 
 function normalizeConnectyHubGroup(value: unknown): ConnectyHubWhatsAppGroupSummary {
   const record = asRecord(value);
   const participants = firstArrayPayload(record, ["participants", "members", "users"]).map(normalizeGroupParticipant);
-  const jid = normalizeWhatsappJid(
-    record.id ||
-      record.jid ||
-      record.groupJid ||
-      record.group_jid ||
-      record.chatid ||
-      record.chatId ||
-      record.remoteJid
-  );
+  const jid = groupJidFromRecord(record);
   const adminCount = participants.filter((participant) => participant.isAdmin || participant.isSuperAdmin).length;
 
   return {
     jid,
-    name: cleanString(record.subject || record.name || record.title || record.groupName, jid || "Grupo WhatsApp"),
-    description: cleanString(record.desc || record.description || record.groupDescription),
-    participantCount: readNumberLike(record.size || record.participantCount || record.participantsCount, participants.length),
-    adminCount: readNumberLike(record.adminCount || record.adminsCount, adminCount),
-    isAnnouncement: Boolean(record.announce || record.isAnnouncement || record.announcement),
-    isCommunity: Boolean(record.isCommunity || record.community || record.isCommunityAnnounce),
-    isAdmin: Boolean(record.isAdmin || record.owner || record.isOwner),
-    inviteUrl: cleanString(record.inviteUrl || record.invite_url || record.inviteCode || record.invite),
+    name: cleanString(recordValue(record, ["subject", "name", "title", "groupName", "pushName"]), jid || "Grupo WhatsApp"),
+    description: cleanString(recordValue(record, ["desc", "description", "groupDescription", "topic"])),
+    participantCount: readNumberLike(recordValue(record, ["size", "participantCount", "participantsCount"]), participants.length),
+    adminCount: readNumberLike(recordValue(record, ["adminCount", "adminsCount"]), adminCount),
+    isAnnouncement: Boolean(recordValue(record, ["announce", "isAnnouncement", "announcement", "isAnnounce"])),
+    isCommunity: Boolean(recordValue(record, ["isCommunity", "community", "isCommunityAnnounce", "isParent"])),
+    isAdmin: Boolean(recordValue(record, ["isAdmin", "owner", "isOwner"])),
+    inviteUrl: cleanString(recordValue(record, ["inviteUrl", "invite_url", "inviteCode", "invite"])),
     participants,
     raw: sanitizePayload(value),
   };
+}
+
+function normalizeGroupPayload(payload: unknown, keys: string[]) {
+  const candidates = firstArrayPayload(payload, keys);
+  const values = candidates.length ? candidates : looksLikeWhatsAppGroup(payload) ? [payload] : [];
+  return values
+    .filter(looksLikeWhatsAppGroup)
+    .map(normalizeConnectyHubGroup)
+    .filter((group) => Boolean(group.jid));
+}
+
+async function connectyhubRequestOrError(path: string, options: ConnectyHubRequestOptions = {}) {
+  try {
+    return {
+      ok: true,
+      path,
+      payload: await connectyhubRequest(path, options),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      path,
+      error: error instanceof Error ? error.message : "Falha ao chamar ConnectyHub.",
+    };
+  }
 }
 
 export async function listConnectyHubWhatsAppGroups(input: {
@@ -1216,14 +1275,17 @@ export async function listConnectyHubWhatsAppGroups(input: {
   });
   if (input.search) query.set("search", input.search);
 
-  let payload: unknown;
-  try {
-    payload = await connectyhubRequest(`/provider/group/list?${query.toString()}`, {
-      method: "GET",
-      timeoutMs: 20000,
-    });
-  } catch {
-    payload = await connectyhubRequest("/provider/group/list", {
+  const attempts: unknown[] = [];
+  const providerGet = await connectyhubRequestOrError(`/provider/group/list?${query.toString()}`, {
+    method: "GET",
+    timeoutMs: 20000,
+  });
+  attempts.push(providerGet);
+
+  let groups = providerGet.ok ? normalizeGroupPayload(providerGet.payload, ["groups", "data", "items", "result", "results"]) : [];
+
+  if (!groups.length) {
+    const providerPost = await connectyhubRequestOrError("/provider/group/list", {
       body: {
         instanceId,
         payload: {
@@ -1235,17 +1297,29 @@ export async function listConnectyHubWhatsAppGroups(input: {
       },
       timeoutMs: 20000,
     });
+    attempts.push(providerPost);
+    if (providerPost.ok) groups = normalizeGroupPayload(providerPost.payload, ["groups", "data", "items", "result", "results"]);
   }
 
-  const groups = firstArrayPayload(payload, ["groups", "data", "items", "result", "results"])
-    .map(normalizeConnectyHubGroup)
-    .filter((group) => Boolean(group.jid));
+  if (!groups.length) {
+    const chatsQuery = new URLSearchParams({
+      instanceId,
+      limit: String(input.limit || 1000),
+      offset: "0",
+    });
+    const chats = await connectyhubRequestOrError(`/chats?${chatsQuery.toString()}`, {
+      method: "GET",
+      timeoutMs: 20000,
+    });
+    attempts.push(chats);
+    if (chats.ok) groups = normalizeGroupPayload(chats.payload, ["chats", "data", "items", "result", "results"]);
+  }
 
   return {
     ok: true,
     instanceId,
     groups,
-    raw: sanitizePayload(payload),
+    raw: sanitizePayload({ attempts }),
   };
 }
 

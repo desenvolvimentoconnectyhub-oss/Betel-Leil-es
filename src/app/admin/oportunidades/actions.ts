@@ -395,7 +395,7 @@ export async function syncOpportunityWhatsAppGroupsAction(formData: FormData) {
   revalidatePath(detailPath);
 
   const params = new URLSearchParams({
-    market: "whatsapp-grupos-atualizados",
+    market: result.groups > 0 ? "whatsapp-grupos-atualizados" : "whatsapp-grupos-vazio",
     grupos: String(result.groups),
     sincronizados: String(result.synced),
   });

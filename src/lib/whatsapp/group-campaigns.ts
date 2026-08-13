@@ -675,6 +675,7 @@ export async function createWhatsAppCommunityCampaign(input: {
   }
 
   const config = await getWhatsAppAgentConfig(agentKey).catch(() => null);
+  const manualOpportunityPublication = cleanString(asRecord(input.metadata).createdFrom) === "market_approval";
   if (input.mentionAllRequested && !config?.behavior.groupMentionAll) {
     throw new Error("Mencionar todos esta desligado no comportamento do agente.");
   }
@@ -699,13 +700,13 @@ export async function createWhatsAppCommunityCampaign(input: {
   }
 
   if (!destinationRows.length) throw new Error("Escolha pelo menos um grupo ou canal.");
-  if (destinationRows.some((row) => cleanString(row.destination_type) === "channel") && !config?.behavior.channelsEnabled) {
+  if (destinationRows.some((row) => cleanString(row.destination_type) === "channel") && !config?.behavior.channelsEnabled && !manualOpportunityPublication) {
     throw new Error("Canais/newsletter estao desligados no comportamento do agente.");
   }
   if (destinationRows.some((row) => cleanString(row.destination_type) === "status") && !config?.behavior.statusWhatsAppEnabled) {
     throw new Error("Publicacao em status esta desligada no comportamento do agente.");
   }
-  if (destinationRows.some((row) => cleanString(row.destination_type, "group") === "group") && !config?.behavior.groupsEnabled) {
+  if (destinationRows.some((row) => cleanString(row.destination_type, "group") === "group") && !config?.behavior.groupsEnabled && !manualOpportunityPublication) {
     throw new Error("Envio para grupos esta desligado no comportamento do agente.");
   }
 
@@ -917,11 +918,11 @@ export async function processWhatsAppCommunityCampaigns(input: { limit?: number;
       const destinationJid = cleanString(targetRow.destination_jid);
       const destinationType = cleanString(targetRow.destination_type, destinationTypeFromJid(destinationJid));
       const disabledReason =
-        destinationType === "channel" && !config.behavior.channelsEnabled
+        destinationType === "channel" && !config.behavior.channelsEnabled && !humanOpportunityPublication
           ? "channels_disabled"
           : destinationType === "status" && !config.behavior.statusWhatsAppEnabled
             ? "status_whatsapp_disabled"
-            : destinationType === "group" && !config.behavior.groupsEnabled
+            : destinationType === "group" && !config.behavior.groupsEnabled && !humanOpportunityPublication
               ? "groups_disabled"
               : "";
       if (disabledReason) {
