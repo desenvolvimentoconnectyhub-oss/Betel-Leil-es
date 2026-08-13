@@ -10,6 +10,7 @@ import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createWhatsAppCommunityCampaign, type WhatsAppCommunityDestination } from "./group-campaigns";
 
 type DbRow = Record<string, unknown>;
+const WHATSAPP_TEASER_MAX_LENGTH = 850;
 
 export type OpportunityWhatsAppPublicationMode =
   | "default_group"
@@ -107,14 +108,28 @@ function formatDate(value: string) {
   }).format(parsed);
 }
 
-function firstLine(value: string, fallback = "") {
-  return cleanString(value).split(/\r?\n/).map((line) => line.trim()).find(Boolean) || fallback;
-}
-
 function compactTitle(opportunity: AuctionOpportunity) {
   const prefix = cleanString(opportunity.propertyType, "Imovel");
   const title = cleanString(opportunity.title, prefix);
   return title.toLowerCase().includes(prefix.toLowerCase()) ? title : `${prefix} - ${title}`;
+}
+
+function truncateSingleLine(value: string, maxLength: number) {
+  const cleaned = cleanString(value).replace(/\s+/g, " ");
+  if (!cleaned || cleaned.length <= maxLength) return cleaned;
+  return `${cleaned.slice(0, Math.max(0, maxLength - 3)).trim()}...`;
+}
+
+function publicDecisionLabel(analysis: PropertyMarketAnalysis | null) {
+  const labels: Record<PropertyMarketAnalysis["decision"], string> = {
+    excellent: "oportunidade forte",
+    good: "boa oportunidade",
+    caution: "exige cautela",
+    review: "em validacao",
+    reject: "requer analise cuidadosa",
+  };
+
+  return analysis?.decision ? labels[analysis.decision] : "analise disponivel";
 }
 
 function analysisArea(analysis?: PropertyMarketAnalysis | null) {
@@ -135,18 +150,18 @@ function line(label: string, value: string) {
   return value ? `${label}: ${value}` : "";
 }
 
-function paymentLines(analysis: PropertyMarketAnalysis | null) {
-  const payment = analysis?.paymentSimulation;
-  if (!payment) return [];
+function compactCaption(lines: string[]) {
+  const caption = lines
+    .filter((item, index, items) => item || (index > 0 && items[index - 1]))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 
-  return [
-    payment.downPaymentAmount ? line("Entrada", formatCurrency(payment.downPaymentAmount)) : "",
-    payment.installmentBalance ? line("Saldo", formatCurrency(payment.installmentBalance)) : "",
-    payment.installmentAmount && payment.installmentCount
-      ? `${payment.installmentCount}x de ${formatCurrency(payment.installmentAmount)}`
-      : "",
-    cleanString(payment.correctionWarning),
-  ].filter(Boolean);
+  if (caption.length <= WHATSAPP_TEASER_MAX_LENGTH) return caption;
+
+  const suffix = "\n\nAnalise completa, fotos e pontos de atencao na ficha Betel.";
+  const available = Math.max(0, WHATSAPP_TEASER_MAX_LENGTH - suffix.length);
+  return `${caption.slice(0, available).replace(/\s+\S*$/g, "").trim()}${suffix}`;
 }
 
 export async function buildOpportunityWhatsAppPost(opportunityCode: string): Promise<DataResult<OpportunityWhatsAppPost | null>> {
@@ -175,13 +190,11 @@ export async function buildOpportunityWhatsAppPost(opportunityCode: string): Pro
     .slice(0, 2)
     .map((target) => `${target.label} -> ${formatCurrency(target.value)}`)
     .filter(Boolean);
-  const payment = paymentLines(analysis);
   const publicUrl = publicOpportunityUrl(opportunity.id || code);
-  const summary = firstLine(analysis?.summary || opportunity.summary);
-  const decision = cleanString(analysis?.decisionLabel);
+  const publicSignal = publicDecisionLabel(analysis);
 
-  const caption = [
-    `*${title}*`,
+  const caption = compactCaption([
+    `*${truncateSingleLine(title, 110)}*`,
     location,
     line("Leilao", formatDate(opportunity.auctionDate)),
     line("Area", area),
@@ -189,32 +202,20 @@ export async function buildOpportunityWhatsAppPost(opportunityCode: string): Pro
     line("Mercado ajustado", marketValue),
     line("Lance", bid),
     line("Desconto", discount),
-    payment.length ? "" : "",
-    payment.length ? "Simulacao de pagamento:" : "",
-    ...payment,
-    ceilingTargets.length ? "" : "",
-    ceilingTargets.length ? "Teto Betel:" : "",
-    ...ceilingTargets,
+    ceilingTargets.length ? line("Teto Betel", ceilingTargets.join(" | ")) : "",
     rent ? "" : "",
     line("Aluguel estimado", rent),
     "",
-    decision ? `Classificacao: ${decision}` : "",
-    summary,
-    cleanString(analysis?.cautionNotes || analysis?.legalSignal),
-    "",
-    "Ficha completa, fotos e dados da analise na pagina da Betel.",
-  ]
-    .filter((item, index, items) => item || (index > 0 && items[index - 1]))
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+    `Sinal Betel: ${publicSignal}.`,
+    "Analise completa, fotos e pontos de atencao na ficha Betel.",
+  ]);
 
   return {
     data: {
       opportunityCode: opportunity.id || code,
       title,
       caption,
-      buttonText: "Acesse a ficha completa do imovel na pagina da Betel pelo botao abaixo.",
+      buttonText: "Veja fotos, riscos e analise completa na ficha Betel.",
       buttonLabel: "Ver imovel",
       publicUrl,
       imageUrl: primaryImageUrl(opportunity.images),
