@@ -1373,8 +1373,10 @@ function DestinationSelect({
 
 function WhatsAppPublicationControls({
   options,
+  canSubmit,
 }: {
   options?: OpportunityWhatsAppPublicationOptions;
+  canSubmit: boolean;
 }) {
   const agents = options?.agents || [];
   const activeDestinations = (options?.destinations || []).filter((destination) => destination.status === "active");
@@ -1402,15 +1404,27 @@ function WhatsAppPublicationControls({
           </select>
         </label>
 
-        <label className="grid gap-1">
-          <span className={labelClass}>Numero para teste</span>
-          <Input
-            className={inputClass}
-            inputMode="tel"
-            name="whatsappTestNumber"
-            placeholder="Ex: 5547999999999"
-          />
-        </label>
+        <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+          <label className="grid gap-1">
+            <span className={labelClass}>Numero para teste</span>
+            <Input
+              className={inputClass}
+              inputMode="tel"
+              name="whatsappTestNumber"
+              placeholder="Ex: 5547999999999"
+            />
+          </label>
+          <Button
+            className="h-10 min-w-32 bg-[var(--admin-green)] text-white hover:bg-[#0f6338]"
+            disabled={!canSubmit || !agents.length}
+            name="submitStatus"
+            type="submit"
+            value="approve_send_test_number"
+          >
+            <Send size={14} />
+            Enviar teste
+          </Button>
+        </div>
 
         <div className="grid gap-2 md:grid-cols-2">
           <DestinationSelect label="Grupo padrao" name="whatsappDefaultGroupId" destinations={groups} defaultValue={defaultGroupId} />
@@ -1806,7 +1820,7 @@ function OpportunityHeader({
         </div>
 
         <div className="flex flex-wrap gap-2 xl:max-w-[520px] xl:justify-end">
-          {analysis ? <WhatsAppPublicationControls options={whatsappPublicationOptions} /> : null}
+          {analysis ? <WhatsAppPublicationControls canSubmit={canSubmit} options={whatsappPublicationOptions} /> : null}
           <Button
             asChild
             variant="outline"
