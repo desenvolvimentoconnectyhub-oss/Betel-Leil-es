@@ -48,9 +48,13 @@ export default async function OpportunityDetailPage({
       qualificationDossier={qualificationResult.data}
       qualificationReason={qualificationResult.reason}
       activeTab={firstQueryValue(query.tab)}
+      marketStatus={firstQueryValue(query.market)}
       marketFilter={firstQueryValue(query.marketFilter)}
       marketSort={firstQueryValue(query.marketSort)}
       selectedPhoto={firstQueryValue(query.photo)}
+      syncedGroups={firstQueryValue(query.sincronizados)}
+      remoteGroups={firstQueryValue(query.grupos)}
+      publicationCampaign={firstQueryValue(query.campaign)}
       whatsappPublicationOptions={whatsappPublicationOptions}
     />
   );

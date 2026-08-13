@@ -25,6 +25,7 @@ import {
   scheduleOpportunityWhatsAppPublication,
   type OpportunityWhatsAppPublicationMode,
 } from "@/lib/whatsapp/opportunity-publication";
+import { syncWhatsAppCommunityDestinations } from "@/lib/whatsapp/group-campaigns";
 
 function field(formData: FormData, name: string, fallback = "") {
   const value = formData.get(name);
@@ -369,6 +370,37 @@ export async function refreshOpportunityValidationPipelineAction() {
   });
 
   redirect(`/admin/oportunidades?${params.toString()}`);
+}
+
+export async function syncOpportunityWhatsAppGroupsAction(formData: FormData) {
+  await requireCurrentAdmin();
+  const currentCode = normalizeCode(field(formData, "opportunityCode") || field(formData, "currentCode"));
+  const detailPath = currentCode ? `/admin/oportunidades/${currentCode}` : "/admin/oportunidades";
+
+  let result: Awaited<ReturnType<typeof syncWhatsAppCommunityDestinations>>;
+  try {
+    result = await syncWhatsAppCommunityDestinations({
+      agentKey: field(formData, "whatsappAgentKey"),
+      force: true,
+      noParticipants: false,
+    });
+  } catch (error) {
+    errorRedirect(detailPath, error instanceof Error ? error.message : "Nao foi possivel atualizar os grupos WhatsApp.");
+  }
+
+  revalidatePath("/admin");
+  revalidatePath("/admin/oportunidades");
+  revalidatePath("/admin/whatsapp");
+  revalidatePath("/api/admin/whatsapp/groups");
+  revalidatePath(detailPath);
+
+  const params = new URLSearchParams({
+    market: "whatsapp-grupos-atualizados",
+    grupos: String(result.groups),
+    sincronizados: String(result.synced),
+  });
+
+  redirect(`${detailPath}?${params.toString()}`);
 }
 
 export async function savePropertyMarketAnalysisAction(formData: FormData) {
