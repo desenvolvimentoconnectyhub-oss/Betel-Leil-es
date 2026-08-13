@@ -417,7 +417,9 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
   const sendTestOnly = publicationMode === "test_number";
   const payload = parseMarketAnalysisForm(formData, detailPath);
   const approvalStatus = payload.status === "approved" || payload.status === "approved_with_notes";
-  const shouldAdvanceWorkflow = approvalStatus && !sendTestOnly;
+  const wasAlreadyApproved = previousMarketStatus === "approved" || previousMarketStatus === "approved_with_notes";
+  let shouldAdvanceWorkflow = approvalStatus && !sendTestOnly;
+  let publishWithoutWorkflow = false;
   let approvalStageKey = "";
   let publicationStatusParam = "";
   let publicationCampaignId = "";
@@ -430,21 +432,33 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
     approvalStageKey = openTaskResult.data?.stageKey || "";
 
     if (!approvalStageKey) {
-      const canApproveLegacyMarket = await adminCanApproveWorkflowStage(admin, "market_review");
-      const wasAlreadyApproved = previousMarketStatus === "approved" || previousMarketStatus === "approved_with_notes";
-      if (!canApproveLegacyMarket || wasAlreadyApproved) {
-        errorRedirect(detailPath, openTaskResult.reason || "Nao existe tarefa aberta para seu setor nesta oportunidade.");
+      if (publicationMode && wasAlreadyApproved) {
+        const canPublishWithoutOpenTask =
+          (await adminCanApproveWorkflowStage(admin, "market_review")) ||
+          (await adminCanApproveWorkflowStage(admin, "communication"));
+        if (!canPublishWithoutOpenTask) {
+          errorRedirect(detailPath, "Seu usuario nao pode enviar WhatsApp desta oportunidade.");
+        }
+        shouldAdvanceWorkflow = false;
+        publishWithoutWorkflow = true;
+      } else {
+        const canApproveLegacyMarket = await adminCanApproveWorkflowStage(admin, "market_review");
+        if (!canApproveLegacyMarket || wasAlreadyApproved) {
+          errorRedirect(detailPath, openTaskResult.reason || "Nao existe tarefa aberta para seu setor nesta oportunidade.");
+        }
+        approvalStageKey = "market_review";
       }
-      approvalStageKey = "market_review";
     }
 
-    const canApprove = await adminCanApproveWorkflowStage(admin, approvalStageKey);
-    if (!canApprove) {
-      errorRedirect(detailPath, "Seu usuario nao pode aprovar a etapa atual desta oportunidade.");
-    }
+    if (shouldAdvanceWorkflow) {
+      const canApprove = await adminCanApproveWorkflowStage(admin, approvalStageKey);
+      if (!canApprove) {
+        errorRedirect(detailPath, "Seu usuario nao pode aprovar a etapa atual desta oportunidade.");
+      }
 
-    if (publicationMode && approvalStageKey !== "market_review" && approvalStageKey !== "communication") {
-      errorRedirect(detailPath, "Envio WhatsApp so pode ser solicitado na aprovacao de mercado ou na etapa de divulgacao WhatsApp.");
+      if (publicationMode && approvalStageKey !== "market_review" && approvalStageKey !== "communication") {
+        errorRedirect(detailPath, "Envio WhatsApp so pode ser solicitado na aprovacao de mercado ou na etapa de divulgacao WhatsApp.");
+      }
     }
   } else if (sendTestOnly) {
     const canSendTest =
@@ -453,6 +467,10 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
     if (!canSendTest) {
       errorRedirect(detailPath, "Seu usuario nao pode enviar teste WhatsApp desta oportunidade.");
     }
+  }
+
+  if (publishWithoutWorkflow && wasAlreadyApproved) {
+    payload.status = previousMarketStatus as MarketAnalysisStatus;
   }
 
   const result = await savePropertyMarketAnalysisRecord(payload);
@@ -519,6 +537,10 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
         ? "whatsapp-ja-agendado"
         : "whatsapp-agendado";
     publicationCampaignId = publicationResult.data.campaignId;
+  }
+
+  if (publishWithoutWorkflow) {
+    await scheduleApprovedWhatsAppPublication();
   }
 
   if (shouldAdvanceWorkflow) {
@@ -594,9 +616,7 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
   const params = new URLSearchParams({
     market: sendTestOnly
       ? publicationStatusParam || "whatsapp-teste-agendado"
-      : shouldAdvanceWorkflow
-        ? publicationStatusParam || workflowApprovalParam(approvalStageKey)
-        : "salva",
+      : publicationStatusParam || (shouldAdvanceWorkflow ? workflowApprovalParam(approvalStageKey) : "salva"),
   });
   if (publicationCampaignId) params.set("campaign", publicationCampaignId);
 
