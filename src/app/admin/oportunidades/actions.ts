@@ -5,8 +5,11 @@ import { redirect } from "next/navigation";
 import { requireCurrentAdmin } from "@/lib/auth/admin";
 import {
   adminCanApproveWorkflowStage,
+  advanceOpportunityAfterLegalApprovalRecord,
   advanceOpportunityAfterMarketApprovalRecord,
+  advanceOpportunityAfterWorkflowStageApprovalRecord,
   createAuctionOpportunityRecord,
+  getOpenOpportunityWorkflowTaskForAdminRecord,
   ingestAuctionOpportunityRecord,
   refreshOpportunityValidationPipelinesRecord,
   savePropertyMarketAnalysisRecord,
@@ -18,6 +21,10 @@ import {
 } from "@/lib/admin/repository";
 import type { MarketAnalysisDecision, MarketAnalysisStatus, MarketComparableQuality, MarketCostItem } from "@/lib/admin/market-analysis";
 import { backfillOpportunityImages } from "@/lib/scraper";
+import {
+  scheduleOpportunityWhatsAppPublication,
+  type OpportunityWhatsAppPublicationMode,
+} from "@/lib/whatsapp/opportunity-publication";
 
 function field(formData: FormData, name: string, fallback = "") {
   const value = formData.get(name);
@@ -65,6 +72,32 @@ function makeFallbackCode(city: string, title: string) {
 
 function errorRedirect(path: string, message: string): never {
   redirect(`${path}?status=error&message=${encodeURIComponent(message)}`);
+}
+
+const workflowApprovalStages = ["validation", "creative", "communication"] as const;
+
+function workflowApprovalParam(stageKey: string) {
+  if (stageKey === "market_review") return "divulgacao";
+  if (stageKey === "legal_review") return "validacao";
+  if (stageKey === "validation") return "criativos";
+  if (stageKey === "creative") return "comunicacao";
+  if (stageKey === "communication") return "concluido";
+  return "aprovado";
+}
+
+function publicationModeFromSubmitStatus(value: string): OpportunityWhatsAppPublicationMode | "" {
+  if (value === "approve_send_default_group") return "default_group";
+  if (value === "approve_send_specific_group") return "specific_group";
+  if (value === "approve_send_channel") return "channel";
+  if (value === "approve_send_broadcast") return "broadcast_list";
+  return "";
+}
+
+function parseBroadcastTargets(value: string) {
+  return value
+    .split(/[\n,;]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function parseOpportunityForm(formData: FormData, errorPath: string): CreateAuctionOpportunityInput {
@@ -143,6 +176,8 @@ function parseComparableQuality(value: string): MarketComparableQuality {
 }
 
 function parseMarketStatus(value: string): MarketAnalysisStatus {
+  if (publicationModeFromSubmitStatus(value)) return "approved";
+
   if (["pending", "in_analysis", "human_review", "approved", "approved_with_notes", "rejected", "insufficient_data"].includes(value)) {
     return value as MarketAnalysisStatus;
   }
@@ -336,13 +371,38 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
   const admin = await requireCurrentAdmin();
   const currentCode = normalizeCode(field(formData, "opportunityCode"));
   const detailPath = currentCode ? `/admin/oportunidades/${currentCode}` : "/admin/oportunidades";
+  const previousMarketStatus = field(formData, "status");
+  const submitStatus = field(formData, "submitStatus", previousMarketStatus);
+  const publicationMode = publicationModeFromSubmitStatus(submitStatus);
   const payload = parseMarketAnalysisForm(formData, detailPath);
   const approvalStatus = payload.status === "approved" || payload.status === "approved_with_notes";
+  let approvalStageKey = "";
+  let publicationStatusParam = "";
+  let publicationCampaignId = "";
 
   if (approvalStatus) {
-    const canApprove = await adminCanApproveWorkflowStage(admin, "market_review");
+    const openTaskResult = await getOpenOpportunityWorkflowTaskForAdminRecord({
+      opportunityCode: currentCode,
+      admin,
+    });
+    approvalStageKey = openTaskResult.data?.stageKey || "";
+
+    if (!approvalStageKey) {
+      const canApproveLegacyMarket = await adminCanApproveWorkflowStage(admin, "market_review");
+      const wasAlreadyApproved = previousMarketStatus === "approved" || previousMarketStatus === "approved_with_notes";
+      if (!canApproveLegacyMarket || wasAlreadyApproved) {
+        errorRedirect(detailPath, openTaskResult.reason || "Nao existe tarefa aberta para seu setor nesta oportunidade.");
+      }
+      approvalStageKey = "market_review";
+    }
+
+    const canApprove = await adminCanApproveWorkflowStage(admin, approvalStageKey);
     if (!canApprove) {
-      errorRedirect(detailPath, "Seu usuario nao pode aprovar a etapa de analise de mercado.");
+      errorRedirect(detailPath, "Seu usuario nao pode aprovar a etapa atual desta oportunidade.");
+    }
+
+    if (publicationMode && approvalStageKey !== "market_review") {
+      errorRedirect(detailPath, "Envio WhatsApp so pode ser solicitado na aprovacao da analise de mercado.");
     }
   }
 
@@ -353,28 +413,106 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
   }
 
   if (approvalStatus) {
-    const workflowResult = await advanceOpportunityAfterMarketApprovalRecord({
-      opportunityCode: currentCode,
-      decision: payload.status === "approved_with_notes" ? "approved_with_notes" : "approved",
-      approvedByAdminUserId: admin.id,
-      approvedByName: admin.name,
-      notes: payload.cautionNotes || payload.decisionReason,
-    });
+    const workflowDecision = payload.status === "approved_with_notes" ? "approved_with_notes" : "approved";
+    const workflowNotes = payload.cautionNotes || payload.decisionReason;
 
-    if (!workflowResult.ok) {
-      errorRedirect(
-        detailPath,
-        workflowResult.error || "Analise aprovada, mas nao foi possivel enviar a oportunidade para o Juridico."
-      );
+    if (approvalStageKey === "market_review") {
+      const workflowResult = await advanceOpportunityAfterMarketApprovalRecord({
+        opportunityCode: currentCode,
+        decision: workflowDecision,
+        approvedByAdminUserId: admin.id,
+        approvedByName: admin.name,
+        notes: workflowNotes,
+      });
+
+      if (!workflowResult.ok) {
+        errorRedirect(
+          detailPath,
+          workflowResult.error || "Analise aprovada, mas nao foi possivel liberar a oportunidade para divulgacao."
+        );
+      }
+
+      if (publicationMode) {
+        const destinationId =
+          publicationMode === "default_group"
+            ? field(formData, "whatsappDefaultGroupId")
+            : publicationMode === "specific_group"
+              ? field(formData, "whatsappSpecificGroupId")
+              : publicationMode === "channel"
+                ? field(formData, "whatsappChannelId")
+                : "";
+
+        const publicationResult = await scheduleOpportunityWhatsAppPublication({
+          opportunityCode: currentCode,
+          mode: publicationMode,
+          agentKey: field(formData, "whatsappAgentKey"),
+          destinationId,
+          broadcastSourceDestinationId: field(formData, "whatsappBroadcastSourceGroupId"),
+          broadcastTargets: parseBroadcastTargets(field(formData, "whatsappBroadcastNumbers")),
+          approvedByAdminUserId: admin.id,
+          approvedByName: admin.name,
+        });
+
+        if (!publicationResult.ok || !publicationResult.data) {
+          errorRedirect(
+            detailPath,
+            publicationResult.error || "Analise aprovada, mas nao foi possivel agendar a publicacao WhatsApp."
+          );
+        }
+
+        publicationStatusParam = publicationResult.data.skipped ? "whatsapp-ja-agendado" : "whatsapp-agendado";
+        publicationCampaignId = publicationResult.data.campaignId;
+      }
+    } else if (approvalStageKey === "legal_review") {
+      const workflowResult = await advanceOpportunityAfterLegalApprovalRecord({
+        opportunityCode: currentCode,
+        decision: workflowDecision,
+        approvedByAdminUserId: admin.id,
+        approvedByName: admin.name,
+        notes: workflowNotes,
+      });
+
+      if (!workflowResult.ok) {
+        errorRedirect(
+          detailPath,
+          workflowResult.error || "Juridico aprovado, mas nao foi possivel enviar a oportunidade para Validacao."
+        );
+      }
+    } else if (workflowApprovalStages.includes(approvalStageKey as (typeof workflowApprovalStages)[number])) {
+      const workflowResult = await advanceOpportunityAfterWorkflowStageApprovalRecord({
+        opportunityCode: currentCode,
+        stageKey: approvalStageKey as (typeof workflowApprovalStages)[number],
+        decision: workflowDecision,
+        approvedByAdminUserId: admin.id,
+        approvedByName: admin.name,
+        notes: workflowNotes,
+      });
+
+      if (!workflowResult.ok) {
+        errorRedirect(
+          detailPath,
+          workflowResult.error || "Etapa aprovada, mas nao foi possivel enviar a oportunidade para o proximo setor."
+        );
+      }
+    } else {
+      errorRedirect(detailPath, "Etapa atual nao reconhecida para avancar o workflow.");
     }
   }
 
   revalidatePath("/admin");
   revalidatePath("/admin/oportunidades");
   revalidatePath("/admin/fontes/capturas");
+  revalidatePath("/admin/meta-whatsapp");
+  revalidatePath("/admin/whatsapp");
   revalidatePath(detailPath);
+  if (currentCode) revalidatePath(`/oportunidades/${currentCode}`);
 
-  redirect(`${detailPath}?market=${approvalStatus ? "juridico" : "salva"}`);
+  const params = new URLSearchParams({
+    market: approvalStatus ? publicationStatusParam || workflowApprovalParam(approvalStageKey) : "salva",
+  });
+  if (publicationCampaignId) params.set("campaign", publicationCampaignId);
+
+  redirect(`${detailPath}?${params.toString()}`);
 }
 
 export async function savePropertyQualificationFeedbackAction(formData: FormData) {

@@ -22,12 +22,15 @@ import {
   MoreHorizontal,
   Pencil,
   RefreshCcw,
+  Radio,
   Save,
   Scale,
+  Send,
   ShieldCheck,
   Sparkles,
   Target,
   UploadCloud,
+  Users,
   XCircle,
 } from "lucide-react";
 import {
@@ -57,6 +60,7 @@ import type {
   PropertyQualificationEvidenceStatus,
   PropertyQualificationFeedbackDecision,
 } from "@/lib/admin/repository/property-qualification";
+import type { OpportunityWhatsAppPublicationOptions } from "@/lib/whatsapp/opportunity-publication";
 import {
   formatCurrency,
   formatDate,
@@ -86,6 +90,7 @@ type OpportunityDetailCenterProps = {
   marketFilter?: string;
   marketSort?: string;
   selectedPhoto?: string;
+  whatsappPublicationOptions?: OpportunityWhatsAppPublicationOptions;
 };
 
 const tabs: Array<{ id: OpportunityTabId; label: string; icon: ReactNode }> = [
@@ -1329,6 +1334,94 @@ function HeaderActionButton({
   );
 }
 
+function destinationLabel(destination: OpportunityWhatsAppPublicationOptions["destinations"][number]) {
+  const typeLabel =
+    destination.destinationType === "channel"
+      ? "Canal"
+      : destination.destinationType === "contact_list"
+        ? "Lista"
+        : "Grupo";
+  const participants = destination.participantCount ? ` - ${destination.participantCount} contatos` : "";
+  return `${typeLabel}: ${destination.name} - ${destination.agentKey}${participants}`;
+}
+
+function DestinationSelect({
+  label,
+  name,
+  destinations,
+  defaultValue,
+}: {
+  label: string;
+  name: string;
+  destinations: OpportunityWhatsAppPublicationOptions["destinations"];
+  defaultValue?: string;
+}) {
+  return (
+    <label className="grid gap-1">
+      <span className={labelClass}>{label}</span>
+      <select className={selectClass} defaultValue={defaultValue || ""} name={name}>
+        <option value="">Selecionar</option>
+        {destinations.map((destination) => (
+          <option key={destination.id} value={destination.id}>
+            {destinationLabel(destination)}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function WhatsAppPublicationControls({
+  options,
+}: {
+  options?: OpportunityWhatsAppPublicationOptions;
+}) {
+  const agents = options?.agents || [];
+  const activeDestinations = (options?.destinations || []).filter((destination) => destination.status === "active");
+  const groups = activeDestinations.filter((destination) => destination.destinationType === "group");
+  const channels = activeDestinations.filter((destination) => destination.destinationType === "channel");
+  const defaultAgentKey = options?.defaultAgentKey || agents[0]?.agentKey || "";
+  const defaultGroupId = options?.defaultGroupId || groups[0]?.id || "";
+
+  return (
+    <details className="w-full rounded-lg border border-[var(--admin-border)] bg-white p-2 text-left">
+      <summary className="flex cursor-pointer list-none items-center gap-2 text-xs font-semibold text-[var(--admin-foreground)]">
+        <Send size={14} className="text-[var(--admin-cyan)]" />
+        Envio WhatsApp apos aprovacao
+      </summary>
+      <div className="mt-3 grid gap-3">
+        <label className="grid gap-1">
+          <span className={labelClass}>Agente remetente</span>
+          <select className={selectClass} defaultValue={defaultAgentKey} name="whatsappAgentKey">
+            {agents.length ? null : <option value="">Nenhum agente conectado</option>}
+            {agents.map((agent) => (
+              <option key={agent.instanceId || agent.agentKey} value={agent.agentKey}>
+                {agent.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <div className="grid gap-2 md:grid-cols-2">
+          <DestinationSelect label="Grupo padrao" name="whatsappDefaultGroupId" destinations={groups} defaultValue={defaultGroupId} />
+          <DestinationSelect label="Grupo especifico" name="whatsappSpecificGroupId" destinations={groups} />
+          <DestinationSelect label="Canal WhatsApp" name="whatsappChannelId" destinations={channels} />
+          <DestinationSelect label="Grupo origem da lista" name="whatsappBroadcastSourceGroupId" destinations={groups} />
+        </div>
+
+        <label className="grid gap-1">
+          <span className={labelClass}>Numeros extras da lista</span>
+          <Textarea
+            className="min-h-16 border-[var(--admin-border)] bg-white text-xs text-[var(--admin-foreground)] placeholder:text-[var(--admin-muted)]"
+            name="whatsappBroadcastNumbers"
+            placeholder="Um telefone por linha, ou separados por virgula"
+          />
+        </label>
+      </div>
+    </details>
+  );
+}
+
 function HiddenInput({ name, value }: { name: string; value?: string | number | boolean }) {
   return <input name={name} type="hidden" value={value === true ? "true" : value ? String(value) : ""} />;
 }
@@ -1615,10 +1708,12 @@ function OpportunityHeader({
   opportunity,
   analysis,
   qualificationDossier,
+  whatsappPublicationOptions,
 }: {
   opportunity: AuctionOpportunity;
   analysis: PropertyMarketAnalysis | null;
   qualificationDossier?: PropertyQualificationDossier | null;
+  whatsappPublicationOptions?: OpportunityWhatsAppPublicationOptions;
 }) {
   const evaluation = buildDetailOpportunityEvaluation(opportunity, analysis, qualificationDossier);
   const canSubmit = Boolean(analysis?.marketValueBase);
@@ -1626,6 +1721,10 @@ function OpportunityHeader({
   const compactTitle = opportunity.title.length > 92 ? `${opportunity.title.slice(0, 92).trim()}...` : opportunity.title;
   const highlightedAction =
     analysis && evaluation.finalRecommendation.status === "recomendado_para_avancar" ? "approved" : "human_review";
+  const activeDestinations = (whatsappPublicationOptions?.destinations || []).filter((destination) => destination.status === "active");
+  const hasWhatsappAgent = Boolean((whatsappPublicationOptions?.agents || []).length);
+  const hasActiveGroup = activeDestinations.some((destination) => destination.destinationType === "group");
+  const hasActiveChannel = activeDestinations.some((destination) => destination.destinationType === "channel");
 
   return (
     <section className="rounded-xl border border-[var(--admin-border)] bg-[rgba(255,255,255,0.96)] p-3 shadow-sm shadow-[rgba(81,60,36,0.07)] backdrop-blur">
@@ -1697,6 +1796,7 @@ function OpportunityHeader({
         </div>
 
         <div className="flex flex-wrap gap-2 xl:max-w-[520px] xl:justify-end">
+          {analysis ? <WhatsAppPublicationControls options={whatsappPublicationOptions} /> : null}
           <Button
             asChild
             variant="outline"
@@ -1726,6 +1826,22 @@ function OpportunityHeader({
                   <HeaderActionButton disabled={!canSubmit} tone="yellow" value="approved_with_notes">
                     <ShieldCheck size={14} />
                     Aprovar com ressalvas
+                  </HeaderActionButton>
+                  <HeaderActionButton disabled={!canSubmit || !hasWhatsappAgent || !hasActiveGroup} tone="green" value="approve_send_default_group">
+                    <Send size={14} />
+                    Aprovar e enviar grupo
+                  </HeaderActionButton>
+                  <HeaderActionButton disabled={!canSubmit || !hasWhatsappAgent || !hasActiveGroup} tone="green" value="approve_send_specific_group">
+                    <Users size={14} />
+                    Aprovar e enviar grupo especifico
+                  </HeaderActionButton>
+                  <HeaderActionButton disabled={!canSubmit || !hasWhatsappAgent || !hasActiveChannel} tone="green" value="approve_send_channel">
+                    <Radio size={14} />
+                    Aprovar e enviar canal
+                  </HeaderActionButton>
+                  <HeaderActionButton disabled={!canSubmit || !hasWhatsappAgent} tone="green" value="approve_send_broadcast">
+                    <ListChecks size={14} />
+                    Aprovar e enviar lista
                   </HeaderActionButton>
                   <HeaderActionButton disabled={!canSubmit} tone="red" value="rejected">
                     <XCircle size={14} />
@@ -4112,6 +4228,7 @@ export function OpportunityDetailCenter({
   marketFilter,
   marketSort,
   selectedPhoto,
+  whatsappPublicationOptions,
 }: OpportunityDetailCenterProps) {
   const tab = normalizeTab(activeTab);
   const images = (opportunity.images || []).filter((image) => image.status !== "failed");
@@ -4123,7 +4240,12 @@ export function OpportunityDetailCenter({
   const body = (
     <div id="topo-oportunidade" className="mx-auto grid max-w-[1600px] gap-4 px-3 py-3 lg:px-5">
       <div>
-        <OpportunityHeader opportunity={opportunity} analysis={analysis} qualificationDossier={qualificationDossier} />
+        <OpportunityHeader
+          opportunity={opportunity}
+          analysis={analysis}
+          qualificationDossier={qualificationDossier}
+          whatsappPublicationOptions={whatsappPublicationOptions}
+        />
         <OpportunityTabs activeTab={tab} />
       </div>
 

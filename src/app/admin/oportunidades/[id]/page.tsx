@@ -5,6 +5,7 @@ import {
   getPropertyMarketAnalysisByOpportunityCode,
   getPropertyQualificationDossierByOpportunityCode,
 } from "@/lib/admin/repository";
+import { getOpportunityWhatsAppPublicationOptions } from "@/lib/whatsapp/opportunity-publication";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -28,9 +29,10 @@ export default async function OpportunityDetailPage({
     searchParams || Promise.resolve(emptyQuery),
   ]);
 
-  const [opportunityResult, marketAnalysisResult] = await Promise.all([
+  const [opportunityResult, marketAnalysisResult, whatsappPublicationOptions] = await Promise.all([
     getAuctionOpportunityByCode(id),
     getPropertyMarketAnalysisByOpportunityCode(id),
+    getOpportunityWhatsAppPublicationOptions(),
   ]);
 
   const opportunity = opportunityResult.data;
@@ -49,6 +51,7 @@ export default async function OpportunityDetailPage({
       marketFilter={firstQueryValue(query.marketFilter)}
       marketSort={firstQueryValue(query.marketSort)}
       selectedPhoto={firstQueryValue(query.photo)}
+      whatsappPublicationOptions={whatsappPublicationOptions}
     />
   );
 }

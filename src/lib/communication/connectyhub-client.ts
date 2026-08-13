@@ -59,6 +59,12 @@ type ConnectyHubWhatsAppMessageResult = {
   endpoint: "provider" | "legacy";
 };
 
+type ConnectyHubWhatsAppMediaResult = {
+  payload: unknown;
+  usedIdempotencyKey: boolean;
+  endpoint: "provider";
+};
+
 export type ConnectyHubDeliveryResult = {
   ok: boolean;
   providerStatus: string;
@@ -1062,6 +1068,44 @@ async function sendConnectyHubWhatsAppMessage(input: {
   }
 }
 
+async function sendConnectyHubWhatsAppMedia(input: {
+  instanceId: string;
+  number: string;
+  fileUrl: string;
+  mediaType: string;
+  text?: string;
+  trackId: string;
+  idempotencyKey?: string;
+  sendOptions?: WhatsAppAgentSendOptions;
+  mentions?: string[];
+  replyId?: string;
+  timeoutMs?: number;
+}): Promise<ConnectyHubWhatsAppMediaResult> {
+  const timeoutMs = input.timeoutMs || CONNECTYHUB_TEXT_SEND_TIMEOUT_MS;
+  const sendFields = optionalSendFields(input.sendOptions);
+
+  const { payload, usedIdempotencyKey } = await connectyhubRequestWithIdempotencyFallback("/provider/send/media", {
+    body: {
+      instanceId: input.instanceId,
+      payload: {
+        number: input.number,
+        type: cleanString(input.mediaType, "image"),
+        file: input.fileUrl,
+        text: cleanString(input.text),
+        ...(input.mentions?.length ? { mentions: input.mentions.join(",") } : {}),
+        ...(input.replyId ? { replyid: input.replyId } : {}),
+        track_source: "betel_ai",
+        track_id: input.trackId,
+        ...sendFields,
+      },
+    },
+    idempotencyKey: input.idempotencyKey || input.trackId,
+    timeoutMs,
+  });
+
+  return { payload, usedIdempotencyKey, endpoint: "provider" };
+}
+
 function firstArrayPayload(payload: unknown, keys: string[]): unknown[] {
   if (Array.isArray(payload)) return payload;
   if (!payload || typeof payload !== "object") return [];
@@ -1265,6 +1309,77 @@ export async function sendWhatsAppDestinationText(input: {
     return {
       ok: false,
       providerStatus: "connectyhub_destination_error",
+      endpointConfigured: true,
+      latencyMs: Math.max(Date.now() - startedMs, 1),
+      processedAt,
+      errorMessage: error instanceof Error ? error.message : "Erro desconhecido na ConnectyHub.",
+    };
+  }
+}
+
+export async function sendWhatsAppDestinationMedia(input: {
+  agentKey: string;
+  instanceId?: string;
+  destinationJid: string;
+  fileUrl: string;
+  mediaType?: "image" | "video" | "document" | "audio" | string;
+  text?: string;
+  trackId: string;
+  mentions?: string[];
+  replyId?: string;
+  sendOptions?: WhatsAppAgentSendOptions;
+}): Promise<ConnectyHubDeliveryResult> {
+  const startedMs = Date.now();
+  const processedAt = new Date().toISOString();
+  const destinationJid = normalizeWhatsappJid(input.destinationJid);
+  const fileUrl = cleanString(input.fileUrl);
+  const { config, instanceId } = await resolveAgentProviderInstanceId(input.agentKey, input.instanceId);
+
+  if (!config.apiToken || !instanceId || !destinationJid || !fileUrl) {
+    return {
+      ok: false,
+      providerStatus: !config.apiToken
+        ? "missing_connectyhub_token"
+        : !instanceId
+          ? "missing_connectyhub_instance"
+          : !destinationJid
+            ? "missing_destination_jid"
+            : "missing_media_url",
+      endpointConfigured: Boolean(config.apiToken && instanceId),
+      latencyMs: Math.max(Date.now() - startedMs, 1),
+      processedAt,
+      errorMessage: "Midia WhatsApp de grupo/canal incompleta.",
+    };
+  }
+
+  try {
+    const delivery = await sendConnectyHubWhatsAppMedia({
+      instanceId,
+      number: destinationJid,
+      fileUrl,
+      mediaType: cleanString(input.mediaType, "image"),
+      text: cleanString(input.text),
+      trackId: input.trackId,
+      idempotencyKey: input.trackId,
+      mentions: input.mentions?.map(normalizeWhatsAppNumber).filter(Boolean),
+      replyId: cleanString(input.replyId),
+      sendOptions: input.sendOptions,
+      timeoutMs: 25000,
+    });
+
+    return {
+      ok: true,
+      providerStatus: delivery.usedIdempotencyKey ? "connectyhub_media_accepted" : "connectyhub_media_accepted_without_idempotency",
+      endpointConfigured: true,
+      latencyMs: Math.max(Date.now() - startedMs, 1),
+      processedAt,
+      externalDeliveryId: extractDeliveryId(delivery.payload),
+      responsePreview: preview(JSON.stringify(sanitizePayload(delivery.payload))),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      providerStatus: "connectyhub_media_error",
       endpointConfigured: true,
       latencyMs: Math.max(Date.now() - startedMs, 1),
       processedAt,

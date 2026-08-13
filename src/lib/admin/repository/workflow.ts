@@ -322,6 +322,89 @@ export function workflowStageKeysForAdmin(admin: AdminSessionUser) {
   return [...stageKeys];
 }
 
+export async function getOpenOpportunityWorkflowTaskForAdminRecord(input: {
+  opportunityCode: string;
+  admin: AdminSessionUser;
+}): Promise<DataResult<OpportunityWorkflowTask | null>> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) {
+    return {
+      data: null,
+      source: "mock",
+      reason: "Supabase admin nao configurado.",
+    };
+  }
+
+  const opportunityCode = cleanString(input.opportunityCode);
+  if (!opportunityCode) {
+    return {
+      data: null,
+      source: "supabase",
+      reason: "Oportunidade nao informada.",
+    };
+  }
+
+  const { data: opportunity, error: opportunityError } = await supabase
+    .from("auction_opportunities")
+    .select("id")
+    .eq("code", opportunityCode)
+    .maybeSingle();
+
+  if (opportunityError) {
+    return {
+      data: null,
+      source: "supabase",
+      reason: opportunityError.message,
+    };
+  }
+
+  const opportunityId = cleanString((opportunity as DbRow | null)?.id);
+  if (!opportunityId) {
+    return {
+      data: null,
+      source: "supabase",
+      reason: "Oportunidade nao encontrada para workflow.",
+    };
+  }
+
+  const stageKeys = workflowStageKeysForAdmin(input.admin);
+  if (!adminHasFullOpportunityVisibility(input.admin) && !stageKeys.length) {
+    return {
+      data: null,
+      source: "supabase",
+      reason: "Usuario sem etapa aberta neste workflow.",
+    };
+  }
+
+  let query = supabase
+    .from("opportunity_workflow_tasks")
+    .select("*")
+    .eq("opportunity_id", opportunityId)
+    .in("status", openWorkflowTaskStatuses)
+    .order("updated_at", { ascending: false })
+    .limit(1);
+
+  if (stageKeys.length) {
+    query = query.in("stage_key", stageKeys);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    return {
+      data: null,
+      source: "supabase",
+      reason: error.message,
+    };
+  }
+
+  const task = ((data || []) as DbRow[]).map(normalizeTask).find((item) => item.id) || null;
+  return {
+    data: task,
+    source: "supabase",
+    reason: task ? undefined : "Nenhuma tarefa aberta para este usuario nesta oportunidade.",
+  };
+}
+
 export async function listAdminSectors(): Promise<DataResult<AdminSector[]>> {
   const supabase = getSupabaseAdminClient();
   if (!supabase) return { data: defaultSectors, source: "mock", reason: "Supabase admin nao configurado." };
@@ -741,7 +824,42 @@ async function resolveOpenWorkflowTask(input: {
     })
     .eq("opportunity_id", input.opportunityId)
     .eq("stage_key", input.stageKey)
-    .in("status", ["pending", "in_progress"]);
+    .in("status", openWorkflowTaskStatuses);
+}
+
+const workflowStageActionCopy: Record<string, { stageLabel: string; nextAction: string; tab: string }> = {
+  legal_review: {
+    stageLabel: "Revisao juridica",
+    nextAction: "Juridico deve validar edital, ocupacao, riscos e permissao de seguir.",
+    tab: "juridico",
+  },
+  validation: {
+    stageLabel: "Validacao",
+    nextAction: "Validacao deve conferir dados finais antes dos criativos e comunicacao.",
+    tab: "visao-geral",
+  },
+  creative: {
+    stageLabel: "Criativos",
+    nextAction: "Criativos devem preparar as pecas e materiais da oportunidade aprovada.",
+    tab: "documentos",
+  },
+  communication: {
+    stageLabel: "Divulgacao WhatsApp",
+    nextAction: "Comunicacao deve escolher agente, destino e acompanhar o envio da oportunidade.",
+    tab: "visao-geral",
+  },
+};
+
+function workflowStageLabel(stage: PipelineStageDefinition) {
+  return workflowStageActionCopy[stage.stageKey]?.stageLabel || stage.name;
+}
+
+function workflowStageNextAction(stage: PipelineStageDefinition) {
+  return workflowStageActionCopy[stage.stageKey]?.nextAction || stage.description;
+}
+
+function workflowStageTab(stage: PipelineStageDefinition) {
+  return workflowStageActionCopy[stage.stageKey]?.tab || "visao-geral";
 }
 
 export async function advanceOpportunityAfterMarketApprovalRecord(input: {
@@ -762,7 +880,7 @@ export async function advanceOpportunityAfterMarketApprovalRecord(input: {
     .maybeSingle();
 
   if (opportunityError) return { ok: false, error: opportunityError.message };
-  if (!opportunity) return { ok: false, error: "Oportunidade nao encontrada para workflow juridico." };
+  if (!opportunity) return { ok: false, error: "Oportunidade nao encontrada para workflow de divulgacao." };
 
   const opportunityRow = opportunity as DbRow;
   const opportunityId = cleanString(opportunityRow.id);
@@ -784,16 +902,15 @@ export async function advanceOpportunityAfterMarketApprovalRecord(input: {
   await supabase
     .from("auction_opportunities")
     .update({
-      stage: "Revisao juridica",
-      legal_status: "Aguardando revisao juridica",
-      next_action: "Juridico deve validar edital, ocupacao, riscos e permissao de seguir.",
-      owner_name: "Juridico",
+      stage: "Divulgacao WhatsApp",
+      next_action: "Comunicacao deve escolher agente, destino e acompanhar o envio da oportunidade.",
+      owner_name: "Comunicacao",
       timeline: [
         ...timeline,
         {
           time: decidedAt,
           actor: input.approvedByName,
-          action: `${decisionLabel} na analise de mercado e enviado para o Juridico.`,
+          action: `${decisionLabel} na analise de mercado e liberado para divulgacao WhatsApp.`,
           tone: input.decision === "approved_with_notes" ? "yellow" : "green",
         },
       ],
@@ -803,7 +920,7 @@ export async function advanceOpportunityAfterMarketApprovalRecord(input: {
   await supabase.from("audit_logs").insert({
     opportunity_id: opportunityId,
     actor_name: input.approvedByName,
-    event_type: "market_review_approved_for_legal",
+    event_type: "market_review_approved_for_whatsapp_publication",
     status: input.decision,
     payload: {
       opportunityCode: code,
@@ -813,10 +930,10 @@ export async function advanceOpportunityAfterMarketApprovalRecord(input: {
 
   const taskResult = await ensureOpportunityWorkflowTaskRecord({
     opportunityId,
-    stageKey: "legal_review",
-    title: `Revisao juridica: ${code}`,
-    description: `${title} foi aprovado pela analise de mercado. Validar juridicamente antes de liberar para validacao.`,
-    actionUrl: `/admin/oportunidades/${code}?tab=juridico`,
+    stageKey: "communication",
+    title: `Divulgacao WhatsApp: ${code}`,
+    description: `${title} foi aprovado pela analise de mercado. Escolher agente, grupo, canal ou lista e acompanhar a publicacao.`,
+    actionUrl: `/admin/oportunidades/${code}?tab=visao-geral`,
     priority: input.decision === "approved_with_notes" ? "high" : "normal",
     createdByAdminUserId: input.approvedByAdminUserId,
     sourceType: "market_approval",
@@ -829,7 +946,7 @@ export async function advanceOpportunityAfterMarketApprovalRecord(input: {
   });
 
   if (!taskResult.ok || !taskResult.data) {
-    return { ok: false, error: taskResult.error || "Analise aprovada, mas a tarefa juridica nao foi criada." };
+    return { ok: false, error: taskResult.error || "Analise aprovada, mas a tarefa de comunicacao nao foi criada." };
   }
 
   return {
@@ -938,6 +1055,135 @@ export async function advanceOpportunityAfterLegalApprovalRecord(input: {
   };
 }
 
+export async function advanceOpportunityAfterWorkflowStageApprovalRecord(input: {
+  opportunityCode: string;
+  stageKey: "validation" | "creative" | "communication";
+  decision: "approved" | "approved_with_notes";
+  approvedByAdminUserId?: string;
+  approvedByName: string;
+  notes?: string;
+}): Promise<MutationResult<{ taskId?: string; notification?: { sent: number; failed: number; skipped: number }; completed: boolean; nextStageKey?: string }>> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return { ok: false, error: "Supabase admin nao configurado." };
+
+  const currentStage = await getStageDefinition(input.stageKey);
+  if (!currentStage) return { ok: false, error: `Etapa atual nao encontrada: ${input.stageKey}.` };
+
+  const nextStage = currentStage.nextStageKey ? await getStageDefinition(currentStage.nextStageKey) : null;
+  const opportunityCode = cleanString(input.opportunityCode);
+  const { data: opportunity, error: opportunityError } = await supabase
+    .from("auction_opportunities")
+    .select("id,code,title,timeline")
+    .eq("code", opportunityCode)
+    .maybeSingle();
+
+  if (opportunityError) return { ok: false, error: opportunityError.message };
+  if (!opportunity) return { ok: false, error: "Oportunidade nao encontrada para workflow." };
+
+  const opportunityRow = opportunity as DbRow;
+  const opportunityId = cleanString(opportunityRow.id);
+  const code = cleanString(opportunityRow.code, opportunityCode);
+  const title = cleanString(opportunityRow.title, code);
+  const timeline = Array.isArray(opportunityRow.timeline) ? opportunityRow.timeline : [];
+  const decidedAt = new Date().toISOString();
+  const decisionLabel = input.decision === "approved_with_notes" ? "Aprovado com ressalvas" : "Aprovado";
+  const nextLabel = nextStage ? workflowStageLabel(nextStage) : "Fluxo concluido";
+
+  await resolveOpenWorkflowTask({
+    opportunityId,
+    stageKey: input.stageKey,
+    status: input.decision,
+    resolvedByAdminUserId: input.approvedByAdminUserId,
+    decision: input.decision,
+    decisionNotes: input.notes,
+  });
+
+  const updatePayload: DbRow = nextStage
+    ? {
+        stage: nextLabel,
+        next_action: workflowStageNextAction(nextStage),
+        owner_name: nextStage.sectorName || nextLabel,
+      }
+    : {
+        stage: "Fluxo concluido",
+        next_action: "Fluxo operacional concluido. Acompanhar respostas, retorno dos usuarios e resultados.",
+        owner_name: "Operacao",
+      };
+
+  await supabase
+    .from("auction_opportunities")
+    .update({
+      ...updatePayload,
+      timeline: [
+        ...timeline,
+        {
+          time: decidedAt,
+          actor: input.approvedByName,
+          action: nextStage
+            ? `${decisionLabel} em ${currentStage.name} e enviado para ${nextLabel}.`
+            : `${decisionLabel} em ${currentStage.name} e workflow operacional concluido.`,
+          tone: input.decision === "approved_with_notes" ? "yellow" : "green",
+        },
+      ],
+    })
+    .eq("id", opportunityId);
+
+  await supabase.from("audit_logs").insert({
+    opportunity_id: opportunityId,
+    actor_name: input.approvedByName,
+    event_type: `${input.stageKey}_approved_for_${nextStage?.stageKey || "completion"}`,
+    status: input.decision,
+    payload: {
+      opportunityCode: code,
+      currentStageKey: input.stageKey,
+      nextStageKey: nextStage?.stageKey || "",
+      notes: input.notes || "",
+    },
+  });
+
+  if (!nextStage) {
+    return {
+      ok: true,
+      data: {
+        completed: true,
+      },
+    };
+  }
+
+  const taskResult = await ensureOpportunityWorkflowTaskRecord({
+    opportunityId,
+    stageKey: nextStage.stageKey,
+    title: `${nextStage.name}: ${code}`,
+    description: `${title} foi aprovado em ${currentStage.name}. ${workflowStageNextAction(nextStage)}`,
+    actionUrl: `/admin/oportunidades/${code}?tab=${workflowStageTab(nextStage)}`,
+    priority: input.decision === "approved_with_notes" ? "high" : "normal",
+    createdByAdminUserId: input.approvedByAdminUserId,
+    sourceType: `${input.stageKey}_approval`,
+    sourcePayload: {
+      opportunityCode: code,
+      currentStageKey: input.stageKey,
+      nextStageKey: nextStage.stageKey,
+      decision: input.decision,
+      approvedBy: input.approvedByName,
+      notes: input.notes || "",
+    },
+  });
+
+  if (!taskResult.ok || !taskResult.data) {
+    return { ok: false, error: taskResult.error || "Etapa aprovada, mas a proxima tarefa nao foi criada." };
+  }
+
+  return {
+    ok: true,
+    data: {
+      taskId: taskResult.data.task.id,
+      notification: taskResult.data.notification,
+      completed: false,
+      nextStageKey: nextStage.stageKey,
+    },
+  };
+}
+
 export async function openMarketReviewTasksForBatchRecord(input: {
   batchId: string;
 }): Promise<MutationResult<{ createdOrUpdated: number; notification?: { sent: number; failed: number; skipped: number } }>> {
@@ -989,7 +1235,7 @@ export async function openMarketReviewTasksForBatchRecord(input: {
       .from("auction_opportunities")
       .update({
         stage: "Revisao de mercado",
-        next_action: "Analise de mercado deve revisar a IA e aprovar antes do Juridico.",
+        next_action: "Analise de mercado deve revisar a IA e aprovar antes da divulgacao WhatsApp.",
         owner_name: "Analise de mercado",
       })
       .eq("id", opportunityId);

@@ -5,8 +5,10 @@ import {
   CONNECTYHUB_PROVIDER,
   WILLIAN_AGENT_KEY,
   listConnectyHubWhatsAppGroups,
+  sendWhatsAppDestinationMedia,
   sendWhatsAppDestinationText,
   type ConnectyHubWhatsAppGroupSummary,
+  type WhatsAppActionButtonInput,
 } from "@/lib/communication/connectyhub-client";
 import { getWhatsAppAgentConfig } from "@/lib/communication/willian-agent-config";
 import type { WillianAgentConfig } from "@/lib/communication/willian-types";
@@ -62,6 +64,8 @@ export type WhatsAppCommunityCampaign = {
   productRef: string;
   subject: string;
   bodyText: string;
+  mediaUrl: string;
+  mediaType: string;
   scheduledFor: string;
   nextRunAt: string;
   dailyLimit: number;
@@ -343,6 +347,8 @@ function mapCampaign(row: Record<string, unknown>, targets: Record<string, Array
     productRef: cleanString(row.product_ref),
     subject: cleanString(row.subject),
     bodyText: cleanString(row.body_text),
+    mediaUrl: cleanString(row.media_url),
+    mediaType: cleanString(row.media_type),
     scheduledFor: asIso(row.scheduled_for),
     nextRunAt: asIso(row.next_run_at),
     dailyLimit: asNumber(row.daily_limit, 20),
@@ -638,6 +644,7 @@ export async function createWhatsAppCommunityCampaign(input: {
   bodyText: string;
   destinationIds?: string[];
   destinationJids?: string[];
+  destinationType?: WhatsAppCommunityDestination["destinationType"];
   campaignType?: string;
   approvalMode?: string;
   scheduledFor?: string;
@@ -650,6 +657,11 @@ export async function createWhatsAppCommunityCampaign(input: {
   productRef?: string;
   subject?: string;
   prompt?: string;
+  mediaUrl?: string;
+  mediaType?: string;
+  actionButton?: WhatsAppActionButtonInput;
+  buttonText?: string;
+  metadata?: Record<string, unknown>;
 }) {
   const supabase = getSupabaseAdminClient();
   if (!supabase) throw new Error("Supabase service role nao configurado.");
@@ -682,7 +694,7 @@ export async function createWhatsAppCommunityCampaign(input: {
 
   for (const jid of selectedJids) {
     if (!destinationRows.some((row) => cleanString(row.jid) === jid)) {
-      destinationRows.push({ id: null, jid, destination_type: destinationTypeFromJid(jid), status: "external" });
+      destinationRows.push({ id: null, jid, destination_type: input.destinationType || destinationTypeFromJid(jid), status: "external" });
     }
   }
 
@@ -713,6 +725,8 @@ export async function createWhatsAppCommunityCampaign(input: {
       subject: cleanString(input.subject) || null,
       prompt: cleanString(input.prompt) || null,
       body_text: bodyText,
+      media_url: cleanString(input.mediaUrl) || null,
+      media_type: cleanString(input.mediaType, input.mediaUrl ? "image" : "") || null,
       scheduled_for: scheduledFor,
       next_run_at: scheduledFor,
       daily_limit: Math.max(1, Math.min(250, Math.trunc(input.dailyLimit || 20))),
@@ -720,6 +734,17 @@ export async function createWhatsAppCommunityCampaign(input: {
       mention_all_confirmed: Boolean(input.mentionAllConfirmed),
       metadata: {
         createdFrom: "whatsapp_agent_panel",
+        ...asRecord(input.metadata),
+        ...(input.actionButton
+          ? {
+              actionButton: {
+                label: cleanString(input.actionButton.label, "Ver oportunidade"),
+                url: cleanString(input.actionButton.url),
+                footerText: cleanString(input.actionButton.footerText, "Betel Leiloes"),
+              },
+            }
+          : {}),
+        ...(input.buttonText ? { buttonText: cleanString(input.buttonText) } : {}),
       },
     })
     .select("*")
@@ -764,6 +789,27 @@ function nextRunAfter(campaignType: string, from: Date) {
     return next.toISOString();
   }
   return "";
+}
+
+function campaignActionButton(campaignRow: Record<string, unknown>): WhatsAppActionButtonInput | undefined {
+  const metadata = asRecord(campaignRow.metadata);
+  const button = asRecord(metadata.actionButton);
+  const url = cleanString(button.url || metadata.publicUrl || metadata.buttonUrl);
+  if (!/^https?:\/\//i.test(url)) return undefined;
+
+  return {
+    label: cleanString(button.label || metadata.buttonLabel, "Ver oportunidade"),
+    url,
+    footerText: cleanString(button.footerText || metadata.buttonFooter, "Betel Leiloes"),
+  };
+}
+
+function campaignButtonText(campaignRow: Record<string, unknown>) {
+  const metadata = asRecord(campaignRow.metadata);
+  return cleanString(
+    metadata.buttonText,
+    "Acesse a ficha completa do imovel na pagina da Betel pelo botao abaixo."
+  );
 }
 
 export async function processWhatsAppCommunityCampaigns(input: { limit?: number; dryRun?: boolean } = {}) {
@@ -832,6 +878,10 @@ export async function processWhatsAppCommunityCampaigns(input: { limit?: number;
     const bodyText = cleanString(campaignRow.body_text);
     const campaignType = cleanString(campaignRow.campaign_type, "single");
     const dailyLimit = Math.max(1, Math.min(250, asNumber(campaignRow.daily_limit, 20)));
+    const mediaUrl = cleanString(campaignRow.media_url);
+    const mediaType = cleanString(campaignRow.media_type, mediaUrl ? "image" : "");
+    const actionButton = campaignActionButton(campaignRow);
+    const buttonText = campaignButtonText(campaignRow);
 
     const targetsResult = await supabase
       .from("whatsapp_group_campaign_targets")
@@ -876,19 +926,55 @@ export async function processWhatsAppCommunityCampaigns(input: { limit?: number;
       let errorMessage = "";
 
       if (!input.dryRun) {
-        const delivery = await sendWhatsAppDestinationText({
-          agentKey,
-          destinationJid,
-          text: bodyText,
-          trackId,
-          sendOptions: {
-            delayMs: 1500,
-            readChat: true,
-          },
-        });
-        deliveryPayload = delivery as unknown as Record<string, unknown>;
-        deliveryStatus = delivery.ok ? "sent" : "failed";
-        errorMessage = delivery.errorMessage || "";
+        if (mediaUrl) {
+          const mediaDelivery = await sendWhatsAppDestinationMedia({
+            agentKey,
+            destinationJid,
+            fileUrl: mediaUrl,
+            mediaType,
+            text: bodyText,
+            trackId: `${trackId}-media`,
+            sendOptions: {
+              delayMs: 1500,
+              readChat: true,
+            },
+          });
+          const buttonDelivery = actionButton
+            ? await sendWhatsAppDestinationText({
+                agentKey,
+                destinationJid,
+                text: buttonText,
+                trackId: `${trackId}-button`,
+                actionButton,
+                sendOptions: {
+                  delayMs: 1200,
+                  readChat: true,
+                },
+              })
+            : null;
+
+          deliveryPayload = {
+            media: mediaDelivery,
+            button: buttonDelivery,
+          } as unknown as Record<string, unknown>;
+          deliveryStatus = mediaDelivery.ok && (!buttonDelivery || buttonDelivery.ok) ? "sent" : "failed";
+          errorMessage = [mediaDelivery.errorMessage, buttonDelivery?.errorMessage].filter(Boolean).join(" | ");
+        } else {
+          const delivery = await sendWhatsAppDestinationText({
+            agentKey,
+            destinationJid,
+            text: bodyText,
+            trackId,
+            actionButton,
+            sendOptions: {
+              delayMs: 1500,
+              readChat: true,
+            },
+          });
+          deliveryPayload = delivery as unknown as Record<string, unknown>;
+          deliveryStatus = delivery.ok ? "sent" : "failed";
+          errorMessage = delivery.errorMessage || "";
+        }
       }
 
       const deliveryResult = await supabase

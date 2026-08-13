@@ -109,11 +109,10 @@ function OpportunityCard({ opp }: { opp: PublicOpportunity }) {
         <span className="text-[10px] font-medium text-[var(--muted)]">
           {opp.sourceName} · {opp.code}
         </span>
-        {!isTeaser && opp.riskScore !== null && (
-          <span className="text-[10px] text-[var(--muted)]">
-            Risco: <span className={cn("font-semibold", opp.riskScore > 60 ? "text-[#ef4444]" : "text-[#22c55e]")}>{opp.riskScore}</span>
-          </span>
-        )}
+        <Link href={`/oportunidades/${opp.code || opp.id}`} className="inline-flex items-center gap-1 text-[10px] font-semibold text-[var(--gold)] transition hover:text-white">
+          Ver ficha
+          <ArrowRight size={12} />
+        </Link>
       </div>
     </article>
   );

@@ -305,7 +305,7 @@ function normalizePublicOpportunity(
 
   return {
     id: String(row.id || ""),
-    code: String(row.opportunity_code || ""),
+    code: String(row.code || row.opportunity_code || ""),
     title: String(row.title || "Oportunidade de leilao"),
     propertyType: String(row.property_type || "Imovel"),
     city: String(row.city || ""),
