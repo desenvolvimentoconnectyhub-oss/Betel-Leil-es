@@ -220,6 +220,7 @@ export default async function PublicOpportunityDetailPage({
   const analysis = analysisResult.data;
   const images = publicImages(opportunity);
   const imageUrl = primaryImage(images);
+  const thumbnailImages = images.slice(1, 11);
   const metrics = metricItems(opportunity, analysis);
   const facts = factItems(opportunity, analysis);
   const highlights = buildLeadHighlights(opportunity, analysis);
@@ -251,7 +252,7 @@ export default async function PublicOpportunityDetailPage({
 
             {images.length > 1 ? (
               <div className="grid grid-cols-4 gap-2 sm:grid-cols-5">
-                {images.slice(1, 6).map((image, index) => (
+                {thumbnailImages.map((image, index) => (
                   <a
                     key={`${image.url}-${index}`}
                     href={image.url}
@@ -260,9 +261,9 @@ export default async function PublicOpportunityDetailPage({
                     className="group relative overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--panel)]"
                   >
                     <img src={image.url} alt={image.alt || `${opportunity.title} foto ${index + 2}`} className="aspect-[4/3] w-full object-cover transition duration-300 group-hover:scale-[1.03]" />
-                    {index === 4 && images.length > 6 ? (
+                    {index === thumbnailImages.length - 1 && images.length > thumbnailImages.length + 1 ? (
                       <span className="absolute inset-0 grid place-items-center bg-black/55 text-xs font-semibold text-white">
-                        +{images.length - 6} fotos
+                        +{images.length - thumbnailImages.length - 1} fotos
                       </span>
                     ) : null}
                   </a>
@@ -414,28 +415,6 @@ export default async function PublicOpportunityDetailPage({
           <section className="rounded-lg border border-[var(--line)] bg-white p-5 shadow-sm">
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--gold)]">Leitura Betel</p>
             <p className="mt-3 max-w-4xl text-sm leading-7 text-[#4d4034]">{publicNote}</p>
-          </section>
-        ) : null}
-
-        {images.length > 6 ? (
-          <section className="rounded-lg border border-[var(--line)] bg-white p-5 shadow-sm">
-            <div className="flex items-center justify-between gap-3">
-              <h2 className="text-lg font-bold text-[var(--foreground)]">Mais fotos do imovel</h2>
-              <span className="text-xs font-semibold text-[var(--muted)]">{images.length} foto(s)</span>
-            </div>
-            <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
-              {images.slice(6, 18).map((image, index) => (
-                <a
-                  key={`${image.url}-gallery-${index}`}
-                  href={image.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--panel-soft)]"
-                >
-                  <img src={image.url} alt={image.alt || `${opportunity.title} galeria ${index + 7}`} className="aspect-[4/3] w-full object-cover transition duration-300 hover:scale-[1.03]" />
-                </a>
-              ))}
-            </div>
           </section>
         ) : null}
       </div>
