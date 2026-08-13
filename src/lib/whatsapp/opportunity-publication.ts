@@ -8,7 +8,7 @@ import type { AuctionOpportunity, PropertyImageAsset } from "@/lib/admin/resourc
 import { WILLIAN_AGENT_KEY } from "@/lib/communication/connectyhub-client";
 import { listSystemWhatsAppSenderOptions } from "@/lib/communication/system-whatsapp-sender";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
-import { createWhatsAppCommunityCampaign, type WhatsAppCommunityDestination } from "./group-campaigns";
+import { createWhatsAppCommunityCampaign, processWhatsAppCommunityCampaigns, type WhatsAppCommunityDestination } from "./group-campaigns";
 
 type DbRow = Record<string, unknown>;
 const WHATSAPP_TEASER_MAX_LENGTH = 850;
@@ -54,6 +54,15 @@ export type OpportunityWhatsAppPost = {
   imageUrl: string;
 };
 
+type ImmediateWhatsAppProcessingResult = {
+  ok: boolean;
+  processed: number;
+  sent: number;
+  failed: number;
+  timestamp?: string;
+  error?: string;
+};
+
 function cleanString(value: unknown, fallback = "") {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
@@ -92,6 +101,31 @@ async function requestImmediateWhatsAppCampaignProcessing(campaignId: string) {
   } catch {
     return false;
   }
+}
+
+async function processOpportunityWhatsAppCampaignNow(campaignId: string): Promise<ImmediateWhatsAppProcessingResult> {
+  const cleanId = cleanString(campaignId);
+  if (!cleanId) return { ok: false, processed: 0, sent: 0, failed: 1, error: "Campanha WhatsApp ausente." };
+
+  try {
+    return await processWhatsAppCommunityCampaigns({
+      campaignId: cleanId,
+      dryRun: false,
+      limit: 1,
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      processed: 0,
+      sent: 0,
+      failed: 1,
+      error: error instanceof Error ? error.message : "Nao foi possivel processar a campanha WhatsApp agora.",
+    };
+  }
+}
+
+function shouldProcessImmediately(mode: OpportunityWhatsAppPublicationMode) {
+  return mode !== "broadcast_list";
 }
 
 function formatCurrency(value: number) {
@@ -382,7 +416,16 @@ export async function scheduleOpportunityWhatsAppPublication(input: {
   broadcastTargets?: string[];
   approvedByAdminUserId?: string;
   approvedByName?: string;
-}): Promise<MutationResult<{ campaignId: string; targets: number; publicUrl: string; skipped?: boolean; immediateDispatchRequested?: boolean }>> {
+}): Promise<
+  MutationResult<{
+    campaignId: string;
+    targets: number;
+    publicUrl: string;
+    skipped?: boolean;
+    immediateDispatchRequested?: boolean;
+    immediateProcessing?: ImmediateWhatsAppProcessingResult;
+  }>
+> {
   const supabase = getSupabaseAdminClient();
   if (!supabase) return { ok: false, error: "Supabase admin nao configurado." };
 
@@ -474,6 +517,17 @@ export async function scheduleOpportunityWhatsAppPublication(input: {
 
     if (existing.data) {
       const campaignId = cleanString((existing.data as DbRow).id);
+      const immediateProcessing = shouldProcessImmediately(input.mode)
+        ? await processOpportunityWhatsAppCampaignNow(campaignId)
+        : undefined;
+      if (shouldProcessImmediately(input.mode) && immediateProcessing && immediateProcessing.failed > 0 && !immediateProcessing.sent) {
+        return {
+          ok: false,
+          error:
+            immediateProcessing.error ||
+            "A campanha existente foi localizada, mas a ConnectyHub nao confirmou o envio para o destino selecionado. Confira o agente e tente novamente.",
+        };
+      }
       return {
         ok: true,
         data: {
@@ -481,7 +535,8 @@ export async function scheduleOpportunityWhatsAppPublication(input: {
           targets: 0,
           publicUrl: post.publicUrl,
           skipped: true,
-          immediateDispatchRequested: await requestImmediateWhatsAppCampaignProcessing(campaignId),
+          immediateProcessing,
+          immediateDispatchRequested: immediateProcessing?.sent ? false : await requestImmediateWhatsAppCampaignProcessing(campaignId),
         },
       };
     }
@@ -521,7 +576,19 @@ export async function scheduleOpportunityWhatsAppPublication(input: {
   });
 
   const campaignId = cleanString(campaign.campaignId);
-  const immediateDispatchRequested = await requestImmediateWhatsAppCampaignProcessing(campaignId);
+  const immediateProcessing = shouldProcessImmediately(input.mode)
+    ? await processOpportunityWhatsAppCampaignNow(campaignId)
+    : undefined;
+  const immediateDispatchRequested = immediateProcessing?.sent ? false : await requestImmediateWhatsAppCampaignProcessing(campaignId);
+  if (shouldProcessImmediately(input.mode) && immediateProcessing && immediateProcessing.failed > 0 && !immediateProcessing.sent) {
+    return {
+      ok: false,
+      error:
+        immediateProcessing.error ||
+        "Campanha criada, mas a ConnectyHub nao confirmou o envio para o destino selecionado. Confira o agente e tente novamente.",
+    };
+  }
+
   const opportunityId = await rawOpportunityId(post.opportunityCode);
   if (opportunityId) {
     await supabase.from("audit_logs").insert({
@@ -538,6 +605,7 @@ export async function scheduleOpportunityWhatsAppPublication(input: {
         destinationJids: destinationJids.slice(0, 50),
         publicUrl: post.publicUrl,
         immediateDispatchRequested,
+        immediateProcessing,
       },
     });
   }
@@ -549,6 +617,7 @@ export async function scheduleOpportunityWhatsAppPublication(input: {
       targets: campaign.targets,
       publicUrl: post.publicUrl,
       immediateDispatchRequested,
+      immediateProcessing,
     },
   };
 }

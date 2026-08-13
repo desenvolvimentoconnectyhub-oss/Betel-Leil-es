@@ -813,6 +813,8 @@ function campaignButtonText(campaignRow: Record<string, unknown>) {
   );
 }
 
+const CAMPAIGN_RUNNING_STALE_MS = 10 * 60 * 1000;
+
 export async function processWhatsAppCommunityCampaigns(input: { limit?: number; dryRun?: boolean; campaignId?: string } = {}) {
   const supabase = getSupabaseAdminClient();
   if (!supabase) return { ok: false, processed: 0, sent: 0, failed: 0, error: "Supabase service role nao configurado." };
@@ -845,8 +847,34 @@ export async function processWhatsAppCommunityCampaigns(input: { limit?: number;
     const dueTime = dueAt ? new Date(dueAt).getTime() : 0;
     if (!dueTime || dueTime > now.getTime()) continue;
 
-    processed += 1;
     const campaignMetadata = asRecord(campaignRow.metadata);
+    const campaignStatus = cleanString(campaignRow.status, "scheduled");
+    const updatedAt = cleanString(campaignRow.updated_at);
+    const updatedTime = updatedAt ? new Date(updatedAt).getTime() : 0;
+    const staleRunning = campaignStatus === "running" && (!updatedTime || now.getTime() - updatedTime > CAMPAIGN_RUNNING_STALE_MS);
+    if (campaignStatus === "running" && !staleRunning) continue;
+
+    let lockQuery = supabase
+      .from("whatsapp_group_campaigns")
+      .update({
+        status: "running",
+        metadata: {
+          ...campaignMetadata,
+          processingStartedAt: now.toISOString(),
+          processingTrigger: requestedCampaignId ? "requested" : "cron",
+        },
+      })
+      .eq("id", campaignId)
+      .eq("status", campaignStatus)
+      .select("id");
+    if (staleRunning) {
+      lockQuery = lockQuery.lte("updated_at", new Date(now.getTime() - CAMPAIGN_RUNNING_STALE_MS).toISOString());
+    }
+
+    const lockResult = await lockQuery.maybeSingle();
+    if (lockResult.error || !lockResult.data) continue;
+
+    processed += 1;
     const humanOpportunityPublication = cleanString(campaignMetadata.createdFrom) === "market_approval";
     const config = await getWhatsAppAgentConfig(agentKey).catch(() => null);
     if (!config) {
@@ -899,6 +927,14 @@ export async function processWhatsAppCommunityCampaigns(input: { limit?: number;
     const mediaType = cleanString(campaignRow.media_type, mediaUrl ? "image" : "");
     const actionButton = campaignActionButton(campaignRow);
     const buttonText = campaignButtonText(campaignRow);
+    const mediaSendOptions = humanOpportunityPublication
+      ? { readChat: true }
+      : { delayMs: 1500, readChat: true };
+    const buttonSendOptions = humanOpportunityPublication
+      ? { readChat: true }
+      : { delayMs: 1200, readChat: true };
+    let campaignSent = 0;
+    let campaignFailed = 0;
 
     const targetsResult = await supabase
       .from("whatsapp_group_campaign_targets")
@@ -932,9 +968,11 @@ export async function processWhatsAppCommunityCampaigns(input: { limit?: number;
           .from("whatsapp_group_campaign_targets")
           .update({
             status: "skipped",
-            last_error: disabledReason,
-          })
-          .eq("id", targetId);
+          last_error: disabledReason,
+        })
+        .eq("id", targetId);
+        campaignFailed += 1;
+        failed += 1;
         continue;
       }
       const trackId = `betel-group-campaign-${campaignId}-${targetId}-${Date.now()}`;
@@ -951,10 +989,7 @@ export async function processWhatsAppCommunityCampaigns(input: { limit?: number;
             mediaType,
             text: bodyText,
             trackId: `${trackId}-media`,
-            sendOptions: {
-              delayMs: 1500,
-              readChat: true,
-            },
+            sendOptions: mediaSendOptions,
           });
           const buttonDelivery = actionButton
             ? await sendWhatsAppDestinationText({
@@ -963,10 +998,7 @@ export async function processWhatsAppCommunityCampaigns(input: { limit?: number;
                 text: buttonText,
                 trackId: `${trackId}-button`,
                 actionButton,
-                sendOptions: {
-                  delayMs: 1200,
-                  readChat: true,
-                },
+                sendOptions: buttonSendOptions,
               })
             : null;
 
@@ -983,10 +1015,7 @@ export async function processWhatsAppCommunityCampaigns(input: { limit?: number;
             text: bodyText,
             trackId,
             actionButton,
-            sendOptions: {
-              delayMs: 1500,
-              readChat: true,
-            },
+            sendOptions: mediaSendOptions,
           });
           deliveryPayload = delivery as unknown as Record<string, unknown>;
           deliveryStatus = delivery.ok ? "sent" : "failed";
@@ -1019,17 +1048,46 @@ export async function processWhatsAppCommunityCampaigns(input: { limit?: number;
         })
         .eq("id", targetId);
 
-      if (deliveryStatus === "sent") sent += 1;
-      else failed += 1;
+      if (deliveryStatus === "sent") {
+        campaignSent += 1;
+        sent += 1;
+      } else {
+        campaignFailed += 1;
+        failed += 1;
+      }
     }
 
     const nextRunAt = nextRunAfter(campaignType, now);
+    const pendingTargetsResult = await supabase
+      .from("whatsapp_group_campaign_targets")
+      .select("id", { count: "exact", head: true })
+      .eq("campaign_id", campaignId)
+      .in("status", ["scheduled", "pending"]);
+    const hasPendingTargets = (pendingTargetsResult.count || 0) > 0;
+    const status = campaignFailed > 0
+      ? "failed"
+      : hasPendingTargets || nextRunAt
+        ? "scheduled"
+        : "completed";
+    const nextScheduledRun = hasPendingTargets
+      ? new Date(Date.now() + 60 * 1000).toISOString()
+      : nextRunAt || null;
+
     await supabase
       .from("whatsapp_group_campaigns")
       .update({
-        status: nextRunAt ? "scheduled" : "completed",
+        status,
         last_run_at: new Date().toISOString(),
-        next_run_at: nextRunAt || null,
+        next_run_at: nextScheduledRun,
+        metadata: {
+          ...campaignMetadata,
+          lastProcessingResult: {
+            sent: campaignSent,
+            failed: campaignFailed,
+            pending: pendingTargetsResult.count || 0,
+            processedAt: new Date().toISOString(),
+          },
+        },
       })
       .eq("id", campaignId);
   }

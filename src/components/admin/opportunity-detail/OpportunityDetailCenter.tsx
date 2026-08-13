@@ -1391,11 +1391,25 @@ function OpportunityActionNotice({
         : "A campanha foi criada. O envio imediato foi solicitado ao Inngest; se atrasar, o cron revisa a fila em ate 5 minutos.",
       tone: "green",
     },
+    "whatsapp-enviado": {
+      title: "Envio WhatsApp enviado",
+      detail: campaignId
+        ? `Campanha ${campaignId} processada agora e aceita pela ConnectyHub.`
+        : "A campanha foi processada agora e aceita pela ConnectyHub.",
+      tone: "green",
+    },
     "whatsapp-teste-agendado": {
       title: "Teste WhatsApp agendado",
       detail: campaignId
         ? `Campanha de teste ${campaignId} criada. O envio imediato foi solicitado ao Inngest; se atrasar, o cron revisa a fila em ate 5 minutos.`
         : "O teste foi criado. O envio imediato foi solicitado ao Inngest; se atrasar, o cron revisa a fila em ate 5 minutos.",
+      tone: "green",
+    },
+    "whatsapp-teste-enviado": {
+      title: "Teste WhatsApp enviado",
+      detail: campaignId
+        ? `Campanha de teste ${campaignId} processada agora e aceita pela ConnectyHub.`
+        : "O teste foi processado agora e aceito pela ConnectyHub.",
       tone: "green",
     },
     "whatsapp-ja-agendado": {

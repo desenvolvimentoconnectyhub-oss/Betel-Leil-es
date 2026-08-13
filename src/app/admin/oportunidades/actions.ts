@@ -95,6 +95,10 @@ function publicationModeFromSubmitStatus(value: string): OpportunityWhatsAppPubl
   return "";
 }
 
+function whatsappPublicationWasSentNow(result: Awaited<ReturnType<typeof scheduleOpportunityWhatsAppPublication>>) {
+  return Boolean(result.data?.immediateProcessing?.sent);
+}
+
 function parseBroadcastTargets(value: string) {
   return value
     .split(/[\n,;]+/)
@@ -474,7 +478,9 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
       );
     }
 
-    publicationStatusParam = "whatsapp-teste-agendado";
+    publicationStatusParam = whatsappPublicationWasSentNow(publicationResult)
+      ? "whatsapp-teste-enviado"
+      : "whatsapp-teste-agendado";
     publicationCampaignId = publicationResult.data.campaignId;
   }
 
@@ -507,9 +513,11 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
       );
     }
 
-    publicationStatusParam = publicationResult.data.skipped
-      ? "whatsapp-ja-agendado"
-      : "whatsapp-agendado";
+    publicationStatusParam = whatsappPublicationWasSentNow(publicationResult)
+      ? "whatsapp-enviado"
+      : publicationResult.data.skipped
+        ? "whatsapp-ja-agendado"
+        : "whatsapp-agendado";
     publicationCampaignId = publicationResult.data.campaignId;
   }
 
