@@ -122,14 +122,14 @@ function truncateSingleLine(value: string, maxLength: number) {
 
 function publicDecisionLabel(analysis: PropertyMarketAnalysis | null) {
   const labels: Record<PropertyMarketAnalysis["decision"], string> = {
-    excellent: "oportunidade forte",
-    good: "boa oportunidade",
-    caution: "exige cautela",
-    review: "em validacao",
-    reject: "requer analise cuidadosa",
+    excellent: "🟢 oportunidade forte",
+    good: "🟢 boa oportunidade",
+    caution: "🟡 exige cautela",
+    review: "🟡 em validacao",
+    reject: "🟡 requer analise cuidadosa",
   };
 
-  return analysis?.decision ? labels[analysis.decision] : "analise disponivel";
+  return analysis?.decision ? labels[analysis.decision] : "🔎 analise disponivel";
 }
 
 function analysisArea(analysis?: PropertyMarketAnalysis | null) {
@@ -159,7 +159,7 @@ function compactCaption(lines: string[]) {
 
   if (caption.length <= WHATSAPP_TEASER_MAX_LENGTH) return caption;
 
-  const suffix = "\n\nAnalise completa, fotos e pontos de atencao na ficha Betel.";
+  const suffix = "\n\n🔎 Analise completa, fotos e pontos de atencao na ficha Betel.";
   const available = Math.max(0, WHATSAPP_TEASER_MAX_LENGTH - suffix.length);
   return `${caption.slice(0, available).replace(/\s+\S*$/g, "").trim()}${suffix}`;
 }
@@ -194,20 +194,20 @@ export async function buildOpportunityWhatsAppPost(opportunityCode: string): Pro
   const publicSignal = publicDecisionLabel(analysis);
 
   const caption = compactCaption([
-    `*${truncateSingleLine(title, 110)}*`,
-    location,
-    line("Leilao", formatDate(opportunity.auctionDate)),
-    line("Area", area),
+    `🏠 *${truncateSingleLine(title, 110)}*`,
+    location ? `📍 ${location}` : "",
+    line("📅 Leilao", formatDate(opportunity.auctionDate)),
+    line("📐 Area", area),
     "",
-    line("Mercado ajustado", marketValue),
-    line("Lance", bid),
-    line("Desconto", discount),
-    ceilingTargets.length ? line("Teto Betel", ceilingTargets.join(" | ")) : "",
+    line("💰 Mercado ajustado", marketValue),
+    line("🏷️ Lance", bid),
+    line("📉 Desconto", discount),
+    ceilingTargets.length ? line("🎯 Teto Betel", ceilingTargets.join(" | ")) : "",
     rent ? "" : "",
-    line("Aluguel estimado", rent),
+    line("🔑 Aluguel estimado", rent),
     "",
     `Sinal Betel: ${publicSignal}.`,
-    "Analise completa, fotos e pontos de atencao na ficha Betel.",
+    "🔎 Analise completa, fotos e pontos de atencao na ficha Betel.",
   ]);
 
   return {
@@ -215,7 +215,7 @@ export async function buildOpportunityWhatsAppPost(opportunityCode: string): Pro
       opportunityCode: opportunity.id || code,
       title,
       caption,
-      buttonText: "Veja fotos, riscos e analise completa na ficha Betel.",
+      buttonText: "👇 Veja fotos, riscos e analise completa na ficha Betel.",
       buttonLabel: "Ver imovel",
       publicUrl,
       imageUrl: primaryImageUrl(opportunity.images),
