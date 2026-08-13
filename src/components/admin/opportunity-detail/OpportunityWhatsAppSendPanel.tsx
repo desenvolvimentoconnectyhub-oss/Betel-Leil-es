@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import {
   AlertCircle,
   CheckCircle2,
   Eye,
+  FileUp,
   ImageOff,
   ListChecks,
   Radio,
@@ -89,6 +90,28 @@ function submitLabelForMode(mode: SendMode) {
   return "Aprovar e enviar grupo";
 }
 
+function extractPhoneNumbersFromText(text: string) {
+  const candidates = text.match(/(?:\+?\d[\d\s().-]{8,}\d)/g) || [];
+  const seen = new Set<string>();
+
+  return candidates
+    .map((candidate) => {
+      const digits = candidate.replace(/\D/g, "").replace(/^00/, "");
+      return digits.length >= 10 && digits.length <= 15 ? digits : "";
+    })
+    .filter((digits) => {
+      if (!digits || seen.has(digits)) return false;
+      seen.add(digits);
+      return true;
+    });
+}
+
+function mergePhoneLists(currentValue: string, importedNumbers: string[]) {
+  const currentNumbers = extractPhoneNumbersFromText(currentValue);
+  const nextNumbers = new Set([...currentNumbers, ...importedNumbers]);
+  return Array.from(nextNumbers).join("\n");
+}
+
 export function OpportunityWhatsAppSendPanel({
   canSubmit,
   opportunityCode,
@@ -119,13 +142,15 @@ export function OpportunityWhatsAppSendPanel({
   const [mode, setMode] = useState<SendMode>(initialMode);
   const [groupId, setGroupId] = useState(groups[0]?.id || "");
   const [channelId, setChannelId] = useState(channels[0]?.id || "");
-  const [broadcastSourceId, setBroadcastSourceId] = useState(groups[0]?.id || "");
+  const [broadcastSourceId, setBroadcastSourceId] = useState("");
   const [testNumber, setTestNumber] = useState("");
   const [broadcastNumbers, setBroadcastNumbers] = useState("");
+  const [contactImportMessage, setContactImportMessage] = useState("");
+  const [contactImportOk, setContactImportOk] = useState(true);
 
   useEffect(() => {
     setGroupId((current) => (groups.some((group) => group.id === current) ? current : groups[0]?.id || ""));
-    setBroadcastSourceId((current) => (groups.some((group) => group.id === current) ? current : groups[0]?.id || ""));
+    setBroadcastSourceId((current) => (groups.some((group) => group.id === current) ? current : ""));
   }, [groups]);
 
   useEffect(() => {
@@ -140,7 +165,8 @@ export function OpportunityWhatsAppSendPanel({
         : mode === "broadcast"
           ? groups.find((destination) => destination.id === broadcastSourceId)
           : null;
-  const hasBroadcastTargets = Boolean(broadcastSourceId || broadcastNumbers.trim());
+  const broadcastNumberCount = useMemo(() => extractPhoneNumbersFromText(broadcastNumbers).length, [broadcastNumbers]);
+  const hasBroadcastTargets = Boolean(broadcastSourceId || broadcastNumberCount);
   const modeReady =
     mode === "test"
       ? Boolean(testNumber.trim())
@@ -150,6 +176,32 @@ export function OpportunityWhatsAppSendPanel({
           ? Boolean(channelId)
           : hasBroadcastTargets;
   const submitDisabled = !canSubmit || !agents.length || !modeReady;
+
+  async function handleContactFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const importedNumbers = extractPhoneNumbersFromText(text);
+
+      if (!importedNumbers.length) {
+        setContactImportOk(false);
+        setContactImportMessage(`Nenhum telefone valido encontrado em ${file.name}.`);
+        return;
+      }
+
+      setBroadcastNumbers((current) => mergePhoneLists(current, importedNumbers));
+      setContactImportOk(true);
+      setContactImportMessage(`${importedNumbers.length} telefone(s) importado(s) de ${file.name}.`);
+    } catch {
+      setContactImportOk(false);
+      setContactImportMessage("Nao foi possivel ler o arquivo de contatos.");
+    } finally {
+      input.value = "";
+    }
+  }
 
   return (
     <section className="w-full rounded-lg border border-[var(--admin-border)] bg-white p-3 text-left">
@@ -210,7 +262,7 @@ export function OpportunityWhatsAppSendPanel({
           <div className="mt-1 grid gap-2 sm:grid-cols-2">
             {(["group", "channel", "broadcast", "test"] as SendMode[]).map((item) => {
               const Icon = modeCopy[item].icon;
-              const disabled = (item === "group" || item === "broadcast") && !groups.length ? true : item === "channel" && !channels.length;
+              const disabled = item === "group" && !groups.length ? true : item === "channel" && !channels.length;
               const selected = mode === item;
               return (
                 <button
@@ -283,14 +335,14 @@ export function OpportunityWhatsAppSendPanel({
         {mode === "broadcast" ? (
           <div className="grid gap-2">
             <label className="grid gap-1">
-              <span className={labelClass}>Grupo origem da lista</span>
+              <span className={labelClass}>Base sincronizada opcional</span>
               <select
                 className={selectClass}
                 name="whatsappBroadcastSourceGroupId"
                 value={broadcastSourceId}
                 onChange={(event) => setBroadcastSourceId(event.target.value)}
               >
-                <option value="">Usar apenas numeros digitados</option>
+                <option value="">Somente arquivo ou numeros abaixo</option>
                 {groups.map((destination) => (
                   <option key={destination.id} value={destination.id}>
                     {destinationLabel(destination)}
@@ -298,8 +350,35 @@ export function OpportunityWhatsAppSendPanel({
                 ))}
               </select>
             </label>
+
+            <div className="grid gap-2 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card-2)] p-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-[var(--admin-foreground)]">Arquivo de contatos</p>
+                  <p className="mt-0.5 text-xs leading-5 text-[var(--admin-muted)]">
+                    {broadcastNumberCount ? `${broadcastNumberCount} telefone(s) na lista.` : "CSV, TXT ou VCF."}
+                  </p>
+                </div>
+                <label className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg border border-[var(--admin-border)] bg-white px-3 text-sm font-medium text-[var(--admin-foreground)] transition hover:bg-[var(--admin-card)]">
+                  <FileUp size={14} />
+                  Importar lista
+                  <input
+                    accept=".csv,.txt,.vcf,text/csv,text/plain,text/vcard,text/x-vcard"
+                    className="sr-only"
+                    type="file"
+                    onChange={handleContactFileChange}
+                  />
+                </label>
+              </div>
+              {contactImportMessage ? (
+                <p className={cn("text-xs leading-5", contactImportOk ? "text-[var(--admin-green)]" : "text-[var(--admin-red)]")}>
+                  {contactImportMessage}
+                </p>
+              ) : null}
+            </div>
+
             <label className="grid gap-1">
-              <span className={labelClass}>Numeros extras da lista</span>
+              <span className={labelClass}>Lista importada ou numeros extras</span>
               <Textarea
                 className="min-h-16 border-[var(--admin-border)] bg-white text-xs text-[var(--admin-foreground)] placeholder:text-[var(--admin-muted)]"
                 name="whatsappBroadcastNumbers"
