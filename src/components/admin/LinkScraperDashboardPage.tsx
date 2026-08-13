@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, ty
 import {
   AlertTriangle,
   CheckCircle2,
+  Download,
   FileSpreadsheet,
   Loader2,
   Play,
@@ -531,6 +532,9 @@ function BatchArticle({
   startBatch: (batch: LinkScraperBatch) => void;
   retryRow: (rowId: string) => void;
 }) {
+  const canExport = batch.rows.some((row) => row.opportunityId) || batch.status === "concluido" || batch.status === "falha";
+  const exportHref = `/api/admin/scraper/export?batchId=${encodeURIComponent(batch.id)}&format=csv`;
+
   return (
     <article className="rounded-lg border border-[var(--admin-border)] p-4">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -551,15 +555,31 @@ function BatchArticle({
                       {batch.notificationStatus ? ` | ${workflowNotificationLabel(batch.notificationStatus)}` : ""}
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    disabled={!batchReadyToStart(batch) || busy === "start_batch"}
-                    onClick={() => startBatch(batch)}
-                    className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-emerald-300 px-3 text-sm font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {busy === "start_batch" ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
-                    Iniciar processo
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    <a
+                      href={canExport ? exportHref : undefined}
+                      aria-disabled={!canExport}
+                      onClick={(event) => {
+                        if (!canExport) event.preventDefault();
+                      }}
+                      className={cn(
+                        "inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-[var(--admin-border)] px-3 text-sm font-semibold text-white transition hover:border-[var(--admin-cyan)]",
+                        !canExport && "pointer-events-none cursor-not-allowed opacity-50"
+                      )}
+                    >
+                      <Download size={16} />
+                      Exportar CSV
+                    </a>
+                    <button
+                      type="button"
+                      disabled={!batchReadyToStart(batch) || busy === "start_batch"}
+                      onClick={() => startBatch(batch)}
+                      className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-emerald-300 px-3 text-sm font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {busy === "start_batch" ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
+                      Iniciar processo
+                    </button>
+                  </div>
                 </div>
                 {batchHasActiveWork(batch) ? <BatchProcessingActivity batch={batch} /> : null}
                 {!batchHasActiveWork(batch) && findQualityGateBlockedRow(batch) ? <BatchPausedActivity batch={batch} /> : null}
