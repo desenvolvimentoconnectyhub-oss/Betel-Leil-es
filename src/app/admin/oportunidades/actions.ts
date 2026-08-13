@@ -433,7 +433,6 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
       broadcastTargets: parseBroadcastTargets(field(formData, "whatsappTestNumber")),
       approvedByAdminUserId: admin.id,
       approvedByName: admin.name,
-      sendImmediately: true,
     });
 
     if (!publicationResult.ok || !publicationResult.data) {
@@ -443,7 +442,7 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
       );
     }
 
-    publicationStatusParam = "whatsapp-teste-enviado";
+    publicationStatusParam = "whatsapp-teste-agendado";
     publicationCampaignId = publicationResult.data.campaignId;
   }
 
@@ -546,7 +545,7 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
 
   const params = new URLSearchParams({
     market: sendTestOnly
-      ? publicationStatusParam || "whatsapp-teste-enviado"
+      ? publicationStatusParam || "whatsapp-teste-agendado"
       : shouldAdvanceWorkflow
         ? publicationStatusParam || workflowApprovalParam(approvalStageKey)
         : "salva",

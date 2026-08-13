@@ -7,11 +7,7 @@ import type { AuctionOpportunity, PropertyImageAsset } from "@/lib/admin/resourc
 import { WILLIAN_AGENT_KEY } from "@/lib/communication/connectyhub-client";
 import { listSystemWhatsAppSenderOptions } from "@/lib/communication/system-whatsapp-sender";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
-import {
-  createWhatsAppCommunityCampaign,
-  processWhatsAppCommunityCampaigns,
-  type WhatsAppCommunityDestination,
-} from "./group-campaigns";
+import { createWhatsAppCommunityCampaign, type WhatsAppCommunityDestination } from "./group-campaigns";
 
 type DbRow = Record<string, unknown>;
 
@@ -363,8 +359,7 @@ export async function scheduleOpportunityWhatsAppPublication(input: {
   broadcastTargets?: string[];
   approvedByAdminUserId?: string;
   approvedByName?: string;
-  sendImmediately?: boolean;
-}): Promise<MutationResult<{ campaignId: string; targets: number; publicUrl: string; skipped?: boolean; sent?: number; failed?: number }>> {
+}): Promise<MutationResult<{ campaignId: string; targets: number; publicUrl: string; skipped?: boolean }>> {
   const supabase = getSupabaseAdminClient();
   if (!supabase) return { ok: false, error: "Supabase admin nao configurado." };
 
@@ -500,23 +495,6 @@ export async function scheduleOpportunityWhatsAppPublication(input: {
   });
 
   const campaignId = cleanString(campaign.campaignId);
-  const immediate = input.sendImmediately
-    ? await processWhatsAppCommunityCampaigns({
-        campaignId,
-        dryRun: false,
-        limit: 1,
-      })
-    : null;
-
-  if (input.sendImmediately && (!immediate?.ok || immediate.sent < 1)) {
-    return {
-      ok: false,
-      error:
-        immediate?.error ||
-        `Teste WhatsApp criado, mas a ConnectyHub nao confirmou envio. Enviados: ${immediate?.sent || 0}; falhas: ${immediate?.failed || 0}.`,
-    };
-  }
-
   const opportunityId = await rawOpportunityId(post.opportunityCode);
   if (opportunityId) {
     await supabase.from("audit_logs").insert({
@@ -542,8 +520,6 @@ export async function scheduleOpportunityWhatsAppPublication(input: {
       campaignId,
       targets: campaign.targets,
       publicUrl: post.publicUrl,
-      sent: immediate?.sent,
-      failed: immediate?.failed,
     },
   };
 }
