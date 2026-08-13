@@ -1,5 +1,6 @@
 import "server-only";
 
+import { inngest } from "@/inngest/client";
 import { getAuctionOpportunityByCode, getPropertyMarketAnalysisByOpportunityCode } from "@/lib/admin/repository";
 import type { DataResult, MutationResult } from "@/lib/admin/repository/shared";
 import type { PropertyMarketAnalysis } from "@/lib/admin/market-analysis";
@@ -76,6 +77,21 @@ function appUrl() {
 
 function publicOpportunityUrl(code: string) {
   return `${appUrl()}/oportunidades/${encodeURIComponent(code)}`;
+}
+
+async function requestImmediateWhatsAppCampaignProcessing(campaignId: string) {
+  const cleanId = cleanString(campaignId);
+  if (!cleanId) return false;
+
+  try {
+    await inngest.send({
+      name: "whatsapp-group/campaign.process",
+      data: { campaignId: cleanId },
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function formatCurrency(value: number) {
@@ -366,7 +382,7 @@ export async function scheduleOpportunityWhatsAppPublication(input: {
   broadcastTargets?: string[];
   approvedByAdminUserId?: string;
   approvedByName?: string;
-}): Promise<MutationResult<{ campaignId: string; targets: number; publicUrl: string; skipped?: boolean }>> {
+}): Promise<MutationResult<{ campaignId: string; targets: number; publicUrl: string; skipped?: boolean; immediateDispatchRequested?: boolean }>> {
   const supabase = getSupabaseAdminClient();
   if (!supabase) return { ok: false, error: "Supabase admin nao configurado." };
 
@@ -457,13 +473,15 @@ export async function scheduleOpportunityWhatsAppPublication(input: {
       .maybeSingle();
 
     if (existing.data) {
+      const campaignId = cleanString((existing.data as DbRow).id);
       return {
         ok: true,
         data: {
-          campaignId: cleanString((existing.data as DbRow).id),
+          campaignId,
           targets: 0,
           publicUrl: post.publicUrl,
           skipped: true,
+          immediateDispatchRequested: await requestImmediateWhatsAppCampaignProcessing(campaignId),
         },
       };
     }
@@ -503,6 +521,7 @@ export async function scheduleOpportunityWhatsAppPublication(input: {
   });
 
   const campaignId = cleanString(campaign.campaignId);
+  const immediateDispatchRequested = await requestImmediateWhatsAppCampaignProcessing(campaignId);
   const opportunityId = await rawOpportunityId(post.opportunityCode);
   if (opportunityId) {
     await supabase.from("audit_logs").insert({
@@ -518,6 +537,7 @@ export async function scheduleOpportunityWhatsAppPublication(input: {
         destinationIds,
         destinationJids: destinationJids.slice(0, 50),
         publicUrl: post.publicUrl,
+        immediateDispatchRequested,
       },
     });
   }
@@ -528,6 +548,7 @@ export async function scheduleOpportunityWhatsAppPublication(input: {
       campaignId,
       targets: campaign.targets,
       publicUrl: post.publicUrl,
+      immediateDispatchRequested,
     },
   };
 }

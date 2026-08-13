@@ -1386,12 +1386,16 @@ function OpportunityActionNotice({
     },
     "whatsapp-agendado": {
       title: "Envio WhatsApp agendado",
-      detail: campaignId ? `Campanha ${campaignId} criada para o Inngest processar.` : "A campanha foi criada para o Inngest processar.",
+      detail: campaignId
+        ? `Campanha ${campaignId} criada. O envio imediato foi solicitado ao Inngest; se atrasar, o cron revisa a fila em ate 5 minutos.`
+        : "A campanha foi criada. O envio imediato foi solicitado ao Inngest; se atrasar, o cron revisa a fila em ate 5 minutos.",
       tone: "green",
     },
     "whatsapp-teste-agendado": {
       title: "Teste WhatsApp agendado",
-      detail: campaignId ? `Campanha de teste ${campaignId} criada para o Inngest processar.` : "O teste foi criado para o Inngest processar.",
+      detail: campaignId
+        ? `Campanha de teste ${campaignId} criada. O envio imediato foi solicitado ao Inngest; se atrasar, o cron revisa a fila em ate 5 minutos.`
+        : "O teste foi criado. O envio imediato foi solicitado ao Inngest; se atrasar, o cron revisa a fila em ate 5 minutos.",
       tone: "green",
     },
     "whatsapp-ja-agendado": {
