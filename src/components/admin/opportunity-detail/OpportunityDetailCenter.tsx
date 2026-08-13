@@ -1700,6 +1700,103 @@ function OpportunityHeader({
   opportunity,
   analysis,
   qualificationDossier,
+}: {
+  opportunity: AuctionOpportunity;
+  analysis: PropertyMarketAnalysis | null;
+  qualificationDossier?: PropertyQualificationDossier | null;
+}) {
+  const evaluation = buildDetailOpportunityEvaluation(opportunity, analysis, qualificationDossier);
+  const updatedAt = analysis?.updatedAt || opportunity.timeline.at(-1)?.time;
+  const compactTitle = opportunity.title.length > 92 ? `${opportunity.title.slice(0, 92).trim()}...` : opportunity.title;
+
+  return (
+    <section className="rounded-xl border border-[var(--admin-border)] bg-[rgba(255,255,255,0.96)] p-3 shadow-sm shadow-[rgba(81,60,36,0.07)] backdrop-blur">
+      <div className="min-w-0">
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <Button
+            asChild
+            variant="outline"
+            className="h-8 border-[var(--admin-border)] bg-white text-[var(--admin-foreground)]"
+          >
+            <Link href="/admin/oportunidades">
+              <ArrowLeft size={14} />
+              Imoveis analisados
+            </Link>
+          </Button>
+          <StatusBadge tone={getStatusTone(opportunity.stage)}>{opportunity.stage}</StatusBadge>
+          <StatusBadge tone={analysis ? statusTone(analysis.status) : "yellow"}>
+            {analysis ? statusLabel(analysis.status) : "sem analise"}
+          </StatusBadge>
+          <StatusBadge tone={getStatusTone(opportunity.legalStatus)}>{opportunity.legalStatus}</StatusBadge>
+        </div>
+
+        <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--admin-cyan)]">
+              {opportunity.id} / Central da oportunidade
+            </p>
+            <h1 className="mt-1 max-w-5xl text-xl font-semibold tracking-tight text-[var(--admin-foreground)] lg:text-2xl">
+              {compactTitle}
+            </h1>
+            <p className="mt-2 flex flex-wrap items-center gap-1.5 text-sm text-[var(--admin-muted)]">
+              <MapPin size={14} />
+              <span>{[opportunity.city, opportunity.state].filter(Boolean).join("/")}</span>
+              <span className="text-[var(--admin-border)]">|</span>
+              <span>{opportunity.sourceName}</span>
+              <span className="text-[var(--admin-border)]">|</span>
+              <span>Responsavel: {opportunity.owner}</span>
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 sm:min-w-[520px] xl:grid-cols-4">
+            <EvaluationMiniCard
+              label="Potencial"
+              value={evaluation.financialPotential.label}
+              detail="financeiro"
+              tone={evaluation.financialPotential.tone}
+            />
+            <EvaluationMiniCard
+              label="Pesquisa"
+              value={evaluation.researchQuality.label}
+              detail="qualidade da base"
+              tone={evaluation.researchQuality.tone}
+            />
+            <EvaluationMiniCard
+              label="Nivel de risco"
+              value={evaluation.risk.label}
+              detail="operacional"
+              tone={evaluation.risk.tone}
+            />
+            <EvaluationMiniCard
+              label="Recomendacao"
+              value={evaluation.finalRecommendation.label}
+              detail="decisao atual"
+              tone={evaluation.finalRecommendation.tone}
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-3 grid gap-2 border-t border-[var(--admin-border)] pt-3 text-xs text-[var(--admin-muted)] lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+        <div className="grid gap-1">
+          <p className="text-sm font-semibold text-[var(--admin-foreground)]">{mainRecommendationTitle(evaluation)}</p>
+          <p className="max-w-5xl leading-5">
+            {evaluation.finalRecommendation.explanation} {recommendationComplement(evaluation)}
+          </p>
+          <p className="leading-5">
+            <span className="font-semibold text-[var(--admin-foreground)]">Proximo passo:</span> {executiveNextStepText(evaluation)}
+          </p>
+        </div>
+        <p>Atualizado: {formatDateTime(updatedAt)}</p>
+      </div>
+    </section>
+  );
+}
+
+function OpportunityActionsPanel({
+  opportunity,
+  analysis,
+  qualificationDossier,
   whatsappPublicationOptions,
 }: {
   opportunity: AuctionOpportunity;
@@ -1709,104 +1806,21 @@ function OpportunityHeader({
 }) {
   const evaluation = buildDetailOpportunityEvaluation(opportunity, analysis, qualificationDossier);
   const canSubmit = Boolean(analysis?.marketValueBase);
-  const updatedAt = analysis?.updatedAt || opportunity.timeline.at(-1)?.time;
-  const compactTitle = opportunity.title.length > 92 ? `${opportunity.title.slice(0, 92).trim()}...` : opportunity.title;
   const highlightedAction =
     analysis && evaluation.finalRecommendation.status === "recomendado_para_avancar" ? "approved" : "human_review";
   const whatsappPreview = buildWhatsAppPreview(opportunity, analysis);
 
   return (
-    <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_520px] xl:items-start">
-      <section className="rounded-xl border border-[var(--admin-border)] bg-[rgba(255,255,255,0.96)] p-3 shadow-sm shadow-[rgba(81,60,36,0.07)] backdrop-blur">
-        <div className="min-w-0">
-          <div className="mb-2 flex flex-wrap items-center gap-2">
-            <Button
-              asChild
-              variant="outline"
-              className="h-8 border-[var(--admin-border)] bg-white text-[var(--admin-foreground)]"
-            >
-              <Link href="/admin/oportunidades">
-                <ArrowLeft size={14} />
-                Imoveis analisados
-              </Link>
-            </Button>
-            <StatusBadge tone={getStatusTone(opportunity.stage)}>{opportunity.stage}</StatusBadge>
-            <StatusBadge tone={analysis ? statusTone(analysis.status) : "yellow"}>
-              {analysis ? statusLabel(analysis.status) : "sem analise"}
-            </StatusBadge>
-            <StatusBadge tone={getStatusTone(opportunity.legalStatus)}>{opportunity.legalStatus}</StatusBadge>
-          </div>
-
-          <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div className="min-w-0">
-              <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--admin-cyan)]">
-                {opportunity.id} / Central da oportunidade
-              </p>
-              <h1 className="mt-1 max-w-5xl text-xl font-semibold tracking-tight text-[var(--admin-foreground)] lg:text-2xl">
-                {compactTitle}
-              </h1>
-              <p className="mt-2 flex flex-wrap items-center gap-1.5 text-sm text-[var(--admin-muted)]">
-                <MapPin size={14} />
-                <span>{[opportunity.city, opportunity.state].filter(Boolean).join("/")}</span>
-                <span className="text-[var(--admin-border)]">|</span>
-                <span>{opportunity.sourceName}</span>
-                <span className="text-[var(--admin-border)]">|</span>
-                <span>Responsavel: {opportunity.owner}</span>
-              </p>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2 sm:min-w-[520px] xl:grid-cols-4">
-              <EvaluationMiniCard
-                label="Potencial"
-                value={evaluation.financialPotential.label}
-                detail="financeiro"
-                tone={evaluation.financialPotential.tone}
-              />
-              <EvaluationMiniCard
-                label="Pesquisa"
-                value={evaluation.researchQuality.label}
-                detail="qualidade da base"
-                tone={evaluation.researchQuality.tone}
-              />
-              <EvaluationMiniCard
-                label="Nivel de risco"
-                value={evaluation.risk.label}
-                detail="operacional"
-                tone={evaluation.risk.tone}
-              />
-              <EvaluationMiniCard
-                label="Recomendacao"
-                value={evaluation.finalRecommendation.label}
-                detail="decisao atual"
-                tone={evaluation.finalRecommendation.tone}
-              />
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-3 grid gap-2 border-t border-[var(--admin-border)] pt-3 text-xs text-[var(--admin-muted)] lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
-          <div className="grid gap-1">
-            <p className="text-sm font-semibold text-[var(--admin-foreground)]">{mainRecommendationTitle(evaluation)}</p>
-            <p className="max-w-5xl leading-5">
-              {evaluation.finalRecommendation.explanation} {recommendationComplement(evaluation)}
-            </p>
-            <p className="leading-5">
-              <span className="font-semibold text-[var(--admin-foreground)]">Proximo passo:</span> {executiveNextStepText(evaluation)}
-            </p>
-          </div>
-          <p>Atualizado: {formatDateTime(updatedAt)}</p>
-        </div>
-      </section>
-
-      <aside className="flex flex-wrap gap-2 xl:max-w-[520px] xl:justify-end">
-        {analysis ? (
-          <OpportunityWhatsAppSendPanel
-            canSubmit={canSubmit}
-            opportunityCode={analysis.opportunityCode || opportunity.id}
-            options={whatsappPublicationOptions}
-            preview={whatsappPreview}
-          />
-        ) : null}
+    <aside className="grid content-start gap-2 xl:sticky xl:top-20">
+      {analysis ? (
+        <OpportunityWhatsAppSendPanel
+          canSubmit={canSubmit}
+          opportunityCode={analysis.opportunityCode || opportunity.id}
+          options={whatsappPublicationOptions}
+          preview={whatsappPreview}
+        />
+      ) : null}
+      <div className="flex flex-wrap justify-end gap-2">
         <Button
           asChild
           variant="outline"
@@ -1854,8 +1868,8 @@ function OpportunityHeader({
             Criar dossie
           </Button>
         )}
-      </aside>
-    </div>
+      </div>
+    </aside>
   );
 }
 
@@ -4223,35 +4237,47 @@ export function OpportunityDetailCenter({
   const heroImage = selectedImageIndex >= 0 ? images[selectedImageIndex] : undefined;
   const body = (
     <div id="topo-oportunidade" className="mx-auto grid max-w-[1600px] gap-4 px-3 py-3 lg:px-5">
-      <div>
-        <OpportunityHeader
-          opportunity={opportunity}
-          analysis={analysis}
-          qualificationDossier={qualificationDossier}
-          whatsappPublicationOptions={whatsappPublicationOptions}
-        />
-        <OpportunityActionNotice
-          campaignId={publicationCampaign}
-          remoteGroups={remoteGroups}
-          status={marketStatus}
-          syncedGroups={syncedGroups}
-        />
-        <OpportunityTabs activeTab={tab} />
-      </div>
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
+        <main className="grid min-w-0 flex-1 gap-4">
+          <div>
+            <OpportunityHeader
+              opportunity={opportunity}
+              analysis={analysis}
+              qualificationDossier={qualificationDossier}
+            />
+            <OpportunityActionNotice
+              campaignId={publicationCampaign}
+              remoteGroups={remoteGroups}
+              status={marketStatus}
+              syncedGroups={syncedGroups}
+            />
+            <OpportunityTabs activeTab={tab} />
+          </div>
 
-      <TabContent
-        activeTab={tab}
-        opportunity={opportunity}
-        analysis={analysis}
-        qualificationDossier={qualificationDossier}
-        qualificationReason={qualificationReason}
-        reason={reason}
-        images={images}
-        heroImage={heroImage}
-        selectedImageIndex={selectedImageIndex >= 0 ? selectedImageIndex : undefined}
-        marketFilter={marketFilter}
-        marketSort={marketSort}
-      />
+          <TabContent
+            activeTab={tab}
+            opportunity={opportunity}
+            analysis={analysis}
+            qualificationDossier={qualificationDossier}
+            qualificationReason={qualificationReason}
+            reason={reason}
+            images={images}
+            heroImage={heroImage}
+            selectedImageIndex={selectedImageIndex >= 0 ? selectedImageIndex : undefined}
+            marketFilter={marketFilter}
+            marketSort={marketSort}
+          />
+        </main>
+
+        <div className="w-full shrink-0 xl:w-[520px]">
+          <OpportunityActionsPanel
+            opportunity={opportunity}
+            analysis={analysis}
+            qualificationDossier={qualificationDossier}
+            whatsappPublicationOptions={whatsappPublicationOptions}
+          />
+        </div>
+      </div>
     </div>
   );
 
