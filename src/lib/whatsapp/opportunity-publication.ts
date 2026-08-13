@@ -15,7 +15,8 @@ export type OpportunityWhatsAppPublicationMode =
   | "default_group"
   | "specific_group"
   | "channel"
-  | "broadcast_list";
+  | "broadcast_list"
+  | "test_number";
 
 export type OpportunityWhatsAppAgentOption = {
   agentKey: string;
@@ -399,9 +400,9 @@ export async function scheduleOpportunityWhatsAppPublication(input: {
     targetKey = destination.id;
   }
 
-  if (input.mode === "broadcast_list") {
+  if (input.mode === "broadcast_list" || input.mode === "test_number") {
     const sourceDestination = await loadDestinationById(cleanString(input.broadcastSourceDestinationId));
-    if (sourceDestination) {
+    if (input.mode === "broadcast_list" && sourceDestination) {
       if (sourceDestination.destinationType !== "group") return { ok: false, error: "A lista so pode ser montada a partir de um grupo." };
       if (sourceDestination.status !== "active") return { ok: false, error: "O grupo de origem da lista nao esta ativo." };
       if (agentKey && sourceDestination.agentKey !== agentKey) {
@@ -413,12 +414,20 @@ export async function scheduleOpportunityWhatsAppPublication(input: {
     }
 
     destinationJids.push(...(input.broadcastTargets || []).map(normalizeBroadcastTarget).filter(Boolean));
-    destinationJids = [...new Set(destinationJids)].slice(0, 500);
+    destinationJids = [...new Set(destinationJids)].slice(0, input.mode === "test_number" ? 1 : 500);
     destinationType = "contact_list";
 
     if (!destinationJids.length) {
-      return { ok: false, error: "Informe uma lista de contatos ou escolha um grupo sincronizado como origem." };
+      return {
+        ok: false,
+        error:
+          input.mode === "test_number"
+            ? "Informe um numero de teste para envio WhatsApp."
+            : "Informe uma lista de contatos ou escolha um grupo sincronizado como origem.",
+      };
     }
+
+    if (input.mode === "test_number") targetKey = destinationJids[0] || "test_number";
   }
 
   const publicationKey = [

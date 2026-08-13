@@ -90,6 +90,7 @@ function publicationModeFromSubmitStatus(value: string): OpportunityWhatsAppPubl
   if (value === "approve_send_specific_group") return "specific_group";
   if (value === "approve_send_channel") return "channel";
   if (value === "approve_send_broadcast") return "broadcast_list";
+  if (value === "approve_send_test_number") return "test_number";
   return "";
 }
 
@@ -448,7 +449,10 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
           agentKey: field(formData, "whatsappAgentKey"),
           destinationId,
           broadcastSourceDestinationId: field(formData, "whatsappBroadcastSourceGroupId"),
-          broadcastTargets: parseBroadcastTargets(field(formData, "whatsappBroadcastNumbers")),
+          broadcastTargets:
+            publicationMode === "test_number"
+              ? parseBroadcastTargets(field(formData, "whatsappTestNumber"))
+              : parseBroadcastTargets(field(formData, "whatsappBroadcastNumbers")),
           approvedByAdminUserId: admin.id,
           approvedByName: admin.name,
         });
@@ -460,7 +464,11 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
           );
         }
 
-        publicationStatusParam = publicationResult.data.skipped ? "whatsapp-ja-agendado" : "whatsapp-agendado";
+        publicationStatusParam = publicationResult.data.skipped
+          ? "whatsapp-ja-agendado"
+          : publicationMode === "test_number"
+            ? "whatsapp-teste-agendado"
+            : "whatsapp-agendado";
         publicationCampaignId = publicationResult.data.campaignId;
       }
     } else if (approvalStageKey === "legal_review") {

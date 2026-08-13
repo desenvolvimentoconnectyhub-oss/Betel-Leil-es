@@ -1402,6 +1402,16 @@ function WhatsAppPublicationControls({
           </select>
         </label>
 
+        <label className="grid gap-1">
+          <span className={labelClass}>Numero para teste</span>
+          <Input
+            className={inputClass}
+            inputMode="tel"
+            name="whatsappTestNumber"
+            placeholder="Ex: 5547999999999"
+          />
+        </label>
+
         <div className="grid gap-2 md:grid-cols-2">
           <DestinationSelect label="Grupo padrao" name="whatsappDefaultGroupId" destinations={groups} defaultValue={defaultGroupId} />
           <DestinationSelect label="Grupo especifico" name="whatsappSpecificGroupId" destinations={groups} />
@@ -1842,6 +1852,10 @@ function OpportunityHeader({
                   <HeaderActionButton disabled={!canSubmit || !hasWhatsappAgent} tone="green" value="approve_send_broadcast">
                     <ListChecks size={14} />
                     Aprovar e enviar lista
+                  </HeaderActionButton>
+                  <HeaderActionButton disabled={!canSubmit || !hasWhatsappAgent} tone="green" value="approve_send_test_number">
+                    <Send size={14} />
+                    Aprovar e enviar teste
                   </HeaderActionButton>
                   <HeaderActionButton disabled={!canSubmit} tone="red" value="rejected">
                     <XCircle size={14} />
