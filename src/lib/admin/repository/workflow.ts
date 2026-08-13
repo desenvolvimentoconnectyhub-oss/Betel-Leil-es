@@ -868,6 +868,7 @@ export async function advanceOpportunityAfterMarketApprovalRecord(input: {
   approvedByAdminUserId: string;
   approvedByName: string;
   notes?: string;
+  sendCommunicationNotification?: boolean;
 }): Promise<MutationResult<{ taskId: string; notification?: { sent: number; failed: number; skipped: number } }>> {
   const supabase = getSupabaseAdminClient();
   if (!supabase) return { ok: false, error: "Supabase admin nao configurado." };
@@ -943,6 +944,7 @@ export async function advanceOpportunityAfterMarketApprovalRecord(input: {
       approvedBy: input.approvedByName,
       notes: input.notes || "",
     },
+    sendNotification: input.sendCommunicationNotification !== false,
   });
 
   if (!taskResult.ok || !taskResult.data) {

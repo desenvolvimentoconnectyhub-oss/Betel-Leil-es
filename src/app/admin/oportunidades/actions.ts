@@ -532,6 +532,7 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
         approvedByAdminUserId: admin.id,
         approvedByName: admin.name,
         notes: workflowNotes,
+        sendCommunicationNotification: !publicationMode,
       });
 
       if (!workflowResult.ok) {
