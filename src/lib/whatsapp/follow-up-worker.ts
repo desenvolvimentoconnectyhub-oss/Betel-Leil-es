@@ -331,6 +331,13 @@ function skippedItem(followUp: DbRow, reason: string): WhatsAppFollowUpWorkerIte
   };
 }
 
+function followUpDisabledReason(config: Awaited<ReturnType<typeof getWhatsAppAgentConfig>>) {
+  if (!config.behavior.active) return "agent_inactive";
+  if (!config.behavior.aiWindowActive) return "ai_window_inactive";
+  if (!config.behavior.followUpEnabled) return "followups_disabled";
+  return "";
+}
+
 export async function processWhatsAppFollowUps(input: {
   dryRun?: boolean;
   limit?: number;
@@ -440,6 +447,14 @@ export async function processWhatsAppFollowUps(input: {
       continue;
     }
 
+    const config = await getWhatsAppAgentConfig(agentKey);
+    const disabledReason = followUpDisabledReason(config);
+    if (disabledReason) {
+      await supabase.from("whatsapp_follow_ups").update({ status: "skipped", error_message: disabledReason }).eq("id", followUpId);
+      skipped.push(skippedItem(followUp, disabledReason));
+      continue;
+    }
+
     const controlStatus = await getConnectyHubWhatsappAgentControlStatus({ agentKey });
     if (controlStatus === "paused") {
       await supabase.from("whatsapp_follow_ups").update({ status: "skipped", error_message: "agent_paused" }).eq("id", followUpId);
@@ -454,7 +469,6 @@ export async function processWhatsAppFollowUps(input: {
       continue;
     }
 
-    const config = await getWhatsAppAgentConfig(agentKey);
     const followUpWindow = describeFollowUpWindow({
       start: config.behavior.followUpWindowStart,
       end: config.behavior.followUpWindowEnd,

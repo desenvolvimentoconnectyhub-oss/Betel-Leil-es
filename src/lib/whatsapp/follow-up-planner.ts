@@ -83,6 +83,13 @@ function normalizeFollowUpReason(score: number) {
   return "lead_no_reply";
 }
 
+function followUpDisabledReason(config: Awaited<ReturnType<typeof getWhatsAppAgentConfig>>) {
+  if (!config.behavior.active) return "agent_inactive";
+  if (!config.behavior.aiWindowActive) return "ai_window_inactive";
+  if (!config.behavior.followUpEnabled) return "followups_disabled";
+  return "";
+}
+
 export async function planWhatsAppFollowUps(input: {
   dryRun?: boolean;
   limit?: number;
@@ -221,7 +228,7 @@ export async function planWhatsAppFollowUps(input: {
       configByAgent.set(agentKey, await getWhatsAppAgentConfig(agentKey));
     }
     const config = configByAgent.get(agentKey);
-    if (!config?.behavior.followUpEnabled) {
+    if (!config || followUpDisabledReason(config)) {
       skippedCount += 1;
       continue;
     }
