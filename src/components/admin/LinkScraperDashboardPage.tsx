@@ -207,6 +207,10 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
   const latestProcessingBatchRef = useRef<LinkScraperBatch | null>(null);
 
   const hasActiveBatch = useMemo(() => dashboard.batches.some(batchHasActiveWork), [dashboard.batches]);
+  const pendingBatches = useMemo(
+    () => dashboard.batches.filter((batch) => batch.status !== "concluido"),
+    [dashboard.batches]
+  );
 
   const refresh = useCallback(async () => {
     const res = await fetch("/api/admin/scraper", { cache: "no-store" });
@@ -743,14 +747,16 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
       </section>
 
       <section>
-        <DashboardCard title="Lotes importados" eyebrow="iniciar processo" action={<Play size={18} className="text-emerald-300" />}>
+        <DashboardCard title="Lotes pendentes" eyebrow="iniciar / corrigir" action={<Play size={18} className="text-emerald-300" />}>
           <div className="space-y-3">
-            {dashboard.batches.length === 0 && (
+            {pendingBatches.length === 0 && (
               <p className="rounded-lg border border-[var(--admin-border)] p-4 text-sm text-[var(--admin-muted)]">
-                Nenhum lote importado ainda.
+                {dashboard.batches.length
+                  ? "Todos os lotes importados ja foram analisados e movidos para Imoveis analisados."
+                  : "Nenhum lote importado ainda."}
               </p>
             )}
-            {dashboard.batches.map((batch) => (
+            {pendingBatches.map((batch) => (
               <BatchArticle
                 key={batch.id}
                 batch={batch}
