@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
 import {
   AlertCircle,
@@ -10,6 +11,7 @@ import {
   FileUp,
   ImageOff,
   ListChecks,
+  LoaderCircle,
   Radio,
   RefreshCcw,
   Send,
@@ -111,6 +113,13 @@ function submitLabelForMode(mode: SendMode) {
   return "Aprovar e enviar grupo";
 }
 
+function sendProcessingTitle(mode: SendMode) {
+  if (mode === "test") return "Enviando teste WhatsApp";
+  if (mode === "channel") return "Publicando no canal";
+  if (mode === "broadcast") return "Enviando para a lista";
+  return "Enviando para o grupo";
+}
+
 function extractPhoneNumbersFromText(text: string) {
   const candidates = text.match(/(?:\+?\d[\d\s().-]{8,}\d)/g) || [];
   const seen = new Set<string>();
@@ -147,6 +156,7 @@ export function OpportunityWhatsAppSendPanel({
   preview: WhatsAppPreview;
 }) {
   const router = useRouter();
+  const { pending } = useFormStatus();
   const agents = options?.agents || [];
   const defaultAgentKey = options?.defaultAgentKey || agents[0]?.agentKey || "";
   const [agentKey, setAgentKey] = useState(defaultAgentKey);
@@ -175,6 +185,8 @@ export function OpportunityWhatsAppSendPanel({
   const [autoSyncState, setAutoSyncState] = useState<AutoSyncState>("idle");
   const [autoSyncMessage, setAutoSyncMessage] = useState("");
   const [modeManuallySelected, setModeManuallySelected] = useState(false);
+  const [sendProcessingOpen, setSendProcessingOpen] = useState(false);
+  const sendPendingSeenRef = useRef(false);
   const currentMode = modeManuallySelected ? mode : initialMode;
   const currentGroupId = groups.some((group) => group.id === groupId) ? groupId : groups[0]?.id || "";
   const currentChannelId = channels.some((channel) => channel.id === channelId) ? channelId : channels[0]?.id || "";
@@ -253,6 +265,26 @@ export function OpportunityWhatsAppSendPanel({
           ? Boolean(currentChannelId)
           : hasBroadcastTargets;
   const submitDisabled = !canSubmit || !agents.length || !modeReady;
+  const destinationName = currentMode === "test" ? testNumber.trim() || "numero de teste" : selectedDestination?.name || "destino selecionado";
+  const sendButtonHint = `Destino: ${destinationName} | Fontes: ${linkFormatCopy[linkFormat].title}`;
+
+  useEffect(() => {
+    if (!sendProcessingOpen) {
+      sendPendingSeenRef.current = false;
+      return;
+    }
+    if (sendProcessingOpen && pending) {
+      sendPendingSeenRef.current = true;
+      return;
+    }
+    if (sendPendingSeenRef.current && !pending) {
+      const closeTimer = window.setTimeout(() => {
+        sendPendingSeenRef.current = false;
+        setSendProcessingOpen(false);
+      }, 0);
+      return () => window.clearTimeout(closeTimer);
+    }
+  }, [pending, sendProcessingOpen]);
 
   async function handleContactFileChange(event: ChangeEvent<HTMLInputElement>) {
     const input = event.currentTarget;
@@ -281,6 +313,48 @@ export function OpportunityWhatsAppSendPanel({
   }
 
   return (
+    <>
+    {sendProcessingOpen ? (
+      <div
+        aria-live="assertive"
+        aria-modal="true"
+        className="fixed inset-0 z-[80] grid place-items-center bg-black/25 px-4 backdrop-blur-[2px]"
+        role="alertdialog"
+      >
+        <div className="w-full max-w-md rounded-xl border border-[var(--admin-border)] bg-white p-5 text-left shadow-2xl">
+          <div className="flex items-start gap-3">
+            <div className="grid size-11 shrink-0 place-items-center rounded-lg bg-[rgba(200,90,31,0.1)] text-[var(--admin-cyan)]">
+              <LoaderCircle size={22} className="animate-spin" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-[var(--admin-foreground)]">{sendProcessingTitle(currentMode)}</p>
+              <p className="mt-1 text-xs leading-5 text-[var(--admin-muted)]">
+                O criativo esta sendo montado e enviado pela ConnectyHub. Aguarde a confirmacao antes de mexer nesta revisao.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-2 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card-2)] p-3 text-xs leading-5">
+            <div className="flex items-center justify-between gap-3">
+              <span className="font-medium text-[var(--admin-muted)]">Destino</span>
+              <span className="max-w-[220px] truncate font-semibold text-[var(--admin-foreground)]">{destinationName}</span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="font-medium text-[var(--admin-muted)]">Formato</span>
+              <span className="font-semibold text-[var(--admin-foreground)]">{linkFormatCopy[linkFormat].title}</span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="font-medium text-[var(--admin-muted)]">Status</span>
+              <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--admin-cyan)]">
+                <LoaderCircle size={13} className="animate-spin" />
+                processando
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    ) : null}
+
     <section className="w-full rounded-lg border border-[var(--admin-border)] bg-white p-3 text-left">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
@@ -549,16 +623,30 @@ export function OpportunityWhatsAppSendPanel({
         </div>
 
         <Button
-          className="h-10 w-full bg-[var(--admin-green)] text-white hover:bg-[#0f6338]"
-          disabled={submitDisabled}
+          className="h-auto min-h-14 w-full justify-start gap-3 whitespace-normal rounded-lg border border-[rgba(200,90,31,0.34)] bg-[var(--admin-cyan)] px-3 py-3 text-left text-white shadow-sm shadow-[rgba(200,90,31,0.18)] hover:brightness-95"
+          disabled={submitDisabled || pending}
           name="submitStatus"
           type="submit"
           value={submitValueForMode(currentMode)}
+          onClick={() => {
+            if (submitDisabled || pending) return;
+            sendPendingSeenRef.current = false;
+            setSendProcessingOpen(true);
+          }}
         >
-          <Send size={14} />
-          {submitLabelForMode(currentMode)}
+          <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-white/15">
+            {pending && sendProcessingOpen ? <LoaderCircle size={17} className="animate-spin" /> : <Send size={17} />}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-semibold leading-5">
+              {pending && sendProcessingOpen ? "Enviando WhatsApp..." : submitLabelForMode(currentMode)}
+            </span>
+            <span className="block truncate text-xs font-normal leading-5 text-white/80">{sendButtonHint}</span>
+          </span>
+          <CheckCircle2 size={18} className="hidden text-white/80 sm:block" />
         </Button>
       </div>
     </section>
+    </>
   );
 }
