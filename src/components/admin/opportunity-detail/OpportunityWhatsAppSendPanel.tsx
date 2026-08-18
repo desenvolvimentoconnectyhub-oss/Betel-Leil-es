@@ -6,6 +6,7 @@ import {
   AlertCircle,
   CheckCircle2,
   Eye,
+  ExternalLink,
   FileUp,
   ImageOff,
   ListChecks,
@@ -24,6 +25,7 @@ import { cn } from "@/lib/utils";
 
 type Destination = OpportunityWhatsAppPublicationOptions["destinations"][number];
 type SendMode = "test" | "group" | "channel" | "broadcast";
+type LinkFormat = "source_buttons" | "source_links" | "betel_button";
 
 type WhatsAppPreview = {
   title: string;
@@ -58,6 +60,24 @@ const modeCopy: Record<SendMode, { title: string; detail: string; icon: typeof S
     title: "Teste",
     detail: "Envia so para um numero.",
     icon: Smartphone,
+  },
+};
+
+const linkFormatCopy: Record<LinkFormat, { title: string; detail: string; icon: typeof Send }> = {
+  source_buttons: {
+    title: "3 botoes",
+    detail: "Envia as 3 referencias como botoes.",
+    icon: ExternalLink,
+  },
+  source_links: {
+    title: "3 links",
+    detail: "Inclui leilao e referencias no texto.",
+    icon: ListChecks,
+  },
+  betel_button: {
+    title: "Ficha Betel",
+    detail: "Mantem somente o botao da ficha interna.",
+    icon: Eye,
   },
 };
 
@@ -144,6 +164,7 @@ export function OpportunityWhatsAppSendPanel({
   const syncedCount = destinationsForAgent.length;
   const initialMode: SendMode = groups.length ? "group" : channels.length ? "channel" : "test";
   const [mode, setMode] = useState<SendMode>(initialMode);
+  const [linkFormat, setLinkFormat] = useState<LinkFormat>("source_buttons");
   const [groupId, setGroupId] = useState(groups[0]?.id || "");
   const [channelId, setChannelId] = useState(channels[0]?.id || "");
   const [broadcastSourceId, setBroadcastSourceId] = useState("");
@@ -154,6 +175,10 @@ export function OpportunityWhatsAppSendPanel({
   const [autoSyncState, setAutoSyncState] = useState<AutoSyncState>("idle");
   const [autoSyncMessage, setAutoSyncMessage] = useState("");
   const [modeManuallySelected, setModeManuallySelected] = useState(false);
+  const currentMode = modeManuallySelected ? mode : initialMode;
+  const currentGroupId = groups.some((group) => group.id === groupId) ? groupId : groups[0]?.id || "";
+  const currentChannelId = channels.some((channel) => channel.id === channelId) ? channelId : channels[0]?.id || "";
+  const currentBroadcastSourceId = groups.some((group) => group.id === broadcastSourceId) ? broadcastSourceId : "";
 
   useEffect(() => {
     if (!agentKey) return;
@@ -164,8 +189,11 @@ export function OpportunityWhatsAppSendPanel({
 
     let cancelled = false;
     window.sessionStorage.setItem(storageKey, String(Date.now()));
-    setAutoSyncState("syncing");
-    setAutoSyncMessage("Atualizando grupos automaticamente...");
+    const syncStateTimer = window.setTimeout(() => {
+      if (cancelled) return;
+      setAutoSyncState("syncing");
+      setAutoSyncMessage("Atualizando grupos automaticamente...");
+    }, 0);
 
     fetch("/api/admin/whatsapp/groups", {
       body: JSON.stringify({
@@ -202,40 +230,27 @@ export function OpportunityWhatsAppSendPanel({
 
     return () => {
       cancelled = true;
+      window.clearTimeout(syncStateTimer);
     };
   }, [agentKey, opportunityCode, router]);
 
-  useEffect(() => {
-    setGroupId((current) => (groups.some((group) => group.id === current) ? current : groups[0]?.id || ""));
-    setBroadcastSourceId((current) => (groups.some((group) => group.id === current) ? current : ""));
-  }, [groups]);
-
-  useEffect(() => {
-    setChannelId((current) => (channels.some((channel) => channel.id === current) ? current : channels[0]?.id || ""));
-  }, [channels]);
-
-  useEffect(() => {
-    if (modeManuallySelected) return;
-    setMode(groups.length ? "group" : channels.length ? "channel" : "test");
-  }, [channels.length, groups.length, modeManuallySelected]);
-
   const selectedDestination =
-    mode === "group"
-      ? groups.find((destination) => destination.id === groupId)
-      : mode === "channel"
-        ? channels.find((destination) => destination.id === channelId)
-        : mode === "broadcast"
-          ? groups.find((destination) => destination.id === broadcastSourceId)
+    currentMode === "group"
+      ? groups.find((destination) => destination.id === currentGroupId)
+      : currentMode === "channel"
+        ? channels.find((destination) => destination.id === currentChannelId)
+        : currentMode === "broadcast"
+          ? groups.find((destination) => destination.id === currentBroadcastSourceId)
           : null;
   const broadcastNumberCount = useMemo(() => extractPhoneNumbersFromText(broadcastNumbers).length, [broadcastNumbers]);
-  const hasBroadcastTargets = Boolean(broadcastSourceId || broadcastNumberCount);
+  const hasBroadcastTargets = Boolean(currentBroadcastSourceId || broadcastNumberCount);
   const modeReady =
-    mode === "test"
+    currentMode === "test"
       ? Boolean(testNumber.trim())
-      : mode === "group"
-        ? Boolean(groupId)
-        : mode === "channel"
-          ? Boolean(channelId)
+      : currentMode === "group"
+        ? Boolean(currentGroupId)
+        : currentMode === "channel"
+          ? Boolean(currentChannelId)
           : hasBroadcastTargets;
   const submitDisabled = !canSubmit || !agents.length || !modeReady;
 
@@ -292,6 +307,7 @@ export function OpportunityWhatsAppSendPanel({
       </div>
 
       <input name="opportunityCode" type="hidden" value={opportunityCode} />
+      <input name="whatsappLinkFormat" type="hidden" value={linkFormat} />
 
       <div className="mt-3 grid gap-3">
         <label className="grid gap-1">
@@ -341,7 +357,7 @@ export function OpportunityWhatsAppSendPanel({
             {(["group", "channel", "broadcast", "test"] as SendMode[]).map((item) => {
               const Icon = modeCopy[item].icon;
               const disabled = item === "group" && !groups.length ? true : item === "channel" && !channels.length;
-              const selected = mode === item;
+              const selected = currentMode === item;
               return (
                 <button
                   className={cn(
@@ -371,7 +387,37 @@ export function OpportunityWhatsAppSendPanel({
           </div>
         </div>
 
-        {mode === "test" ? (
+        <div>
+          <p className={labelClass}>Links do criativo</p>
+          <div className="mt-1 grid gap-2 sm:grid-cols-3">
+            {(["source_buttons", "source_links", "betel_button"] as LinkFormat[]).map((item) => {
+              const Icon = linkFormatCopy[item].icon;
+              const selected = linkFormat === item;
+              return (
+                <button
+                  className={cn(
+                    "min-h-16 rounded-lg border px-3 py-2 text-left transition",
+                    selected
+                      ? "border-[rgba(200,90,31,0.42)] bg-[rgba(200,90,31,0.08)]"
+                      : "border-[var(--admin-border)] bg-white hover:bg-[var(--admin-card-2)]"
+                  )}
+                  key={item}
+                  type="button"
+                  onClick={() => setLinkFormat(item)}
+                >
+                  <span className="flex items-center gap-2 text-sm font-semibold text-[var(--admin-foreground)]">
+                    <Icon size={15} className={selected ? "text-[var(--admin-cyan)]" : "text-[var(--admin-muted)]"} />
+                    {linkFormatCopy[item].title}
+                    {selected ? <CheckCircle2 size={14} className="ml-auto text-[var(--admin-green)]" /> : null}
+                  </span>
+                  <span className="mt-1 block text-xs leading-5 text-[var(--admin-muted)]">{linkFormatCopy[item].detail}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {currentMode === "test" ? (
           <label className="grid gap-1">
             <span className={labelClass}>Numero para teste</span>
             <Input
@@ -385,10 +431,10 @@ export function OpportunityWhatsAppSendPanel({
           </label>
         ) : null}
 
-        {mode === "group" ? (
+        {currentMode === "group" ? (
           <label className="grid gap-1">
             <span className={labelClass}>Grupo de destino</span>
-            <select className={selectClass} name="whatsappSpecificGroupId" value={groupId} onChange={(event) => setGroupId(event.target.value)}>
+            <select className={selectClass} name="whatsappSpecificGroupId" value={currentGroupId} onChange={(event) => setGroupId(event.target.value)}>
               {groups.length ? null : <option value="">Nenhum grupo sincronizado</option>}
               {groups.map((destination) => (
                 <option key={destination.id} value={destination.id}>
@@ -399,10 +445,10 @@ export function OpportunityWhatsAppSendPanel({
           </label>
         ) : null}
 
-        {mode === "channel" ? (
+        {currentMode === "channel" ? (
           <label className="grid gap-1">
             <span className={labelClass}>Canal WhatsApp</span>
-            <select className={selectClass} name="whatsappChannelId" value={channelId} onChange={(event) => setChannelId(event.target.value)}>
+            <select className={selectClass} name="whatsappChannelId" value={currentChannelId} onChange={(event) => setChannelId(event.target.value)}>
               {channels.length ? null : <option value="">Nenhum canal sincronizado</option>}
               {channels.map((destination) => (
                 <option key={destination.id} value={destination.id}>
@@ -413,14 +459,14 @@ export function OpportunityWhatsAppSendPanel({
           </label>
         ) : null}
 
-        {mode === "broadcast" ? (
+        {currentMode === "broadcast" ? (
           <div className="grid gap-2">
             <label className="grid gap-1">
               <span className={labelClass}>Base sincronizada opcional</span>
               <select
                 className={selectClass}
                 name="whatsappBroadcastSourceGroupId"
-                value={broadcastSourceId}
+                value={currentBroadcastSourceId}
                 onChange={(event) => setBroadcastSourceId(event.target.value)}
               >
                 <option value="">Somente arquivo ou numeros abaixo</option>
@@ -495,8 +541,9 @@ export function OpportunityWhatsAppSendPanel({
                 {preview.discount ? `Desconto: ${preview.discount}` : "Texto completo e botao aparecem no WhatsApp."}
               </p>
               <p className="mt-1 font-medium text-[var(--admin-foreground)]">
-                Destino: {mode === "test" ? testNumber || "numero de teste" : selectedDestination?.name || "selecione um destino"}
+                Destino: {currentMode === "test" ? testNumber || "numero de teste" : selectedDestination?.name || "selecione um destino"}
               </p>
+              <p className="text-[var(--admin-muted)]">Fontes: {linkFormatCopy[linkFormat].title}</p>
             </div>
           </div>
         </div>
@@ -506,10 +553,10 @@ export function OpportunityWhatsAppSendPanel({
           disabled={submitDisabled}
           name="submitStatus"
           type="submit"
-          value={submitValueForMode(mode)}
+          value={submitValueForMode(currentMode)}
         >
           <Send size={14} />
-          {submitLabelForMode(mode)}
+          {submitLabelForMode(currentMode)}
         </Button>
       </div>
     </section>

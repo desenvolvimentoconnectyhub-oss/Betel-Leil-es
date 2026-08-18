@@ -23,6 +23,7 @@ import type { MarketAnalysisDecision, MarketAnalysisStatus, MarketComparableQual
 import { backfillOpportunityImages } from "@/lib/scraper";
 import {
   scheduleOpportunityWhatsAppPublication,
+  type OpportunityWhatsAppLinkFormat,
   type OpportunityWhatsAppPublicationMode,
 } from "@/lib/whatsapp/opportunity-publication";
 import { syncWhatsAppCommunityDestinations } from "@/lib/whatsapp/group-campaigns";
@@ -93,6 +94,12 @@ function publicationModeFromSubmitStatus(value: string): OpportunityWhatsAppPubl
   if (value === "approve_send_broadcast") return "broadcast_list";
   if (value === "approve_send_test_number") return "test_number";
   return "";
+}
+
+function publicationLinkFormatFromForm(formData: FormData): OpportunityWhatsAppLinkFormat {
+  const value = field(formData, "whatsappLinkFormat", "source_buttons");
+  if (value === "source_links" || value === "betel_button") return value;
+  return "source_buttons";
 }
 
 function whatsappPublicationWasSentNow(result: Awaited<ReturnType<typeof scheduleOpportunityWhatsAppPublication>>) {
@@ -414,6 +421,7 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
   const previousMarketStatus = field(formData, "status");
   const submitStatus = field(formData, "submitStatus", previousMarketStatus);
   const publicationMode = publicationModeFromSubmitStatus(submitStatus);
+  const linkFormat = publicationLinkFormatFromForm(formData);
   const sendTestOnly = publicationMode === "test_number";
   const payload = parseMarketAnalysisForm(formData, detailPath);
   const approvalStatus = payload.status === "approved" || payload.status === "approved_with_notes";
@@ -483,6 +491,7 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
     const publicationResult = await scheduleOpportunityWhatsAppPublication({
       opportunityCode: currentCode,
       mode: "test_number",
+      linkFormat,
       agentKey: field(formData, "whatsappAgentKey"),
       broadcastTargets: parseBroadcastTargets(field(formData, "whatsappTestNumber")),
       approvedByAdminUserId: admin.id,
@@ -516,6 +525,7 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
     const publicationResult = await scheduleOpportunityWhatsAppPublication({
       opportunityCode: currentCode,
       mode: publicationMode,
+      linkFormat,
       agentKey: field(formData, "whatsappAgentKey"),
       destinationId,
       broadcastSourceDestinationId: field(formData, "whatsappBroadcastSourceGroupId"),

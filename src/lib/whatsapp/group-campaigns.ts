@@ -742,6 +742,13 @@ export async function createWhatsAppCommunityCampaign(input: {
                 label: cleanString(input.actionButton.label, "Ver oportunidade"),
                 url: cleanString(input.actionButton.url),
                 footerText: cleanString(input.actionButton.footerText, "Betel Leiloes"),
+                choices: (input.actionButton.choices || [])
+                  .map((choice) => ({
+                    label: cleanString(choice.label, "Abrir link"),
+                    url: cleanString(choice.url),
+                  }))
+                  .filter((choice) => choice.url)
+                  .slice(0, 3),
               },
             }
           : {}),
@@ -795,6 +802,26 @@ function nextRunAfter(campaignType: string, from: Date) {
 function campaignActionButton(campaignRow: Record<string, unknown>): WhatsAppActionButtonInput | undefined {
   const metadata = asRecord(campaignRow.metadata);
   const button = asRecord(metadata.actionButton);
+  const choices = (Array.isArray(button.choices) ? button.choices : [])
+    .map((choice) => {
+      const item = asRecord(choice);
+      return {
+        label: cleanString(item.label, "Abrir link"),
+        url: cleanString(item.url),
+      };
+    })
+    .filter((choice) => /^https?:\/\//i.test(choice.url))
+    .slice(0, 3);
+
+  if (choices.length) {
+    return {
+      label: choices[0]?.label || "Abrir link",
+      url: choices[0]?.url || "",
+      choices,
+      footerText: cleanString(button.footerText || metadata.buttonFooter, "Betel Leiloes"),
+    };
+  }
+
   const url = cleanString(button.url || metadata.publicUrl || metadata.buttonUrl);
   if (!/^https?:\/\//i.test(url)) return undefined;
 

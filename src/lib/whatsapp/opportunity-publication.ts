@@ -5,13 +5,14 @@ import { getAuctionOpportunityByCode, getPropertyMarketAnalysisByOpportunityCode
 import type { DataResult, MutationResult } from "@/lib/admin/repository/shared";
 import type { PropertyMarketAnalysis } from "@/lib/admin/market-analysis";
 import type { AuctionOpportunity, PropertyImageAsset } from "@/lib/admin/resources";
-import { WILLIAN_AGENT_KEY } from "@/lib/communication/connectyhub-client";
+import { WILLIAN_AGENT_KEY, type WhatsAppActionButtonInput } from "@/lib/communication/connectyhub-client";
 import { listSystemWhatsAppSenderOptions } from "@/lib/communication/system-whatsapp-sender";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createWhatsAppCommunityCampaign, processWhatsAppCommunityCampaigns, type WhatsAppCommunityDestination } from "./group-campaigns";
 
 type DbRow = Record<string, unknown>;
 const WHATSAPP_TEASER_MAX_LENGTH = 850;
+const WHATSAPP_TEASER_WITH_LINKS_MAX_LENGTH = 1800;
 
 export type OpportunityWhatsAppPublicationMode =
   | "default_group"
@@ -19,6 +20,13 @@ export type OpportunityWhatsAppPublicationMode =
   | "channel"
   | "broadcast_list"
   | "test_number";
+
+export type OpportunityWhatsAppLinkFormat = "source_buttons" | "source_links" | "betel_button";
+
+export type OpportunityWhatsAppSourceLink = {
+  label: string;
+  url: string;
+};
 
 export type OpportunityWhatsAppAgentOption = {
   agentKey: string;
@@ -52,6 +60,10 @@ export type OpportunityWhatsAppPost = {
   buttonLabel: string;
   publicUrl: string;
   imageUrl: string;
+  linkFormat: OpportunityWhatsAppLinkFormat;
+  auctionUrl: string;
+  sourceLinks: OpportunityWhatsAppSourceLink[];
+  actionButton?: WhatsAppActionButtonInput;
 };
 
 type ImmediateWhatsAppProcessingResult = {
@@ -65,6 +77,10 @@ type ImmediateWhatsAppProcessingResult = {
 
 function cleanString(value: unknown, fallback = "") {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function asRecord(value: unknown): DbRow {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as DbRow) : {};
 }
 
 function asNumber(value: unknown, fallback = 0) {
@@ -214,7 +230,163 @@ function compactCaption(lines: string[]) {
   return `${caption.slice(0, available).replace(/\s+\S*$/g, "").trim()}${suffix}`;
 }
 
-export async function buildOpportunityWhatsAppPost(opportunityCode: string): Promise<DataResult<OpportunityWhatsAppPost | null>> {
+function isHttpUrl(value: unknown) {
+  return /^https?:\/\//i.test(cleanString(value));
+}
+
+function normalizePublicationLinkFormat(value: unknown): OpportunityWhatsAppLinkFormat {
+  if (value === "source_links" || value === "betel_button") return value;
+  return "source_buttons";
+}
+
+function sourceLinkLabel(rawLabel: string, fallback: string) {
+  const normalized = rawLabel.toLowerCase();
+  if (normalized.includes("alug")) return "Ref aluguel";
+  if (normalized.includes("venda")) return "Ref venda";
+  if (normalized.includes("compar")) return "Comparavel";
+  if (normalized.includes("refer")) return fallback;
+  return fallback;
+}
+
+function appendUniqueSourceLink(
+  links: OpportunityWhatsAppSourceLink[],
+  seen: Set<string>,
+  label: string,
+  url: string
+) {
+  const cleanUrl = cleanString(url);
+  if (!isHttpUrl(cleanUrl) || seen.has(cleanUrl)) return;
+  seen.add(cleanUrl);
+  links.push({ label, url: cleanUrl });
+}
+
+function buildAuctionUrl(analysis: PropertyMarketAnalysis | null) {
+  const auctionSource = (analysis?.sourceLinks || []).find((source) => /leil|auction|fonte/i.test(source.label));
+  if (isHttpUrl(auctionSource?.url)) return cleanString(auctionSource?.url);
+
+  const rawPayload = asRecord(analysis?.rawPayload);
+  const candidate = asRecord(rawPayload.candidate);
+  const fallbackUrls = [
+    rawPayload.auctionUrl,
+    rawPayload.auction_url,
+    rawPayload.sourceUrl,
+    rawPayload.source_url,
+    candidate.sourceUrl,
+    candidate.source_url,
+    rawPayload.targetUrl,
+    rawPayload.target_url,
+  ];
+  const fallback = fallbackUrls.find(isHttpUrl);
+  return cleanString(fallback);
+}
+
+function buildPublicationReferenceLinks(analysis: PropertyMarketAnalysis | null, publicUrl: string, auctionUrl: string) {
+  const links: OpportunityWhatsAppSourceLink[] = [];
+  const seen = new Set<string>([publicUrl, auctionUrl].filter(Boolean));
+  const sourceLinks = (analysis?.sourceLinks || []).filter((source) => !/leil|auction|fonte/i.test(source.label));
+  const directReferenceSources = sourceLinks.filter((source) => !/^busca:/i.test(source.label) && !/alug|rent/i.test(source.label));
+  const searchSources = sourceLinks.filter((source) => /^busca:/i.test(source.label));
+
+  const comparableLinks = (analysis?.comparables || [])
+    .filter((comparable) => comparable.sourceUrl)
+    .sort((left, right) => right.similarityScore - left.similarityScore);
+
+  for (const source of directReferenceSources) {
+    appendUniqueSourceLink(
+      links,
+      seen,
+      sourceLinkLabel(source.label, "Ref venda"),
+      source.url
+    );
+    if (links.length >= 3) return links.slice(0, 3);
+  }
+
+  for (const comparable of comparableLinks) {
+    appendUniqueSourceLink(
+      links,
+      seen,
+      sourceLinkLabel(`${comparable.listingType} ${comparable.sourceLabel}`, `Referencia ${links.length + 1}`),
+      comparable.sourceUrl
+    );
+    if (links.length >= 3) return links.slice(0, 3);
+  }
+
+  appendUniqueSourceLink(links, seen, "Ref aluguel", analysis?.rentalEstimate.referenceUrl || "");
+
+  const prioritySources = sourceLinks.filter((source) => !/^busca:/i.test(source.label)).concat(searchSources);
+
+  for (const source of prioritySources) {
+    appendUniqueSourceLink(
+      links,
+      seen,
+      sourceLinkLabel(source.label, `Referencia ${links.length + 1}`),
+      source.url
+    );
+    if (links.length >= 3) return links.slice(0, 3);
+  }
+
+  return links.slice(0, 3);
+}
+
+function appendSourceLinksToCaption(caption: string, auctionUrl: string, links: OpportunityWhatsAppSourceLink[]) {
+  if (!auctionUrl && !links.length) return caption;
+
+  const suffixLines = [
+    ...(auctionUrl ? [`Link leilao: ${auctionUrl}`] : []),
+    ...(auctionUrl && links.length ? [""] : []),
+    ...(links.length ? ["Referencias:", ...links.map((link, index) => `${index + 1}. ${link.label}: ${link.url}`)] : []),
+  ];
+  const suffix = `\n\n${suffixLines.join("\n")}`;
+  const fullCaption = `${caption}${suffix}`;
+  if (fullCaption.length <= WHATSAPP_TEASER_WITH_LINKS_MAX_LENGTH) return fullCaption;
+
+  const available = Math.max(0, WHATSAPP_TEASER_WITH_LINKS_MAX_LENGTH - suffix.length);
+  const trimmedCaption = caption.slice(0, available).replace(/\s+\S*$/g, "").trim();
+  return `${trimmedCaption}${suffix}`;
+}
+
+function actionButtonForPost(input: {
+  linkFormat: OpportunityWhatsAppLinkFormat;
+  publicUrl: string;
+  sourceLinks: OpportunityWhatsAppSourceLink[];
+}) {
+  if (input.linkFormat === "source_buttons" && input.sourceLinks.length) {
+    return {
+      label: input.sourceLinks[0]?.label || "Abrir fonte",
+      url: input.sourceLinks[0]?.url || "",
+      footerText: "Betel Leiloes",
+      choices: input.sourceLinks.map((link) => ({
+        label: link.label,
+        url: link.url,
+      })),
+    } satisfies WhatsAppActionButtonInput;
+  }
+
+  if (input.linkFormat === "betel_button" || !input.sourceLinks.length) {
+    return {
+      label: "Ver imovel",
+      url: input.publicUrl,
+      footerText: "Betel Leiloes",
+    } satisfies WhatsAppActionButtonInput;
+  }
+
+  return undefined;
+}
+
+function buttonTextForPost(linkFormat: OpportunityWhatsAppLinkFormat, hasSourceLinks: boolean) {
+  if (linkFormat === "source_buttons" && hasSourceLinks) {
+    return "👇 Abra abaixo as referencias de venda e aluguel usadas na analise.";
+  }
+  if (linkFormat === "source_links" && hasSourceLinks) {
+    return "";
+  }
+  return "👇 Veja fotos, riscos e analise completa na ficha Betel.";
+}
+
+export async function buildOpportunityWhatsAppPost(
+  opportunityCode: string,
+  options: { linkFormat?: OpportunityWhatsAppLinkFormat } = {}
+): Promise<DataResult<OpportunityWhatsAppPost | null>> {
   const code = cleanString(opportunityCode);
   if (!code) return { data: null, source: "supabase", reason: "Oportunidade nao informada." };
 
@@ -242,8 +414,12 @@ export async function buildOpportunityWhatsAppPost(opportunityCode: string): Pro
     .filter(Boolean);
   const publicUrl = publicOpportunityUrl(opportunity.id || code);
   const publicSignal = publicDecisionLabel(analysis);
+  const linkFormat = normalizePublicationLinkFormat(options.linkFormat);
+  const auctionUrl = buildAuctionUrl(analysis);
+  const sourceLinks = buildPublicationReferenceLinks(analysis, publicUrl, auctionUrl);
+  const actionButton = actionButtonForPost({ linkFormat, publicUrl, sourceLinks });
 
-  const caption = compactCaption([
+  const baseCaption = compactCaption([
     `🏠 *${truncateSingleLine(title, 110)}*`,
     location ? `📍 ${location}` : "",
     line("📅 Leilao", formatDate(opportunity.auctionDate)),
@@ -259,16 +435,22 @@ export async function buildOpportunityWhatsAppPost(opportunityCode: string): Pro
     `Sinal Betel: ${publicSignal}.`,
     "🔎 Analise completa, fotos e pontos de atencao na ficha Betel.",
   ]);
+  const shouldAppendLinksToCaption = linkFormat === "source_links" || (linkFormat === "source_buttons" && Boolean(auctionUrl));
+  const caption = shouldAppendLinksToCaption ? appendSourceLinksToCaption(baseCaption, auctionUrl, linkFormat === "source_links" ? sourceLinks : []) : baseCaption;
 
   return {
     data: {
       opportunityCode: opportunity.id || code,
       title,
       caption,
-      buttonText: "👇 Veja fotos, riscos e analise completa na ficha Betel.",
-      buttonLabel: "Ver imovel",
+      buttonText: buttonTextForPost(linkFormat, sourceLinks.length > 0),
+      buttonLabel: actionButton?.label || "Ver imovel",
       publicUrl,
       imageUrl: primaryImageUrl(opportunity.images),
+      linkFormat,
+      auctionUrl,
+      sourceLinks,
+      actionButton,
     },
     source: opportunityResult.source === "supabase" || analysisResult.source === "supabase" ? "supabase" : "mock",
     reason: analysisResult.reason,
@@ -410,6 +592,7 @@ async function rawOpportunityId(code: string) {
 export async function scheduleOpportunityWhatsAppPublication(input: {
   opportunityCode: string;
   mode: OpportunityWhatsAppPublicationMode;
+  linkFormat?: OpportunityWhatsAppLinkFormat;
   agentKey?: string;
   destinationId?: string;
   broadcastSourceDestinationId?: string;
@@ -429,7 +612,8 @@ export async function scheduleOpportunityWhatsAppPublication(input: {
   const supabase = getSupabaseAdminClient();
   if (!supabase) return { ok: false, error: "Supabase admin nao configurado." };
 
-  const postResult = await buildOpportunityWhatsAppPost(input.opportunityCode);
+  const linkFormat = normalizePublicationLinkFormat(input.linkFormat);
+  const postResult = await buildOpportunityWhatsAppPost(input.opportunityCode, { linkFormat });
   const post = postResult.data;
   if (!post) return { ok: false, error: postResult.reason || "Nao foi possivel gerar a publicacao WhatsApp." };
 
@@ -500,6 +684,7 @@ export async function scheduleOpportunityWhatsAppPublication(input: {
     post.opportunityCode,
     agentKey,
     input.mode,
+    post.linkFormat,
     targetKey,
     ...destinationIds,
     ...destinationJids.slice(0, 20),
@@ -549,11 +734,7 @@ export async function scheduleOpportunityWhatsAppPublication(input: {
     bodyText: post.caption,
     mediaUrl: post.imageUrl,
     mediaType: post.imageUrl ? "image" : "",
-    actionButton: {
-      label: post.buttonLabel,
-      url: post.publicUrl,
-      footerText: "Betel Leiloes",
-    },
+    actionButton: post.actionButton,
     buttonText: post.buttonText,
     destinationIds,
     destinationJids,
@@ -570,6 +751,9 @@ export async function scheduleOpportunityWhatsAppPublication(input: {
       opportunityCode: post.opportunityCode,
       publicUrl: post.publicUrl,
       imageUrl: post.imageUrl,
+      linkFormat: post.linkFormat,
+      auctionUrl: post.auctionUrl,
+      sourceLinks: post.sourceLinks,
       approvedByAdminUserId: cleanString(input.approvedByAdminUserId),
       approvedByName: cleanString(input.approvedByName),
     },
@@ -604,6 +788,9 @@ export async function scheduleOpportunityWhatsAppPublication(input: {
         destinationIds,
         destinationJids: destinationJids.slice(0, 50),
         publicUrl: post.publicUrl,
+        linkFormat: post.linkFormat,
+        auctionUrl: post.auctionUrl,
+        sourceLinks: post.sourceLinks,
         immediateDispatchRequested,
         immediateProcessing,
       },

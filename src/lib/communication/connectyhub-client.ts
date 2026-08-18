@@ -46,10 +46,16 @@ type ConnectyHubRequestOptions = {
   timeoutMs?: number;
 };
 
-export type WhatsAppActionButtonInput = {
+export type WhatsAppActionButtonChoiceInput = {
   label: string;
   url: string;
+};
+
+export type WhatsAppActionButtonInput = {
+  label?: string;
+  url?: string;
   footerText?: string;
+  choices?: WhatsAppActionButtonChoiceInput[];
 };
 
 type ConnectyHubWhatsAppMessageResult = {
@@ -195,13 +201,33 @@ function findFirstHttpUrl(text: string) {
 }
 
 function normalizeActionButton(input: WhatsAppActionButtonInput | undefined, text: string) {
+  const explicitChoices = (input?.choices || [])
+    .map((choice) => ({
+      label: clampLabel(choice.label || "", "Abrir link"),
+      url: cleanString(choice.url),
+    }))
+    .filter((choice) => /^https?:\/\//i.test(choice.url))
+    .slice(0, 3);
+
+  if (explicitChoices.length) {
+    return {
+      choices: explicitChoices,
+      footerText: clampLabel(input?.footerText || "", "Betel Leiloes", 48),
+      explicit: true,
+    };
+  }
+
   const explicitUrl = cleanString(input?.url);
   const inferredUrl = explicitUrl || findFirstHttpUrl(text);
   if (!inferredUrl || !/^https?:\/\//i.test(inferredUrl)) return null;
 
   return {
-    label: clampLabel(input?.label || "", "Abrir link"),
-    url: inferredUrl,
+    choices: [
+      {
+        label: clampLabel(input?.label || "", "Abrir link"),
+        url: inferredUrl,
+      },
+    ],
     footerText: clampLabel(input?.footerText || "", "Betel Leiloes", 48),
     explicit: Boolean(explicitUrl),
   };
@@ -1001,7 +1027,8 @@ async function sendConnectyHubWhatsAppMessage(input: {
   const sendFields = optionalSendFields(input.sendOptions);
 
   if (button) {
-    const buttonText = button.explicit ? input.text.trim() : removeButtonUrlFromText(input.text, button.url);
+    const inferredUrl = button.choices[0]?.url || "";
+    const buttonText = button.explicit ? input.text.trim() : removeButtonUrlFromText(input.text, inferredUrl);
 
     const { payload, usedIdempotencyKey } = await connectyhubRequestWithIdempotencyFallback("/provider/send/menu", {
       body: {
@@ -1010,7 +1037,7 @@ async function sendConnectyHubWhatsAppMessage(input: {
           number: input.number,
           type: "button",
           text: buttonText || input.text.trim(),
-          choices: [`${button.label}|${button.url}`],
+          choices: button.choices.map((choice) => `${choice.label}|${choice.url}`),
           footerText: button.footerText,
           track_source: "betel_ai",
           track_id: input.trackId,
