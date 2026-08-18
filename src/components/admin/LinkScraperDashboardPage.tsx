@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -36,6 +37,17 @@ const textareaClass =
   "min-h-32 w-full resize-y rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-sm leading-5 text-white placeholder:text-[var(--admin-muted)] outline-none transition focus:border-[var(--admin-cyan)]";
 
 type ImportMode = "file" | "manual";
+type ProcessingModalTone = "working" | "success" | "error";
+type ProcessingModalState = {
+  batchId: string;
+  batchName: string;
+  title: string;
+  detail: string;
+  progress: number;
+  completedRows: number;
+  totalRows: number;
+  tone: ProcessingModalTone;
+};
 
 function statusTone(status: string) {
   if (["concluido", "pronto_para_revisao", "sent"].includes(status)) return "border-emerald-300 bg-emerald-50 text-emerald-900";
@@ -79,6 +91,10 @@ function batchHasActiveWork(batch: LinkScraperBatch) {
   return batch.status === "processando" && batch.rows.some((row) => activeRowStatuses.has(row.status));
 }
 
+function batchFinishedProcessing(batch: LinkScraperBatch) {
+  return ["concluido", "falha", "cancelado"].includes(batch.status) && !batchHasActiveWork(batch);
+}
+
 function findQualityGateBlockedRow(batch: LinkScraperBatch) {
   return batch.rows.find((row) =>
     row.status === "falha" && row.errorMessage.toLowerCase().includes("trava de qualidade")
@@ -100,6 +116,50 @@ function rowStageLabel(status: string) {
   if (status === "falha") return "Falha na coleta";
   if (status === "url_invalida") return "Link invalido";
   return status || "Em processamento";
+}
+
+function processingModalFromBatch(batch: LinkScraperBatch, tone: ProcessingModalTone = "working"): ProcessingModalState {
+  const rows = batch.rows;
+  const completedRows = rows.filter((row) => terminalRowStatuses.has(row.status)).length;
+  const totalRows = Math.max(batch.validRowCount || 0, rows.length, 1);
+  const activeRow =
+    rows.find((row) => row.status === "scraping") ||
+    rows.find((row) => activeRowStatuses.has(row.status)) ||
+    rows.find((row) => !terminalRowStatuses.has(row.status));
+  const baseProgress = Math.round((completedRows / totalRows) * 100);
+  const progress = tone === "success" ? 100 : Math.min(94, Math.max(activeRow ? 16 : 8, baseProgress));
+  const stage = activeRow ? rowStageLabel(activeRow.status) : "Conferindo fechamento do lote";
+  const currentLine = activeRow
+    ? `Linha ${activeRow.rowNumber}${activeRow.sourceDomain ? ` - ${activeRow.sourceDomain}` : ""}`
+    : `${completedRows} de ${totalRows} link(s) finalizados`;
+
+  return {
+    batchId: batch.id,
+    batchName: batch.originalFilename || batch.id,
+    title: tone === "success" ? "Analise finalizada" : "Processando analise de mercado",
+    detail:
+      tone === "success"
+        ? "Tudo certo. Abrindo Imoveis analisados para revisao humana."
+        : `${stage}: ${currentLine}`,
+    progress,
+    completedRows,
+    totalRows,
+    tone,
+  };
+}
+
+function processingModalError(batch: LinkScraperBatch, message: string): ProcessingModalState {
+  const state = processingModalFromBatch(batch, "error");
+  return {
+    ...state,
+    title: "Nao foi possivel concluir",
+    detail: message,
+    progress: Math.max(8, state.progress),
+  };
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function batchReadyToStart(batch: LinkScraperBatch) {
@@ -128,6 +188,7 @@ function formatResetSummary(summary?: MarketAnalysisResetSummary) {
 }
 
 export function LinkScraperDashboardPage({ module, data }: Props) {
+  const router = useRouter();
   const [dashboard, setDashboard] = useState(data.data);
   const [feedback, setFeedback] = useState<{ type: "ok" | "err" | "info"; message: string } | null>(
     data.reason ? { type: "info", message: data.reason } : null
@@ -139,15 +200,23 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
   const [manualLinks, setManualLinks] = useState("");
   const [analysisDepth, setAnalysisDepth] = useState<LinkAnalysisDepth>("deep");
   const [resetConfirmation, setResetConfirmation] = useState("");
+  const [processingModal, setProcessingModal] = useState<ProcessingModalState | null>(null);
   const importFormRef = useRef<HTMLFormElement | null>(null);
   const autoImportKeyRef = useRef("");
+  const redirectTimerRef = useRef<number | null>(null);
+  const latestProcessingBatchRef = useRef<LinkScraperBatch | null>(null);
 
   const hasActiveBatch = useMemo(() => dashboard.batches.some(batchHasActiveWork), [dashboard.batches]);
 
   const refresh = useCallback(async () => {
     const res = await fetch("/api/admin/scraper", { cache: "no-store" });
     const json = await res.json();
-    if (json.data) setDashboard(json.data as LinkScraperDashboardData);
+    if (json.data) {
+      const nextData = json.data as LinkScraperDashboardData;
+      setDashboard(nextData);
+      return nextData;
+    }
+    return null;
   }, []);
 
   useEffect(() => {
@@ -157,6 +226,12 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
     }, 6000);
     return () => window.clearInterval(intervalId);
   }, [hasActiveBatch, refresh]);
+
+  useEffect(() => {
+    return () => {
+      if (redirectTimerRef.current) window.clearTimeout(redirectTimerRef.current);
+    };
+  }, []);
 
   async function postJson(payload: Record<string, unknown>, success: string) {
     setBusy(String(payload.action || "acao"));
@@ -333,14 +408,56 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
   }
 
   async function startBatch(batch: LinkScraperBatch) {
-    await postJson(
-      {
-        action: "start_batch",
-        batchId: batch.id,
-        analysisDepth: batch.analysisDepth || analysisDepth,
-      },
-      "Processamento enfileirado. Ao terminar, o setor de Analise de mercado recebera o WhatsApp."
-    );
+    setBusy("start_batch");
+    setFeedback(null);
+    latestProcessingBatchRef.current = batch;
+    setProcessingModal(processingModalFromBatch(batch));
+
+    try {
+      const res = await fetch("/api/admin/scraper", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "start_batch",
+          batchId: batch.id,
+          analysisDepth: batch.analysisDepth || analysisDepth,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok || json.ok === false) throw new Error(json.error || "Falha ao iniciar o processamento.");
+
+      const completedBatch = await waitForBatchCompletion(batch);
+      setFeedback({ type: "ok", message: "Analise finalizada. Abrindo Imoveis analisados." });
+      setProcessingModal(processingModalFromBatch(completedBatch, "success"));
+      redirectTimerRef.current = window.setTimeout(() => {
+        router.push("/admin/oportunidades?pipeline=market_review");
+      }, 900);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Falha ao acompanhar o processamento.";
+      setFeedback({ type: "err", message });
+      setProcessingModal(processingModalError(latestProcessingBatchRef.current || batch, message));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function waitForBatchCompletion(initialBatch: LinkScraperBatch) {
+    const timeoutAt = Date.now() + 12 * 60 * 1000;
+    let currentBatch = initialBatch;
+
+    while (Date.now() < timeoutAt) {
+      const nextDashboard = await refresh();
+      const nextBatch = nextDashboard?.batches.find((item) => item.id === initialBatch.id);
+      if (nextBatch) currentBatch = nextBatch;
+      latestProcessingBatchRef.current = currentBatch;
+
+      if (batchFinishedProcessing(currentBatch)) return currentBatch;
+
+      setProcessingModal(processingModalFromBatch(currentBatch));
+      await wait(3500);
+    }
+
+    throw new Error("O processamento continua em segundo plano. Atualize a tela em alguns instantes.");
   }
 
   async function retryRow(rowId: string) {
@@ -374,6 +491,13 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
 
   return (
     <main className="space-y-6">
+      {processingModal ? (
+        <ProcessingStatusModal
+          state={processingModal}
+          onDismiss={processingModal.tone === "error" ? () => setProcessingModal(null) : undefined}
+        />
+      ) : null}
+
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
           <p className="font-mono text-xs uppercase tracking-[0.24em] text-[var(--admin-muted)]">{module.label}</p>
@@ -770,6 +894,95 @@ function BatchArticle({
                   </table>
                 </div>
               </article>
+  );
+}
+
+function ProcessingStatusModal({
+  state,
+  onDismiss,
+}: {
+  state: ProcessingModalState;
+  onDismiss?: () => void;
+}) {
+  const isError = state.tone === "error";
+  const isSuccess = state.tone === "success";
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/65 px-4 backdrop-blur-sm">
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="scraper-processing-title"
+        className="w-full max-w-lg overflow-hidden rounded-lg border border-[var(--admin-border)] bg-[var(--admin-panel)] shadow-2xl shadow-slate-950/30"
+      >
+        <div className="border-b border-[var(--admin-border)] px-5 py-4">
+          <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--admin-muted)]">
+            Analise de mercado
+          </p>
+          <div className="mt-2 flex items-start gap-3">
+            <span
+              className={cn(
+                "grid size-10 shrink-0 place-items-center rounded-lg",
+                isError && "bg-red-100 text-red-700",
+                isSuccess && "bg-emerald-100 text-emerald-700",
+                !isError && !isSuccess && "bg-cyan-100 text-cyan-700"
+              )}
+            >
+              {isError ? (
+                <AlertTriangle size={20} />
+              ) : isSuccess ? (
+                <CheckCircle2 size={20} />
+              ) : (
+                <Loader2 size={20} className="animate-spin" />
+              )}
+            </span>
+            <div className="min-w-0">
+              <h2 id="scraper-processing-title" className="text-lg font-semibold text-white">
+                {state.title}
+              </h2>
+              <p className="mt-1 truncate text-xs text-[var(--admin-muted)]">{state.batchName}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-4 px-5 py-5">
+          <p className="text-sm leading-6 text-[var(--admin-muted)]">{state.detail}</p>
+          <div>
+            <div className="h-2 overflow-hidden rounded-full bg-white/10">
+              <div
+                className={cn(
+                  "h-full rounded-full transition-all duration-700",
+                  isError && "bg-red-400",
+                  isSuccess && "bg-emerald-400",
+                  !isError && !isSuccess && "bg-[var(--admin-cyan)]"
+                )}
+                style={{ width: `${Math.min(100, Math.max(0, state.progress))}%` }}
+              />
+            </div>
+            <div className="mt-2 flex items-center justify-between text-xs text-[var(--admin-muted)]">
+              <span>
+                {state.completedRows} de {state.totalRows} link(s)
+              </span>
+              <span>{Math.min(100, Math.max(0, state.progress))}%</span>
+            </div>
+          </div>
+          {!isError ? (
+            <p className="rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs leading-5 text-cyan-900">
+              Aguarde. Quando finalizar, vamos abrir Imoveis analisados automaticamente.
+            </p>
+          ) : null}
+          {onDismiss ? (
+            <button
+              type="button"
+              onClick={onDismiss}
+              className="inline-flex h-9 items-center justify-center rounded-lg border border-[var(--admin-border)] px-3 text-sm font-semibold text-white hover:border-[var(--admin-cyan)]"
+            >
+              Fechar
+            </button>
+          ) : null}
+        </div>
+      </section>
+    </div>
   );
 }
 
