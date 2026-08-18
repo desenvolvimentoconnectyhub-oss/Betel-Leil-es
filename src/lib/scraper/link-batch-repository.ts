@@ -24,6 +24,7 @@ import { extractAuctionLinkWithGemini, type AuctionLinkExtraction } from "./auct
 import { runDeepMarketResearch, type DeepMarketComparable, type DeepMarketResearchResult } from "./deep-market-research";
 import { auctionApiFetchHeaders, auctionPageFetchHeaders } from "./http";
 import { persistPropertyQualificationDossier } from "./property-qualification-dossier";
+import { parseAuctionDate } from "./scraper-criteria";
 import { cleanHtmlForLlm } from "./scraper-llm";
 import { collectImageUrlsFromSourceUrl, looksLikeBotChallenge } from "./scraper-strategies";
 import type { DataResult, MutationResult } from "@/lib/admin/repository/shared";
@@ -1838,6 +1839,11 @@ function firstText(...values: string[]) {
   return values.find((value) => cleanString(value)) || "";
 }
 
+function isoDateFromText(value: string) {
+  const parsed = parseAuctionDate(value);
+  return parsed ? parsed.toISOString().slice(0, 10) : "";
+}
+
 function uniqueStrings(values: string[], limit = 60) {
   const seen = new Set<string>();
   return values
@@ -2616,6 +2622,7 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
       extraction.cautionNotes,
       ...qualityReview.cautionNotes,
     ], 30).join("\n");
+    const auctionDate = isoDateFromText(firstText(extraction.auctionDate, row.auctionDateHint));
     await supabase.from("market_analysis_import_rows").update({ status: "extracao_concluida" }).eq("id", row.id);
 
     const ingest = await ingestAuctionOpportunityRecord({
@@ -2642,7 +2649,7 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
         ? `${importEvaluation.finalRecommendation.label}: ${importEvaluation.finalRecommendation.explanation}`
         : "Revisar captura por link e completar analise de mercado.",
       owner: "Upload de Links - Analise de Mercado",
-      auctionDate: firstText(extraction.auctionDate, row.auctionDateHint),
+      auctionDate,
       occupancy: firstText(extraction.occupancy, "Nao informado"),
       summary: firstText(
         extraction.summary,
