@@ -4,35 +4,15 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Activity, ChevronDown, HeartPulse } from "lucide-react";
-import { adminCanAccessHref } from "@/lib/admin/access";
+import { filterAdminNavGroupsForUser } from "@/lib/admin/access";
 import { adminNavGroups, getCanonicalAdminHref } from "@/lib/admin/modules";
 import type { AdminSessionUser } from "@/lib/auth/types";
 import { AdminNavGroup } from "./AdminNavGroup";
 
 const logoUrl = "https://pub-3b8a3e7613ad4776be18e72d6d78207f.r2.dev/logo-betel.png";
 
-function visibleNavGroups(admin: AdminSessionUser | undefined) {
-  return adminNavGroups
-    .map((group) => ({
-      ...group,
-      items: group.items
-        .map((item) => {
-          const canAccessItem = adminCanAccessHref(admin, item.href);
-          const children = item.children?.filter((child) => adminCanAccessHref(admin, child.href));
-
-          return {
-            ...item,
-            href: canAccessItem ? item.href : children?.[0]?.href || item.href,
-            children,
-          };
-        })
-        .filter((item) => adminCanAccessHref(admin, item.href) || Boolean(item.children?.length)),
-    }))
-    .filter((group) => group.items.length);
-}
-
 export function AdminSidebarContent({ activeHref, admin }: { activeHref: string; admin?: AdminSessionUser }) {
-  const groups = visibleNavGroups(admin);
+  const groups = filterAdminNavGroupsForUser(adminNavGroups, admin);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--admin-sidebar)] text-[var(--admin-foreground)]">

@@ -77,7 +77,7 @@ export function AdminTopbar({ admin }: { admin: AdminSessionUser }) {
         </div>
 
         <div className="ml-auto flex min-w-0 items-center gap-2">
-          <CommandSearch />
+          <CommandSearch admin={admin} />
           <NotificationButton />
           <ThemeSwitcher />
           <UserMenu admin={admin} />

@@ -3,23 +3,28 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
+import { filterAdminNavGroupsForUser } from "@/lib/admin/access";
 import { adminNavGroups } from "@/lib/admin/modules";
+import type { AdminSessionUser } from "@/lib/auth/types";
 import { cn } from "@/lib/utils";
 
-const items = adminNavGroups.flatMap((group) =>
-  group.items.flatMap((item) => [
-    { ...item, group: group.label },
-    ...(item.children || []).map((child) => ({
-      ...child,
-      group: `${group.label} / ${item.label}`,
-    })),
-  ])
-);
+function searchableItems(admin: AdminSessionUser | undefined) {
+  return filterAdminNavGroupsForUser(adminNavGroups, admin).flatMap((group) =>
+    group.items.flatMap((item) => [
+      { ...item, group: group.label },
+      ...(item.children || []).map((child) => ({
+        ...child,
+        group: `${group.label} / ${item.label}`,
+      })),
+    ])
+  );
+}
 
-export function CommandSearch() {
+export function CommandSearch({ admin }: { admin: AdminSessionUser }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const items = useMemo(() => searchableItems(admin), [admin]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -41,7 +46,7 @@ export function CommandSearch() {
     return items
       .filter((item) => `${item.label} ${item.group}`.toLowerCase().includes(normalized))
       .slice(0, 7);
-  }, [query]);
+  }, [items, query]);
 
   return (
     <div className="relative hidden min-w-[22rem] max-w-[34rem] flex-1 xl:block">

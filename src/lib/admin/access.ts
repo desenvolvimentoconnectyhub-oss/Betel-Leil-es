@@ -1,7 +1,17 @@
 import type { AdminSessionUser } from "@/lib/auth/types";
+import type { AdminNavGroup, AdminNavItem } from "./modules";
+
+function normalizedAdminRole(admin: AdminSessionUser | undefined) {
+  return String(admin?.role || "").trim().toLowerCase();
+}
+
+export function adminIsSuperAdmin(admin: AdminSessionUser | undefined) {
+  return ["owner", "superadmin", "super_admin"].includes(normalizedAdminRole(admin));
+}
 
 export function adminHasFullPanelAccess(admin: AdminSessionUser | undefined) {
-  return Boolean(admin && (admin.role === "owner" || admin.role === "admin"));
+  const role = normalizedAdminRole(admin);
+  return Boolean(admin && (role === "owner" || role === "admin"));
 }
 
 export function scopedAdminSectorKeys(admin: AdminSessionUser | undefined) {
@@ -42,4 +52,35 @@ export function adminCanAccessHref(admin: AdminSessionUser | undefined, href: st
   }
 
   return false;
+}
+
+function isComingSoonNavItem(item: Pick<AdminNavItem, "badge">) {
+  return item.badge?.trim().toLowerCase() === "em breve";
+}
+
+export function filterAdminNavGroupsForUser(groups: AdminNavGroup[], admin: AdminSessionUser | undefined): AdminNavGroup[] {
+  const canSeeComingSoon = adminIsSuperAdmin(admin);
+
+  return groups
+    .map((group) => ({
+      ...group,
+      items: group.items
+        .flatMap((item): AdminNavItem[] => {
+          if (!canSeeComingSoon && isComingSoonNavItem(item)) return [];
+
+          const canAccessItem = adminCanAccessHref(admin, item.href);
+          const children = item.children?.filter(
+            (child) => adminCanAccessHref(admin, child.href) && (canSeeComingSoon || !isComingSoonNavItem(child))
+          );
+
+          if (!canAccessItem && !children?.length) return [];
+
+          return [{
+            ...item,
+            href: canAccessItem ? item.href : children?.[0]?.href || item.href,
+            children,
+          }];
+        }),
+    }))
+    .filter((group) => group.items.length);
 }
