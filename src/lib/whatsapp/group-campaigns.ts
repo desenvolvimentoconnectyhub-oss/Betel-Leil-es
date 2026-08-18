@@ -801,6 +801,8 @@ function nextRunAfter(campaignType: string, from: Date) {
 
 function campaignActionButton(campaignRow: Record<string, unknown>): WhatsAppActionButtonInput | undefined {
   const metadata = asRecord(campaignRow.metadata);
+  if (cleanString(metadata.linkFormat) === "source_links") return undefined;
+
   const button = asRecord(metadata.actionButton);
   const choices = (Array.isArray(button.choices) ? button.choices : [])
     .map((choice) => {
@@ -954,6 +956,7 @@ export async function processWhatsAppCommunityCampaigns(input: { limit?: number;
     const mediaType = cleanString(campaignRow.media_type, mediaUrl ? "image" : "");
     const actionButton = campaignActionButton(campaignRow);
     const buttonText = campaignButtonText(campaignRow);
+    const inferActionButtonFromText = cleanString(campaignMetadata.linkFormat) !== "source_links";
     const mediaSendOptions = humanOpportunityPublication
       ? { readChat: true }
       : { delayMs: 1500, readChat: true };
@@ -1042,6 +1045,7 @@ export async function processWhatsAppCommunityCampaigns(input: { limit?: number;
             text: bodyText,
             trackId,
             actionButton,
+            inferActionButtonFromText,
             sendOptions: mediaSendOptions,
           });
           deliveryPayload = delivery as unknown as Record<string, unknown>;

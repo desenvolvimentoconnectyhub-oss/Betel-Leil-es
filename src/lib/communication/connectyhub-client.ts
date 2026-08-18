@@ -1017,12 +1017,13 @@ async function sendConnectyHubWhatsAppMessage(input: {
   trackId: string;
   idempotencyKey?: string;
   actionButton?: WhatsAppActionButtonInput;
+  inferActionButtonFromText?: boolean;
   sendOptions?: WhatsAppAgentSendOptions;
   mentions?: string[];
   replyId?: string;
   timeoutMs?: number;
 }): Promise<ConnectyHubWhatsAppMessageResult> {
-  const button = normalizeActionButton(input.actionButton, input.text);
+  const button = normalizeActionButton(input.actionButton, input.inferActionButtonFromText === false ? "" : input.text);
   const timeoutMs = input.timeoutMs || CONNECTYHUB_TEXT_SEND_TIMEOUT_MS;
   const sendFields = optionalSendFields(input.sendOptions);
 
@@ -1358,6 +1359,7 @@ export async function sendWhatsAppDestinationText(input: {
   text: string;
   trackId: string;
   actionButton?: WhatsAppActionButtonInput;
+  inferActionButtonFromText?: boolean;
   mentions?: string[];
   replyId?: string;
   sendOptions?: WhatsAppAgentSendOptions;
@@ -1392,6 +1394,7 @@ export async function sendWhatsAppDestinationText(input: {
       trackId: input.trackId,
       idempotencyKey: input.trackId,
       actionButton: input.actionButton,
+      inferActionButtonFromText: input.inferActionButtonFromText,
       mentions: input.mentions?.map(normalizeWhatsAppNumber).filter(Boolean),
       replyId: cleanString(input.replyId),
       sendOptions: input.sendOptions,

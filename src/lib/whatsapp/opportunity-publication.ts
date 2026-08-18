@@ -315,7 +315,7 @@ function compactCaption(lines: string[]) {
 
   if (caption.length <= WHATSAPP_TEASER_MAX_LENGTH) return caption;
 
-  const suffix = "\n\n🔎 Analise completa, fotos e pontos de atencao na ficha Betel.";
+  const suffix = "\n\n🔎 Analise resumida para envio no WhatsApp.";
   const available = Math.max(0, WHATSAPP_TEASER_MAX_LENGTH - suffix.length);
   return `${caption.slice(0, available).replace(/\s+\S*$/g, "").trim()}${suffix}`;
 }
@@ -440,6 +440,8 @@ function actionButtonForPost(input: {
   publicUrl: string;
   sourceLinks: OpportunityWhatsAppSourceLink[];
 }) {
+  if (input.linkFormat === "source_links") return undefined;
+
   if (input.linkFormat === "source_buttons" && input.sourceLinks.length) {
     return {
       label: input.sourceLinks[0]?.label || "Abrir fonte",
@@ -467,9 +469,7 @@ function buttonTextForPost(linkFormat: OpportunityWhatsAppLinkFormat, hasSourceL
   if (linkFormat === "source_buttons" && hasSourceLinks) {
     return "👇 Abra abaixo as referencias de venda e aluguel usadas na analise.";
   }
-  if (linkFormat === "source_links" && hasSourceLinks) {
-    return "";
-  }
+  if (linkFormat === "source_links") return "";
   return "👇 Veja fotos, riscos e analise completa na ficha Betel.";
 }
 
