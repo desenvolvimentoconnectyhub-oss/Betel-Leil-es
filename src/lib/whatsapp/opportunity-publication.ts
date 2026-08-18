@@ -11,8 +11,8 @@ import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createWhatsAppCommunityCampaign, processWhatsAppCommunityCampaigns, type WhatsAppCommunityDestination } from "./group-campaigns";
 
 type DbRow = Record<string, unknown>;
-const WHATSAPP_TEASER_MAX_LENGTH = 850;
-const WHATSAPP_TEASER_WITH_LINKS_MAX_LENGTH = 1800;
+const WHATSAPP_TEASER_MAX_LENGTH = 1500;
+const WHATSAPP_TEASER_WITH_LINKS_MAX_LENGTH = 2300;
 
 export type OpportunityWhatsAppPublicationMode =
   | "default_group"
@@ -149,7 +149,8 @@ function formatCurrency(value: number) {
   return new Intl.NumberFormat("pt-BR", {
     style: "currency",
     currency: "BRL",
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   }).format(value);
 }
 
@@ -160,7 +161,7 @@ function formatPct(value: number) {
 
 function formatArea(value: number) {
   if (!value) return "";
-  return `${value.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} m2`;
+  return `${value.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} m²`;
 }
 
 function formatDate(value: string) {
@@ -180,6 +181,33 @@ function compactTitle(opportunity: AuctionOpportunity) {
   return title.toLowerCase().includes(prefix.toLowerCase()) ? title : `${prefix} - ${title}`;
 }
 
+function normalizeSearchValue(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function creativeTitle(opportunity: AuctionOpportunity, title: string) {
+  const location = [opportunity.city, opportunity.state].map((item) => cleanString(item)).filter(Boolean).join("/");
+  if (!location) return title;
+
+  const normalizedTitle = normalizeSearchValue(title);
+  const city = normalizeSearchValue(opportunity.city);
+  const state = normalizeSearchValue(opportunity.state);
+  if ((city && normalizedTitle.includes(city)) || (state && normalizedTitle.includes(`/${state}`))) return title;
+  return `${title} - ${location}`;
+}
+
+function propertyEmoji(opportunity: AuctionOpportunity, analysis: PropertyMarketAnalysis | null) {
+  const text = normalizeSearchValue(`${opportunity.propertyType} ${analysis?.subject.propertyType || ""} ${opportunity.title}`);
+  if (text.includes("apart")) return "🏢";
+  if (text.includes("terreno") || text.includes("galpao") || text.includes("galpão")) return "🏗️";
+  if (text.includes("casa")) return "🏡";
+  if (text.includes("sala") || text.includes("comercial")) return "🏬";
+  return "🏠";
+}
+
 function truncateSingleLine(value: string, maxLength: number) {
   const cleaned = cleanString(value).replace(/\s+/g, " ");
   if (!cleaned || cleaned.length <= maxLength) return cleaned;
@@ -188,14 +216,14 @@ function truncateSingleLine(value: string, maxLength: number) {
 
 function publicDecisionLabel(analysis: PropertyMarketAnalysis | null) {
   const labels: Record<PropertyMarketAnalysis["decision"], string> = {
-    excellent: "🟢 oportunidade forte",
-    good: "🟢 boa oportunidade",
-    caution: "🟡 exige cautela",
-    review: "🟡 em validacao",
-    reject: "🟡 requer analise cuidadosa",
+    excellent: "🟢 *Oportunidade forte*",
+    good: "🟢 *Boa oportunidade*",
+    caution: "🟡 *Exige cautela*",
+    review: "🟡 *Em validação*",
+    reject: "🟡 *Requer análise cuidadosa*",
   };
 
-  return analysis?.decision ? labels[analysis.decision] : "🔎 analise disponivel";
+  return analysis?.decision ? labels[analysis.decision] : "🔎 *Análise disponível*";
 }
 
 function analysisArea(analysis?: PropertyMarketAnalysis | null) {
@@ -214,6 +242,68 @@ function primaryImageUrl(images?: PropertyImageAsset[]) {
 
 function line(label: string, value: string) {
   return value ? `${label}: ${value}` : "";
+}
+
+function formatPaymentMode(value: string, installmentCount: number) {
+  const normalized = normalizeSearchValue(value);
+  if (normalized.includes("parcel") || installmentCount > 1) return "parcelado";
+  if (normalized.includes("vista")) return "à vista";
+  return cleanString(value, installmentCount > 1 ? "parcelado" : "pagamento");
+}
+
+function paymentSimulationLines(analysis: PropertyMarketAnalysis | null) {
+  const payment = analysis?.paymentSimulation;
+  if (!payment) return [];
+
+  const downPayment = formatCurrency(payment.downPaymentAmount);
+  const balance = formatCurrency(payment.installmentBalance);
+  const installment = formatCurrency(payment.installmentAmount);
+  const installmentCount = Math.trunc(payment.installmentCount || 0);
+  const hasPaymentData = Boolean(downPayment || balance || (installment && installmentCount));
+  if (!hasPaymentData) return [];
+
+  const downPaymentPct = payment.downPaymentPct ? `${payment.downPaymentPct.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%` : "";
+  const balancePct = payment.downPaymentPct ? `${Math.max(0, 100 - payment.downPaymentPct).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%` : "";
+  const correctionRule = cleanString(payment.correctionRule, "sem correção");
+  const correctionWarning = cleanString(
+    payment.correctionWarning,
+    installmentCount ? "Parcelas sujeitas à correção conforme edital." : ""
+  );
+  const correctionDetail = `(${correctionRule.replace(/[()]/g, "")})`;
+
+  return [
+    `💳Simulação de pagamento (${formatPaymentMode(payment.paymentMode, installmentCount)})`,
+    "",
+    downPayment ? `🔻 Entrada${downPaymentPct ? ` (${downPaymentPct})` : ""}: ${downPayment}` : "",
+    balance ? `🔸 Saldo${balancePct ? ` (${balancePct})` : ""}: ${balance}` : "",
+    installment && installmentCount ? `👉 Parcelamento em ${installmentCount}x: ${installment}/mês ${correctionDetail}` : "",
+    correctionWarning ? "" : "",
+    correctionWarning ? `⚠️ ${correctionWarning.replace(/^⚠️\s*/u, "")}` : "",
+  ];
+}
+
+function ceilingTargetLines(targets: PropertyMarketAnalysis["ceilingTargets"]) {
+  const lines = (targets || [])
+    .slice(0, 2)
+    .map((target) => {
+      const value = formatCurrency(target.value);
+      return value ? `➡️ ${target.label} -> ${value}` : "";
+    })
+    .filter(Boolean);
+  return lines.length ? ["📊 Teto Betel:", ...lines] : [];
+}
+
+function legalSignalLine(analysis: PropertyMarketAnalysis | null) {
+  const signal = cleanString(analysis?.legalSignal);
+  if (!signal) return "";
+  return `👨🏻‍⚖️${signal.replace(/\.$/, "")}.`;
+}
+
+function marketSummaryLine(analysis: PropertyMarketAnalysis | null, marketValue: string) {
+  const summary = cleanString(analysis?.summary);
+  if (!summary) return "";
+  const prefix = /^valor de mercado/i.test(summary) ? "" : marketValue ? `Valor de mercado calculado: ${marketValue}. ` : "";
+  return `📝 *${prefix}${summary}*`;
 }
 
 function compactCaption(lines: string[]) {
@@ -402,16 +492,12 @@ export async function buildOpportunityWhatsAppPost(
 
   const analysis = analysisResult.data;
   const title = compactTitle(opportunity);
-  const location = [opportunity.city, opportunity.state].filter(Boolean).join("/");
+  const titleWithLocation = creativeTitle(opportunity, title);
   const area = formatArea(analysisArea(analysis));
   const marketValue = formatCurrency(analysis?.marketValueBase || opportunity.appraisalValue);
   const bid = formatCurrency(analysis?.initialBid || opportunity.initialBid);
   const discount = formatPct(analysis?.realDiscountPct || opportunity.discountPct);
   const rent = formatCurrency(analysis?.rentalEstimate.monthlyRent || 0);
-  const ceilingTargets = (analysis?.ceilingTargets || [])
-    .slice(0, 2)
-    .map((target) => `${target.label} -> ${formatCurrency(target.value)}`)
-    .filter(Boolean);
   const publicUrl = publicOpportunityUrl(opportunity.id || code);
   const publicSignal = publicDecisionLabel(analysis);
   const linkFormat = normalizePublicationLinkFormat(options.linkFormat);
@@ -420,20 +506,27 @@ export async function buildOpportunityWhatsAppPost(
   const actionButton = actionButtonForPost({ linkFormat, publicUrl, sourceLinks });
 
   const baseCaption = compactCaption([
-    `🏠 *${truncateSingleLine(title, 110)}*`,
-    location ? `📍 ${location}` : "",
-    line("📅 Leilao", formatDate(opportunity.auctionDate)),
-    line("📐 Area", area),
+    `${propertyEmoji(opportunity, analysis)} *${truncateSingleLine(titleWithLocation, 140)}*`,
+    "",
+    formatDate(opportunity.auctionDate) ? `📆${formatDate(opportunity.auctionDate)}` : "",
+    "",
+    area ? `📐 ${area}` : "",
     "",
     line("💰 Mercado ajustado", marketValue),
-    line("🏷️ Lance", bid),
+    line("🔨 Lance", bid),
     line("📉 Desconto", discount),
-    ceilingTargets.length ? line("🎯 Teto Betel", ceilingTargets.join(" | ")) : "",
-    rent ? "" : "",
-    line("🔑 Aluguel estimado", rent),
     "",
-    `Sinal Betel: ${publicSignal}.`,
-    "🔎 Analise completa, fotos e pontos de atencao na ficha Betel.",
+    ...paymentSimulationLines(analysis),
+    "",
+    ...ceilingTargetLines(analysis?.ceilingTargets || []),
+    "",
+    legalSignalLine(analysis),
+    "",
+    rent ? `💵 Aluguel: ${rent}/mês` : "",
+    "",
+    marketSummaryLine(analysis, marketValue),
+    "",
+    `👉 ${publicSignal}`,
   ]);
   const shouldAppendLinksToCaption = linkFormat === "source_links" || (linkFormat === "source_buttons" && Boolean(auctionUrl));
   const caption = shouldAppendLinksToCaption ? appendSourceLinksToCaption(baseCaption, auctionUrl, linkFormat === "source_links" ? sourceLinks : []) : baseCaption;
