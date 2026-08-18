@@ -478,6 +478,34 @@ function parseDelimitedRows(text: string) {
   return rows.map((item) => item.map((cellValue) => cleanString(cellValue)));
 }
 
+function cleanPastedUrl(value: string) {
+  return cleanString(value).replace(/[)\].,;]+$/g, "");
+}
+
+function extractPastedUrls(value: string) {
+  return [...value.matchAll(/\b(?:https?:\/\/|www\.)[^\s<>"']+/gi)]
+    .map((match) => cleanPastedUrl(match[0]))
+    .map((url) => (url.toLowerCase().startsWith("www.") ? `https://${url}` : url))
+    .filter(isHttpUrl);
+}
+
+function parseManualRows(text: string) {
+  const rows: string[][] = [];
+  text.split(/\r?\n/).forEach((line) => {
+    const cleaned = cleanString(line);
+    if (!cleaned) return;
+
+    const urls = extractPastedUrls(cleaned);
+    if (!urls.length) {
+      rows.push([cleaned]);
+      return;
+    }
+
+    urls.forEach((url) => rows.push(["", url]));
+  });
+  return rows;
+}
+
 function isHttpUrl(value: string) {
   try {
     const url = new URL(value);
@@ -612,6 +640,25 @@ export async function parsePropertyLinkImportFile(file: File): Promise<ParsedLin
     filename: cleanString(file.name, "links-imoveis"),
     buffer: Buffer.from(await file.arrayBuffer()),
   });
+}
+
+export function parsePropertyLinkImportText(input: {
+  text: string;
+  filename?: string;
+}): ParsedLinkImportFile {
+  const filename = cleanString(input.filename, `links-manuais-${new Date().toISOString().slice(0, 10)}.txt`);
+  const mapped = mapRows(parseManualRows(input.text));
+  const validRowCount = mapped.rows.filter((row) => row.status !== "url_invalida").length;
+  const invalidRowCount = mapped.rows.length - validRowCount;
+  return {
+    filename,
+    sourceType: "manual",
+    rows: mapped.rows,
+    rowCount: mapped.rows.length,
+    validRowCount,
+    invalidRowCount,
+    ignoredRowCount: mapped.ignoredRowCount,
+  };
 }
 
 function normalizeRow(row: DbRow): LinkScraperRow {
@@ -805,7 +852,7 @@ export async function createLinkScraperBatch(input: {
   if (!supabase) return { ok: false, error: "Supabase admin nao configurado." };
 
   const validRows = input.parsed.rows.filter((row) => row.status !== "url_invalida");
-  if (!validRows.length) return { ok: false, error: "Nenhum link valido encontrado no arquivo." };
+  if (!validRows.length) return { ok: false, error: "Nenhum link valido encontrado no lote." };
   const analysisDepth = normalizeAnalysisDepth(input.analysisDepth);
   const profile = analysisDepthProfile(analysisDepth);
 

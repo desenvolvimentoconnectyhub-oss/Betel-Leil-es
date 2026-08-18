@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Download,
   FileSpreadsheet,
+  Link2,
   Loader2,
   Play,
   RefreshCw,
@@ -31,6 +32,10 @@ type Props = {
 
 const inputClass =
   "h-9 w-full rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.04)] px-3 text-sm text-white placeholder:text-[var(--admin-muted)] outline-none transition focus:border-[var(--admin-cyan)]";
+const textareaClass =
+  "min-h-32 w-full resize-y rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-sm leading-5 text-white placeholder:text-[var(--admin-muted)] outline-none transition focus:border-[var(--admin-cyan)]";
+
+type ImportMode = "file" | "manual";
 
 function statusTone(status: string) {
   if (["concluido", "pronto_para_revisao", "sent"].includes(status)) return "border-emerald-300 bg-emerald-50 text-emerald-900";
@@ -128,8 +133,10 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
     data.reason ? { type: "info", message: data.reason } : null
   );
   const [busy, setBusy] = useState("");
+  const [importMode, setImportMode] = useState<ImportMode>("file");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [filePreview, setFilePreview] = useState<ParsedLinkImportFile | null>(null);
+  const [manualLinks, setManualLinks] = useState("");
   const [analysisDepth, setAnalysisDepth] = useState<LinkAnalysisDepth>("deep");
   const [resetConfirmation, setResetConfirmation] = useState("");
   const importFormRef = useRef<HTMLFormElement | null>(null);
@@ -170,6 +177,18 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
       return false;
     } finally {
       setBusy("");
+    }
+  }
+
+  function changeImportMode(mode: ImportMode) {
+    setImportMode(mode);
+    autoImportKeyRef.current = "";
+    setFeedback(null);
+    if (mode === "manual") {
+      setSelectedFile(null);
+      setFilePreview(null);
+    } else {
+      setManualLinks("");
     }
   }
 
@@ -255,6 +274,7 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
   );
 
   useEffect(() => {
+    if (importMode !== "file") return;
     if (!selectedFile || !filePreview || filePreview.validRowCount === 0) return;
     if (busy === "preview_file" || busy === "import_file") return;
 
@@ -263,10 +283,51 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
 
     autoImportKeyRef.current = key;
     void saveImportedFile(selectedFile, filePreview, importFormRef.current);
-  }, [analysisDepth, busy, filePreview, saveImportedFile, selectedFile]);
+  }, [analysisDepth, busy, filePreview, importMode, saveImportedFile, selectedFile]);
 
-  async function importFile(event: FormEvent<HTMLFormElement>) {
+  async function importManualLinks() {
+    const links = manualLinks.trim();
+    if (!links) {
+      setFeedback({ type: "err", message: "Cole pelo menos um link para criar o lote." });
+      return;
+    }
+
+    setBusy("import_manual_links");
+    setFeedback({ type: "info", message: "Validando links e criando lote manual..." });
+
+    try {
+      const res = await fetch("/api/admin/scraper", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "import_manual_links", links, analysisDepth }),
+      });
+      const json = await res.json();
+      if (!res.ok || json.ok === false || json.result?.ok === false) {
+        throw new Error(json.error || json.result?.error || "Falha ao importar links manuais.");
+      }
+
+      const parsed = json.parsed as ParsedLinkImportFile | undefined;
+      const rowsCreated = json.result?.data?.rowsCreated || 0;
+      const detail = parsed
+        ? ` ${parsed.invalidRowCount} invalido(s), ${parsed.ignoredRowCount} linha(s) ignorada(s).`
+        : "";
+      setManualLinks("");
+      setFeedback({ type: "ok", message: `Lote manual criado com ${rowsCreated} link(s).${detail}` });
+      await refresh();
+    } catch (error) {
+      setFeedback({ type: "err", message: error instanceof Error ? error.message : "Falha ao importar links manuais." });
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function importBatch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (importMode === "manual") {
+      await importManualLinks();
+      return;
+    }
+
     autoImportKeyRef.current = selectedFile ? fileAutoImportKey(selectedFile, analysisDepth) : "";
     await saveImportedFile(selectedFile, filePreview, event.currentTarget);
   }
@@ -375,8 +436,8 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
           </div>
         </DashboardCard>
 
-        <DashboardCard title="Importar novo lote" eyebrow="xlsx / csv / txt" action={<FileSpreadsheet size={18} className="text-[var(--admin-cyan)]" />}>
-          <form ref={importFormRef} onSubmit={importFile} className="space-y-4">
+        <DashboardCard title="Importar novo lote" eyebrow="arquivo / links manuais" action={<FileSpreadsheet size={18} className="text-[var(--admin-cyan)]" />}>
+          <form ref={importFormRef} onSubmit={importBatch} className="space-y-4">
             <fieldset className="rounded-lg border border-[var(--admin-border)] p-3">
               <legend className="px-1 text-xs text-[var(--admin-muted)]">Profundidade da analise</legend>
               <div className="grid gap-2 md:grid-cols-2">
@@ -412,21 +473,76 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
                 ))}
               </div>
             </fieldset>
-            <label className="block rounded-lg border border-dashed border-[var(--admin-border)] p-4">
-              <span className="mb-2 flex items-center gap-2 text-sm font-semibold text-white">
-                <Upload size={16} />
-                Arquivo com links
-              </span>
-              <input
-                name="file"
-                type="file"
-                accept=".xlsx,.csv,.txt"
-                className="block w-full text-sm text-[var(--admin-muted)]"
-                onChange={onFileChange}
-                required
-              />
-            </label>
-            {(busy === "preview_file" || busy === "import_file") && (
+            <div className="grid gap-2 sm:grid-cols-2">
+              <button
+                type="button"
+                aria-pressed={importMode === "file"}
+                onClick={() => changeImportMode("file")}
+                className={cn(
+                  "inline-flex h-10 items-center justify-center gap-2 rounded-lg border px-3 text-sm font-semibold transition",
+                  importMode === "file"
+                    ? "border-[var(--admin-cyan)] bg-cyan-50 text-cyan-950"
+                    : "border-[var(--admin-border)] text-white hover:border-[var(--admin-cyan)]"
+                )}
+              >
+                <FileSpreadsheet size={16} />
+                Arquivo
+              </button>
+              <button
+                type="button"
+                aria-pressed={importMode === "manual"}
+                onClick={() => changeImportMode("manual")}
+                className={cn(
+                  "inline-flex h-10 items-center justify-center gap-2 rounded-lg border px-3 text-sm font-semibold transition",
+                  importMode === "manual"
+                    ? "border-[var(--admin-cyan)] bg-cyan-50 text-cyan-950"
+                    : "border-[var(--admin-border)] text-white hover:border-[var(--admin-cyan)]"
+                )}
+              >
+                <Link2 size={16} />
+                Links manuais
+              </button>
+            </div>
+
+            {importMode === "file" ? (
+              <label className="block rounded-lg border border-dashed border-[var(--admin-border)] p-4">
+                <span className="mb-2 flex items-center gap-2 text-sm font-semibold text-white">
+                  <Upload size={16} />
+                  Arquivo com links
+                </span>
+                <input
+                  name="file"
+                  type="file"
+                  accept=".xlsx,.csv,.txt"
+                  className="block w-full text-sm text-[var(--admin-muted)]"
+                  onChange={onFileChange}
+                  required={importMode === "file"}
+                />
+              </label>
+            ) : (
+              <div className="space-y-3 rounded-lg border border-dashed border-[var(--admin-border)] p-4">
+                <label htmlFor="manual-links" className="flex items-center gap-2 text-sm font-semibold text-white">
+                  <Link2 size={16} />
+                  Colar links para analise
+                </label>
+                <textarea
+                  id="manual-links"
+                  value={manualLinks}
+                  onChange={(event) => setManualLinks(event.target.value)}
+                  className={textareaClass}
+                  placeholder={"https://exemplo.com/lote-1\nhttps://exemplo.com/lote-2"}
+                />
+                <button
+                  type="submit"
+                  disabled={!manualLinks.trim() || busy === "import_manual_links"}
+                  className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-[var(--admin-cyan)] px-3 text-sm font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {busy === "import_manual_links" ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
+                  Adicionar lote para analise
+                </button>
+              </div>
+            )}
+            {(busy === "preview_file" || busy === "import_file" || busy === "import_manual_links") && (
               <div className="flex flex-wrap gap-2">
                 {busy === "preview_file" && (
                   <span className="inline-flex h-9 items-center gap-2 rounded-lg border border-[var(--admin-border)] px-3 text-sm text-[var(--admin-muted)]">
@@ -440,9 +556,15 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
                   Salvando lote
                 </span>
               )}
+              {busy === "import_manual_links" && (
+                <span className="inline-flex h-9 items-center gap-2 rounded-lg bg-[var(--admin-cyan)] px-3 text-sm font-semibold text-slate-950">
+                  <Loader2 size={16} className="animate-spin" />
+                  Salvando links
+                </span>
+              )}
               </div>
             )}
-            {filePreview && (
+            {importMode === "file" && filePreview && (
               <div className="space-y-3 rounded-lg border border-[var(--admin-border)] p-3">
                 <div className="grid gap-3 text-sm sm:grid-cols-4">
                   <div>

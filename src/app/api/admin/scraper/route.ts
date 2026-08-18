@@ -7,6 +7,7 @@ import {
   createLinkScraperBatch,
   getLinkScraperDashboardData,
   parsePropertyLinkImportFile,
+  parsePropertyLinkImportText,
   queueLinkScraperBatch,
   resetMarketAnalysisTestData,
   retryLinkScraperRow,
@@ -95,6 +96,20 @@ export async function POST(request: Request) {
 
     const body = await request.json();
     const action = cleanString(body.action);
+
+    if (action === "import_manual_links") {
+      const parsed = parsePropertyLinkImportText({
+        text: cleanString(body.links),
+        filename: cleanString(body.filename),
+      });
+      const result = await createLinkScraperBatch({
+        parsed,
+        analysisDepth: cleanString(body.analysisDepth, "deep"),
+      });
+
+      revalidateScraper();
+      return NextResponse.json({ ok: result.ok, result, parsed: { ...parsed, rows: parsed.rows.slice(0, 20) } }, { status: result.ok ? 200 : 400 });
+    }
 
     if (action === "start_batch") {
       const startPayload = {
