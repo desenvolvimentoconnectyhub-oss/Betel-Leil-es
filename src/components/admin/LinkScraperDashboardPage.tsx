@@ -908,14 +908,14 @@ function ProcessingStatusModal({
   const isSuccess = state.tone === "success";
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/65 px-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[120] grid place-items-center bg-[#241d16]/55 px-4 backdrop-blur-sm">
       <section
         role="dialog"
         aria-modal="true"
         aria-labelledby="scraper-processing-title"
-        className="w-full max-w-lg overflow-hidden rounded-lg border border-[var(--admin-border)] bg-[var(--admin-panel)] shadow-2xl shadow-slate-950/30"
+        className="w-full max-w-xl overflow-hidden rounded-lg border border-[rgba(70,54,36,0.16)] bg-white shadow-2xl shadow-[rgba(36,29,22,0.28)]"
       >
-        <div className="border-b border-[var(--admin-border)] px-5 py-4">
+        <div className="border-b border-[var(--admin-border)] bg-[#fffaf2] px-5 py-4">
           <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--admin-muted)]">
             Analise de mercado
           </p>
@@ -937,7 +937,7 @@ function ProcessingStatusModal({
               )}
             </span>
             <div className="min-w-0">
-              <h2 id="scraper-processing-title" className="text-lg font-semibold text-white">
+              <h2 id="scraper-processing-title" className="text-lg font-semibold text-[var(--admin-foreground)]">
                 {state.title}
               </h2>
               <p className="mt-1 truncate text-xs text-[var(--admin-muted)]">{state.batchName}</p>
@@ -946,20 +946,20 @@ function ProcessingStatusModal({
         </div>
 
         <div className="space-y-4 px-5 py-5">
-          <p className="text-sm leading-6 text-[var(--admin-muted)]">{state.detail}</p>
+          <p className="text-sm font-medium leading-6 text-[var(--admin-soft)]">{state.detail}</p>
           <div>
-            <div className="h-2 overflow-hidden rounded-full bg-white/10">
+            <div className="h-3 overflow-hidden rounded-full bg-[#eee6da]">
               <div
                 className={cn(
                   "h-full rounded-full transition-all duration-700",
-                  isError && "bg-red-400",
-                  isSuccess && "bg-emerald-400",
+                  isError && "bg-red-500",
+                  isSuccess && "bg-emerald-500",
                   !isError && !isSuccess && "bg-[var(--admin-cyan)]"
                 )}
                 style={{ width: `${Math.min(100, Math.max(0, state.progress))}%` }}
               />
             </div>
-            <div className="mt-2 flex items-center justify-between text-xs text-[var(--admin-muted)]">
+            <div className="mt-2 flex items-center justify-between text-xs font-semibold text-[var(--admin-muted)]">
               <span>
                 {state.completedRows} de {state.totalRows} link(s)
               </span>
@@ -967,7 +967,7 @@ function ProcessingStatusModal({
             </div>
           </div>
           {!isError ? (
-            <p className="rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs leading-5 text-cyan-900">
+            <p className="rounded-lg border border-[rgba(200,90,31,0.18)] bg-[rgba(200,90,31,0.08)] px-3 py-2 text-xs font-medium leading-5 text-[var(--admin-foreground)]">
               Aguarde. Quando finalizar, vamos abrir Imoveis analisados automaticamente.
             </p>
           ) : null}
@@ -975,7 +975,7 @@ function ProcessingStatusModal({
             <button
               type="button"
               onClick={onDismiss}
-              className="inline-flex h-9 items-center justify-center rounded-lg border border-[var(--admin-border)] px-3 text-sm font-semibold text-white hover:border-[var(--admin-cyan)]"
+              className="inline-flex h-9 items-center justify-center rounded-lg border border-[var(--admin-border)] bg-white px-3 text-sm font-semibold text-[var(--admin-foreground)] hover:border-[var(--admin-cyan)]"
             >
               Fechar
             </button>
