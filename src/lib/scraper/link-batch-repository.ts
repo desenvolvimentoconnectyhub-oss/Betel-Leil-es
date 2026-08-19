@@ -20,7 +20,12 @@ import { ingestAuctionOpportunityRecord } from "@/lib/admin/repository/pipeline"
 import { openMarketReviewTasksForBatchRecord } from "@/lib/admin/repository/workflow";
 import { deletePublicR2Object, mirrorRemoteImagesToR2, type StoredImageAsset } from "@/lib/storage/r2";
 import { extractAuctionSiteContext, type AuctionSiteDocument, type AuctionSiteExtractionPatch } from "./auction-site-adapters";
-import { extractAuctionLinkWithGemini, type AuctionLinkExtraction } from "./auction-link-extractor";
+import {
+  extractAuctionLinkWithGemini,
+  extractAuctionLinkWithGeminiGrounded,
+  type AuctionLinkExtraction,
+  type AuctionLinkExtractionResult,
+} from "./auction-link-extractor";
 import { runDeepMarketResearch, type DeepMarketComparable, type DeepMarketResearchResult } from "./deep-market-research";
 import { auctionApiFetchHeaders, auctionPageFetchHeaders } from "./http";
 import { normalizeLocationName, normalizeStateUf } from "./location-normalization";
@@ -1799,6 +1804,83 @@ async function fetchAuctionPageSupplement(input: {
   return emptyAuctionPageSupplement();
 }
 
+async function fetchAuctionPageSnapshot(input: {
+  sourceUrl: string;
+  timeoutMs: number;
+}) {
+  try {
+    const response = await fetch(input.sourceUrl, {
+      cache: "no-store",
+      headers: auctionPageFetchHeaders(),
+      signal: AbortSignal.timeout(input.timeoutMs),
+    });
+    return {
+      html: await response.text(),
+      resolvedSourceUrl: response.url || input.sourceUrl,
+      ok: response.ok,
+      status: response.status,
+      error: "",
+    };
+  } catch (error) {
+    return {
+      html: "",
+      resolvedSourceUrl: input.sourceUrl,
+      ok: false,
+      status: 0,
+      error: error instanceof Error ? error.message : "fetch failed",
+    };
+  }
+}
+
+function titleCandidateFromUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    const pathParts = parsed.pathname
+      .split("/")
+      .map((part) => decodeURIComponent(part).replace(/\.[a-z0-9]+$/i, ""))
+      .filter(Boolean);
+    const slug = cleanString(pathParts[pathParts.length - 1] || pathParts.slice(-2).join(" "));
+    return cleanString(
+      slug
+        .replace(/\b(?:id|codigo|cod|ref|j)?\d{4,}\b/gi, " ")
+        .replace(/\b(?:utm|source|medium|campaign|content|term)\b/gi, " ")
+        .replace(/[-_+]+/g, " ")
+        .replace(/\s+/g, " ")
+    );
+  } catch {
+    return "";
+  }
+}
+
+function urlContextForAuctionLink(input: {
+  sourceUrl: string;
+  domain: string;
+  row: LinkScraperRow;
+}) {
+  let pathContext = "";
+  try {
+    const parsed = new URL(input.sourceUrl);
+    pathContext = decodeURIComponent(parsed.pathname)
+      .replace(/[-_+]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  } catch {
+    pathContext = "";
+  }
+
+  const titleCandidate = titleCandidateFromUrl(input.sourceUrl);
+  return [
+    "Contexto derivado da URL quando a pagina esta protegida ou vazia:",
+    `URL: ${input.sourceUrl}`,
+    input.domain ? `Dominio: ${input.domain}` : "",
+    titleCandidate ? `Titulo provavel pelo slug: ${titleCandidate}` : "",
+    pathContext ? `Caminho da URL: ${pathContext}` : "",
+    input.row.cityHint || input.row.stateHint ? `Dica cidade/UF: ${[input.row.cityHint, input.row.stateHint].filter(Boolean).join("/")}` : "",
+    input.row.propertyTypeHint ? `Dica tipo: ${input.row.propertyTypeHint}` : "",
+    input.row.auctionDateHint ? `Dica data: ${input.row.auctionDateHint}` : "",
+  ].filter(Boolean).join("\n");
+}
+
 function inferPropertyType(text: string, fallback: string) {
   const normalized = text
     .normalize("NFD")
@@ -1927,29 +2009,74 @@ function mergeAuctionExtraction(gemini: AuctionLinkExtraction, adapter: AuctionS
   return merged;
 }
 
-function hasUsableAuctionEvidence(input: {
-  extraction: AuctionSiteExtractionPatch;
+function mergeExtractionPreferPrimary(primary: AuctionLinkExtraction, fallback: Partial<AuctionLinkExtraction> & AuctionSiteExtractionPatch): AuctionLinkExtraction {
+  const pickText = (primaryValue: string, fallbackValue?: string) => firstText(primaryValue, fallbackValue || "");
+  const pickNumber = (primaryValue: number, fallbackValue?: number) => firstPositive(primaryValue, fallbackValue || 0);
+
+  return {
+    title: pickText(primary.title, fallback.title),
+    propertyType: pickText(primary.propertyType, fallback.propertyType),
+    address: pickText(primary.address, fallback.address),
+    city: normalizeLocationName(pickText(primary.city, fallback.city)),
+    state: normalizeStateUf(pickText(primary.state, fallback.state)),
+    neighborhood: normalizeLocationName(pickText(primary.neighborhood, fallback.neighborhood)),
+    landAreaM2: pickNumber(primary.landAreaM2, fallback.landAreaM2),
+    builtAreaM2: pickNumber(primary.builtAreaM2, fallback.builtAreaM2),
+    privateAreaM2: pickNumber(primary.privateAreaM2, fallback.privateAreaM2),
+    bedrooms: pickNumber(primary.bedrooms, fallback.bedrooms),
+    parkingSpaces: pickNumber(primary.parkingSpaces, fallback.parkingSpaces),
+    initialBid: pickNumber(primary.initialBid, fallback.initialBid),
+    appraisalValue: pickNumber(primary.appraisalValue, fallback.appraisalValue),
+    auctionDate: pickText(primary.auctionDate, fallback.auctionDate),
+    paymentCondition: pickText(primary.paymentCondition, fallback.paymentCondition),
+    occupancy: pickText(primary.occupancy, fallback.occupancy),
+    legalSignal: pickText(primary.legalSignal, fallback.legalSignal),
+    summary: pickText(primary.summary, fallback.summary),
+    cautionNotes: uniqueStrings([
+      primary.cautionNotes,
+      fallback.cautionNotes || "",
+    ], 8).join("\n"),
+    confidenceScore: Math.max(primary.confidenceScore || 0, fallback.confidenceScore || 0),
+    missingFields: uniqueStrings([
+      ...(primary.missingFields || []),
+      ...((fallback.missingFields || []) as string[]),
+    ], 40),
+  };
+}
+
+function needsGroundedAuctionFallback(input: {
+  extraction: AuctionLinkExtraction;
+  pageBlocked: boolean;
+  fetchError: string;
+  visibleText: string;
+}) {
+  const areaM2 = firstPositive(input.extraction.privateAreaM2, input.extraction.builtAreaM2, input.extraction.landAreaM2);
+  const coreMoney = firstPositive(input.extraction.initialBid, input.extraction.appraisalValue);
+  return (
+    Boolean(input.fetchError) ||
+    input.pageBlocked ||
+    input.visibleText.length < 1200 ||
+    input.extraction.confidenceScore < 45 ||
+    !input.extraction.title ||
+    !input.extraction.city ||
+    !input.extraction.state ||
+    !areaM2 ||
+    !coreMoney
+  );
+}
+
+function hasMinimumAuctionExtraction(input: {
+  extraction: AuctionLinkExtraction;
   imageCount: number;
   documentCount: number;
-  supplementText: string;
 }) {
-  const extraction = input.extraction;
-  const hardSignals = [
-    extraction.initialBid,
-    extraction.appraisalValue,
-    extraction.privateAreaM2 || extraction.builtAreaM2 || extraction.landAreaM2,
-    extraction.address,
-    extraction.city && extraction.state,
-  ].filter(Boolean).length;
-  const supportSignals = [
-    extraction.title && !/just a moment|attention required|access denied/i.test(extraction.title),
-    extraction.summary && !/just a moment|attention required|access denied/i.test(extraction.summary),
-    input.imageCount,
-    input.documentCount,
-    cleanString(input.supplementText),
-  ].filter(Boolean).length;
-
-  return hardSignals >= 2 || (hardSignals >= 1 && supportSignals >= 2);
+  const areaM2 = firstPositive(input.extraction.privateAreaM2, input.extraction.builtAreaM2, input.extraction.landAreaM2);
+  const value = firstPositive(input.extraction.initialBid, input.extraction.appraisalValue);
+  const titleLooksSpecific = cleanString(input.extraction.title).length >= 12 && !/^imovel em leilao/i.test(input.extraction.title);
+  return Boolean(
+    titleLooksSpecific &&
+      (input.extraction.city || input.extraction.state || input.extraction.address || areaM2 || value || input.imageCount || input.documentCount)
+  );
 }
 
 type LinkAnalysisQualityReview = {
@@ -2174,15 +2301,80 @@ function evaluateLinkAnalysisQualityGate(input: {
   } satisfies LinkAnalysisQualityGate;
 }
 
+const MARKET_REFERENCE_HOST_ALLOWLIST = [
+  "vivareal",
+  "zapimoveis",
+  "imovelweb",
+  "mgfimoveis",
+  "olx.com.br",
+  "chavesnamao",
+  "quintoandar",
+  "loft.com.br",
+  "netimoveis",
+  "wimoveis",
+  "scimoveis",
+  "ibagy",
+  "apolar",
+  "foxter",
+  "auxiliadora",
+  "lopes",
+  "agenteimovel",
+  "123i",
+  "imobiliaria",
+  "imob",
+  "imb.br",
+  "classimoveis",
+  "corretora",
+  "properati",
+];
+
+function normalizedAsciiText(value: string) {
+  return cleanString(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function isLikelyMarketListingUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    const host = normalizedAsciiText(parsed.hostname.replace(/^www\./i, ""));
+    const path = normalizedAsciiText(decodeURIComponent(parsed.pathname));
+    const query = normalizedAsciiText(parsed.search);
+    if (!MARKET_REFERENCE_HOST_ALLOWLIST.some((token) => host.includes(token))) return false;
+    if (/(google|bing|duckduckgo|facebook|instagram|youtube|whatsapp|maps)/i.test(host)) return false;
+    if (/(leilao|leiloes|auction|superbid|hasta|hastapublica|judicial|portalzuk|fbleiloes|lancenoleilao)/i.test(host)) return false;
+    if (/(busca|buscar|search|pesquisa|resultado|resultados|mapa|favoritos|categoria)/.test(path)) return false;
+    const compact = `${path} ${query}`;
+    const hasListingToken = /(imovel|apartamento|apto|casa|sobrado|terreno|lote|sala|galpao|comercial|chacara|condominio|propriedade)/.test(compact);
+    const hasIdentifier = /\d{4,}/.test(compact) || /(?:id|codigo|cod|ref)[=/_-]?\d{2,}/.test(compact);
+    const pathDepth = path.split("/").filter(Boolean).length;
+    return hasIdentifier || (hasListingToken && pathDepth >= 2);
+  } catch {
+    return false;
+  }
+}
+
+function searchReferenceLabel(input: { label: string; url: string; kind: "sale" | "rent" }) {
+  const label = cleanString(input.label);
+  const domain = sourceDomain(input.url);
+  if (input.kind === "rent" || /alug|rent/i.test(label)) return `Referencia aluguel: ${domain || label || "fonte"}`;
+  return `Referencia venda: ${domain || label || "fonte"}`;
+}
+
 function marketSourceLinks(input: {
   auctionUrl: string;
   marketResearch: DeepMarketResearchResult | null;
 }) {
+  const searchedReferenceLinks = (input.marketResearch?.searchedUrls || [])
+    .filter((item) => isLikelyMarketListingUrl(item.url))
+    .map((item) => ({ label: searchReferenceLabel(item), url: item.url }));
   const links = [
     { label: "Link leilao", url: input.auctionUrl },
-    ...(input.marketResearch?.searchedUrls || []).map((item) => ({ label: `Busca: ${item.label}`, url: item.url })),
     ...(input.marketResearch?.saleComparables || []).map((item) => ({ label: `Comparavel venda: ${item.sourceLabel}`, url: item.sourceUrl })),
     ...(input.marketResearch?.rentalComparables || []).map((item) => ({ label: `Comparavel aluguel: ${item.sourceLabel}`, url: item.sourceUrl })),
+    ...searchedReferenceLinks,
+    ...(input.marketResearch?.searchedUrls || []).map((item) => ({ label: `Busca: ${item.label}`, url: item.url })),
   ];
   const seen = new Set<string>();
   return links
@@ -2474,23 +2666,28 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
   await supabase.from("market_analysis_import_rows").update({ status: "scraping", scrape_run_id: runId }).eq("id", row.id);
 
   try {
-    const response = await fetch(row.auctionUrl, {
-      cache: "no-store",
-      headers: auctionPageFetchHeaders(),
-      signal: AbortSignal.timeout(profile.fetchTimeoutMs),
+    const page = await fetchAuctionPageSnapshot({
+      sourceUrl: row.auctionUrl,
+      timeoutMs: profile.fetchTimeoutMs,
     });
-    const html = await response.text();
-    const resolvedSourceUrl = response.url || row.auctionUrl;
+    const html = page.html;
+    const resolvedSourceUrl = page.resolvedSourceUrl;
     const domain = row.sourceDomain || sourceDomain(resolvedSourceUrl);
-    const pageBlocked = looksLikeBotChallenge(html, titleFromHtml(html, domain), resolvedSourceUrl);
+    const pageTitle = titleFromHtml(html, domain);
+    const pageBlocked = Boolean(page.error) || looksLikeBotChallenge(html, pageTitle, resolvedSourceUrl);
     const supplement = await fetchAuctionPageSupplement({
       sourceUrl: row.auctionUrl,
       resolvedSourceUrl,
       domain,
       timeoutMs: profile.fetchTimeoutMs,
     });
+    const urlContext = urlContextForAuctionLink({
+      sourceUrl: row.auctionUrl,
+      domain,
+      row,
+    });
     const enrichedHtml = [html, supplement.html].filter(Boolean).join("\n\n");
-    const visibleText = cleanString([htmlToText(html), supplement.text].filter(Boolean).join("\n\n"));
+    const visibleText = cleanString([htmlToText(html), supplement.text, urlContext].filter(Boolean).join("\n\n"));
     const siteContext = extractAuctionSiteContext({
       sourceUrl: resolvedSourceUrl,
       sourceDomain: domain,
@@ -2503,20 +2700,11 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
       supplement.documentLinks,
       siteContext.documents
     );
-    if (pageBlocked && !hasUsableAuctionEvidence({
-      extraction: siteContext.extraction,
-      imageCount: siteContext.imageUrls.length + supplement.imageUrls.length,
-      documentCount: documentLinks.length,
-      supplementText: supplement.text,
-    })) {
-      throw new Error(
-        `Pagina protegida ou desafio anti-bot em ${domain || "fonte"}; a coleta automatica nao recebeu dados suficientes para cadastrar o imovel.`
-      );
-    }
+    const baseGeminiContext = [siteContext.llmContext, visibleText].filter(Boolean).join("\n\n");
     const gemini = await extractAuctionLinkWithGemini({
       sourceUrl: row.auctionUrl,
       sourceDomain: domain,
-      htmlText: [siteContext.llmContext, visibleText].filter(Boolean).join("\n\n"),
+      htmlText: baseGeminiContext,
       analysisDepth,
       maxInputChars: profile.llmTextLimit,
       hints: {
@@ -2526,8 +2714,27 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
         propertyType: row.propertyTypeHint,
       },
     });
-    const extraction = mergeAuctionExtraction(gemini.extraction, siteContext.extraction);
-    const title = firstText(extraction.title, titleFromHtml(html, domain));
+    let extraction = mergeAuctionExtraction(gemini.extraction, siteContext.extraction);
+    let groundedGemini: AuctionLinkExtractionResult | null = null;
+    if (needsGroundedAuctionFallback({ extraction, pageBlocked, fetchError: page.error, visibleText })) {
+      groundedGemini = await extractAuctionLinkWithGeminiGrounded({
+        sourceUrl: row.auctionUrl,
+        sourceDomain: domain,
+        htmlText: baseGeminiContext,
+        analysisDepth,
+        maxInputChars: Math.min(profile.llmTextLimit, 20_000),
+        hints: {
+          city: row.cityHint,
+          state: row.stateHint,
+          auctionDate: row.auctionDateHint,
+          propertyType: row.propertyTypeHint,
+        },
+      });
+      if (groundedGemini.extraction.confidenceScore || !groundedGemini.error) {
+        extraction = mergeExtractionPreferPrimary(groundedGemini.extraction, extraction);
+      }
+    }
+    const title = firstText(extraction.title, titleCandidateFromUrl(row.auctionUrl), pageTitle);
     const initialBid = firstPositive(
       extraction.initialBid,
       findMoneyAfter(visibleText, ["lance", "valor minimo", "valor do lance", "preco minimo"])
@@ -2543,6 +2750,14 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
       ? await mirrorRemoteImagesToR2({ opportunityCode, imageUrls: rawImageUrls, alt: title, maxImages: profile.maxImages, referer: row.auctionUrl })
       : ([] as StoredImageAsset[]);
     const usableImageCount = images.filter((image) => image.status === "mirrored" || image.status === "external").length;
+    if (!hasMinimumAuctionExtraction({ extraction: { ...extraction, title }, imageCount: usableImageCount, documentCount: documentLinks.length })) {
+      const reason = page.error
+        ? `a pagina original falhou (${page.error}) e a busca complementar nao confirmou os dados do imovel`
+        : pageBlocked
+          ? "a pagina original parece protegida/vazia e a busca complementar nao confirmou os dados do imovel"
+          : "a coleta automatica nao encontrou dados minimos do imovel";
+      throw new Error(`Nao foi possivel extrair dados minimos de ${domain || "fonte"}: ${reason}.`);
+    }
     let qualityReview = buildLinkAnalysisQualityReview({
       analysisDepth,
       extraction,
@@ -2550,9 +2765,17 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
       appraisalValue,
       imageCount: usableImageCount,
       documentCount: documentLinks.length,
-      responseOk: response.ok,
-      geminiError: gemini.error,
-      adapterWarnings: [...siteContext.warnings, ...supplement.warnings],
+      responseOk: page.ok,
+      geminiError: uniqueStrings([
+        gemini.error || "",
+        groundedGemini?.error ? `Google Search: ${groundedGemini.error}` : "",
+      ], 4).join(" | "),
+      adapterWarnings: uniqueStrings([
+        ...siteContext.warnings,
+        ...supplement.warnings,
+        page.error ? `Fetch pagina principal: ${page.error}` : "",
+        pageBlocked ? "Pagina original parece bloqueada, vazia ou carregada por JavaScript; fallback de busca acionado." : "",
+      ], 12),
     });
     const marketResearch = analysisDepth === "deep"
       ? await runDeepMarketResearch({ extraction, title, initialBid })
@@ -2607,7 +2830,7 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
           !["nao informado", "nao informada", "nao se aplica", "n/a", "-"].includes(occupancyTextForEvaluation)
       ),
       riskScore: !qualityGate.passed || qualityReview.requiresReview ? 65 : 40,
-      complianceScore: response.ok && qualityGate.passed && !qualityReview.requiresReview ? 78 : 55,
+      complianceScore: page.ok && qualityGate.passed && !qualityReview.requiresReview ? 78 : 55,
       missingFields: uniqueStrings([...qualityReview.missingFields, ...qualityGate.issues], 40),
       qualityFlags: qualityReview.qualityFlags,
       cautionNotes: qualityReview.cautionNotes,
@@ -2675,12 +2898,18 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
         evaluationRuleVersion: importEvaluation.ruleVersion,
         sourceUrl: row.auctionUrl,
         sourceDomain: domain,
-        httpStatus: response.status,
+        httpStatus: page.status,
         geminiExtraction: {
           model: gemini.model,
           error: gemini.error || null,
           extraction,
           rawText: gemini.rawText ? gemini.rawText.slice(0, 12000) : "",
+          grounded: groundedGemini ? {
+            model: groundedGemini.model || "",
+            error: groundedGemini.error || null,
+            extraction: groundedGemini.extraction,
+            rawText: groundedGemini.rawText ? groundedGemini.rawText.slice(0, 12000) : "",
+          } : null,
         },
         siteAdapter: {
           key: siteContext.adapterKey,
@@ -2787,7 +3016,7 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
         confidenceScore: siteContext.extraction.confidenceScore || 0,
       },
       pageDiagnostics: {
-        httpStatus: response.status,
+        httpStatus: page.status,
         resolvedSourceUrl,
         blockedByAntiBot: pageBlocked,
       },
@@ -2795,9 +3024,9 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
 
     await supabase.from("auction_scrape_runs").update({
       opportunity_id: ingest.data.opportunityId,
-      status: response.ok && qualityGate.passed ? "completed" : "partial",
+      status: page.ok && qualityGate.passed ? "completed" : "partial",
       completed_at: new Date().toISOString(),
-      http_status: response.status,
+      http_status: page.status,
       error_message: qualityGate.passed ? null : qualityGateMessage,
       raw_snapshot_id: ingest.data.snapshotId,
       extracted_payload: {
@@ -2807,6 +3036,8 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
         gemini: {
           model: gemini.model,
           error: gemini.error || null,
+          groundedModel: groundedGemini?.model || "",
+          groundedError: groundedGemini?.error || "",
           confidenceScore: extraction.confidenceScore,
           missingFields: extraction.missingFields,
         },
@@ -2829,8 +3060,9 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
         },
         pageDiagnostics: {
           blockedByAntiBot: pageBlocked,
-          httpStatus: response.status,
+          httpStatus: page.status,
           resolvedSourceUrl,
+          fetchError: page.error,
         },
         subject: {
           propertyType: extraction.propertyType,

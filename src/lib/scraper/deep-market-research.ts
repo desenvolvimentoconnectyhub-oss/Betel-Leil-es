@@ -6,7 +6,7 @@ import {
   type MarketComparableQuality,
   type MarketCostItem,
 } from "@/lib/admin/market-analysis";
-import { getGeminiApiKey, getGeminiModel } from "@/lib/ai/config";
+import { getGeminiApiKey, getGeminiModel, normalizeGeminiModel } from "@/lib/ai/config";
 import type { AuctionLinkExtraction } from "./auction-link-extractor";
 import { normalizeLocationName, normalizeStateUf } from "./location-normalization";
 
@@ -511,24 +511,32 @@ function buildSearchQueries(subject: SubjectProfile) {
   const area = subject.areaM2 ? `${Math.round(subject.areaM2)} m2` : "";
   const microLocation = subject.condoName || subject.neighborhood;
   const street = streetForSearch(subject.address);
+  const titleCore = compactQuery([subject.title, microLocation, cityUf]);
   const saleCore = compactQuery([primaryType, "venda", microLocation, cityUf, area]);
   const rentCore = compactQuery([primaryType, "aluguel", microLocation, cityUf, area]);
   const saleQueries = uniqueStrings([
+    titleCore ? compactQuery([titleCore, "venda"]) : "",
     subject.condoName ? compactQuery([`"${subject.condoName}"`, type, "venda", cityUf]) : "",
     microLocation ? saleCore : "",
     titleText.includes("sobrado") ? compactQuery(["casa", "venda", microLocation, cityUf, area]) : "",
     compactQuery([type, "alto padrao", "venda", subject.city, subject.state, area]),
     compactQuery([type, "venda", subject.neighborhood, subject.city, subject.state, area]),
     street ? compactQuery([street, type, "venda", subject.city, subject.state]) : "",
+    titleCore ? compactQuery(["site:vivareal.com.br/imovel", titleCore, "venda"]) : "",
+    titleCore ? compactQuery(["site:zapimoveis.com.br/imovel", titleCore, "venda"]) : "",
+    titleCore ? compactQuery(["site:imovelweb.com.br", titleCore, "venda"]) : "",
     saleCore ? compactQuery(["site:vivareal.com.br/imovel", saleCore]) : "",
     saleCore ? compactQuery(["site:zapimoveis.com.br/imovel", saleCore]) : "",
     saleCore ? compactQuery(["site:imovelweb.com.br", saleCore]) : "",
     saleCore ? compactQuery(["site:olx.com.br/imoveis", saleCore]) : "",
   ], 10);
   const rentQueries = uniqueStrings([
+    titleCore ? compactQuery([titleCore, "aluguel"]) : "",
     subject.condoName ? compactQuery([`"${subject.condoName}"`, type, "aluguel", cityUf]) : "",
     microLocation ? rentCore : "",
     compactQuery([type, "aluguel", subject.neighborhood, subject.city, subject.state, area]),
+    titleCore ? compactQuery(["site:vivareal.com.br/imovel", titleCore, "aluguel"]) : "",
+    titleCore ? compactQuery(["site:zapimoveis.com.br/imovel", titleCore, "aluguel"]) : "",
     rentCore ? compactQuery(["site:vivareal.com.br/imovel", rentCore]) : "",
     rentCore ? compactQuery(["site:zapimoveis.com.br/imovel", rentCore]) : "",
   ], 5);
@@ -574,10 +582,20 @@ async function searchMarketResults(subject: SubjectProfile) {
     seen.add(key);
     return true;
   });
+  const resultUrls = uniqueResults
+    .filter((item) => isAcceptableGroundedMarketSource(item.url))
+    .map((item) => ({
+      label: `Resultado ${item.provider}: ${item.title || sourceLabel(item.url)}`,
+      url: item.url,
+      kind: item.kind,
+    }));
 
   return {
     searchQueries: searches.map((item) => item.query),
-    searchedUrls: pages.map((item) => ({ label: `${item.provider}: ${item.query}`, url: item.url, kind: item.kind })),
+    searchedUrls: uniqueSearchedUrls([
+      ...resultUrls,
+      ...pages.map((item) => ({ label: `${item.provider}: ${item.query}`, url: item.url, kind: item.kind })),
+    ]),
     results: uniqueResults,
   };
 }
@@ -1138,25 +1156,32 @@ async function generateGeminiGroundedContent(input: {
   ];
 
   let lastError = "";
-  for (const attempt of toolAttempts) {
-    try {
-      const genModel = client.getGenerativeModel({
-        model: input.model,
-        tools: attempt.tools,
-        generationConfig: {
-          temperature: 0.1,
-          topP: 0.8,
-        },
-        systemInstruction: input.systemInstruction,
-      } as Parameters<typeof client.getGenerativeModel>[0]);
-      const result = await genModel.generateContent(input.prompt, { timeout: GEMINI_GROUNDED_TIMEOUT_MS });
-      return {
-        response: result.response,
-        rawText: result.response.text(),
-        toolName: attempt.label,
-      };
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : `Falha usando ${attempt.label}.`;
+  const modelCandidates = uniqueStrings([
+    normalizeGeminiModel(input.model),
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+  ], 4);
+  for (const model of modelCandidates) {
+    for (const attempt of toolAttempts) {
+      try {
+        const genModel = client.getGenerativeModel({
+          model,
+          tools: attempt.tools,
+          generationConfig: {
+            temperature: 0.1,
+            topP: 0.8,
+          },
+          systemInstruction: input.systemInstruction,
+        } as unknown as Parameters<typeof client.getGenerativeModel>[0]);
+        const result = await genModel.generateContent(input.prompt, { timeout: GEMINI_GROUNDED_TIMEOUT_MS });
+        return {
+          response: result.response,
+          rawText: result.response.text(),
+          toolName: `${attempt.label}/${model}`,
+        };
+      } catch (error) {
+        lastError = error instanceof Error ? `${attempt.label}/${model}: ${error.message}` : `Falha usando ${attempt.label}/${model}.`;
+      }
     }
   }
 

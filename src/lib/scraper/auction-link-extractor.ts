@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getGeminiApiKey, getGeminiModel } from "@/lib/ai/config";
+import { getGeminiApiKey, getGeminiModel, normalizeGeminiModel } from "@/lib/ai/config";
 import { normalizeLocationName, normalizeStateUf } from "./location-normalization";
 
 export type AuctionLinkExtraction = {
@@ -132,6 +132,30 @@ function normalizeExtraction(value: unknown): AuctionLinkExtraction {
   };
 }
 
+function uniqueStrings(values: string[], limit = 6) {
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const value of values.map((item) => cleanString(item)).filter(Boolean)) {
+    const key = value
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(value);
+    if (output.length >= limit) break;
+  }
+  return output;
+}
+
+function groundedModelCandidates(configuredModel: string) {
+  return uniqueStrings([
+    normalizeGeminiModel(configuredModel),
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+  ]);
+}
+
 export async function extractAuctionLinkWithGemini(input: {
   sourceUrl: string;
   sourceDomain: string;
@@ -208,4 +232,85 @@ export async function extractAuctionLinkWithGemini(input: {
       error: error instanceof Error ? error.message : "Falha ao extrair dados com Gemini.",
     };
   }
+}
+
+export async function extractAuctionLinkWithGeminiGrounded(input: {
+  sourceUrl: string;
+  sourceDomain: string;
+  htmlText?: string;
+  analysisDepth?: "standard" | "deep" | string;
+  maxInputChars?: number;
+  hints?: {
+    city?: string;
+    state?: string;
+    auctionDate?: string;
+    propertyType?: string;
+  };
+}): Promise<AuctionLinkExtractionResult> {
+  const apiKey = await getGeminiApiKey();
+  if (!apiKey) {
+    return { extraction: emptyExtraction, rawText: "", error: "Gemini nao configurado." };
+  }
+
+  const configuredModel = await getGeminiModel();
+  const deepMode = input.analysisDepth === "deep";
+  const context = cleanString(input.htmlText).slice(0, input.maxInputChars || (deepMode ? 20_000 : 12_000));
+  let lastError = "";
+
+  try {
+    const { GoogleGenerativeAI } = await import("@google/generative-ai");
+    const client = new GoogleGenerativeAI(apiKey);
+    const prompt = [
+      "Use Google Search para encontrar a pagina do lote de leilao abaixo e extrair dados do imovel.",
+      "Retorne apenas JSON valido no schema informado. Se o Google nao confirmar o dado, deixe vazio/zero e liste em missingFields.",
+      "Nunca use referencias de venda/aluguel como dados do leilao. Elas servem apenas para contexto, nao para lance ou avaliacao.",
+      "",
+      "Schema JSON:",
+      JSON.stringify(emptyExtraction),
+      "",
+      `URL do lote: ${input.sourceUrl}`,
+      `Dominio: ${input.sourceDomain}`,
+      `Modo: ${deepMode ? "profundo" : "padrao"}`,
+      `Dicas manuais: ${JSON.stringify(input.hints || {})}`,
+      context ? `Contexto parcial ja coletado:\n${context}` : "",
+    ].filter(Boolean).join("\n");
+
+    for (const model of groundedModelCandidates(configuredModel)) {
+      try {
+        const genModel = client.getGenerativeModel({
+          model,
+          tools: [{ googleSearch: {} }],
+          generationConfig: {
+            temperature: 0.1,
+            topP: 0.8,
+          },
+          systemInstruction: [
+            "Voce extrai dados verificaveis de lotes de leilao imobiliario para a Betel.",
+            "Use busca Google quando a pagina original estiver protegida, vazia, em carregamento ou com HTML insuficiente.",
+            "Retorne apenas JSON valido, sem markdown.",
+            "Se nao houver fonte para um campo, nao invente.",
+          ].join("\n"),
+        } as unknown as Parameters<typeof client.getGenerativeModel>[0]);
+        const result = await genModel.generateContent(prompt, { timeout: 45_000 });
+        const rawText = result.response.text();
+        const parsed = pickJson(rawText);
+        if (!parsed) {
+          lastError = `${model}: Gemini/Google retornou JSON invalido.`;
+          continue;
+        }
+        return { extraction: normalizeExtraction(parsed), rawText, model };
+      } catch (error) {
+        lastError = error instanceof Error ? `${model}: ${error.message}` : `${model}: Falha ao extrair com Google Search.`;
+      }
+    }
+  } catch (error) {
+    lastError = error instanceof Error ? error.message : "Falha ao preparar Gemini/Google Search.";
+  }
+
+  return {
+    extraction: emptyExtraction,
+    rawText: "",
+    model: configuredModel,
+    error: lastError || "Gemini/Google Search nao retornou extracao aproveitavel.",
+  };
 }

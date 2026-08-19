@@ -120,6 +120,19 @@ function asNumber(value: unknown, fallback = 0) {
   return Number.isFinite(parsed) ? Math.trunc(parsed) : fallback;
 }
 
+function deliveryExternalId(payload: Record<string, unknown>) {
+  const media = asRecord(payload.media);
+  const button = asRecord(payload.button);
+  return cleanString(
+    payload.externalDeliveryId ||
+      payload.external_delivery_id ||
+      button.externalDeliveryId ||
+      button.external_delivery_id ||
+      media.externalDeliveryId ||
+      media.external_delivery_id
+  );
+}
+
 function asBoolean(value: unknown) {
   return value === true || value === "true" || value === "1" || value === 1;
 }
@@ -1060,7 +1073,7 @@ export async function processWhatsAppCommunityCampaigns(input: { limit?: number;
           campaign_id: campaignId,
           target_id: targetId,
           destination_id: cleanString(targetRow.destination_id) || null,
-          provider_message_id: cleanString(deliveryPayload.externalDeliveryId) || null,
+          provider_message_id: deliveryExternalId(deliveryPayload) || null,
           delivery_status: input.dryRun ? "skipped" : deliveryStatus,
           payload: deliveryPayload,
           error_message: errorMessage || null,
