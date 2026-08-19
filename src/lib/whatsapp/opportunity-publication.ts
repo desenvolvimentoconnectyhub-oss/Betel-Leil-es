@@ -6,7 +6,9 @@ import type { DataResult, MutationResult } from "@/lib/admin/repository/shared";
 import type { PropertyMarketAnalysis, PropertyMarketComparable } from "@/lib/admin/market-analysis";
 import type { AuctionOpportunity, PropertyImageAsset } from "@/lib/admin/resources";
 import { WILLIAN_AGENT_KEY, type WhatsAppActionButtonInput } from "@/lib/communication/connectyhub-client";
-import { normalizeLocationName } from "@/lib/scraper/location-normalization";
+import type { AuctionLinkExtraction } from "@/lib/scraper/auction-link-extractor";
+import { runDeepMarketResearch, type DeepMarketComparable, type DeepMarketResearchResult } from "@/lib/scraper/deep-market-research";
+import { normalizeLocationName, normalizeStateUf } from "@/lib/scraper/location-normalization";
 import { listSystemWhatsAppSenderOptions } from "@/lib/communication/system-whatsapp-sender";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createWhatsAppCommunityCampaign, processWhatsAppCommunityCampaigns, type WhatsAppCommunityDestination } from "./group-campaigns";
@@ -235,9 +237,26 @@ function publicDecisionLabel(analysis: PropertyMarketAnalysis | null) {
   return analysis?.decision ? labels[analysis.decision] : "🔎 *Análise disponível*";
 }
 
+function normalizeAreaForPublication(value: unknown, propertyType: string) {
+  const area = asNumber(value);
+  if (!area) return 0;
+  const group = propertyGroup(propertyType);
+  if (group === "apartment" || group === "house" || group === "commercial") {
+    if (area > 1_000_000) return Math.round((area / 10_000) * 100) / 100;
+    if (area > 10_000) return Math.round((area / 100) * 100) / 100;
+  }
+  return area;
+}
+
 function analysisArea(analysis?: PropertyMarketAnalysis | null) {
   const subject = analysis?.subject;
-  return subject?.privateAreaM2 || subject?.builtAreaM2 || subject?.landAreaM2 || 0;
+  const propertyType = cleanString(subject?.propertyType);
+  return (
+    normalizeAreaForPublication(subject?.privateAreaM2, propertyType) ||
+    normalizeAreaForPublication(subject?.builtAreaM2, propertyType) ||
+    normalizeAreaForPublication(subject?.landAreaM2, propertyType) ||
+    0
+  );
 }
 
 function primaryImageUrl(images?: PropertyImageAsset[]) {
@@ -446,6 +465,215 @@ function buildAuctionUrl(analysis: PropertyMarketAnalysis | null) {
   return cleanString(fallback);
 }
 
+function firstHttpUrl(...values: unknown[]) {
+  return values.map((value) => cleanString(value)).find((value) => /^https?:\/\//i.test(value)) || "";
+}
+
+function firstPositiveNumber(...values: unknown[]) {
+  return values.map((value) => asNumber(value)).find((value) => Number.isFinite(value) && value > 0) || 0;
+}
+
+function researchSourceLinks(analysis: PropertyMarketAnalysis | null, auctionUrl: string, research: DeepMarketResearchResult) {
+  const links = [
+    ...(analysis?.sourceLinks || []),
+    { label: "Link leilao", url: auctionUrl },
+    ...research.saleComparables.map((item) => ({ label: `Comparavel venda: ${item.sourceLabel}`, url: item.sourceUrl })),
+    ...research.rentalComparables.map((item) => ({ label: `Comparavel aluguel: ${item.sourceLabel}`, url: item.sourceUrl })),
+  ];
+  const seen = new Set<string>();
+  return links
+    .map((link) => ({ label: cleanString(link.label, "Fonte"), url: cleanString(link.url) }))
+    .filter((link) => link.url)
+    .filter((link) => {
+      if (seen.has(link.url)) return false;
+      seen.add(link.url);
+      return true;
+    })
+    .slice(0, 30);
+}
+
+function subjectForReferenceRefresh(
+  opportunity: AuctionOpportunity,
+  analysis: PropertyMarketAnalysis | null,
+  runSubject: DbRow
+) {
+  const analysisSubject = analysis?.subject;
+  const propertyType = cleanString(runSubject.propertyType, cleanString(analysisSubject?.propertyType, opportunity.propertyType));
+  return {
+    propertyType,
+    address: cleanString(runSubject.address, cleanString(analysisSubject?.address, opportunity.address)),
+    city: normalizeLocationName(cleanString(runSubject.city, cleanString(analysisSubject?.city, opportunity.city))),
+    state: normalizeStateUf(cleanString(runSubject.state, cleanString(analysisSubject?.state, opportunity.state))),
+    neighborhood: normalizeLocationName(cleanString(runSubject.neighborhood, cleanString((analysisSubject as { neighborhood?: unknown } | undefined)?.neighborhood))),
+    landAreaM2: normalizeAreaForPublication(firstPositiveNumber(runSubject.landAreaM2, analysisSubject?.landAreaM2), propertyType),
+    builtAreaM2: normalizeAreaForPublication(firstPositiveNumber(runSubject.builtAreaM2, analysisSubject?.builtAreaM2), propertyType),
+    privateAreaM2: normalizeAreaForPublication(firstPositiveNumber(runSubject.privateAreaM2, analysisSubject?.privateAreaM2), propertyType),
+    bedrooms: firstPositiveNumber(runSubject.bedrooms, analysisSubject?.bedrooms),
+    parkingSpaces: firstPositiveNumber(runSubject.parkingSpaces, analysisSubject?.parkingSpaces),
+  };
+}
+
+function comparableRowsForRefresh(input: {
+  analysisId: string;
+  opportunityId: string;
+  comparables: DeepMarketComparable[];
+}) {
+  return input.comparables
+    .filter((comparable) => comparable.quality !== "discarded")
+    .slice(0, 12)
+    .map((comparable) => {
+      const referenceValue = firstPositiveNumber(comparable.askingPrice, comparable.monthlyRent);
+      return {
+        analysis_id: input.analysisId,
+        opportunity_id: input.opportunityId,
+        source_label: comparable.sourceLabel,
+        source_url: comparable.sourceUrl,
+        listing_type: comparable.listingType === "rent" ? "Aluguel" : "Venda",
+        property_type: comparable.propertyType,
+        address: comparable.address || null,
+        neighborhood: comparable.neighborhood || null,
+        city: comparable.city || null,
+        state: comparable.state || null,
+        area_m2: comparable.areaM2,
+        asking_price: referenceValue,
+        sold_price: 0,
+        price_per_m2: comparable.pricePerM2,
+        distance_km: 0,
+        similarity_score: comparable.similarityScore,
+        quality: comparable.quality,
+        notes: comparable.notes,
+        collected_at: comparable.collectedAt,
+        raw_payload: {
+          source: "publication_reference_refresh",
+          listingType: comparable.listingType,
+          askingPrice: comparable.askingPrice,
+          monthlyRent: comparable.monthlyRent,
+        },
+      };
+    });
+}
+
+async function refreshPublicationReferences(input: {
+  opportunityCode: string;
+  opportunity: AuctionOpportunity;
+  analysis: PropertyMarketAnalysis | null;
+  auctionUrl: string;
+}) {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase || !input.analysis?.id) return { refreshed: false, reason: "Analise de mercado ainda nao foi salva." };
+
+  const { data: opportunityRow, error: opportunityError } = await supabase
+    .from("auction_opportunities")
+    .select("id, raw_payload")
+    .eq("code", input.opportunityCode)
+    .maybeSingle();
+  const opportunityUuid = cleanString((opportunityRow as DbRow | null)?.id);
+  if (opportunityError || !opportunityUuid) {
+    return { refreshed: false, reason: opportunityError?.message || "Oportunidade real nao encontrada para atualizar referencias." };
+  }
+
+  const { data: runRow } = await supabase
+    .from("auction_scrape_runs")
+    .select("source_url, extracted_payload, completed_at, updated_at")
+    .eq("opportunity_id", opportunityUuid)
+    .order("completed_at", { ascending: false, nullsFirst: false })
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const runPayload = asRecord((runRow as DbRow | null)?.extracted_payload);
+  const runSubject = asRecord(runPayload.subject);
+  const subject = subjectForReferenceRefresh(input.opportunity, input.analysis, runSubject);
+  const auctionUrl = firstHttpUrl(input.auctionUrl, (runRow as DbRow | null)?.source_url, asRecord((opportunityRow as DbRow | null)?.raw_payload).sourceUrl);
+
+  if (!subject.city || !subject.state) {
+    return { refreshed: false, reason: "Cidade/UF ainda nao estao confirmadas para buscar referencias." };
+  }
+
+  const extraction: AuctionLinkExtraction = {
+    title: input.opportunity.title,
+    propertyType: subject.propertyType,
+    address: subject.address,
+    city: subject.city,
+    state: subject.state,
+    neighborhood: subject.neighborhood,
+    landAreaM2: subject.landAreaM2,
+    builtAreaM2: subject.builtAreaM2,
+    privateAreaM2: subject.privateAreaM2,
+    bedrooms: subject.bedrooms,
+    parkingSpaces: subject.parkingSpaces,
+    initialBid: input.analysis.initialBid || input.opportunity.initialBid,
+    appraisalValue: input.analysis.marketValueBase || input.opportunity.appraisalValue,
+    auctionDate: input.opportunity.auctionDate,
+    paymentCondition: input.analysis.paymentCondition,
+    occupancy: input.opportunity.occupancy,
+    legalSignal: input.analysis.legalSignal,
+    summary: input.analysis.summary || input.opportunity.summary,
+    cautionNotes: input.analysis.cautionNotes,
+    confidenceScore: input.analysis.confidenceScore,
+    missingFields: [],
+  };
+
+  const research = await runDeepMarketResearch({
+    extraction,
+    title: input.opportunity.title,
+    initialBid: extraction.initialBid,
+  });
+  const comparables = [...research.saleComparables, ...research.rentalComparables].filter((item) => item.quality !== "discarded");
+  if (comparables.length < MIN_PUBLICATION_REFERENCE_LINKS) {
+    return {
+      refreshed: false,
+      reason: `Pesquisa automatica encontrou ${comparables.length} referencia(s) validas.`,
+    };
+  }
+
+  await supabase
+    .from("property_market_comparables")
+    .delete()
+    .eq("analysis_id", input.analysis.id)
+    .eq("raw_payload->>source", "publication_reference_refresh");
+
+  const comparableRows = comparableRowsForRefresh({
+    analysisId: input.analysis.id,
+    opportunityId: opportunityUuid,
+    comparables,
+  });
+  if (comparableRows.length) await supabase.from("property_market_comparables").insert(comparableRows);
+
+  const sourceLinks = researchSourceLinks(input.analysis, auctionUrl, research);
+  await supabase
+    .from("property_market_analyses")
+    .update({
+      source_links: sourceLinks,
+      subject_property_snapshot: {
+        ...input.analysis.subject,
+        ...subject,
+      },
+      market_value_low: research.marketValueLow || input.analysis.marketValueLow,
+      market_value_base: research.marketValueBase || input.analysis.marketValueBase,
+      market_value_high: research.marketValueHigh || input.analysis.marketValueHigh,
+      confidence_score: Math.max(input.analysis.confidenceScore || 0, research.confidenceScore || 0),
+      liquidity_score: Math.max(input.analysis.liquidityScore || 0, research.liquidityScore || 0),
+      caution_notes: [
+        input.analysis.cautionNotes,
+        `Referencias atualizadas automaticamente no envio WhatsApp: ${research.saleComparables.length} venda, ${research.rentalComparables.length} aluguel.`,
+        ...research.cautionNotes,
+      ].filter(Boolean).join("\n"),
+      raw_payload: {
+        ...asRecord(input.analysis.rawPayload),
+        publicationReferenceRefresh: {
+          refreshedAt: new Date().toISOString(),
+          saleComparables: research.saleComparables.length,
+          rentalComparables: research.rentalComparables.length,
+        },
+        marketResearch: research,
+      },
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", input.analysis.id);
+
+  return { refreshed: true, reason: "" };
+}
+
 function buildPublicationReferenceLinks(analysis: PropertyMarketAnalysis | null, publicUrl: string, auctionUrl: string) {
   const links: OpportunityWhatsAppSourceLink[] = [];
   const seen = new Set<string>([publicUrl, auctionUrl].filter(Boolean));
@@ -555,7 +783,7 @@ function buttonTextForPost(linkFormat: OpportunityWhatsAppLinkFormat, hasSourceL
 
 export async function buildOpportunityWhatsAppPost(
   opportunityCode: string,
-  options: { linkFormat?: OpportunityWhatsAppLinkFormat } = {}
+  options: { linkFormat?: OpportunityWhatsAppLinkFormat; refreshReferences?: boolean } = {}
 ): Promise<DataResult<OpportunityWhatsAppPost | null>> {
   const code = cleanString(opportunityCode);
   if (!code) return { data: null, source: "supabase", reason: "Oportunidade nao informada." };
@@ -577,27 +805,46 @@ export async function buildOpportunityWhatsAppPost(
     return { data: null, source: opportunityResult.source, reason: opportunityResult.reason || "Oportunidade nao encontrada." };
   }
 
-  const analysis = analysisResult.data;
+  let analysis = analysisResult.data;
   const title = compactTitle(opportunity);
+  const publicUrl = publicOpportunityUrl(opportunity.id || code);
+  const linkFormat = normalizePublicationLinkFormat(options.linkFormat);
+  let auctionUrl = buildAuctionUrl(analysis);
+  let sourceLinks = buildPublicationReferenceLinks(analysis, publicUrl, auctionUrl);
+  let refreshReason = "";
+  if (options.refreshReferences && linkFormatRequiresReferences(linkFormat) && sourceLinks.length < MIN_PUBLICATION_REFERENCE_LINKS) {
+    const refresh = await refreshPublicationReferences({
+      opportunityCode: code,
+      opportunity,
+      analysis,
+      auctionUrl,
+    });
+    refreshReason = refresh.reason || "";
+    if (refresh.refreshed) {
+      const refreshedAnalysisResult = await getPropertyMarketAnalysisByOpportunityCode(code);
+      analysis = refreshedAnalysisResult.data;
+      auctionUrl = buildAuctionUrl(analysis);
+      sourceLinks = buildPublicationReferenceLinks(analysis, publicUrl, auctionUrl);
+    }
+  }
+  if (linkFormatRequiresReferences(linkFormat) && sourceLinks.length < MIN_PUBLICATION_REFERENCE_LINKS) {
+    return {
+      data: null,
+      source: analysisResult.source,
+      reason: [
+        `A analise ainda nao possui ${MIN_PUBLICATION_REFERENCE_LINKS} referencias validas de mercado.`,
+        refreshReason || "Reprocesse ou complete os comparaveis antes de enviar no WhatsApp.",
+      ].filter(Boolean).join(" "),
+    };
+  }
+  const actionButton = actionButtonForPost({ linkFormat, publicUrl, sourceLinks });
   const titleWithLocation = creativeTitle(opportunity, title);
   const area = formatArea(analysisArea(analysis));
   const marketValue = formatCurrency(analysis?.marketValueBase || opportunity.appraisalValue);
   const bid = formatCurrency(analysis?.initialBid || opportunity.initialBid);
   const discount = formatPct(analysis?.realDiscountPct || opportunity.discountPct);
   const rent = formatCurrency(analysis?.rentalEstimate.monthlyRent || 0);
-  const publicUrl = publicOpportunityUrl(opportunity.id || code);
   const publicSignal = publicDecisionLabel(analysis);
-  const linkFormat = normalizePublicationLinkFormat(options.linkFormat);
-  const auctionUrl = buildAuctionUrl(analysis);
-  const sourceLinks = buildPublicationReferenceLinks(analysis, publicUrl, auctionUrl);
-  if (linkFormatRequiresReferences(linkFormat) && sourceLinks.length < MIN_PUBLICATION_REFERENCE_LINKS) {
-    return {
-      data: null,
-      source: analysisResult.source,
-      reason: `A analise ainda nao possui ${MIN_PUBLICATION_REFERENCE_LINKS} referencias validas de mercado. Reprocesse ou complete os comparaveis antes de enviar no WhatsApp.`,
-    };
-  }
-  const actionButton = actionButtonForPost({ linkFormat, publicUrl, sourceLinks });
 
   const baseCaption = compactCaption([
     `${propertyEmoji(opportunity, analysis)} *${truncateSingleLine(titleWithLocation, 140)}*`,
@@ -800,7 +1047,7 @@ export async function scheduleOpportunityWhatsAppPublication(input: {
   if (!supabase) return { ok: false, error: "Supabase admin nao configurado." };
 
   const linkFormat = normalizePublicationLinkFormat(input.linkFormat);
-  const postResult = await buildOpportunityWhatsAppPost(input.opportunityCode, { linkFormat });
+  const postResult = await buildOpportunityWhatsAppPost(input.opportunityCode, { linkFormat, refreshReferences: true });
   const post = postResult.data;
   if (!post) return { ok: false, error: postResult.reason || "Nao foi possivel gerar a publicacao WhatsApp." };
 
