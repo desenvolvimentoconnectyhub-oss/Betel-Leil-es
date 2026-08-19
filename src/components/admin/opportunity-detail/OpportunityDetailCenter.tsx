@@ -58,7 +58,10 @@ import type {
   PropertyQualificationEvidenceStatus,
   PropertyQualificationFeedbackDecision,
 } from "@/lib/admin/repository/property-qualification";
-import type { OpportunityWhatsAppPublicationOptions } from "@/lib/whatsapp/opportunity-publication";
+import {
+  getOpportunityWhatsAppReferenceStatus,
+  type OpportunityWhatsAppPublicationOptions,
+} from "@/lib/whatsapp/opportunity-publication";
 import {
   formatCurrency,
   formatDate,
@@ -1842,6 +1845,14 @@ function OpportunityActionsPanel({
 }) {
   const evaluation = buildDetailOpportunityEvaluation(opportunity, analysis, qualificationDossier);
   const canSubmit = Boolean(analysis?.marketValueBase);
+  const submitBlockReason = !canSubmit
+    ? "Informe o valor de mercado base antes de aprovar ou enviar pelo WhatsApp."
+    : "";
+  const whatsappReferenceStatus = getOpportunityWhatsAppReferenceStatus(
+    analysis,
+    "",
+    analysis ? sourceUrlFor(analysis, ["leilao", "fonte"]) : ""
+  );
   const highlightedAction =
     analysis && evaluation.finalRecommendation.status === "recomendado_para_avancar" ? "approved" : "human_review";
   const whatsappPreview = buildWhatsAppPreview(opportunity, analysis);
@@ -1854,6 +1865,8 @@ function OpportunityActionsPanel({
           opportunityCode={analysis.opportunityCode || opportunity.id}
           options={whatsappPublicationOptions}
           preview={whatsappPreview}
+          referenceStatus={whatsappReferenceStatus}
+          submitBlockReason={submitBlockReason}
         />
       ) : null}
       <div className="flex flex-wrap justify-end gap-2">

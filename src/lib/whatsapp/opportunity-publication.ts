@@ -56,6 +56,13 @@ export type OpportunityWhatsAppPublicationOptions = {
   defaultGroupId: string;
 };
 
+export type OpportunityWhatsAppReferenceStatus = {
+  requiredCount: number;
+  validCount: number;
+  ready: boolean;
+  reason: string;
+};
+
 export type OpportunityWhatsAppPost = {
   opportunityCode: string;
   title: string;
@@ -722,6 +729,23 @@ function buildPublicationReferenceLinks(analysis: PropertyMarketAnalysis | null,
   }
 
   return links.slice(0, 3);
+}
+
+export function getOpportunityWhatsAppReferenceStatus(
+  analysis: PropertyMarketAnalysis | null,
+  publicUrl = "",
+  auctionUrl = ""
+): OpportunityWhatsAppReferenceStatus {
+  const validCount = buildPublicationReferenceLinks(analysis, publicUrl, auctionUrl).length;
+  const ready = validCount >= MIN_PUBLICATION_REFERENCE_LINKS;
+  return {
+    requiredCount: MIN_PUBLICATION_REFERENCE_LINKS,
+    validCount,
+    ready,
+    reason: ready
+      ? ""
+      : `A analise ainda tem ${validCount}/${MIN_PUBLICATION_REFERENCE_LINKS} referencias validas de mercado para o criativo.`,
+  };
 }
 
 function appendSourceLinksToCaption(caption: string, auctionUrl: string, links: OpportunityWhatsAppSourceLink[]) {

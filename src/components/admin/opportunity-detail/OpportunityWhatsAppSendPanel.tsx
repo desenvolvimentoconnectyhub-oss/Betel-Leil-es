@@ -22,7 +22,10 @@ import { syncOpportunityWhatsAppGroupsAction } from "@/app/admin/oportunidades/a
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import type { OpportunityWhatsAppPublicationOptions } from "@/lib/whatsapp/opportunity-publication";
+import type {
+  OpportunityWhatsAppPublicationOptions,
+  OpportunityWhatsAppReferenceStatus,
+} from "@/lib/whatsapp/opportunity-publication";
 import { cn } from "@/lib/utils";
 
 type Destination = OpportunityWhatsAppPublicationOptions["destinations"][number];
@@ -149,11 +152,15 @@ export function OpportunityWhatsAppSendPanel({
   opportunityCode,
   options,
   preview,
+  referenceStatus,
+  submitBlockReason,
 }: {
   canSubmit: boolean;
   opportunityCode: string;
   options?: OpportunityWhatsAppPublicationOptions;
   preview: WhatsAppPreview;
+  referenceStatus?: OpportunityWhatsAppReferenceStatus;
+  submitBlockReason?: string;
 }) {
   const router = useRouter();
   const { pending } = useFormStatus();
@@ -264,9 +271,30 @@ export function OpportunityWhatsAppSendPanel({
         : currentMode === "channel"
           ? Boolean(currentChannelId)
           : hasBroadcastTargets;
-  const submitDisabled = !canSubmit || !agents.length || !modeReady;
+  const activeReferenceStatus = referenceStatus || {
+    requiredCount: 3,
+    validCount: 0,
+    ready: false,
+    reason: "A analise ainda nao possui referencias validas de mercado para o criativo.",
+  };
+  const linkFormatNeedsReferences = linkFormat === "source_buttons" || linkFormat === "source_links";
+  const referencesBlocked = linkFormatNeedsReferences && !activeReferenceStatus.ready;
+  const blockedReason =
+    !agents.length
+      ? "Nenhum agente WhatsApp conectado para enviar."
+      : !modeReady
+        ? "Selecione um destino valido para enviar."
+        : !canSubmit
+          ? submitBlockReason || "Complete a analise antes de aprovar ou enviar pelo WhatsApp."
+          : referencesBlocked
+            ? activeReferenceStatus.reason
+            : "";
+  const submitDisabled = Boolean(blockedReason);
   const destinationName = currentMode === "test" ? testNumber.trim() || "numero de teste" : selectedDestination?.name || "destino selecionado";
-  const sendButtonHint = `Destino: ${destinationName} | Fontes: ${linkFormatCopy[linkFormat].title}`;
+  const referenceSummary = linkFormatNeedsReferences
+    ? `${activeReferenceStatus.validCount}/${activeReferenceStatus.requiredCount} referencias validas`
+    : linkFormatCopy[linkFormat].title;
+  const sendButtonHint = blockedReason || `Destino: ${destinationName} | Fontes: ${referenceSummary}`;
 
   useEffect(() => {
     if (!sendProcessingOpen) {
@@ -489,6 +517,14 @@ export function OpportunityWhatsAppSendPanel({
               );
             })}
           </div>
+          {linkFormatNeedsReferences && !activeReferenceStatus.ready ? (
+            <div className="mt-2 flex items-start gap-2 rounded-lg border border-[rgba(210,54,43,0.28)] bg-[rgba(210,54,43,0.06)] px-3 py-2 text-xs leading-5 text-[var(--admin-red)]">
+              <AlertCircle size={14} className="mt-0.5 shrink-0" />
+              <span>
+                {activeReferenceStatus.reason} Reprocesse a analise ou adicione comparaveis antes de enviar com referencias.
+              </span>
+            </div>
+          ) : null}
         </div>
 
         {currentMode === "test" ? (
@@ -617,13 +653,13 @@ export function OpportunityWhatsAppSendPanel({
               <p className="mt-1 font-medium text-[var(--admin-foreground)]">
                 Destino: {currentMode === "test" ? testNumber || "numero de teste" : selectedDestination?.name || "selecione um destino"}
               </p>
-              <p className="text-[var(--admin-muted)]">Fontes: {linkFormatCopy[linkFormat].title}</p>
+              <p className="text-[var(--admin-muted)]">Fontes: {referenceSummary}</p>
             </div>
           </div>
         </div>
 
         <Button
-          className="h-auto min-h-14 w-full justify-start gap-3 whitespace-normal rounded-lg border border-[rgba(200,90,31,0.34)] bg-[var(--admin-cyan)] px-3 py-3 text-left text-white shadow-sm shadow-[rgba(200,90,31,0.18)] hover:brightness-95"
+          className="h-auto min-h-14 w-full justify-start gap-3 whitespace-normal rounded-lg border border-[rgba(200,90,31,0.34)] bg-[var(--admin-cyan)] px-3 py-3 text-left text-white shadow-sm shadow-[rgba(200,90,31,0.18)] hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-55"
           disabled={submitDisabled || pending}
           name="submitStatus"
           type="submit"
