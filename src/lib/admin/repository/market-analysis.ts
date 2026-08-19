@@ -32,6 +32,7 @@ import {
   buildOpportunityEvaluation,
   marketDecisionFromRecommendation,
 } from "@/lib/domain/opportunity-evaluation";
+import { normalizeLocationName, normalizeStateUf } from "@/lib/scraper/location-normalization";
 
 export type SavePropertyMarketComparableInput = {
   sourceLabel: string;
@@ -120,6 +121,19 @@ function firstUrl(...values: unknown[]) {
   return "";
 }
 
+function parseLocalizedNumber(value: unknown, fallback = 0) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const text = asString(value).replace(/\s/g, "").replace(/[^\d,.-]/g, "");
+  if (!text) return fallback;
+  const normalized = text.includes(",")
+    ? text.replace(/\./g, "").replace(",", ".")
+    : /^-?\d{1,3}(?:\.\d{3})+$/.test(text)
+      ? text.replace(/\./g, "")
+      : text;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 function normalizeDecision(value: string, fallback: MarketAnalysisDecision): MarketAnalysisDecision {
   const normalized = value.toLowerCase();
   if (["excellent", "good", "caution", "review", "reject"].includes(normalized)) {
@@ -176,8 +190,7 @@ function normalizeSimilarityScore(value: unknown, fallback = 50) {
 function extractAreaFromText(text: string, marker: RegExp) {
   const match = text.match(marker);
   if (!match?.[1]) return 0;
-  const value = Number(match[1].replace(/\./g, "").replace(",", "."));
-  return Number.isFinite(value) ? value : 0;
+  return parseLocalizedNumber(match[1]);
 }
 
 function buildSubject(opportunity: AuctionOpportunity, rawPayload: Record<string, unknown>): PropertyMarketSubject {
@@ -201,8 +214,8 @@ function buildSubject(opportunity: AuctionOpportunity, rawPayload: Record<string
   return {
     propertyType: stringFromRecord(subject, ["propertyType", "property_type"], opportunity.propertyType),
     address: stringFromRecord(subject, ["address", "endereco"], opportunity.address),
-    city: stringFromRecord(subject, ["city", "cidade"], opportunity.city),
-    state: stringFromRecord(subject, ["state", "uf"], opportunity.state),
+    city: normalizeLocationName(stringFromRecord(subject, ["city", "cidade"], opportunity.city)),
+    state: normalizeStateUf(stringFromRecord(subject, ["state", "uf"], opportunity.state)),
     landAreaM2,
     builtAreaM2,
     privateAreaM2,
@@ -225,9 +238,9 @@ function normalizeComparable(row: Record<string, unknown>, opportunityId: string
     listingType: asString(row.listing_type, asString(row.listingType, "Oferta")),
     propertyType: asString(row.property_type, asString(row.propertyType, "Imovel")),
     address: asString(row.address),
-    neighborhood: asString(row.neighborhood, asString(row.bairro)),
-    city: asString(row.city, asString(row.cidade)),
-    state: asString(row.state, asString(row.uf)).toUpperCase(),
+    neighborhood: normalizeLocationName(asString(row.neighborhood, asString(row.bairro))),
+    city: normalizeLocationName(asString(row.city, asString(row.cidade))),
+    state: normalizeStateUf(asString(row.state, asString(row.uf))),
     areaM2,
     askingPrice,
     soldPrice,
@@ -423,7 +436,10 @@ function normalizePersistedAnalysis(
   const subject = {
     ...buildSubject(opportunity, {}),
     ...asRecord(row.subject_property_snapshot),
-  } as PropertyMarketSubject;
+  } as PropertyMarketSubject & { neighborhood?: string };
+  subject.city = normalizeLocationName(subject.city);
+  subject.state = normalizeStateUf(subject.state);
+  subject.neighborhood = normalizeLocationName((subject as { neighborhood?: unknown }).neighborhood);
   const marketValueBase = asNumber(row.market_value_base, opportunity.appraisalValue);
   const initialBid = opportunity.initialBid;
   const realDiscountPct = asNumber(row.real_discount_pct, calculateMarketDiscount(initialBid, marketValueBase));
@@ -652,8 +668,8 @@ export async function savePropertyMarketAnalysisRecord(
         subject_property_snapshot: {
           propertyType: asString(opportunity.property_type),
           address: asString(opportunity.address),
-          city: asString(opportunity.city),
-          state: asString(opportunity.state),
+          city: normalizeLocationName(asString(opportunity.city)),
+          state: normalizeStateUf(asString(opportunity.state)),
           landAreaM2: input.landAreaM2,
           builtAreaM2: input.builtAreaM2,
           privateAreaM2: input.privateAreaM2,
@@ -717,9 +733,9 @@ export async function savePropertyMarketAnalysisRecord(
       listing_type: comparable.listingType || "Oferta",
       property_type: comparable.propertyType || asString(opportunity.property_type),
       address: comparable.address || null,
-      neighborhood: comparable.neighborhood || null,
-      city: comparable.city || asString(opportunity.city),
-      state: (comparable.state || asString(opportunity.state)).toUpperCase(),
+      neighborhood: normalizeLocationName(comparable.neighborhood) || null,
+      city: normalizeLocationName(comparable.city || asString(opportunity.city)),
+      state: normalizeStateUf(comparable.state || asString(opportunity.state)),
       area_m2: comparableArea,
       asking_price: comparable.askingPrice,
       sold_price: comparable.soldPrice,

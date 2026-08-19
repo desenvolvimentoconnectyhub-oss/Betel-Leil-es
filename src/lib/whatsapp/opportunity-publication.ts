@@ -566,6 +566,13 @@ export async function buildOpportunityWhatsAppPost(
   ]);
 
   const opportunity = opportunityResult.data;
+  if (opportunityResult.source !== "supabase") {
+    return {
+      data: null,
+      source: opportunityResult.source,
+      reason: opportunityResult.reason || "Publicacao WhatsApp exige oportunidade real salva no Supabase.",
+    };
+  }
   if (!opportunity) {
     return { data: null, source: opportunityResult.source, reason: opportunityResult.reason || "Oportunidade nao encontrada." };
   }
