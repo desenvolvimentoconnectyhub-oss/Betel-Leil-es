@@ -85,6 +85,8 @@ type OpportunityDetailCenterProps = {
   reason?: string;
   qualificationReason?: string;
   activeTab?: string;
+  actionStatus?: string;
+  actionMessage?: string;
   marketStatus?: string;
   marketFilter?: string;
   marketSort?: string;
@@ -1362,16 +1364,32 @@ function HeaderActionButton({
 
 function OpportunityActionNotice({
   status,
+  message,
   remoteGroups,
   syncedGroups,
   campaignId,
 }: {
   status?: string;
+  message?: string;
   remoteGroups?: string;
   syncedGroups?: string;
   campaignId?: string;
 }) {
   if (!status) return null;
+
+  if (status === "error") {
+    return (
+      <div className={cn("mt-3 flex items-start gap-2 rounded-lg border px-3 py-2 text-sm", toneBorder.red, toneBg.red)}>
+        <XCircle size={16} className={cn("mt-0.5 shrink-0", toneText.red)} />
+        <div className="min-w-0">
+          <p className="font-semibold text-[var(--admin-foreground)]">Acao nao concluida</p>
+          <p className="mt-0.5 break-words text-xs leading-5 text-[var(--admin-muted)]">
+            {message || "O sistema nao conseguiu concluir essa acao. Confira os dados e tente novamente."}
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   const notices: Record<string, { title: string; detail: string; tone: ResourceTone }> = {
     "whatsapp-grupos-atualizados": {
@@ -4237,6 +4255,8 @@ export function OpportunityDetailCenter({
   reason,
   qualificationReason,
   activeTab,
+  actionStatus,
+  actionMessage,
   marketStatus,
   marketFilter,
   marketSort,
@@ -4262,6 +4282,10 @@ export function OpportunityDetailCenter({
               opportunity={opportunity}
               analysis={analysis}
               qualificationDossier={qualificationDossier}
+            />
+            <OpportunityActionNotice
+              message={actionMessage}
+              status={actionStatus}
             />
             <OpportunityActionNotice
               campaignId={publicationCampaign}

@@ -121,6 +121,65 @@ function firstUrl(...values: unknown[]) {
   return "";
 }
 
+function normalizeSourceLinks(value: unknown) {
+  return asArray<Record<string, unknown>>(value, [])
+    .map((item) => ({
+      label: asString(item.label, "Referencia"),
+      url: firstUrl(item.url),
+    }))
+    .filter((item) => item.url);
+}
+
+function mergeSourceLinks(...groups: Array<Array<{ label: string; url: string }>>) {
+  const seen = new Set<string>();
+  const output: Array<{ label: string; url: string }> = [];
+
+  for (const link of groups.flat()) {
+    const url = firstUrl(link.url);
+    if (!url) continue;
+    const key = url.split("#")[0].replace(/\/+$/g, "").toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push({
+      label: asString(link.label, "Referencia"),
+      url,
+    });
+  }
+
+  return output.slice(0, 40);
+}
+
+function marketResearchSourceLinks(rawPayload: Record<string, unknown>) {
+  const marketResearch = asRecord(rawPayload.marketResearch || rawPayload.market_research);
+  const saleComparables = asArray<Record<string, unknown>>(marketResearch.saleComparables || marketResearch.sale_comparables, []);
+  const rentalComparables = asArray<Record<string, unknown>>(marketResearch.rentalComparables || marketResearch.rental_comparables, []);
+  const searchedUrls = asArray<Record<string, unknown>>(marketResearch.searchedUrls || marketResearch.searched_urls, []);
+
+  return mergeSourceLinks(
+    saleComparables.map((item) => ({
+      label: [
+        "Comparavel venda",
+        asString(item.sourceLabel || item.source_label || item.title || item.label),
+      ].filter(Boolean).join(": "),
+      url: firstUrl(item.sourceUrl, item.source_url, item.url),
+    })),
+    rentalComparables.map((item) => ({
+      label: [
+        "Comparavel aluguel",
+        asString(item.sourceLabel || item.source_label || item.title || item.label),
+      ].filter(Boolean).join(": "),
+      url: firstUrl(item.sourceUrl, item.source_url, item.url),
+    })),
+    searchedUrls.map((item) => ({
+      label: [
+        /^rent|alug/i.test(asString(item.kind)) ? "Busca aluguel" : "Busca venda",
+        asString(item.label || item.sourceLabel || item.source_label),
+      ].filter(Boolean).join(": "),
+      url: firstUrl(item.url, item.sourceUrl, item.source_url),
+    }))
+  );
+}
+
 function parseLocalizedNumber(value: unknown, fallback = 0) {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   const text = asString(value).replace(/\s/g, "").replace(/[^\d,.-]/g, "");
@@ -452,6 +511,20 @@ function normalizePersistedAnalysis(
   const estimatedCostsTotal = estimatedCosts.reduce((total, item) => total + item.value, 0);
   const marketValueLow = asNumber(row.market_value_low, marketValueBase ? Math.round(marketValueBase * 0.9) : 0);
   const marketValueHigh = asNumber(row.market_value_high, marketValueBase ? Math.round(marketValueBase * 1.08) : 0);
+  const comparableSourceLinks = comparables
+    .map((item) => ({
+      label: [
+        /alug|rent/i.test(item.listingType) ? "Comparavel aluguel" : "Comparavel venda",
+        item.sourceLabel,
+      ].filter(Boolean).join(": "),
+      url: firstUrl(item.sourceUrl),
+    }))
+    .filter((item) => item.url);
+  const sourceLinks = mergeSourceLinks(
+    normalizeSourceLinks(row.source_links),
+    comparableSourceLinks,
+    marketResearchSourceLinks(rawPayload)
+  );
 
   return {
     id: asString(row.id),
@@ -514,9 +587,7 @@ function normalizePersistedAnalysis(
     summary: asString(row.summary, "Analise de mercado registrada."),
     cautionNotes: asString(row.caution_notes),
     comparables,
-    sourceLinks: asArray<Record<string, unknown>>(row.source_links, [])
-      .map((item) => ({ label: asString(item.label), url: firstUrl(item.url) }))
-      .filter((item) => item.label && item.url),
+    sourceLinks,
     rawPayload,
     updatedAt: asString(row.updated_at),
   };
@@ -618,6 +689,33 @@ export async function savePropertyMarketAnalysisRecord(
   const opportunityId = asString(opportunity.id);
   const opportunityCode = asString(opportunity.code, input.opportunityCode);
   const initialBid = asNumber(opportunity.initial_bid);
+  const { data: existingAnalysisRow } = await supabase
+    .from("property_market_analyses")
+    .select("id, source_links, raw_payload")
+    .eq("opportunity_id", opportunityId)
+    .maybeSingle();
+  const existingAnalysis = asRecord(existingAnalysisRow);
+  const existingAnalysisId = asString(existingAnalysis.id);
+  const existingRawPayload = asRecord(existingAnalysis.raw_payload);
+  let existingComparableLinks: Array<{ label: string; url: string }> = [];
+  if (existingAnalysisId) {
+    const { data: comparableRows } = await supabase
+      .from("property_market_comparables")
+      .select("source_label, source_url, listing_type")
+      .eq("analysis_id", existingAnalysisId)
+      .not("source_url", "is", null)
+      .order("similarity_score", { ascending: false })
+      .limit(20);
+    existingComparableLinks = ((comparableRows || []) as Array<Record<string, unknown>>)
+      .map((row) => ({
+        label: [
+          /alug|rent/i.test(asString(row.listing_type)) ? "Comparavel aluguel" : "Comparavel venda",
+          asString(row.source_label),
+        ].filter(Boolean).join(": "),
+        url: firstUrl(row.source_url),
+      }))
+      .filter((item) => item.url);
+  }
   const subjectArea = input.privateAreaM2 || input.builtAreaM2 || input.landAreaM2;
   const marketValueBase = input.marketValueBase;
   const marketValueLow = input.marketValueLow || (marketValueBase ? Math.round(marketValueBase * 0.9) : 0);
@@ -650,11 +748,17 @@ export async function savePropertyMarketAnalysisRecord(
   };
   const normalizedStatus =
     input.status === "approved" && input.cautionNotes ? "approved_with_notes" : input.status;
-  const sourceLinks = [
-    { label: "Fonte do leilao", url: input.auctionUrl },
-    { label: "Referencia", url: input.referenceUrl },
-    { label: "Referencia aluguel", url: rentalEstimate.referenceUrl },
-  ].filter((item) => item.url);
+  const sourceLinks = mergeSourceLinks(
+    normalizeSourceLinks(existingAnalysis.source_links),
+    marketResearchSourceLinks(existingRawPayload),
+    existingComparableLinks,
+    [
+      { label: "Fonte do leilao", url: input.auctionUrl },
+      { label: "Referencia", url: input.referenceUrl },
+      { label: "Referencia aluguel", url: rentalEstimate.referenceUrl },
+    ].filter((item) => item.url)
+  );
+  const reviewedAt = new Date().toISOString();
 
   const { data: analysisRow, error: analysisError } = await supabase
     .from("property_market_analyses")
@@ -695,16 +799,24 @@ export async function savePropertyMarketAnalysisRecord(
         caution_notes: input.cautionNotes,
         source_links: sourceLinks,
         raw_payload: {
+          ...existingRawPayload,
           savedFrom: "admin_market_analysis_human_review",
           rentalEstimate,
           paymentSimulation,
           review: {
+            ...asRecord(existingRawPayload.review),
             status: normalizedStatus,
-            reviewedAt: new Date().toISOString(),
+            reviewedAt,
             analystName: input.analystName || "Analise Betel",
           },
+          adminReview: {
+            status: normalizedStatus,
+            reviewedAt,
+            analystName: input.analystName || "Analise Betel",
+            preservedSourceLinks: sourceLinks.length,
+          },
         },
-        updated_at: new Date().toISOString(),
+        updated_at: reviewedAt,
       },
       { onConflict: "opportunity_id" }
     )

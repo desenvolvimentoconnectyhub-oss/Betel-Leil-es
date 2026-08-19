@@ -48,6 +48,8 @@ export default async function OpportunityDetailPage({
       qualificationDossier={qualificationResult.data}
       qualificationReason={qualificationResult.reason}
       activeTab={firstQueryValue(query.tab)}
+      actionMessage={firstQueryValue(query.message)}
+      actionStatus={firstQueryValue(query.status)}
       marketStatus={firstQueryValue(query.market)}
       marketFilter={firstQueryValue(query.marketFilter)}
       marketSort={firstQueryValue(query.marketSort)}

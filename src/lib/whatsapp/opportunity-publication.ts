@@ -681,8 +681,7 @@ function buildPublicationReferenceLinks(analysis: PropertyMarketAnalysis | null,
   const directReferenceSources = sourceLinks.filter((source) =>
     !/^busca:/i.test(source.label) &&
     !/alug|rent/i.test(source.label) &&
-    !/comparavel|comparável/i.test(source.label) &&
-    /refer/i.test(source.label) &&
+    /refer|comparavel|comparável/i.test(source.label) &&
     isHttpUrl(source.url) &&
     !isBlockedReferenceUrl(source.url) &&
     isLikelyListingDetailUrl(source.url)
@@ -1023,6 +1022,31 @@ async function rawOpportunityId(code: string) {
   return cleanString((data as DbRow | null)?.id);
 }
 
+async function recordOpportunityWhatsAppPublicationAudit(input: {
+  opportunityCode: string;
+  actorName?: string;
+  eventType: string;
+  status: string;
+  payload: Record<string, unknown>;
+}) {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return;
+
+  const opportunityId = await rawOpportunityId(input.opportunityCode);
+  if (!opportunityId) return;
+
+  await supabase.from("audit_logs").insert({
+    opportunity_id: opportunityId,
+    actor_name: cleanString(input.actorName, "Analise de mercado"),
+    event_type: input.eventType,
+    status: input.status,
+    payload: {
+      opportunityCode: input.opportunityCode,
+      ...input.payload,
+    },
+  });
+}
+
 export async function scheduleOpportunityWhatsAppPublication(input: {
   opportunityCode: string;
   mode: OpportunityWhatsAppPublicationMode;
@@ -1049,7 +1073,23 @@ export async function scheduleOpportunityWhatsAppPublication(input: {
   const linkFormat = normalizePublicationLinkFormat(input.linkFormat);
   const postResult = await buildOpportunityWhatsAppPost(input.opportunityCode, { linkFormat, refreshReferences: true });
   const post = postResult.data;
-  if (!post) return { ok: false, error: postResult.reason || "Nao foi possivel gerar a publicacao WhatsApp." };
+  if (!post) {
+    const reason = postResult.reason || "Nao foi possivel gerar a publicacao WhatsApp.";
+    await recordOpportunityWhatsAppPublicationAudit({
+      opportunityCode: input.opportunityCode,
+      actorName: input.approvedByName,
+      eventType: "opportunity_whatsapp_publication_blocked",
+      status: "blocked",
+      payload: {
+        reason,
+        publicationMode: input.mode,
+        linkFormat,
+        approvedByAdminUserId: cleanString(input.approvedByAdminUserId),
+        source: postResult.source,
+      },
+    });
+    return { ok: false, error: reason };
+  }
 
   let agentKey = cleanString(input.agentKey, WILLIAN_AGENT_KEY);
   let destinationIds: string[] = [];
@@ -1140,11 +1180,27 @@ export async function scheduleOpportunityWhatsAppPublication(input: {
         ? await processOpportunityWhatsAppCampaignNow(campaignId)
         : undefined;
       if (shouldProcessImmediately(input.mode) && immediateProcessing && immediateProcessing.failed > 0 && !immediateProcessing.sent) {
+        const reason =
+          immediateProcessing.error ||
+          "A campanha existente foi localizada, mas a ConnectyHub nao confirmou o envio para o destino selecionado. Confira o agente e tente novamente.";
+        await recordOpportunityWhatsAppPublicationAudit({
+          opportunityCode: post.opportunityCode,
+          actorName: input.approvedByName,
+          eventType: "opportunity_whatsapp_publication_failed",
+          status: "failed",
+          payload: {
+            campaignId,
+            reason,
+            publicationMode: input.mode,
+            agentKey,
+            targetKey,
+            linkFormat: post.linkFormat,
+            immediateProcessing,
+          },
+        });
         return {
           ok: false,
-          error:
-            immediateProcessing.error ||
-            "A campanha existente foi localizada, mas a ConnectyHub nao confirmou o envio para o destino selecionado. Confira o agente e tente novamente.",
+          error: reason,
         };
       }
       return {
@@ -1199,11 +1255,31 @@ export async function scheduleOpportunityWhatsAppPublication(input: {
     : undefined;
   const immediateDispatchRequested = immediateProcessing?.sent ? false : await requestImmediateWhatsAppCampaignProcessing(campaignId);
   if (shouldProcessImmediately(input.mode) && immediateProcessing && immediateProcessing.failed > 0 && !immediateProcessing.sent) {
+    const reason =
+      immediateProcessing.error ||
+      "Campanha criada, mas a ConnectyHub nao confirmou o envio para o destino selecionado. Confira o agente e tente novamente.";
+    await recordOpportunityWhatsAppPublicationAudit({
+      opportunityCode: post.opportunityCode,
+      actorName: input.approvedByName,
+      eventType: "opportunity_whatsapp_publication_failed",
+      status: "failed",
+      payload: {
+        campaignId,
+        reason,
+        publicationMode: input.mode,
+        agentKey,
+        destinationIds,
+        destinationJids: destinationJids.slice(0, 50),
+        linkFormat: post.linkFormat,
+        auctionUrl: post.auctionUrl,
+        sourceLinks: post.sourceLinks,
+        immediateDispatchRequested,
+        immediateProcessing,
+      },
+    });
     return {
       ok: false,
-      error:
-        immediateProcessing.error ||
-        "Campanha criada, mas a ConnectyHub nao confirmou o envio para o destino selecionado. Confira o agente e tente novamente.",
+      error: reason,
     };
   }
 
