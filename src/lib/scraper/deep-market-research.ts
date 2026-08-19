@@ -8,6 +8,7 @@ import {
 } from "@/lib/admin/market-analysis";
 import { getGeminiApiKey, getGeminiModel } from "@/lib/ai/config";
 import type { AuctionLinkExtraction } from "./auction-link-extractor";
+import { normalizeLocationName, normalizeStateUf } from "./location-normalization";
 
 type ListingKind = "sale" | "rent";
 
@@ -480,9 +481,9 @@ function buildSubjectProfile(input: {
     title: input.title,
     propertyType: input.extraction.propertyType || inferPropertyType(text),
     address: input.extraction.address,
-    city: input.extraction.city,
-    state: input.extraction.state,
-    neighborhood: input.extraction.neighborhood,
+    city: normalizeLocationName(input.extraction.city),
+    state: normalizeStateUf(input.extraction.state),
+    neighborhood: normalizeLocationName(input.extraction.neighborhood),
     condoName: extractCondoName(text),
     areaM2: firstPositive(input.extraction.privateAreaM2, input.extraction.builtAreaM2, input.extraction.landAreaM2),
     bedrooms: input.extraction.bedrooms || 0,
@@ -910,9 +911,9 @@ function normalizeGroundedComparable(
     propertyType: cleanString(row.propertyType || row.property_type || row.tipoImovel, inferPropertyType(title)),
     title,
     address: cleanString(row.address || row.endereco),
-    neighborhood: cleanString(row.neighborhood || row.bairro),
-    city: cleanString(row.city || row.cidade),
-    state: cleanString(row.state || row.uf).toUpperCase(),
+    neighborhood: normalizeLocationName(row.neighborhood || row.bairro),
+    city: normalizeLocationName(row.city || row.cidade),
+    state: normalizeStateUf(row.state || row.uf),
     areaM2,
     askingPrice,
     monthlyRent,

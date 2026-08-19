@@ -23,6 +23,7 @@ import { extractAuctionSiteContext, type AuctionSiteDocument, type AuctionSiteEx
 import { extractAuctionLinkWithGemini, type AuctionLinkExtraction } from "./auction-link-extractor";
 import { runDeepMarketResearch, type DeepMarketComparable, type DeepMarketResearchResult } from "./deep-market-research";
 import { auctionApiFetchHeaders, auctionPageFetchHeaders } from "./http";
+import { normalizeLocationName, normalizeStateUf } from "./location-normalization";
 import { persistPropertyQualificationDossier } from "./property-qualification-dossier";
 import { parseAuctionDate } from "./scraper-criteria";
 import { cleanHtmlForLlm } from "./scraper-llm";
@@ -1901,9 +1902,9 @@ function mergeAuctionExtraction(gemini: AuctionLinkExtraction, adapter: AuctionS
     title: pickText(gemini.title, adapter.title),
     propertyType: pickText(gemini.propertyType, adapter.propertyType),
     address: pickText(gemini.address, adapter.address),
-    city: pickText(gemini.city, adapter.city),
-    state: pickText(gemini.state, adapter.state).toUpperCase(),
-    neighborhood: pickText(gemini.neighborhood, adapter.neighborhood),
+    city: normalizeLocationName(pickText(gemini.city, adapter.city)),
+    state: normalizeStateUf(pickText(gemini.state, adapter.state)),
+    neighborhood: normalizeLocationName(pickText(gemini.neighborhood, adapter.neighborhood)),
     landAreaM2: pickNumber(gemini.landAreaM2, adapter.landAreaM2),
     builtAreaM2: pickNumber(gemini.builtAreaM2, adapter.builtAreaM2),
     privateAreaM2: pickNumber(gemini.privateAreaM2, adapter.privateAreaM2),
@@ -2630,8 +2631,8 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
       title,
       propertyType: firstText(extraction.propertyType, inferPropertyType(`${title} ${visibleText.slice(0, 2000)}`, row.propertyTypeHint)),
       address: firstText(extraction.address, row.cityHint, "Nao informado"),
-      city: firstText(extraction.city, row.cityHint, "Nao informado"),
-      state: firstText(extraction.state, row.stateHint).toUpperCase(),
+      city: firstText(extraction.city, normalizeLocationName(row.cityHint), "Nao informado"),
+      state: firstText(extraction.state, normalizeStateUf(row.stateHint)),
       sourceName: domain || "Link de leilao",
       sourceType: "auction_link",
       initialBid,

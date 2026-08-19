@@ -6,6 +6,7 @@ import type { DataResult, MutationResult } from "@/lib/admin/repository/shared";
 import type { PropertyMarketAnalysis, PropertyMarketComparable } from "@/lib/admin/market-analysis";
 import type { AuctionOpportunity, PropertyImageAsset } from "@/lib/admin/resources";
 import { WILLIAN_AGENT_KEY, type WhatsAppActionButtonInput } from "@/lib/communication/connectyhub-client";
+import { normalizeLocationName } from "@/lib/scraper/location-normalization";
 import { listSystemWhatsAppSenderOptions } from "@/lib/communication/system-whatsapp-sender";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createWhatsAppCommunityCampaign, processWhatsAppCommunityCampaigns, type WhatsAppCommunityDestination } from "./group-campaigns";
@@ -395,9 +396,10 @@ function publicationComparableLooksRelevant(analysis: PropertyMarketAnalysis | n
   const comparableType = propertyGroup(`${comparable.propertyType} ${comparable.listingType} ${comparable.address} ${comparable.sourceUrl}`);
   if (subjectType !== "unknown" && comparableType !== "unknown" && subjectType !== comparableType) return false;
 
-  const subjectNeighborhood = cleanString((subject as { neighborhood?: unknown }).neighborhood);
+  const subjectCity = normalizeLocationName(subject.city);
+  const subjectNeighborhood = normalizeLocationName((subject as { neighborhood?: unknown }).neighborhood);
   const locationText = `${comparable.sourceUrl} ${comparable.address} ${comparable.neighborhood}`;
-  const cityMatches = subject.city && includesToken(locationText, subject.city);
+  const cityMatches = subjectCity && includesToken(locationText, subjectCity);
   const neighborhoodMatches = subjectNeighborhood && includesToken(locationText, subjectNeighborhood);
   const explicitNeighborhoodMatches =
     comparable.neighborhood && includesToken(`${subject.address} ${subjectNeighborhood}`, comparable.neighborhood);

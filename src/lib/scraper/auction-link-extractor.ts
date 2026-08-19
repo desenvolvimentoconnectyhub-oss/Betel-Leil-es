@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getGeminiApiKey, getGeminiModel } from "@/lib/ai/config";
+import { normalizeLocationName, normalizeStateUf } from "./location-normalization";
 
 export type AuctionLinkExtraction = {
   title: string;
@@ -110,9 +111,9 @@ function normalizeExtraction(value: unknown): AuctionLinkExtraction {
     title: cleanString(row.title),
     propertyType: cleanString(row.propertyType || row.property_type),
     address: cleanString(row.address || row.endereco),
-    city: cleanString(row.city || row.cidade),
-    state: cleanString(row.state || row.uf).toUpperCase(),
-    neighborhood: cleanString(row.neighborhood || row.bairro),
+    city: normalizeLocationName(row.city || row.cidade),
+    state: normalizeStateUf(row.state || row.uf),
+    neighborhood: normalizeLocationName(row.neighborhood || row.bairro),
     landAreaM2: asNumber(row.landAreaM2 || row.land_area_m2 || row.terreno_m2),
     builtAreaM2: asNumber(row.builtAreaM2 || row.built_area_m2 || row.area_construida_m2),
     privateAreaM2: asNumber(row.privateAreaM2 || row.private_area_m2 || row.area_privativa_m2 || row.area_m2),
