@@ -268,13 +268,13 @@ function normalizeComparableUrl(value: string) {
 
 export function looksLikeWeakPropertySourceUrl(sourceUrl: string) {
   const normalized = normalizeQualityText(sourceUrl);
-  if (GENERIC_SOURCE_SIGNALS.some((signal) => normalized.includes(signal))) return true;
 
   try {
     const url = new URL(sourceUrl);
     const host = normalizeQualityText(url.hostname);
     const path = normalizeQualityText(url.pathname).replace(/\/+$/, "") || "/";
     const search = normalizeQualityText(url.search);
+    const pathSegments = path.split("/").filter(Boolean);
     const hasIdentifier = /\d/.test(`${path}${search}`);
     const hasDetailSignal =
       /\/sale\/detail\b/.test(path) ||
@@ -282,6 +282,8 @@ export function looksLikeWeakPropertySourceUrl(sourceUrl: string) {
       /(?:^|[?&])(?:id|lot|lote|bem|item)=\d/i.test(url.search);
 
     if (!url.pathname || url.pathname === "/") return true;
+    if (!hasDetailSignal && GENERIC_SOURCE_SIGNALS.some((signal) => pathSegments.includes(signal))) return true;
+    if (!hasDetailSignal && GENERIC_SOURCE_SIGNALS.some((signal) => normalized.includes(signal))) return true;
     if (host.includes("biasileiloes.com.br") && /^\/leilao(?:\/|$)/.test(path)) return true;
     if (/^\/(?:imoveis|properties)$/.test(path)) return true;
     if (/^\/(?:leilao|leiloes)(?:\/|$)/.test(path) && !hasDetailSignal) return true;
