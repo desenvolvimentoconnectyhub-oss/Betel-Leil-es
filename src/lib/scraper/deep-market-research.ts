@@ -265,21 +265,40 @@ function isLikelyMarketSource(url: string) {
   return MARKET_SOURCE_ALLOWLIST.some((token) => normalized.includes(token));
 }
 
+function isLikelyListingDetailUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    const path = normalizeText(decodeURIComponent(parsed.pathname || ""));
+    const query = normalizeText(decodeURIComponent(parsed.search || ""));
+    if (!path || path === "/") return false;
+    if (/(busca|buscar|search|pesquisa|resultado|resultados|mapa|favoritos|categoria)/.test(path)) return false;
+    const compact = `${path} ${query}`;
+    const hasListingToken = /(imovel|apartamento|casa|sobrado|terreno|lote|sala|galpao|comercial|chacara|condominio)/.test(compact);
+    const hasIdentifier = /\d{4,}/.test(compact) || /(?:id|codigo|cod|ref)[=/_-]?\d{2,}/.test(compact);
+    const pathDepth = path.split("/").filter(Boolean).length;
+    return hasIdentifier || (hasListingToken && pathDepth >= 2);
+  } catch {
+    return false;
+  }
+}
+
 function isAcceptableGroundedMarketSource(url: string) {
   const normalized = normalizeText(url);
   if (!/^https?:\/\//i.test(url)) return false;
   if (AUCTION_SOURCE_BLOCKLIST.some((token) => normalized.includes(token))) return false;
   if (NON_LISTING_SOURCE_BLOCKLIST.some((token) => normalized.includes(token))) return false;
-  return true;
+  return isLikelyMarketSource(url) && isLikelyListingDetailUrl(url);
 }
 
 function normalizeComparableQuality(value: unknown, score: number): MarketComparableQuality {
   const normalized = normalizeText(value);
-  if (normalized === "strong" || normalized === "forte" || normalized === "alta") return "strong";
-  if (normalized === "medium" || normalized === "media" || normalized === "média") return "medium";
+  const scoreQuality = qualityFromScore(score);
+  if (scoreQuality === "discarded") return "discarded";
+  if ((normalized === "strong" || normalized === "forte" || normalized === "alta") && score >= 78) return "strong";
+  if ((normalized === "medium" || normalized === "media" || normalized === "média") && score >= 58) return "medium";
   if (normalized === "weak" || normalized === "fraca" || normalized === "baixa") return "weak";
   if (normalized === "discarded" || normalized === "descartado") return "discarded";
-  return qualityFromScore(score);
+  return scoreQuality;
 }
 
 function unwrapBingUrl(url: string) {
@@ -381,6 +400,23 @@ function inferPropertyType(value: string) {
   if (text.includes("terreno") || text.includes("lote")) return "terreno";
   if (text.includes("sala") || text.includes("comercial")) return "comercial";
   return "imovel";
+}
+
+function propertyGroup(value: string) {
+  const text = normalizeText(value);
+  if (text.includes("apart")) return "apartment";
+  if (text.includes("terreno") || text.includes("lote")) return "land";
+  if (text.includes("sala") || text.includes("comercial") || text.includes("galpao")) return "commercial";
+  if (text.includes("casa") || text.includes("sobrado") || text.includes("residencia")) return "house";
+  return "unknown";
+}
+
+function propertyTypeCompatible(subjectType: string, comparableType: string, comparableTitle = "") {
+  const subjectGroup = propertyGroup(subjectType);
+  if (subjectGroup === "unknown") return true;
+  const comparableGroup = propertyGroup(`${comparableType} ${comparableTitle}`);
+  if (comparableGroup === "unknown") return true;
+  return subjectGroup === comparableGroup;
 }
 
 function extractCondoName(input: string) {
@@ -577,6 +613,45 @@ function includesToken(text: string, token: string) {
   return normalizeText(text).includes(normalizedToken);
 }
 
+function comparableEvidenceText(comparable: Pick<DeepMarketComparable, "title" | "address" | "neighborhood" | "city" | "state" | "sourceUrl">) {
+  return `${comparable.title} ${comparable.address} ${comparable.neighborhood} ${comparable.city} ${comparable.state} ${comparable.sourceUrl}`;
+}
+
+function hasLocationEvidence(subject: SubjectProfile, comparable: Pick<DeepMarketComparable, "title" | "address" | "neighborhood" | "city" | "state" | "sourceUrl">) {
+  const text = comparableEvidenceText(comparable);
+  const cityMatches = subject.city && includesToken(text, subject.city);
+  const stateMatches = subject.state && includesToken(text, subject.state);
+  const neighborhoodMatches = subject.neighborhood && includesToken(text, subject.neighborhood);
+  const condoMatches = subject.condoName && includesToken(text, subject.condoName);
+
+  if (condoMatches || neighborhoodMatches) return true;
+  if (cityMatches && (!subject.state || stateMatches || normalizeText(comparable.state) === normalizeText(subject.state))) return true;
+  return false;
+}
+
+function areaLooksComparable(subject: SubjectProfile, comparable: Pick<DeepMarketComparable, "areaM2">) {
+  if (!subject.areaM2 || !comparable.areaM2) return true;
+  const ratio = comparable.areaM2 / subject.areaM2;
+  return ratio >= 0.35 && ratio <= 2.2;
+}
+
+function comparableHasListingValue(comparable: Pick<DeepMarketComparable, "listingType" | "askingPrice" | "monthlyRent">) {
+  return comparable.listingType === "sale" ? comparable.askingPrice > 0 : comparable.monthlyRent > 0;
+}
+
+function isRelevantComparable(
+  subject: SubjectProfile,
+  comparable: Omit<DeepMarketComparable, "similarityScore" | "quality" | "notes" | "collectedAt">,
+  score: number
+) {
+  if (!isAcceptableGroundedMarketSource(comparable.sourceUrl)) return false;
+  if (!comparableHasListingValue(comparable)) return false;
+  if (!propertyTypeCompatible(subject.propertyType, comparable.propertyType, comparable.title)) return false;
+  if (!hasLocationEvidence(subject, comparable)) return false;
+  if (!areaLooksComparable(subject, comparable)) return false;
+  return score >= 45;
+}
+
 function scoreComparable(subject: SubjectProfile, comparable: Omit<DeepMarketComparable, "similarityScore" | "quality" | "notes" | "collectedAt">) {
   const text = `${comparable.title} ${comparable.address} ${comparable.neighborhood} ${comparable.city} ${comparable.state} ${comparable.sourceUrl}`;
   let score = 20;
@@ -585,7 +660,8 @@ function scoreComparable(subject: SubjectProfile, comparable: Omit<DeepMarketCom
   if (subject.city && includesToken(text, subject.city)) score += 22;
   if (subject.neighborhood && includesToken(text, subject.neighborhood)) score += 12;
   if (subject.condoName && includesToken(text, subject.condoName)) score += 28;
-  if (subject.propertyType && includesToken(text, subject.propertyType)) score += 12;
+  if (propertyTypeCompatible(subject.propertyType, comparable.propertyType, comparable.title)) score += 12;
+  else score -= 26;
 
   if (subject.areaM2 && comparable.areaM2) {
     const delta = Math.abs(comparable.areaM2 - subject.areaM2) / subject.areaM2;
@@ -600,6 +676,7 @@ function scoreComparable(subject: SubjectProfile, comparable: Omit<DeepMarketCom
   if (comparable.listingType === "sale" && comparable.askingPrice) score += 6;
   if (comparable.listingType === "rent" && comparable.monthlyRent) score += 6;
   if (!includesToken(text, subject.city) && !includesToken(text, subject.condoName)) score -= 30;
+  if (!isLikelyListingDetailUrl(comparable.sourceUrl)) score -= 24;
 
   return clampMarketScore(score);
 }
@@ -613,6 +690,8 @@ function qualityFromScore(score: number): MarketComparableQuality {
 
 async function hydrateSearchResult(subject: SubjectProfile, result: SearchResult): Promise<DeepMarketComparable | null> {
   const fetched = await fetchText(result.url, PAGE_TIMEOUT_MS);
+  const sourceUrl = fetched.finalUrl || result.url;
+  if (!isAcceptableGroundedMarketSource(sourceUrl)) return null;
   const html = fetched.text;
   const combinedText = stripTags(`${result.title} ${result.snippet} ${html.slice(0, PAGE_TEXT_LIMIT)}`);
   const title = extractTitle(html, result.title);
@@ -621,16 +700,17 @@ async function hydrateSearchResult(subject: SubjectProfile, result: SearchResult
   const askingPrice = listingType === "sale" ? extractSalePrice(combinedText) : 0;
   const monthlyRent = listingType === "rent" ? extractRentPrice(combinedText) : 0;
   const pricePerM2 = listingType === "sale" ? calculatePricePerM2(askingPrice, areaM2) : 0;
+  const evidence = `${title} ${result.snippet} ${combinedText.slice(0, 4000)} ${sourceUrl}`;
   const comparableBase = {
-    sourceLabel: sourceLabel(fetched.finalUrl || result.url),
-    sourceUrl: fetched.finalUrl || result.url,
+    sourceLabel: sourceLabel(sourceUrl),
+    sourceUrl,
     listingType,
     propertyType: inferPropertyType(`${title} ${combinedText.slice(0, 1000)}`),
     title,
     address: "",
-    neighborhood: subject.neighborhood,
-    city: subject.city,
-    state: subject.state,
+    neighborhood: subject.neighborhood && includesToken(evidence, subject.neighborhood) ? subject.neighborhood : "",
+    city: subject.city && includesToken(evidence, subject.city) ? subject.city : "",
+    state: subject.state && includesToken(evidence, subject.state) ? subject.state : "",
     areaM2,
     askingPrice,
     monthlyRent,
@@ -640,8 +720,7 @@ async function hydrateSearchResult(subject: SubjectProfile, result: SearchResult
   };
   const similarityScore = scoreComparable(subject, comparableBase);
   const quality = qualityFromScore(similarityScore);
-  const hasValue = listingType === "sale" ? askingPrice > 0 : monthlyRent > 0;
-  if (!hasValue || quality === "discarded") return null;
+  if (quality === "discarded" || !isRelevantComparable(subject, comparableBase, similarityScore)) return null;
 
   const notes = [
     subject.condoName && includesToken(`${title} ${combinedText}`, subject.condoName) ? "Mesmo condominio ou nome muito aderente." : "",
@@ -760,9 +839,9 @@ function normalizeGroundedComparable(
     propertyType: cleanString(row.propertyType || row.property_type || row.tipoImovel, inferPropertyType(title)),
     title,
     address: cleanString(row.address || row.endereco),
-    neighborhood: cleanString(row.neighborhood || row.bairro, subject.neighborhood),
-    city: cleanString(row.city || row.cidade, subject.city),
-    state: cleanString(row.state || row.uf, subject.state).toUpperCase(),
+    neighborhood: cleanString(row.neighborhood || row.bairro),
+    city: cleanString(row.city || row.cidade),
+    state: cleanString(row.state || row.uf).toUpperCase(),
     areaM2,
     askingPrice,
     monthlyRent,
@@ -771,8 +850,10 @@ function normalizeGroundedComparable(
     parkingSpaces: asNumber(row.parkingSpaces ?? row.parking_spaces ?? row.vagas),
   };
   const rawScore = asNumber(row.similarityScore ?? row.similarity_score ?? row.similaridade);
-  const similarityScore = clampMarketScore(rawScore || scoreComparable(subject, comparableBase));
+  const calculatedScore = scoreComparable(subject, comparableBase);
+  const similarityScore = clampMarketScore(rawScore ? Math.min(rawScore, calculatedScore + 8) : calculatedScore);
   const quality = normalizeComparableQuality(row.quality || row.qualidade, similarityScore);
+  if (quality === "discarded" || !isRelevantComparable(subject, comparableBase, similarityScore)) return null;
 
   return {
     ...comparableBase,
@@ -1088,6 +1169,8 @@ async function runGeminiGroundedMarketResearch(input: {
       "- Para casas/sobrados, diferencie terreno, area construida, bairro e padrao.",
       "- Para apartamentos, priorize mesmo condominio, bairro, area privativa, dormitorios e vagas.",
       "- Para terrenos/lotes, priorize mesmo loteamento/bairro, area, zoneamento e preco por m2.",
+      "- Use apenas links de detalhe do anuncio comparavel; nunca use pagina de busca, categoria, mapa ou resultado geral.",
+      "- Descarte anuncios sem evidencia clara da cidade/bairro ou de tipo de imovel compativel com o alvo.",
       "- Se o valor de mercado for estimado com poucos comparaveis, reduza confidenceScore e explique.",
       "- Nao invente links, valores, areas, quartos ou vagas.",
       "",

@@ -3,7 +3,7 @@ import "server-only";
 import { inngest } from "@/inngest/client";
 import { getAuctionOpportunityByCode, getPropertyMarketAnalysisByOpportunityCode } from "@/lib/admin/repository";
 import type { DataResult, MutationResult } from "@/lib/admin/repository/shared";
-import type { PropertyMarketAnalysis } from "@/lib/admin/market-analysis";
+import type { PropertyMarketAnalysis, PropertyMarketComparable } from "@/lib/admin/market-analysis";
 import type { AuctionOpportunity, PropertyImageAsset } from "@/lib/admin/resources";
 import { WILLIAN_AGENT_KEY, type WhatsAppActionButtonInput } from "@/lib/communication/connectyhub-client";
 import { listSystemWhatsAppSenderOptions } from "@/lib/communication/system-whatsapp-sender";
@@ -77,6 +77,13 @@ type ImmediateWhatsAppProcessingResult = {
 
 function cleanString(value: unknown, fallback = "") {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function normalizeText(value: unknown) {
+  return cleanString(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
 }
 
 function asRecord(value: unknown): DbRow {
@@ -324,6 +331,27 @@ function isHttpUrl(value: unknown) {
   return /^https?:\/\//i.test(cleanString(value));
 }
 
+function isLikelyListingDetailUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    const path = normalizeText(decodeURIComponent(parsed.pathname || ""));
+    const query = normalizeText(decodeURIComponent(parsed.search || ""));
+    if (!path || path === "/") return false;
+    if (/(busca|buscar|search|pesquisa|resultado|resultados|mapa|favoritos|categoria)/.test(path)) return false;
+    const compact = `${path} ${query}`;
+    const hasListingToken = /(imovel|apartamento|casa|sobrado|terreno|lote|sala|galpao|comercial|chacara|condominio)/.test(compact);
+    const hasIdentifier = /\d{4,}/.test(compact) || /(?:id|codigo|cod|ref)[=/_-]?\d{2,}/.test(compact);
+    const pathDepth = path.split("/").filter(Boolean).length;
+    return hasIdentifier || (hasListingToken && pathDepth >= 2);
+  } catch {
+    return false;
+  }
+}
+
+function isBlockedReferenceUrl(url: string) {
+  return /(leilao|leiloes|auction|superbid|hasta|hastapublica|judicial|portalzuk|fbleiloes|lancenoleilao)/i.test(url);
+}
+
 function normalizePublicationLinkFormat(value: unknown): OpportunityWhatsAppLinkFormat {
   if (value === "source_links" || value === "betel_button") return value;
   return "source_buttons";
@@ -336,6 +364,47 @@ function sourceLinkLabel(rawLabel: string, fallback: string) {
   if (normalized.includes("compar")) return "Comparavel";
   if (normalized.includes("refer")) return fallback;
   return fallback;
+}
+
+function includesToken(text: string, token: string) {
+  const normalizedToken = normalizeText(token);
+  return normalizedToken.length >= 3 && normalizeText(text).includes(normalizedToken);
+}
+
+function propertyGroup(value: string) {
+  const text = normalizeText(value);
+  if (text.includes("apart")) return "apartment";
+  if (text.includes("terreno") || text.includes("lote")) return "land";
+  if (text.includes("sala") || text.includes("comercial") || text.includes("galpao")) return "commercial";
+  if (text.includes("casa") || text.includes("sobrado") || text.includes("residencia")) return "house";
+  return "unknown";
+}
+
+function publicationComparableLooksRelevant(analysis: PropertyMarketAnalysis | null, comparable: PropertyMarketComparable) {
+  if (!analysis || !isHttpUrl(comparable.sourceUrl)) return false;
+  if (isBlockedReferenceUrl(comparable.sourceUrl) || !isLikelyListingDetailUrl(comparable.sourceUrl)) return false;
+  if (comparable.quality === "discarded" || comparable.similarityScore < 58) return false;
+
+  const subject = analysis.subject;
+  const subjectType = propertyGroup(subject.propertyType);
+  const comparableType = propertyGroup(`${comparable.propertyType} ${comparable.listingType} ${comparable.address} ${comparable.sourceUrl}`);
+  if (subjectType !== "unknown" && comparableType !== "unknown" && subjectType !== comparableType) return false;
+
+  const subjectNeighborhood = cleanString((subject as { neighborhood?: unknown }).neighborhood);
+  const locationText = `${comparable.sourceUrl} ${comparable.address} ${comparable.neighborhood}`;
+  const cityMatches = subject.city && includesToken(locationText, subject.city);
+  const neighborhoodMatches = subjectNeighborhood && includesToken(locationText, subjectNeighborhood);
+  const explicitNeighborhoodMatches =
+    comparable.neighborhood && includesToken(`${subject.address} ${subjectNeighborhood}`, comparable.neighborhood);
+  if (!cityMatches && !neighborhoodMatches && !explicitNeighborhoodMatches) return false;
+
+  const subjectArea = subject.privateAreaM2 || subject.builtAreaM2 || subject.landAreaM2;
+  if (subjectArea && comparable.areaM2) {
+    const ratio = comparable.areaM2 / subjectArea;
+    if (ratio < 0.35 || ratio > 2.2) return false;
+  }
+
+  return true;
 }
 
 function appendUniqueSourceLink(
@@ -374,12 +443,29 @@ function buildPublicationReferenceLinks(analysis: PropertyMarketAnalysis | null,
   const links: OpportunityWhatsAppSourceLink[] = [];
   const seen = new Set<string>([publicUrl, auctionUrl].filter(Boolean));
   const sourceLinks = (analysis?.sourceLinks || []).filter((source) => !/leil|auction|fonte/i.test(source.label));
-  const directReferenceSources = sourceLinks.filter((source) => !/^busca:/i.test(source.label) && !/alug|rent/i.test(source.label));
-  const searchSources = sourceLinks.filter((source) => /^busca:/i.test(source.label));
+  const directReferenceSources = sourceLinks.filter((source) =>
+    !/^busca:/i.test(source.label) &&
+    !/alug|rent/i.test(source.label) &&
+    !/comparavel|comparável/i.test(source.label) &&
+    /refer/i.test(source.label) &&
+    isHttpUrl(source.url) &&
+    !isBlockedReferenceUrl(source.url) &&
+    isLikelyListingDetailUrl(source.url)
+  );
 
   const comparableLinks = (analysis?.comparables || [])
-    .filter((comparable) => comparable.sourceUrl)
+    .filter((comparable) => publicationComparableLooksRelevant(analysis, comparable))
     .sort((left, right) => right.similarityScore - left.similarityScore);
+
+  for (const comparable of comparableLinks.filter((item) => !/alug|rent/i.test(item.listingType))) {
+    appendUniqueSourceLink(
+      links,
+      seen,
+      sourceLinkLabel(`${comparable.listingType} ${comparable.sourceLabel}`, `Referencia ${links.length + 1}`),
+      comparable.sourceUrl
+    );
+    if (links.length >= 3) return links.slice(0, 3);
+  }
 
   for (const source of directReferenceSources) {
     appendUniqueSourceLink(
@@ -391,26 +477,12 @@ function buildPublicationReferenceLinks(analysis: PropertyMarketAnalysis | null,
     if (links.length >= 3) return links.slice(0, 3);
   }
 
-  for (const comparable of comparableLinks) {
+  for (const comparable of comparableLinks.filter((item) => /alug|rent/i.test(item.listingType))) {
     appendUniqueSourceLink(
       links,
       seen,
-      sourceLinkLabel(`${comparable.listingType} ${comparable.sourceLabel}`, `Referencia ${links.length + 1}`),
+      "Ref aluguel",
       comparable.sourceUrl
-    );
-    if (links.length >= 3) return links.slice(0, 3);
-  }
-
-  appendUniqueSourceLink(links, seen, "Ref aluguel", analysis?.rentalEstimate.referenceUrl || "");
-
-  const prioritySources = sourceLinks.filter((source) => !/^busca:/i.test(source.label)).concat(searchSources);
-
-  for (const source of prioritySources) {
-    appendUniqueSourceLink(
-      links,
-      seen,
-      sourceLinkLabel(source.label, `Referencia ${links.length + 1}`),
-      source.url
     );
     if (links.length >= 3) return links.slice(0, 3);
   }
