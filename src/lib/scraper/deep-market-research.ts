@@ -56,7 +56,7 @@ type SearchResult = {
   url: string;
   snippet: string;
   kind: ListingKind;
-  provider: "bing" | "duckduckgo";
+  provider: "bing" | "duckduckgo" | "google-grounding";
 };
 
 type MarketSearchUrl = {
@@ -83,8 +83,10 @@ const SEARCH_TIMEOUT_MS = 8_000;
 const PAGE_TIMEOUT_MS = 7_000;
 const PAGE_TEXT_LIMIT = 600_000;
 const MAX_SEARCH_RESULTS = 12;
-const MAX_SALE_PAGES = 8;
-const MAX_RENT_PAGES = 4;
+const MIN_SALE_REFERENCES = 3;
+const MIN_RENT_REFERENCES = 1;
+const MAX_SALE_PAGES = 14;
+const MAX_RENT_PAGES = 8;
 const GEMINI_GROUNDED_TIMEOUT_MS = 45_000;
 const MAX_GROUNDED_COMPARABLES = 10;
 
@@ -508,19 +510,27 @@ function buildSearchQueries(subject: SubjectProfile) {
   const area = subject.areaM2 ? `${Math.round(subject.areaM2)} m2` : "";
   const microLocation = subject.condoName || subject.neighborhood;
   const street = streetForSearch(subject.address);
+  const saleCore = compactQuery([primaryType, "venda", microLocation, cityUf, area]);
+  const rentCore = compactQuery([primaryType, "aluguel", microLocation, cityUf, area]);
   const saleQueries = uniqueStrings([
     subject.condoName ? compactQuery([`"${subject.condoName}"`, type, "venda", cityUf]) : "",
-    microLocation ? compactQuery([primaryType, "venda", microLocation, cityUf, area]) : "",
+    microLocation ? saleCore : "",
     titleText.includes("sobrado") ? compactQuery(["casa", "venda", microLocation, cityUf, area]) : "",
     compactQuery([type, "alto padrao", "venda", subject.city, subject.state, area]),
     compactQuery([type, "venda", subject.neighborhood, subject.city, subject.state, area]),
     street ? compactQuery([street, type, "venda", subject.city, subject.state]) : "",
-  ], 6);
+    saleCore ? compactQuery(["site:vivareal.com.br/imovel", saleCore]) : "",
+    saleCore ? compactQuery(["site:zapimoveis.com.br/imovel", saleCore]) : "",
+    saleCore ? compactQuery(["site:imovelweb.com.br", saleCore]) : "",
+    saleCore ? compactQuery(["site:olx.com.br/imoveis", saleCore]) : "",
+  ], 10);
   const rentQueries = uniqueStrings([
     subject.condoName ? compactQuery([`"${subject.condoName}"`, type, "aluguel", cityUf]) : "",
-    microLocation ? compactQuery([primaryType, "aluguel", microLocation, cityUf, area]) : "",
+    microLocation ? rentCore : "",
     compactQuery([type, "aluguel", subject.neighborhood, subject.city, subject.state, area]),
-  ], 3);
+    rentCore ? compactQuery(["site:vivareal.com.br/imovel", rentCore]) : "",
+    rentCore ? compactQuery(["site:zapimoveis.com.br/imovel", rentCore]) : "",
+  ], 5);
 
   return [
     ...saleQueries.map((query) => ({ query, kind: "sale" as const })),
@@ -571,6 +581,35 @@ async function searchMarketResults(subject: SubjectProfile) {
   };
 }
 
+function inferListingKindFromText(value: string, fallback: ListingKind = "sale"): ListingKind {
+  const text = normalizeText(value);
+  if (/(aluguel|alugar|locacao|rent)/.test(text)) return "rent";
+  if (/(venda|comprar|sale)/.test(text)) return "sale";
+  return fallback;
+}
+
+function searchResultFromMarketSource(source: MarketSearchUrl): SearchResult {
+  return {
+    title: cleanString(source.label, sourceLabel(source.url)),
+    url: source.url,
+    snippet: source.label,
+    kind: inferListingKindFromText(`${source.label} ${source.url}`, source.kind),
+    provider: "google-grounding",
+  };
+}
+
+function uniqueSearchResults(values: SearchResult[]) {
+  const seen = new Set<string>();
+  const output: SearchResult[] = [];
+  for (const item of values) {
+    const key = canonicalMarketUrl(item.url);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    output.push(item);
+  }
+  return output;
+}
+
 function extractTitle(html: string, fallback: string) {
   return stripTags(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || fallback).slice(0, 180);
 }
@@ -580,6 +619,11 @@ function moneyMatches(text: string) {
   const regex = /R\$\s*([\d.]{1,12}(?:,\d{2})?)/gi;
   let match: RegExpExecArray | null;
   while ((match = regex.exec(text))) {
+    const value = currencyFromText(match[1]);
+    if (value > 0) output.push(value);
+  }
+  const compactRegex = /\bRS\s*([1-9]\d{3,8})(?![a-z])/gi;
+  while ((match = compactRegex.exec(text))) {
     const value = currencyFromText(match[1]);
     if (value > 0) output.push(value);
   }
@@ -714,8 +758,11 @@ async function hydrateSearchResult(subject: SubjectProfile, result: SearchResult
   const sourceUrl = fetched.finalUrl || result.url;
   if (!isAcceptableGroundedMarketSource(sourceUrl)) return null;
   const html = fetched.text;
-  const combinedText = stripTags(`${result.title} ${result.snippet} ${html.slice(0, PAGE_TEXT_LIMIT)}`);
-  const title = extractTitle(html, result.title);
+  const pageTitle = extractTitle(html, result.title);
+  const title = fetched.status >= 400 || /attention required|cloudflare|just a moment|access denied/i.test(pageTitle)
+    ? result.title
+    : pageTitle;
+  const combinedText = stripTags(`${result.title} ${result.snippet} ${sourceUrl} ${html.slice(0, PAGE_TEXT_LIMIT)}`);
   const listingType = result.kind;
   const areaM2 = extractArea(combinedText);
   const askingPrice = listingType === "sale" ? extractSalePrice(combinedText) : 0;
@@ -747,6 +794,7 @@ async function hydrateSearchResult(subject: SubjectProfile, result: SearchResult
     subject.condoName && includesToken(`${title} ${combinedText}`, subject.condoName) ? "Mesmo condominio ou nome muito aderente." : "",
     areaM2 ? `Area capturada: ${areaM2} m2.` : "Area nao confirmada na pagina do comparavel.",
     fetched.status ? `HTTP ${fetched.status}.` : "Pagina do comparavel nao confirmou status HTTP.",
+    result.provider === "google-grounding" ? "Referencia derivada de link real retornado pelo Google Search." : "",
   ].filter(Boolean).join(" ");
 
   return {
@@ -950,10 +998,11 @@ function collectGroundingLinks(response: unknown) {
       const web = asRecord(asRecord(chunk).web);
       const url = cleanString(web.uri || web.url);
       if (!isAcceptableGroundedMarketSource(url)) return links;
+      const label = cleanString(web.title, sourceLabel(url));
       links.push({
-        label: cleanString(web.title, sourceLabel(url)),
+        label,
         url,
-        kind: "sale",
+        kind: inferListingKindFromText(`${label} ${url}`, "sale"),
       });
       return links;
     }, []);
@@ -1016,8 +1065,8 @@ function normalizeGroundedMarketResearch(
   const acceptedComparableCount = saleComparables.length + rentalComparables.length;
 
   if (!marketValueBase) missingFields.add("valor de mercado por comparaveis");
-  if (saleComparables.length < 3) missingFields.add("minimo de 3 comparaveis de venda");
-  if (!rentalComparables.length) missingFields.add("referencia direta de aluguel");
+  if (saleComparables.length < MIN_SALE_REFERENCES) missingFields.add(`minimo de ${MIN_SALE_REFERENCES} comparaveis de venda`);
+  if (rentalComparables.length < MIN_RENT_REFERENCES) missingFields.add("referencia direta de aluguel");
   if (!subject.areaM2) missingFields.add("area para preco por m2");
   if (rawComparableCount > acceptedComparableCount) {
     cautionNotes.add(`${rawComparableCount - acceptedComparableCount} referencia(s) descartada(s) por link sem grounding do Google, URL invalida ou baixa aderencia.`);
@@ -1038,7 +1087,7 @@ function normalizeGroundedMarketResearch(
   );
 
   return {
-    status: marketValueBase && saleComparables.length >= 3 ? "completed" : "partial",
+    status: marketValueBase && saleComparables.length >= MIN_SALE_REFERENCES ? "completed" : "partial",
     searchQueries: uniqueStrings([
       ...asStringArray(row.searchQueries || row.search_queries || row.buscas),
       ...grounding.queries,
@@ -1117,7 +1166,11 @@ async function runGeminiGroundedMarketResearch(input: {
   extraction: AuctionLinkExtraction;
   title: string;
   initialBid: number;
-}, subject: SubjectProfile): Promise<{ research: DeepMarketResearchResult | null; error: string }> {
+}, subject: SubjectProfile): Promise<{
+  research: DeepMarketResearchResult | null;
+  error: string;
+  grounding?: ReturnType<typeof collectGroundingLinks>;
+}> {
   const apiKey = await getGeminiApiKey();
   if (!apiKey) return { research: null, error: "Gemini nao configurado para pesquisa com Google." };
 
@@ -1222,10 +1275,16 @@ async function runGeminiGroundedMarketResearch(input: {
     ].join("\n");
 
     const grounded = await generateGeminiGroundedContent({ apiKey, model, prompt, systemInstruction });
-    const parsed = pickJsonObject(grounded.rawText);
-    if (!parsed) return { research: null, error: "Gemini/Google retornou resposta sem JSON estruturado." };
-
     const grounding = collectGroundingLinks(grounded.response);
+    const parsed = pickJsonObject(grounded.rawText);
+    if (!parsed) {
+      return {
+        research: null,
+        grounding,
+        error: "Gemini/Google retornou resposta sem JSON estruturado.",
+      };
+    }
+
     const research = normalizeGroundedMarketResearch(subject, parsed, grounding);
     if (research) {
       research.cautionNotes = uniqueStrings([
@@ -1235,6 +1294,7 @@ async function runGeminiGroundedMarketResearch(input: {
     }
     return {
       research,
+      grounding,
       error: research ? "" : "Gemini/Google nao retornou comparaveis aproveitaveis.",
     };
   } catch (error) {
@@ -1306,8 +1366,8 @@ export async function runDeepMarketResearch(input: {
   const needsFallbackSearch =
     !groundedResearch ||
     !groundedResearch.marketValueBase ||
-    groundedResearch.saleComparables.length < 3 ||
-    groundedResearch.rentalComparables.length < 1;
+    groundedResearch.saleComparables.length < MIN_SALE_REFERENCES ||
+    groundedResearch.rentalComparables.length < MIN_RENT_REFERENCES;
 
   const search = needsFallbackSearch
     ? await searchMarketResults(subject)
@@ -1318,8 +1378,12 @@ export async function runDeepMarketResearch(input: {
       };
   const saleResults = search.results.filter((item) => item.kind === "sale").slice(0, MAX_SALE_PAGES);
   const rentResults = search.results.filter((item) => item.kind === "rent").slice(0, MAX_RENT_PAGES);
+  const groundedResults = needsFallbackSearch
+    ? (groundedAttempt.grounding?.sourceLinks || []).map(searchResultFromMarketSource)
+    : [];
+  const fallbackResults = uniqueSearchResults([...groundedResults, ...saleResults, ...rentResults]);
   const hydrated = needsFallbackSearch
-    ? await Promise.all([...saleResults, ...rentResults].map((result) => hydrateSearchResult(subject, result)))
+    ? await Promise.all(fallbackResults.map((result) => hydrateSearchResult(subject, result)))
     : [];
   const comparables = hydrated.filter((item): item is DeepMarketComparable => Boolean(item));
   const saleComparables = mergeComparableLists([
@@ -1341,17 +1405,17 @@ export async function runDeepMarketResearch(input: {
   const rentalMonthlyRent = firstPositive(rental.monthlyRent, groundedResearch?.rentalMonthlyRent || 0);
   const rentalReferenceUrl = firstText(rental.referenceUrl, groundedResearch?.rentalReferenceUrl || "");
 
-  if (saleComparables.length < 3) missingFields.push("minimo de 3 comparaveis de venda");
+  if (saleComparables.length < MIN_SALE_REFERENCES) missingFields.push(`minimo de ${MIN_SALE_REFERENCES} comparaveis de venda`);
   if (!marketValue.base) missingFields.push("valor de mercado por comparaveis");
-  if (!rentalComparables.length) missingFields.push("referencia direta de aluguel");
+  if (rentalComparables.length < MIN_RENT_REFERENCES) missingFields.push("referencia direta de aluguel");
   if (!subject.areaM2) missingFields.push("area para preco por m2");
   (groundedResearch?.missingFields || []).forEach((field) => missingFields.push(field));
   if (groundedAttempt.error) cautionNotes.push(`Pesquisa Gemini/Google: ${groundedAttempt.error}`);
   cautionNotes.push(...(groundedResearch?.cautionNotes || []));
-  if (needsFallbackSearch && !search.results.length && !(groundedResearch?.searchedUrls.length)) {
+  if (needsFallbackSearch && !search.results.length && !groundedResults.length && !(groundedResearch?.searchedUrls.length)) {
     cautionNotes.push("Nenhum resultado de mercado aderente foi encontrado na busca automatica.");
   }
-  if (saleComparables.length && saleComparables.length < 3) {
+  if (saleComparables.length && saleComparables.length < MIN_SALE_REFERENCES) {
     cautionNotes.push(`Apenas ${saleComparables.length} comparavel(is) de venda aderente(s); revisar manualmente antes de aprovar.`);
   }
   if (!rentalComparables.length && rentalMonthlyRent) cautionNotes.push(rental.note);
@@ -1368,9 +1432,17 @@ export async function runDeepMarketResearch(input: {
     : calculatedConfidenceScore;
 
   return {
-    status: marketValue.base && saleComparables.length >= 3 ? "completed" : "partial",
-    searchQueries: uniqueStrings([...(groundedResearch?.searchQueries || []), ...search.searchQueries], 18),
-    searchedUrls: uniqueSearchedUrls([...(groundedResearch?.searchedUrls || []), ...search.searchedUrls]),
+    status: marketValue.base && saleComparables.length >= MIN_SALE_REFERENCES ? "completed" : "partial",
+    searchQueries: uniqueStrings([
+      ...(groundedResearch?.searchQueries || []),
+      ...(groundedAttempt.grounding?.queries || []),
+      ...search.searchQueries,
+    ], 18),
+    searchedUrls: uniqueSearchedUrls([
+      ...(groundedResearch?.searchedUrls || []),
+      ...(groundedAttempt.grounding?.sourceLinks || []),
+      ...search.searchedUrls,
+    ]),
     saleComparables,
     rentalComparables,
     marketValueLow: marketValue.low,

@@ -13,6 +13,7 @@ import { createWhatsAppCommunityCampaign, processWhatsAppCommunityCampaigns, typ
 type DbRow = Record<string, unknown>;
 const WHATSAPP_TEASER_MAX_LENGTH = 1500;
 const WHATSAPP_TEASER_WITH_LINKS_MAX_LENGTH = 2300;
+const MIN_PUBLICATION_REFERENCE_LINKS = 3;
 
 export type OpportunityWhatsAppPublicationMode =
   | "default_group"
@@ -357,6 +358,10 @@ function normalizePublicationLinkFormat(value: unknown): OpportunityWhatsAppLink
   return "source_buttons";
 }
 
+function linkFormatRequiresReferences(value: OpportunityWhatsAppLinkFormat) {
+  return value === "source_buttons" || value === "source_links";
+}
+
 function sourceLinkLabel(rawLabel: string, fallback: string) {
   const normalized = rawLabel.toLowerCase();
   if (normalized.includes("alug")) return "Ref aluguel";
@@ -576,6 +581,13 @@ export async function buildOpportunityWhatsAppPost(
   const linkFormat = normalizePublicationLinkFormat(options.linkFormat);
   const auctionUrl = buildAuctionUrl(analysis);
   const sourceLinks = buildPublicationReferenceLinks(analysis, publicUrl, auctionUrl);
+  if (linkFormatRequiresReferences(linkFormat) && sourceLinks.length < MIN_PUBLICATION_REFERENCE_LINKS) {
+    return {
+      data: null,
+      source: analysisResult.source,
+      reason: `A analise ainda nao possui ${MIN_PUBLICATION_REFERENCE_LINKS} referencias validas de mercado. Reprocesse ou complete os comparaveis antes de enviar no WhatsApp.`,
+    };
+  }
   const actionButton = actionButtonForPost({ linkFormat, publicUrl, sourceLinks });
 
   const baseCaption = compactCaption([
