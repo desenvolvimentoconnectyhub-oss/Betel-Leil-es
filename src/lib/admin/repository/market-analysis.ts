@@ -165,6 +165,14 @@ function normalizeQuality(value: string): MarketComparableQuality {
   return "medium";
 }
 
+function normalizeSimilarityScore(value: unknown, fallback = 50) {
+  const score = asNumber(value, fallback);
+  if (!Number.isFinite(score)) return fallback;
+  if (score > 0 && score <= 1) return clampMarketScore(score * 100, fallback);
+  if (score > 1 && score <= 10) return clampMarketScore(score * 10, fallback);
+  return clampMarketScore(score, fallback);
+}
+
 function extractAreaFromText(text: string, marker: RegExp) {
   const match = text.match(marker);
   if (!match?.[1]) return 0;
@@ -225,7 +233,7 @@ function normalizeComparable(row: Record<string, unknown>, opportunityId: string
     soldPrice,
     pricePerM2: asNumber(row.price_per_m2, asNumber(row.pricePerM2, calculatePricePerM2(price, areaM2))),
     distanceKm: asNumber(row.distance_km, asNumber(row.distanceKm)),
-    similarityScore: clampMarketScore(asNumber(row.similarity_score, asNumber(row.similarityScore, 50))),
+    similarityScore: normalizeSimilarityScore(row.similarity_score ?? row.similarityScore, 50),
     quality: normalizeQuality(asString(row.quality, "medium")),
     notes: asString(row.notes),
     collectedAt: asString(row.collected_at, asString(row.collectedAt)),

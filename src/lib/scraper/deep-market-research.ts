@@ -301,6 +301,14 @@ function normalizeComparableQuality(value: unknown, score: number): MarketCompar
   return scoreQuality;
 }
 
+function normalizeExternalSimilarityScore(value: unknown) {
+  const score = asNumber(value);
+  if (!score) return 0;
+  if (score > 0 && score <= 1) return clampMarketScore(score * 100);
+  if (score > 1 && score <= 10) return clampMarketScore(score * 10);
+  return clampMarketScore(score);
+}
+
 function unwrapBingUrl(url: string) {
   const decoded = htmlDecode(url);
   try {
@@ -849,7 +857,7 @@ function normalizeGroundedComparable(
     bedrooms: asNumber(row.bedrooms ?? row.dormitorios ?? row.quartos),
     parkingSpaces: asNumber(row.parkingSpaces ?? row.parking_spaces ?? row.vagas),
   };
-  const rawScore = asNumber(row.similarityScore ?? row.similarity_score ?? row.similaridade);
+  const rawScore = normalizeExternalSimilarityScore(row.similarityScore ?? row.similarity_score ?? row.similaridade);
   const calculatedScore = scoreComparable(subject, comparableBase);
   const similarityScore = clampMarketScore(rawScore ? Math.min(rawScore, calculatedScore + 8) : calculatedScore);
   const quality = normalizeComparableQuality(row.quality || row.qualidade, similarityScore);
