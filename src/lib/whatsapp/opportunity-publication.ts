@@ -526,7 +526,7 @@ function actionButtonForPost(input: {
     } satisfies WhatsAppActionButtonInput;
   }
 
-  if (input.linkFormat === "betel_button" || !input.sourceLinks.length) {
+  if (input.linkFormat === "betel_button") {
     return {
       label: "Ver imovel",
       url: input.publicUrl,
@@ -541,6 +541,7 @@ function buttonTextForPost(linkFormat: OpportunityWhatsAppLinkFormat, hasSourceL
   if (linkFormat === "source_buttons" && hasSourceLinks) {
     return "👇 Abra abaixo as referencias de venda e aluguel usadas na analise.";
   }
+  if (linkFormat === "source_buttons") return "";
   if (linkFormat === "source_links") return "";
   return "👇 Veja fotos, riscos e analise completa na ficha Betel.";
 }
@@ -609,7 +610,7 @@ export async function buildOpportunityWhatsAppPost(
       title,
       caption,
       buttonText: buttonTextForPost(linkFormat, sourceLinks.length > 0),
-      buttonLabel: actionButton?.label || "Ver imovel",
+      buttonLabel: actionButton?.label || "",
       publicUrl,
       imageUrl: primaryImageUrl(opportunity.images),
       linkFormat,
