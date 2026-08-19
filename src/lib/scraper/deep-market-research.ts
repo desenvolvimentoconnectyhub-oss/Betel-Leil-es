@@ -265,6 +265,19 @@ function isLikelyMarketSource(url: string) {
   return MARKET_SOURCE_ALLOWLIST.some((token) => normalized.includes(token));
 }
 
+function canonicalMarketUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.replace(/^www\./i, "").toLowerCase();
+    const path = decodeURIComponent(parsed.pathname || "")
+      .replace(/\/+$/g, "")
+      .toLowerCase();
+    return `${host}${path}`;
+  } catch {
+    return cleanString(url).split(/[?#]/)[0].replace(/\/+$/g, "").toLowerCase();
+  }
+}
+
 function isLikelyListingDetailUrl(url: string) {
   try {
     const parsed = new URL(url);
@@ -819,11 +832,13 @@ function calculateRental(subject: SubjectProfile, rentalComparables: DeepMarketC
 function normalizeGroundedComparable(
   subject: SubjectProfile,
   value: unknown,
-  fallbackKind: ListingKind
+  fallbackKind: ListingKind,
+  allowedSourceUrls: Set<string>
 ): DeepMarketComparable | null {
   const row = asRecord(value);
   const sourceUrl = cleanString(row.sourceUrl || row.source_url || row.url || row.link);
   if (!isAcceptableGroundedMarketSource(sourceUrl)) return null;
+  if (!allowedSourceUrls.has(canonicalMarketUrl(sourceUrl))) return null;
 
   const kindText = normalizeText(row.listingType || row.listing_type || row.tipo || row.kind);
   const listingType: ListingKind = kindText.includes("alug") || kindText.includes("rent") || fallbackKind === "rent"
@@ -867,14 +882,21 @@ function normalizeGroundedComparable(
     ...comparableBase,
     similarityScore,
     quality,
-    notes: cleanString(row.notes || row.observacoes || row.justificativa),
+    notes: [cleanString(row.notes || row.observacoes || row.justificativa), "Link validado no grounding do Google Search."]
+      .filter(Boolean)
+      .join(" "),
     collectedAt: new Date().toISOString(),
   };
 }
 
-function normalizeGroundedComparableList(subject: SubjectProfile, value: unknown, fallbackKind: ListingKind) {
+function normalizeGroundedComparableList(
+  subject: SubjectProfile,
+  value: unknown,
+  fallbackKind: ListingKind,
+  allowedSourceUrls: Set<string>
+) {
   return (Array.isArray(value) ? value : [])
-    .map((item) => normalizeGroundedComparable(subject, item, fallbackKind))
+    .map((item) => normalizeGroundedComparable(subject, item, fallbackKind, allowedSourceUrls))
     .filter((item): item is DeepMarketComparable => Boolean(item))
     .slice(0, MAX_GROUNDED_COMPARABLES);
 }
@@ -948,15 +970,20 @@ function normalizeGroundedMarketResearch(
   grounding: ReturnType<typeof collectGroundingLinks>
 ): DeepMarketResearchResult | null {
   const row = asRecord(parsed);
+  const groundedSourceUrls = new Set(grounding.sourceLinks.map((source) => canonicalMarketUrl(source.url)));
+  const rawSaleComparables = row.saleComparables || row.sale_comparables || row.comparaveisVenda || row.comparaveis_venda;
+  const rawRentalComparables = row.rentalComparables || row.rental_comparables || row.comparaveisAluguel || row.comparaveis_aluguel;
   const saleComparables = normalizeGroundedComparableList(
     subject,
-    row.saleComparables || row.sale_comparables || row.comparaveisVenda || row.comparaveis_venda,
-    "sale"
+    rawSaleComparables,
+    "sale",
+    groundedSourceUrls
   );
   const rentalComparables = normalizeGroundedComparableList(
     subject,
-    row.rentalComparables || row.rental_comparables || row.comparaveisAluguel || row.comparaveis_aluguel,
-    "rent"
+    rawRentalComparables,
+    "rent",
+    groundedSourceUrls
   );
   if (!saleComparables.length && !rentalComparables.length) return null;
 
@@ -983,11 +1010,18 @@ function normalizeGroundedMarketResearch(
   const rentalReferenceUrl = cleanString(row.rentalReferenceUrl || row.rental_reference_url, rental.referenceUrl);
   const missingFields = new Set(asStringArray(row.missingFields || row.missing_fields || row.pendencias));
   const cautionNotes = new Set(asStringArray(row.cautionNotes || row.caution_notes || row.ressalvas));
+  const rawComparableCount =
+    (Array.isArray(rawSaleComparables) ? rawSaleComparables.length : 0) +
+    (Array.isArray(rawRentalComparables) ? rawRentalComparables.length : 0);
+  const acceptedComparableCount = saleComparables.length + rentalComparables.length;
 
   if (!marketValueBase) missingFields.add("valor de mercado por comparaveis");
   if (saleComparables.length < 3) missingFields.add("minimo de 3 comparaveis de venda");
   if (!rentalComparables.length) missingFields.add("referencia direta de aluguel");
   if (!subject.areaM2) missingFields.add("area para preco por m2");
+  if (rawComparableCount > acceptedComparableCount) {
+    cautionNotes.add(`${rawComparableCount - acceptedComparableCount} referencia(s) descartada(s) por link sem grounding do Google, URL invalida ou baixa aderencia.`);
+  }
   cautionNotes.add("Pesquisa com Gemini e Google Search; conferir links e aderencia antes de aprovar.");
 
   const comparableLinks = [
@@ -1178,6 +1212,7 @@ async function runGeminiGroundedMarketResearch(input: {
       "- Para apartamentos, priorize mesmo condominio, bairro, area privativa, dormitorios e vagas.",
       "- Para terrenos/lotes, priorize mesmo loteamento/bairro, area, zoneamento e preco por m2.",
       "- Use apenas links de detalhe do anuncio comparavel; nunca use pagina de busca, categoria, mapa ou resultado geral.",
+      "- Copie somente URLs reais encontradas nos resultados do Google Search. Nao monte, encurte, corrija ou invente slugs de anuncio.",
       "- Descarte anuncios sem evidencia clara da cidade/bairro ou de tipo de imovel compativel com o alvo.",
       "- Se o valor de mercado for estimado com poucos comparaveis, reduza confidenceScore e explique.",
       "- Nao invente links, valores, areas, quartos ou vagas.",
