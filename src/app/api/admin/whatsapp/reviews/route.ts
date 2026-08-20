@@ -29,6 +29,7 @@ function revalidateWhatsAppPaths() {
   revalidatePath("/api/admin/whatsapp/agent-config");
   revalidatePath("/api/admin/whatsapp/crm");
   revalidatePath("/api/admin/whatsapp/reviews");
+  revalidatePath("/api/admin/whatsapp/health");
 }
 
 export async function GET(request: Request) {

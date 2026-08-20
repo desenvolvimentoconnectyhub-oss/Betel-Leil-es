@@ -1,5 +1,6 @@
 import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
+import { requireAdminApi } from "@/lib/auth/admin-api";
 import {
   createWhatsAppCommunityCampaign,
   getWhatsAppCommunityData,
@@ -26,9 +27,13 @@ function stringList(value: unknown) {
 function revalidateWhatsAppGroups() {
   revalidatePath("/admin/whatsapp");
   revalidatePath("/api/admin/whatsapp/groups");
+  revalidatePath("/api/admin/whatsapp/health");
 }
 
 export async function GET(request: Request) {
+  const authorization = await requireAdminApi();
+  if (authorization.response) return authorization.response;
+
   const url = new URL(request.url);
   const agentKey = cleanString(url.searchParams.get("agentKey"), WILLIAN_AGENT_KEY);
   const data = await getWhatsAppCommunityData(agentKey);
@@ -36,6 +41,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const authorization = await requireAdminApi();
+  if (authorization.response) return authorization.response;
+
   let body: Record<string, unknown>;
 
   try {

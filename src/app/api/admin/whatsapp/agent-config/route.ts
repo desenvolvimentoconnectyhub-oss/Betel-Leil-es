@@ -1,5 +1,6 @@
 import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
+import { requireAdminApi } from "@/lib/auth/admin-api";
 import {
   getWhatsAppAgentConfig,
   getWillianAgentConfig,
@@ -15,6 +16,7 @@ function revalidateWillianConfig() {
   revalidatePath("/admin/whatsapp");
   revalidatePath("/api/admin/whatsapp/agent-config");
   revalidatePath("/api/admin/whatsapp/crm");
+  revalidatePath("/api/admin/whatsapp/health");
 }
 
 function cleanString(value: unknown, fallback = "") {
@@ -22,6 +24,9 @@ function cleanString(value: unknown, fallback = "") {
 }
 
 export async function GET(request: Request) {
+  const authorization = await requireAdminApi();
+  if (authorization.response) return authorization.response;
+
   const url = new URL(request.url);
   const agentKey = cleanString(url.searchParams.get("agentKey"));
   const config = agentKey ? await getWhatsAppAgentConfig(agentKey) : await getWillianAgentConfig();
@@ -29,6 +34,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const authorization = await requireAdminApi();
+  if (authorization.response) return authorization.response;
+
   let body: unknown;
 
   try {

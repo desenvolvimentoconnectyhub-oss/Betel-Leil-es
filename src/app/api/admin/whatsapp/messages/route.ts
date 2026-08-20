@@ -14,6 +14,7 @@ function revalidateWhatsAppPaths() {
   revalidatePath("/admin");
   revalidatePath("/admin/whatsapp");
   revalidatePath("/api/admin/whatsapp/crm");
+  revalidatePath("/api/admin/whatsapp/health");
 }
 
 export async function POST(request: Request) {

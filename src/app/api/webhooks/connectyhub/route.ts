@@ -39,6 +39,11 @@ import {
   type InboundMediaAnalysisResult,
 } from "@/lib/whatsapp/inbound-media-analysis";
 import { recordWhatsAppGroupMessageEvent } from "@/lib/whatsapp/group-campaigns";
+import {
+  buildWhatsAppRuntimeDecision,
+  evaluateWhatsAppReplyBeforeSend,
+  type WhatsAppRuntimeDecision,
+} from "@/lib/whatsapp/conversation-runtime";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -3526,6 +3531,115 @@ async function markHumanIntervention(
   });
 }
 
+async function persistWhatsAppRuntimeDecision(
+  supabase: NonNullable<ReturnType<typeof getSupabaseAdminClient>>,
+  input: {
+    conversationId: string;
+    leadId: string;
+    agentKey: string;
+    eventId: string;
+    decision: WhatsAppRuntimeDecision;
+  }
+) {
+  const now = new Date().toISOString();
+  const nextActionDueAt = input.decision.nextActionDueMinutes
+    ? new Date(Date.now() + input.decision.nextActionDueMinutes * 60_000).toISOString()
+    : null;
+  const runtimeDecision = {
+    ...asRecord(input.decision.memoryPatch.whatsapp_runtime_decision),
+    eventId: input.eventId || null,
+    persistedAt: now,
+  };
+
+  const [conversationResult, leadResult, profileResult] = await Promise.all([
+    supabase.from("whatsapp_conversations").select("metadata").eq("id", input.conversationId).maybeSingle(),
+    supabase.from("whatsapp_leads").select("metadata").eq("id", input.leadId).maybeSingle(),
+    supabase
+      .from("whatsapp_lead_profiles")
+      .select("metadata,next_action_due_at,source")
+      .eq("lead_id", input.leadId)
+      .maybeSingle(),
+  ]);
+  const conversationMetadata = asRecord(asRecord(conversationResult.data).metadata);
+  const leadMetadata = asRecord(asRecord(leadResult.data).metadata);
+  const profile = asRecord(profileResult.data);
+  const profileMetadata = asRecord(profile.metadata);
+  const metadataPatch = {
+    ...input.decision.memoryPatch,
+    whatsapp_runtime_decision: runtimeDecision,
+    whatsappRuntimeDecision: {
+      ...asRecord(input.decision.memoryPatch.whatsappRuntimeDecision),
+      eventId: input.eventId || null,
+      persistedAt: now,
+    },
+    crm_stage_updated_at: now,
+    crm_stage_updated_by: "whatsapp_agent_runtime",
+  };
+
+  await Promise.all([
+    supabase
+      .from("whatsapp_conversations")
+      .update({
+        metadata: {
+          ...conversationMetadata,
+          ...metadataPatch,
+        },
+        updated_at: now,
+      })
+      .eq("id", input.conversationId),
+    supabase
+      .from("whatsapp_leads")
+      .update({
+        metadata: {
+          ...leadMetadata,
+          ...metadataPatch,
+        },
+        updated_at: now,
+      })
+      .eq("id", input.leadId),
+    supabase.from("whatsapp_lead_profiles").upsert(
+      {
+        lead_id: input.leadId,
+        agent_key: input.agentKey || null,
+        crm_stage: input.decision.stage,
+        classification: input.decision.classification,
+        source: cleanString(profile.source, "whatsapp"),
+        next_action: input.decision.nextAction,
+        next_action_due_at: nextActionDueAt || cleanString(profile.next_action_due_at) || null,
+        last_contact_at: now,
+        metadata: {
+          ...profileMetadata,
+          ...metadataPatch,
+        },
+      },
+      { onConflict: "lead_id" }
+    ),
+  ]);
+
+  await insertRuntimeEvent(supabase, {
+    agentKey: input.agentKey,
+    eventType: "whatsapp_agent_runtime_decision",
+    status: input.decision.stage,
+    message: "Runtime classificou intencao, estagio e proxima acao antes de responder.",
+    payload: {
+      eventId: input.eventId,
+      leadId: input.leadId,
+      conversationId: input.conversationId,
+      primaryIntent: input.decision.primaryIntent,
+      intents: input.decision.intents,
+      confidence: input.decision.confidence,
+      stage: input.decision.stage,
+      nextAction: input.decision.nextAction,
+      qualificationMissing: input.decision.qualificationMissing,
+      shouldHandoff: input.decision.shouldHandoff,
+      handoffReason: input.decision.handoffReason || null,
+      alertHuman: input.decision.alertHuman,
+      followUpCandidate: input.decision.followUpCandidate,
+      riskFlags: input.decision.riskFlags,
+    },
+  });
+}
+
 function samePhoneNumber(left: string, right: string) {
   const leftAliases = phoneAliases(left);
   if (!leftAliases.size) return false;
@@ -4256,6 +4370,7 @@ async function generateWhatsappAgentReply(
     audioReplyRequested?: boolean;
     opportunitiesContext: string;
     globalBehaviorPrompt: string;
+    runtimeDecisionContext?: string;
   }
 ) {
   const apiKey = await getGeminiApiKey();
@@ -4344,6 +4459,9 @@ async function generateWhatsappAgentReply(
       "",
       "Controles de comportamento ativos:",
       behaviorControlPrompt,
+      "",
+      "Decisao operacional antes da resposta:",
+      input.runtimeDecisionContext || "Sem decisao operacional adicional.",
       "",
       humanConsultantPrompt,
       "",
@@ -4588,6 +4706,28 @@ async function processWhatsappAgentRuntime(
     });
   }
 
+  const runtimeDecision = buildWhatsAppRuntimeDecision({
+    inboundText: runtimeControlText || runtimeText,
+    lead: runtimeContext.lead,
+    history: runtimeContext.messages,
+    config: {
+      qualifiedScore: config.qualification.qualifiedScore,
+      vipScore: config.qualification.vipScore,
+    },
+    mediaKind: inboundMessageType,
+  });
+  runtimeContext.lead.metadata = {
+    ...runtimeContext.lead.metadata,
+    ...runtimeDecision.memoryPatch,
+  };
+  await persistWhatsAppRuntimeDecision(supabase, {
+    conversationId,
+    leadId,
+    agentKey,
+    eventId,
+    decision: runtimeDecision,
+  });
+
   if ((config.behavior.interInstanceTest || config.behavior.realCloneTest) && isResponsibleTestNumber(config, phone)) {
     await insertRuntimeEvent(supabase, {
       agentKey,
@@ -4637,8 +4777,10 @@ async function processWhatsappAgentRuntime(
   }
 
   const trackId = `${agentKey}-${eventId || Date.now().toString(36)}`;
+  const runtimeDecisionHandoffReason =
+    config.behavior.aiHumanRequestTrigger && runtimeDecision.shouldHandoff ? runtimeDecision.handoffReason : "";
   const aiHumanNeedReason = config.behavior.aiHumanRequestTrigger
-    ? detectAiHumanNeed({ text: runtimeControlText, lead: runtimeContext.lead, config })
+    ? runtimeDecisionHandoffReason || detectAiHumanNeed({ text: runtimeControlText, lead: runtimeContext.lead, config })
     : "";
   const aiHumanNeedAlertOnly = Boolean(aiHumanNeedReason && !aiHumanNeedPausesConversation(aiHumanNeedReason));
   if (aiHumanNeedReason) {
@@ -4831,6 +4973,7 @@ async function processWhatsappAgentRuntime(
         audioReplyRequested,
         opportunitiesContext,
         globalBehaviorPrompt,
+        runtimeDecisionContext: runtimeDecision.promptContext,
       });
   if (casualGreeting) {
     await insertRuntimeEvent(supabase, {
@@ -4860,21 +5003,41 @@ async function processWhatsappAgentRuntime(
     history: runtimeContext.messages,
     audioReplyRequested,
   });
-  const responseText = guardedReply.text;
+  const preSendEvaluation = evaluateWhatsAppReplyBeforeSend({
+    text: guardedReply.text,
+    inboundText: runtimeText,
+    history: runtimeContext.messages,
+    decision: runtimeDecision,
+  });
+  const responseText = preSendEvaluation.text;
+  const replyGuardCorrections = uniqueStrings([
+    ...guardedReply.corrections,
+    ...preSendEvaluation.corrections,
+  ]);
   const replyActionButton = runtimeActionButton(config, trackId);
-  if (guardedReply.corrections.length) {
+  if (replyGuardCorrections.length || preSendEvaluation.flags.length || !preSendEvaluation.allow) {
     await insertRuntimeEvent(supabase, {
       agentKey,
-      eventType: "whatsapp_agent_runtime_behavior_guard",
-      status: "adjusted",
-      message: "Resposta da IA ajustada por controles de comportamento antes do envio.",
+      eventType: "whatsapp_agent_runtime_pre_send_review",
+      status: preSendEvaluation.allow ? "adjusted" : `replaced_${preSendEvaluation.blockedReason || "blocked"}`,
+      message: "Resposta da IA revisada por controles de atendimento antes do envio.",
       model: generated.model,
       payload: {
         eventId,
         leadId,
         conversationId,
-        corrections: guardedReply.corrections,
+        runtimeDecision: {
+          primaryIntent: runtimeDecision.primaryIntent,
+          stage: runtimeDecision.stage,
+          nextAction: runtimeDecision.nextAction,
+          riskFlags: runtimeDecision.riskFlags,
+        },
+        corrections: replyGuardCorrections,
+        preSendFlags: preSendEvaluation.flags,
+        preSendScore: preSendEvaluation.score,
+        blockedReason: preSendEvaluation.blockedReason || null,
         originalText: clampText(generated.text, 1000),
+        behaviorGuardText: clampText(guardedReply.text, 1000),
         finalText: clampText(responseText, 1000),
       },
     });
@@ -5007,10 +5170,24 @@ async function processWhatsappAgentRuntime(
       generation_model: generated.model,
       generation_reason: generated.reason,
       generation_fallback: Boolean(generated.fallback),
-      behavior_guard_corrections: guardedReply.corrections,
+      behavior_guard_corrections: replyGuardCorrections,
+      runtime_decision: {
+        primaryIntent: runtimeDecision.primaryIntent,
+        intents: runtimeDecision.intents,
+        stage: runtimeDecision.stage,
+        nextAction: runtimeDecision.nextAction,
+        qualificationMissing: runtimeDecision.qualificationMissing,
+        riskFlags: runtimeDecision.riskFlags,
+      },
+      pre_send_evaluation: {
+        allow: preSendEvaluation.allow,
+        score: preSendEvaluation.score,
+        flags: preSendEvaluation.flags,
+        blockedReason: preSendEvaluation.blockedReason || null,
+      },
       action_button: !wantsAudio || shouldFallbackToText ? replyActionButton || null : null,
       behavior_guard_original_text:
-        guardedReply.corrections.length ? clampText(generated.text, 1000) : null,
+        replyGuardCorrections.length ? clampText(generated.text, 1000) : null,
       voice_decision: voiceDecision,
       audio_requested: voiceDecision.audioRequested,
       audio_delivered: audioDeliveryPartiallyAccepted,
@@ -5088,7 +5265,7 @@ async function processWhatsappAgentRuntime(
         replyParts,
         history: runtimeContext.messages,
         messageMode,
-        guardCorrections: guardedReply.corrections,
+        guardCorrections: replyGuardCorrections,
         generatedModel: generated.model,
         generationFallback: Boolean(generated.fallback),
       })
@@ -5118,8 +5295,18 @@ async function processWhatsappAgentRuntime(
       promptInjection,
       generationFallback: Boolean(generated.fallback),
       generationReason: generated.reason,
-      behaviorGuardCorrections: guardedReply.corrections,
-      behaviorGuardAdjusted: guardedReply.corrections.length > 0,
+      behaviorGuardCorrections: replyGuardCorrections,
+      behaviorGuardAdjusted: replyGuardCorrections.length > 0,
+      runtimeDecision: {
+        primaryIntent: runtimeDecision.primaryIntent,
+        intents: runtimeDecision.intents,
+        stage: runtimeDecision.stage,
+        nextAction: runtimeDecision.nextAction,
+        shouldHandoff: runtimeDecision.shouldHandoff,
+        handoffReason: runtimeDecision.handoffReason || null,
+        riskFlags: runtimeDecision.riskFlags,
+      },
+      preSendEvaluation,
       actionButton: !wantsAudio || shouldFallbackToText ? replyActionButton || null : null,
       turingBenchmark: turingReport,
       voiceDecision,
@@ -5155,7 +5342,13 @@ async function processWhatsappAgentRuntime(
         report: turingReport,
         messageMode,
         deliveryStatus: providerStatus,
-        behaviorGuardCorrections: guardedReply.corrections,
+        behaviorGuardCorrections: replyGuardCorrections,
+        runtimeDecision: {
+          primaryIntent: runtimeDecision.primaryIntent,
+          stage: runtimeDecision.stage,
+          nextAction: runtimeDecision.nextAction,
+        },
+        preSendEvaluation,
         generationFallback: Boolean(generated.fallback),
         humanization: humanizationPlan.summary,
       },

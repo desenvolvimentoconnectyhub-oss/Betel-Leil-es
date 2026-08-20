@@ -2,11 +2,13 @@ import { WhatsAppCrmPage } from "@/components/admin/WhatsAppCrmPage";
 import { getWhatsAppCrmData } from "@/lib/admin/repository";
 import { getWillianInstanceState, WILLIAN_AGENT_KEY, WILLIAN_AGENT_NAME, WILLIAN_DEFAULT_INSTANCE_NAME } from "@/lib/communication/connectyhub-client";
 import { getWillianAgentConfig } from "@/lib/communication/willian-agent-config";
+import { getWhatsAppOperationalHealth } from "@/lib/whatsapp/operational-health";
 import {
   DEFAULT_WILLIAN_AGENT_CONFIG,
   type WillianAgentConfig,
   type WillianInstanceState,
 } from "@/lib/communication/willian-types";
+import type { WhatsAppOperationalHealth } from "@/lib/whatsapp/operational-health-types";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -106,16 +108,26 @@ async function loadWillianAgentConfig(): Promise<WillianAgentConfig> {
   }
 }
 
+async function loadOperationalHealth(): Promise<WhatsAppOperationalHealth | null> {
+  try {
+    return await getWhatsAppOperationalHealth({ checkRemote: false });
+  } catch {
+    return null;
+  }
+}
+
 export default async function WhatsAppAdminPage() {
-  const [crmData, willianInstance, willianAgentConfig] = await Promise.all([
+  const [crmData, willianInstance, willianAgentConfig, operationalHealth] = await Promise.all([
     loadWhatsAppCrmData(),
     loadWillianInstanceState(),
     loadWillianAgentConfig(),
+    loadOperationalHealth(),
   ]);
 
   return (
     <WhatsAppCrmPage
       crmData={crmData}
+      operationalHealth={operationalHealth}
       willianAgentConfig={willianAgentConfig}
       willianInstance={willianInstance}
     />

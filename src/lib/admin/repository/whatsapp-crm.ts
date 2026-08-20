@@ -42,6 +42,17 @@ export type WhatsAppCrmQualification = {
 
 export type WhatsAppCrmStage = "entrada" | "qualificando" | "quente" | "handoff" | "convertido" | "perdido";
 
+export type WhatsAppRuntimeDecisionSummary = {
+  primaryIntent: string;
+  intents: string[];
+  confidence: number;
+  stage: WhatsAppCrmStage | "";
+  nextAction: string;
+  qualificationMissing: string[];
+  riskFlags: string[];
+  updatedAt: string;
+};
+
 export type WhatsAppCrmTimelineItem = {
   id: string;
   direction: string;
@@ -92,6 +103,7 @@ export type WhatsAppCrmLeadCard = {
   followUpCount: number;
   nextFollowUpAt: string;
   nextAction: string;
+  runtimeDecision: WhatsAppRuntimeDecisionSummary;
   latestReviewScore: number;
   latestReviewVerdict: string;
   latestReviewAt: string;
@@ -306,6 +318,35 @@ function providerInstanceIdForLead(lead: DbRow, conversation: DbRow, profile?: D
     "providerInstanceId",
     "provider_instance_id",
   ]);
+}
+
+function stringList(value: unknown) {
+  if (Array.isArray(value)) return value.map((item) => asString(item)).filter(Boolean);
+  return asString(value)
+    .split(/[;,\n]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function runtimeDecisionSummary(lead: DbRow, conversation: DbRow, profile?: DbRow): WhatsAppRuntimeDecisionSummary {
+  const records = nestedRecords(profile?.metadata, lead.metadata, conversation.metadata, lead, profile);
+  const decision = records
+    .map((record) => asRecord(record.whatsapp_runtime_decision || record.whatsappRuntimeDecision))
+    .find((record) => Object.keys(record).length);
+  const stage = asString(decision?.stage);
+
+  return {
+    primaryIntent: asString(decision?.primaryIntent),
+    intents: stringList(decision?.intents),
+    confidence: asNumber(decision?.confidence, 0),
+    stage: ["entrada", "qualificando", "quente", "handoff", "convertido", "perdido"].includes(stage)
+      ? (stage as WhatsAppCrmStage)
+      : "",
+    nextAction: asString(decision?.nextAction),
+    qualificationMissing: stringList(decision?.qualificationMissing),
+    riskFlags: stringList(decision?.riskFlags),
+    updatedAt: asString(decision?.updatedAt || decision?.persistedAt),
+  };
 }
 
 async function hydrateMissingLeadProfileImages(
@@ -708,6 +749,16 @@ function fallbackData(): WhatsAppCrmData {
         followUpCount: 0,
         nextFollowUpAt: "",
         nextAction: "Confirmar capital disponivel e experiencia com leilao.",
+        runtimeDecision: {
+          primaryIntent: "buying_intent",
+          intents: ["buying_intent", "budget", "region"],
+          confidence: 0.82,
+          stage: "quente",
+          nextAction: "Confirmar capital disponivel e experiencia com leilao.",
+          qualificationMissing: ["experiencia", "proximo passo"],
+          riskFlags: [],
+          updatedAt: outboundAt,
+        },
         latestReviewScore: 88,
         latestReviewVerdict: "aprovado",
         latestReviewAt: outboundAt,
@@ -917,6 +968,7 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
       followUpCount,
       qualification,
     });
+    const runtimeDecision = runtimeDecisionSummary(lead, conversation, profile);
 
     leadCards.push({
       id: conversationId,
@@ -952,6 +1004,7 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
       followUpCount,
       nextFollowUpAt: asString(followUps.find((item) => ["queued", "scheduled"].includes(asString(item.status)))?.scheduled_for),
       nextAction: action,
+      runtimeDecision,
       latestReviewScore: Math.round(asNumber(latestReview?.score, 0)),
       latestReviewVerdict: asString(latestReview?.verdict),
       latestReviewAt: asString(latestReview?.created_at),
@@ -1014,6 +1067,7 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
       lastMessageAt,
       explicitDueAt: asString(profile?.next_action_due_at),
     });
+    const runtimeDecision = runtimeDecisionSummary(lead, {}, profile);
 
     leadCards.push({
       id: `lead-${leadId}`,
@@ -1057,6 +1111,7 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
         followUpCount: 0,
         qualification,
       }),
+      runtimeDecision,
       latestReviewScore: 0,
       latestReviewVerdict: "",
       latestReviewAt: "",

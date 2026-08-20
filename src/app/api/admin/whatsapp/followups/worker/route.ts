@@ -39,6 +39,7 @@ export async function POST(request: Request) {
 
   revalidatePath("/admin/whatsapp");
   revalidatePath("/api/admin/whatsapp/crm");
+  revalidatePath("/api/admin/whatsapp/health");
 
   return NextResponse.json(result, { status: result.ok ? 200 : 500 });
 }

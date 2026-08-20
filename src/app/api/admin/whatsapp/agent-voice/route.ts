@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAdminApi } from "@/lib/auth/admin-api";
 import {
   createElevenLabsVoiceClone,
   getElevenLabsConfig,
@@ -42,6 +43,9 @@ function formBoolean(form: FormData, key: string) {
 }
 
 export async function GET() {
+  const authorization = await requireAdminApi();
+  if (authorization.response) return authorization.response;
+
   try {
     const [config, voices] = await Promise.all([getElevenLabsConfig(), listElevenLabsVoices()]);
 
@@ -188,6 +192,9 @@ async function handleJson(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const authorization = await requireAdminApi();
+  if (authorization.response) return authorization.response;
+
   try {
     const contentType = request.headers.get("content-type") || "";
 

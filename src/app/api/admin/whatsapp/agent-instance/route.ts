@@ -1,5 +1,6 @@
 import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
+import { requireAdminApi } from "@/lib/auth/admin-api";
 import {
   configureWillianWebhook,
   createLocalConnectyHubWhatsappAgent,
@@ -35,6 +36,7 @@ function revalidateWillian() {
   revalidatePath("/api/admin/whatsapp/agent-instance");
   revalidatePath("/api/admin/whatsapp/agent-config");
   revalidatePath("/api/admin/whatsapp/crm");
+  revalidatePath("/api/admin/whatsapp/health");
 }
 
 function isRecoverableInstanceError(error: unknown) {
@@ -145,6 +147,9 @@ async function generateWhatsappAgentQrCode(input: { agentKey?: string; agentName
 }
 
 export async function GET(request: Request) {
+  const authorization = await requireAdminApi();
+  if (authorization.response) return authorization.response;
+
   const url = new URL(request.url);
   const checkRemote = ["1", "true", "sim"].includes((url.searchParams.get("remote") || "").toLowerCase());
   const state = await getWillianInstanceState({ checkRemote });
@@ -153,6 +158,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const authorization = await requireAdminApi();
+  if (authorization.response) return authorization.response;
+
   let body: Record<string, unknown>;
 
   try {
