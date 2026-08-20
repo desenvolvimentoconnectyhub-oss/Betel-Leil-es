@@ -504,8 +504,8 @@ function TemplatePreview({ template }: { template: MessageTemplate }) {
           <p className="mt-1 text-sm font-semibold text-[var(--admin-green)]">
             {template.buttonLabelTemplate || "Sem label"}
           </p>
-          <p className="mt-1 break-all font-mono text-[10px] text-[var(--admin-muted)]">
-            {template.buttonUrlTemplate || "Sem URL"}
+          <p className="mt-1 text-xs text-[var(--admin-muted)]">
+            {template.buttonUrlTemplate ? "Link configurado para teste." : "Sem link configurado."}
           </p>
         </div>
       )}

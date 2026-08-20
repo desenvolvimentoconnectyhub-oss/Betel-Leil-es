@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   ExternalLink,
   FileSpreadsheet,
+  ImageIcon,
   Loader2,
   RefreshCw,
   Send,
@@ -86,6 +87,18 @@ function formatDate(value: string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
+}
+
+function isMediaHeader(type: string) {
+  return ["image", "video", "document"].includes(type);
+}
+
+function headerTypeLabel(type: string) {
+  if (type === "image") return "imagem";
+  if (type === "video") return "video";
+  if (type === "document") return "documento";
+  if (type === "text") return "texto";
+  return "sem header";
 }
 
 async function requestJson(url: string, body: Record<string, unknown>) {
@@ -376,6 +389,46 @@ export function MetaWhatsAppCampaignsClient({
             <MiniStat label="Elegiveis" value={String(eligiblePreview)} />
             <MiniStat label="Numero" value={selectedSender?.displayPhoneNumber || selectedSender?.label || "pendente"} />
           </div>
+          {selectedTemplate && (
+            <div className="mt-3 rounded-md border border-[var(--admin-border)] bg-white px-3 py-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-[var(--admin-foreground)]">{selectedTemplate.name}</p>
+                  <p className="mt-1 text-xs text-[var(--admin-muted)]">
+                    {selectedTemplate.category} / {selectedTemplate.language} / {headerTypeLabel(selectedTemplate.headerType)}
+                  </p>
+                </div>
+                <span className="inline-flex h-7 w-fit items-center gap-1.5 rounded-md border border-[rgba(22,163,74,0.28)] bg-[rgba(22,163,74,0.08)] px-2.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--admin-green)]">
+                  <CheckCircle2 size={12} />
+                  pronto para teste
+                </span>
+              </div>
+              {isMediaHeader(selectedTemplate.headerType) && (
+                <div className="mt-3 flex items-center gap-3 rounded-md border border-[rgba(22,163,74,0.22)] bg-[rgba(22,163,74,0.06)] px-3 py-2">
+                  {selectedTemplate.headerMediaPreviewUrl && selectedTemplate.headerType === "image" ? (
+                    <span
+                      aria-label="Previa da midia do template"
+                      className="size-12 shrink-0 rounded-md border border-[var(--admin-border)] bg-white bg-cover bg-center"
+                      role="img"
+                      style={{ backgroundImage: `url("${selectedTemplate.headerMediaPreviewUrl.replace(/"/g, "%22")}")` }}
+                    />
+                  ) : (
+                    <span className="grid size-12 shrink-0 place-items-center rounded-md border border-[var(--admin-border)] bg-white text-[var(--admin-cyan)]">
+                      <ImageIcon size={18} />
+                    </span>
+                  )}
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-[var(--admin-foreground)]">
+                      Midia de {headerTypeLabel(selectedTemplate.headerType)} configurada
+                    </p>
+                    <p className="mt-0.5 text-xs text-[var(--admin-muted)]">
+                      O teste usa a midia padrao do template sem expor o link tecnico.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
             <p className="text-xs leading-5 text-[var(--admin-muted)]">

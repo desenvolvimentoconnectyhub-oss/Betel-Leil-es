@@ -105,6 +105,7 @@ export type MetaWhatsAppDashboardData = {
     category: string;
     headerType: string;
     headerText: string;
+    headerMediaPreviewUrl: string;
     bodyText: string;
     footerText: string;
     buttons: unknown[];
@@ -415,6 +416,36 @@ function mapHeaderType(components: unknown[]) {
 function componentText(components: unknown[], type: string) {
   const component = components.find((item) => cleanString((item as DbRow).type).toUpperCase() === type) as DbRow | undefined;
   return cleanString(component?.text);
+}
+
+function firstStringFromUnknown(value: unknown): string {
+  if (typeof value === "string") return cleanString(value);
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = firstStringFromUnknown(item);
+      if (found) return found;
+    }
+  }
+  if (value && typeof value === "object") {
+    for (const item of Object.values(value as DbRow)) {
+      const found = firstStringFromUnknown(item);
+      if (found) return found;
+    }
+  }
+  return "";
+}
+
+function componentHeaderMediaPreviewUrl(components: unknown[]) {
+  const header = components.find((item) => cleanString((item as DbRow).type).toUpperCase() === "HEADER") as DbRow | undefined;
+  if (!header) return "";
+  const candidate =
+    firstStringFromUnknown((header.example as DbRow | undefined)?.header_url) ||
+    firstStringFromUnknown((header.example as DbRow | undefined)?.header_handle) ||
+    firstStringFromUnknown(header.media_url) ||
+    firstStringFromUnknown(header.image_url) ||
+    firstStringFromUnknown(header.url) ||
+    firstStringFromUnknown(header.link);
+  return /^https?:\/\//i.test(candidate) ? candidate : "";
 }
 
 function componentButtons(components: unknown[]) {
@@ -1186,6 +1217,7 @@ function mapCampaignRow(row: DbRow): MetaWhatsAppDashboardData["campaigns"][numb
 }
 
 function mapTemplateRow(row: DbRow): MetaWhatsAppDashboardData["templates"][number] {
+  const components = asArray(row.components);
   return {
     id: cleanString(row.id),
     metaTemplateId: cleanString(row.meta_template_id),
@@ -1196,6 +1228,7 @@ function mapTemplateRow(row: DbRow): MetaWhatsAppDashboardData["templates"][numb
     category: cleanString(row.category, "MARKETING"),
     headerType: cleanString(row.header_type, "none"),
     headerText: cleanString(row.header_text),
+    headerMediaPreviewUrl: componentHeaderMediaPreviewUrl(components),
     bodyText: cleanString(row.body_text),
     footerText: cleanString(row.footer_text),
     buttons: asArray(row.buttons),
