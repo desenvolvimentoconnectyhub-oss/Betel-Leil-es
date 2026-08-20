@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   Bot,
   CalendarClock,
+  ChevronDown,
   CheckCircle2,
   ClipboardCheck,
   Clock3,
@@ -365,7 +366,7 @@ function InfoCell({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0 rounded-md border border-[var(--admin-border)] bg-[rgba(255,255,255,0.02)] px-3 py-2">
       <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-[var(--admin-muted)]">{label}</p>
-      <p className="mt-1 truncate text-sm text-white">{value || "Nao informado"}</p>
+      <p className="mt-1 truncate text-sm text-[var(--admin-foreground)]">{value || "Nao informado"}</p>
     </div>
   );
 }
@@ -424,143 +425,238 @@ function OperationalReadinessPanel({
   busy?: boolean;
   onRefresh: () => void;
 }) {
-  const blockers = health.readiness.blockers.slice(0, 4);
-  const warnings = health.readiness.warnings.slice(0, 4);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const blockers = health.readiness.blockers;
+  const warnings = health.readiness.warnings;
   const nextActions = health.readiness.nextActions.slice(0, 5);
+  const readinessTone = health.readiness.tone;
+  const canServeTone: ResourceTone = health.readiness.canAutoServePrivateChats ? "green" : "red";
+  const canConvertTone: ResourceTone = health.readiness.canConvertWithFollowUp ? "green" : "yellow";
+  const blockerTone: ResourceTone = blockers.length ? "red" : "green";
+  const warningTone: ResourceTone = warnings.length ? "yellow" : "green";
+  const firstAction = nextActions[0] || "Manter monitoramento e auditoria recorrente.";
 
   return (
-    <DashboardCard
-      title="Prontidao operacional"
-      eyebrow="atendimento / conversao / follow-up"
-      action={
-        <div className="flex flex-wrap justify-end gap-2">
-          <StatusBadge tone={health.readiness.tone}>{health.readiness.label}</StatusBadge>
-          <ActionButton icon={RefreshCw} tone="muted" busy={busy} onClick={onRefresh}>
-            Atualizar raio X
-          </ActionButton>
-        </div>
-      }
-    >
-      <div className="grid gap-4 xl:grid-cols-[240px_minmax(0,1fr)_320px]">
-        <div className={cn("rounded-md border px-4 py-4", toneBg[health.readiness.tone])}>
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-[var(--admin-muted)]">Score</p>
-              <p className={cn("mt-2 font-mono text-4xl font-bold leading-none", toneText[health.readiness.tone])}>
-                {health.readiness.score}
+    <section className="min-w-0 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] text-[var(--admin-foreground)] shadow-sm shadow-[rgba(81,60,36,0.05)]">
+      <div className="grid gap-3 p-3 xl:grid-cols-[220px_minmax(0,1fr)_auto] xl:items-center">
+        <div className={cn("rounded-md border px-3 py-2", toneBg[readinessTone])}>
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--admin-muted)]">
+                Prontidao
               </p>
+              <div className="mt-1 flex items-baseline gap-2">
+                <p className={cn("font-mono text-2xl font-bold leading-none", toneText[readinessTone])}>
+                  {health.readiness.score}
+                </p>
+                <span className="truncate text-xs font-semibold text-[var(--admin-foreground)]">
+                  {health.readiness.label}
+                </span>
+              </div>
             </div>
-            <Gauge size={22} className={toneText[health.readiness.tone]} />
+            <Gauge size={18} className={toneText[readinessTone]} />
           </div>
-          <div className="mt-4 h-2 overflow-hidden rounded-full bg-white/10">
+          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/50">
             <div
               className={cn(
                 "h-full rounded-full",
-                health.readiness.tone === "green"
+                readinessTone === "green"
                   ? "bg-[var(--admin-green)]"
-                  : health.readiness.tone === "yellow"
+                  : readinessTone === "yellow"
                     ? "bg-[var(--admin-yellow)]"
                     : "bg-[var(--admin-red)]"
               )}
               style={{ width: `${Math.max(4, health.readiness.score)}%` }}
             />
           </div>
-          <div className="mt-4 grid grid-cols-2 gap-2">
-            <InfoCell label="Atender" value={health.readiness.canAutoServePrivateChats ? "Liberado" : "Nao"} />
-            <InfoCell label="Converter" value={health.readiness.canConvertWithFollowUp ? "Liberado" : "Nao"} />
+        </div>
+
+        <div className="grid min-w-0 gap-2 sm:grid-cols-2 2xl:grid-cols-5">
+          <div className="min-h-[58px] rounded-md border border-[var(--admin-border)] bg-white/[0.02] px-3 py-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--admin-muted)]">
+                Atender
+              </p>
+              <CheckCircle2 size={14} className={toneText[canServeTone]} />
+            </div>
+            <p className={cn("mt-1 text-sm font-semibold", toneText[canServeTone])}>
+              {health.readiness.canAutoServePrivateChats ? "Liberado" : "Bloqueado"}
+            </p>
+          </div>
+
+          <div className="min-h-[58px] rounded-md border border-[var(--admin-border)] bg-white/[0.02] px-3 py-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--admin-muted)]">
+                Converter
+              </p>
+              <Flame size={14} className={toneText[canConvertTone]} />
+            </div>
+            <p className={cn("mt-1 text-sm font-semibold", toneText[canConvertTone])}>
+              {health.readiness.canConvertWithFollowUp ? "Liberado" : "Pendente"}
+            </p>
+          </div>
+
+          <div className="min-h-[58px] rounded-md border border-[var(--admin-border)] bg-white/[0.02] px-3 py-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--admin-muted)]">
+                Bloqueios
+              </p>
+              <ShieldAlert size={14} className={toneText[blockerTone]} />
+            </div>
+            <p className={cn("mt-1 text-sm font-semibold", toneText[blockerTone])}>
+              {blockers.length ? blockers.length : "0"}
+            </p>
+          </div>
+
+          <div className="min-h-[58px] rounded-md border border-[var(--admin-border)] bg-white/[0.02] px-3 py-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--admin-muted)]">
+                Alertas
+              </p>
+              <AlertTriangle size={14} className={toneText[warningTone]} />
+            </div>
+            <p className={cn("mt-1 text-sm font-semibold", toneText[warningTone])}>
+              {warnings.length ? warnings.length : "0"}
+            </p>
+          </div>
+
+          <div className="min-h-[58px] rounded-md border border-[var(--admin-border)] bg-white/[0.02] px-3 py-2 sm:col-span-2 2xl:col-span-1">
+            <div className="flex items-center justify-between gap-2">
+              <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--admin-muted)]">
+                Proxima acao
+              </p>
+              <ClipboardCheck size={14} className="text-[var(--admin-muted)]" />
+            </div>
+            <p className="mt-1 line-clamp-1 text-xs font-medium leading-5 text-[var(--admin-foreground)]">
+              {firstAction}
+            </p>
           </div>
         </div>
 
-        <div className="grid gap-3 lg:grid-cols-2">
-          <div className="rounded-md border border-[var(--admin-border)] bg-white/[0.02] px-3 py-3">
-            <div className="flex items-center gap-2">
-              <ShieldAlert size={15} className={toneText[blockers.length ? "red" : "green"]} />
-              <p className="text-xs font-semibold text-white">Bloqueios</p>
-            </div>
-            <div className="mt-3 grid gap-2">
-              {blockers.length ? (
-                blockers.map((item) => (
-                  <p key={item} className="rounded border border-[rgba(239,68,68,0.28)] bg-[rgba(239,68,68,0.08)] px-2 py-1.5 text-xs leading-5 text-[var(--admin-red)]">
-                    {item}
-                  </p>
-                ))
-              ) : (
-                <p className="rounded border border-[rgba(34,197,94,0.24)] bg-[rgba(34,197,94,0.08)] px-2 py-1.5 text-xs text-[var(--admin-green)]">
-                  Sem bloqueios criticos.
-                </p>
-              )}
-            </div>
-          </div>
-
-          <div className="rounded-md border border-[var(--admin-border)] bg-white/[0.02] px-3 py-3">
-            <div className="flex items-center gap-2">
-              <AlertTriangle size={15} className={toneText[warnings.length ? "yellow" : "green"]} />
-              <p className="text-xs font-semibold text-white">Alertas</p>
-            </div>
-            <div className="mt-3 grid gap-2">
-              {warnings.length ? (
-                warnings.map((item) => (
-                  <p key={item} className="rounded border border-[rgba(234,179,8,0.28)] bg-[rgba(234,179,8,0.08)] px-2 py-1.5 text-xs leading-5 text-[var(--admin-yellow)]">
-                    {item}
-                  </p>
-                ))
-              ) : (
-                <p className="rounded border border-[rgba(34,197,94,0.24)] bg-[rgba(34,197,94,0.08)] px-2 py-1.5 text-xs text-[var(--admin-green)]">
-                  Sem alertas operacionais.
-                </p>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="rounded-md border border-[var(--admin-border)] bg-white/[0.02] px-3 py-3">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-xs font-semibold text-white">Proximos passos</p>
-            <StatusBadge tone={health.source === "supabase" ? "green" : "yellow"}>
-              {health.source === "supabase" ? "dados reais" : "fallback"}
-            </StatusBadge>
-          </div>
-          <ol className="mt-3 grid gap-2">
-            {nextActions.length ? (
-              nextActions.map((item, index) => (
-                <li key={item} className="grid grid-cols-[22px_minmax(0,1fr)] gap-2 text-xs leading-5 text-[var(--admin-muted)]">
-                  <span className="grid size-5 place-items-center rounded border border-[var(--admin-border)] font-mono text-[10px] text-white">
-                    {index + 1}
-                  </span>
-                  <span>{item}</span>
-                </li>
-              ))
-            ) : (
-              <li className="text-xs text-[var(--admin-muted)]">Manter monitoramento e auditoria recorrente.</li>
-            )}
-          </ol>
+        <div className="flex flex-wrap items-center justify-start gap-2 xl:justify-end">
+          <StatusBadge tone={health.source === "supabase" ? "green" : "yellow"}>
+            {health.source === "supabase" ? "dados reais" : "fallback"}
+          </StatusBadge>
+          <ActionButton icon={RefreshCw} tone="muted" busy={busy} onClick={onRefresh}>
+            Atualizar
+          </ActionButton>
+          <button
+            type="button"
+            aria-expanded={detailsOpen}
+            onClick={() => setDetailsOpen((value) => !value)}
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-[var(--admin-border)] bg-white px-3 text-xs font-semibold text-[var(--admin-foreground)] transition hover:border-[rgba(200,90,31,0.32)] hover:bg-[rgba(200,90,31,0.06)]"
+          >
+            Detalhes
+            <ChevronDown
+              size={14}
+              className={cn("transition-transform", detailsOpen ? "rotate-180" : "")}
+            />
+          </button>
         </div>
       </div>
 
-      <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-        {health.checks.map((check) => {
-          const Icon = healthCheckIcon(check.status);
-          const tone: ResourceTone = check.status === "ok" ? "green" : check.status === "warning" ? "yellow" : "red";
-          return (
-            <div key={check.id} className={cn("min-h-[118px] rounded-md border px-3 py-3", toneBg[tone])}>
+      {detailsOpen && (
+        <div className="grid gap-3 border-t border-[var(--admin-border)] p-3 xl:grid-cols-[minmax(0,1fr)_340px]">
+          <div className="min-w-0 overflow-hidden rounded-md border border-[var(--admin-border)]">
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[760px] text-left text-xs">
+                <thead className="border-b border-[var(--admin-border)] bg-[rgba(81,60,36,0.04)]">
+                  <tr className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--admin-muted)]">
+                    <th className="px-3 py-2 font-semibold">Area</th>
+                    <th className="px-3 py-2 font-semibold">Status</th>
+                    <th className="px-3 py-2 font-semibold">Impacto</th>
+                    <th className="px-3 py-2 font-semibold">Acao</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--admin-border)]">
+                  {health.checks.map((check) => {
+                    const Icon = healthCheckIcon(check.status);
+                    const tone: ResourceTone = check.status === "ok" ? "green" : check.status === "warning" ? "yellow" : "red";
+                    return (
+                      <tr key={check.id} className="align-top">
+                        <td className="px-3 py-2">
+                          <span className="inline-flex items-center gap-2 font-semibold text-[var(--admin-foreground)]">
+                            <Icon size={14} className={toneText[tone]} />
+                            {check.label}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2">
+                          <StatusBadge tone={tone}>
+                            {check.status === "ok" ? "ok" : check.status === "warning" ? "atencao" : "critico"}
+                          </StatusBadge>
+                        </td>
+                        <td className="px-3 py-2 leading-5 text-[var(--admin-muted)]">{check.summary}</td>
+                        <td className={cn("px-3 py-2 leading-5", toneText[tone])}>{check.action}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="grid gap-3">
+            <div className="rounded-md border border-[var(--admin-border)] bg-white/[0.02] px-3 py-3">
               <div className="flex items-center justify-between gap-2">
-                <p className="truncate text-xs font-semibold text-white">{check.label}</p>
-                <Icon size={15} className={toneText[tone]} />
+                <p className="text-xs font-semibold text-[var(--admin-foreground)]">Prioridade operacional</p>
+                <StatusBadge tone={readinessTone}>{health.readiness.label}</StatusBadge>
               </div>
-              <p className="mt-2 line-clamp-2 text-xs leading-5 text-[var(--admin-muted)]">{check.summary}</p>
-              <p className={cn("mt-2 line-clamp-2 text-[11px] leading-4", toneText[tone])}>{check.action}</p>
+              <div className="mt-3 grid gap-2">
+                {(blockers.length ? blockers : ["Sem bloqueios criticos."]).slice(0, 3).map((item) => (
+                  <p
+                    key={item}
+                    className={cn(
+                      "rounded border-l-2 bg-white/[0.02] px-2 py-1.5 text-xs leading-5",
+                      blockers.length
+                        ? "border-l-[var(--admin-red)] text-[var(--admin-red)]"
+                        : "border-l-[var(--admin-green)] text-[var(--admin-green)]"
+                    )}
+                  >
+                    {item}
+                  </p>
+                ))}
+                {warnings.slice(0, 3).map((item) => (
+                  <p
+                    key={item}
+                    className="rounded border-l-2 border-l-[var(--admin-yellow)] bg-white/[0.02] px-2 py-1.5 text-xs leading-5 text-[var(--admin-yellow)]"
+                  >
+                    {item}
+                  </p>
+                ))}
+              </div>
             </div>
-          );
-        })}
-      </div>
 
-      <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-        <InfoCell label="Follow-up falha" value={formatHealthPercent(health.followUps.failureRate)} />
-        <InfoCell label="Reviews" value={`${health.quality.averageScore}/100`} />
-        <InfoCell label="Grupos ativos" value={`${health.groups.destinationsActive}/${health.groups.destinationsTotal}`} />
-        <InfoCell label="Templates Meta" value={`${health.metaOfficial.templatesApproved}/${health.metaOfficial.templatesTotal}`} />
-      </div>
-    </DashboardCard>
+            <div className="rounded-md border border-[var(--admin-border)] bg-white/[0.02] px-3 py-3">
+              <p className="text-xs font-semibold text-[var(--admin-foreground)]">Proximos passos</p>
+              <ol className="mt-3 grid gap-2">
+                {nextActions.length ? (
+                  nextActions.map((item, index) => (
+                    <li
+                      key={item}
+                      className="grid grid-cols-[22px_minmax(0,1fr)] gap-2 text-xs leading-5 text-[var(--admin-muted)]"
+                    >
+                      <span className="grid size-5 place-items-center rounded border border-[var(--admin-border)] font-mono text-[10px] text-[var(--admin-foreground)]">
+                        {index + 1}
+                      </span>
+                      <span>{item}</span>
+                    </li>
+                  ))
+                ) : (
+                  <li className="text-xs text-[var(--admin-muted)]">Manter monitoramento e auditoria recorrente.</li>
+                )}
+              </ol>
+            </div>
+
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
+              <InfoCell label="Follow-up falha" value={formatHealthPercent(health.followUps.failureRate)} />
+              <InfoCell label="Reviews" value={`${health.quality.averageScore}/100`} />
+              <InfoCell label="Grupos ativos" value={`${health.groups.destinationsActive}/${health.groups.destinationsTotal}`} />
+              <InfoCell label="Templates Meta" value={`${health.metaOfficial.templatesApproved}/${health.metaOfficial.templatesTotal}`} />
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -1604,6 +1700,32 @@ export function WhatsAppCrmPage({
         </div>
       </nav>
 
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {overviewCards.map((card) => {
+          const Icon = card.icon;
+          const value = card.label === "Conexao WhatsApp" && card.value.includes("/")
+            ? card.value.replace("/", " de ")
+            : card.value;
+          return (
+            <article
+              key={card.label}
+              className="grid min-h-[82px] grid-cols-[38px_minmax(0,1fr)] items-center gap-3 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-3 shadow-sm shadow-[rgba(81,60,36,0.04)]"
+            >
+              <span className={cn("grid size-8 shrink-0 place-items-center rounded-md border", toneBg[card.tone])}>
+                <Icon size={15} className={toneText[card.tone]} />
+              </span>
+              <div className="min-w-0">
+                <p className="truncate text-xs font-semibold text-[var(--admin-muted)]">{card.label}</p>
+                <p className={cn("mt-1 truncate font-mono text-xl font-bold leading-none tracking-tight", toneText[card.tone])}>
+                  {value}
+                </p>
+                <p className="mt-1 truncate text-xs leading-4 text-[var(--admin-muted)]">{card.detail}</p>
+              </div>
+            </article>
+          );
+        })}
+      </section>
+
       {operationalHealth && (
         <section>
           <OperationalReadinessPanel
@@ -1617,32 +1739,6 @@ export function WhatsAppCrmPage({
           />
         </section>
       )}
-
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {overviewCards.map((card) => {
-          const Icon = card.icon;
-          const value = card.label === "Conexao WhatsApp" && card.value.includes("/")
-            ? card.value.replace("/", " de ")
-            : card.value;
-          return (
-            <article
-              key={card.label}
-              className="grid min-h-[108px] grid-cols-[44px_minmax(0,1fr)] items-start gap-3 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-4 shadow-sm shadow-[rgba(81,60,36,0.04)]"
-            >
-              <span className={cn("grid size-9 shrink-0 place-items-center rounded-md border", toneBg[card.tone])}>
-                <Icon size={17} className={toneText[card.tone]} />
-              </span>
-              <div className="min-w-0">
-                <p className="truncate text-xs font-semibold text-[var(--admin-muted)]">{card.label}</p>
-                <p className={cn("mt-2 truncate font-mono text-2xl font-bold leading-none tracking-tight", toneText[card.tone])}>
-                  {value}
-                </p>
-                <p className="mt-3 truncate text-xs leading-4 text-[var(--admin-muted)]">{card.detail}</p>
-              </div>
-            </article>
-          );
-        })}
-      </section>
 
       {crmData.reason && (
         <div className="rounded-md border border-[rgba(234,179,8,0.28)] bg-[rgba(234,179,8,0.08)] px-3 py-2 text-xs text-[var(--admin-yellow)]">
