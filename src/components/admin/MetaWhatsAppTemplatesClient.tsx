@@ -18,7 +18,6 @@ import {
 } from "lucide-react";
 import { DashboardCard } from "@/components/admin/DashboardCard";
 import type { MetaWhatsAppDashboardData } from "@/lib/meta-whatsapp/official";
-import { cn } from "@/lib/utils";
 
 type DraftButton = {
   type: "URL" | "PHONE_NUMBER";
@@ -77,18 +76,6 @@ function templateTone(status: string) {
   if (status === "rejected" || status === "disabled") return "border-[rgba(220,38,38,0.26)] bg-[rgba(220,38,38,0.08)] text-[var(--admin-red)]";
   if (status === "pending") return "border-[rgba(184,122,22,0.26)] bg-[rgba(184,122,22,0.08)] text-[var(--admin-yellow)]";
   return "border-[var(--admin-border)] bg-white text-[var(--admin-muted)]";
-}
-
-function isMediaHeader(type: string) {
-  return ["image", "video", "document"].includes(type);
-}
-
-function headerTypeLabel(type: string) {
-  if (type === "image") return "imagem";
-  if (type === "video") return "video";
-  if (type === "document") return "documento";
-  if (type === "text") return "texto";
-  return "sem header";
 }
 
 function normalizeTemplateName(value: string) {
@@ -290,7 +277,7 @@ export function MetaWhatsAppTemplatesClient({
             {draft.headerType === "text" ? (
               <Field label="Texto do header" value={draft.headerText} onChange={(headerText) => updateDraft({ headerText })} placeholder="Betel Leiloes" />
             ) : ["image", "video", "document"].includes(draft.headerType) ? (
-              <Field label="Midia de exemplo" value={draft.headerMediaHandle} onChange={(headerMediaHandle) => updateDraft({ headerMediaHandle })} placeholder="handle interno da Meta" />
+              <Field label="Media handle de exemplo" value={draft.headerMediaHandle} onChange={(headerMediaHandle) => updateDraft({ headerMediaHandle })} placeholder="handle gerado pela Meta" />
             ) : (
               <div className="rounded-md border border-[var(--admin-border)] bg-white px-3 py-2 text-xs text-[var(--admin-muted)]">Sem header.</div>
             )}
@@ -400,11 +387,10 @@ export function MetaWhatsAppTemplatesClient({
           <div className="mx-auto max-w-md rounded-xl border border-[var(--admin-border)] bg-[rgba(37,211,102,0.08)] p-3">
             <div className="rounded-lg bg-white p-3 shadow-sm">
               {draft.headerType === "text" && draft.headerText && <p className="mb-2 text-sm font-semibold text-[var(--admin-foreground)]">{draft.headerText}</p>}
-              {isMediaHeader(draft.headerType) && (
-                <TemplateMediaPreview
-                  headerType={draft.headerType}
-                  ready={Boolean(draft.headerMediaHandle.trim())}
-                />
+              {["image", "video", "document"].includes(draft.headerType) && (
+                <div className="mb-2 grid h-32 place-items-center rounded-md border border-dashed border-[var(--admin-border)] bg-[rgba(81,60,36,0.03)] text-[var(--admin-muted)]">
+                  <ImageIcon size={24} />
+                </div>
               )}
               <p className="whitespace-pre-wrap text-sm leading-6 text-[var(--admin-foreground)]">
                 {draft.bodyText || "Digite o corpo do template para ver o preview."}
@@ -437,16 +423,8 @@ export function MetaWhatsAppTemplatesClient({
                   <div>
                     <p className="text-sm font-semibold text-[var(--admin-foreground)]">{template.name}</p>
                     <p className="mt-1 text-xs text-[var(--admin-muted)]">
-                      {template.category} / {template.language} / {headerTypeLabel(template.headerType)} / {template.managedFromPanel ? "painel" : "sincronizado"}
+                      {template.category} / {template.language} / {template.headerType} / {template.managedFromPanel ? "painel" : "sincronizado"}
                     </p>
-                    {isMediaHeader(template.headerType) && (
-                      <TemplateMediaPreview
-                        headerType={template.headerType}
-                        imageUrl={template.headerMediaPreviewUrl}
-                        ready
-                        compact
-                      />
-                    )}
                     {template.bodyText && <p className="mt-2 line-clamp-2 text-xs leading-5 text-[var(--admin-muted)]">{template.bodyText}</p>}
                     {template.rejectionReason && <p className="mt-1 text-xs text-[var(--admin-red)]">{template.rejectionReason}</p>}
                   </div>
@@ -487,54 +465,6 @@ export function MetaWhatsAppTemplatesClient({
         </DashboardCard>
       </section>
     </main>
-  );
-}
-
-function TemplateMediaPreview({
-  headerType,
-  imageUrl = "",
-  ready,
-  compact = false,
-}: {
-  headerType: string;
-  imageUrl?: string;
-  ready: boolean;
-  compact?: boolean;
-}) {
-  const label = headerTypeLabel(headerType);
-  const safeImageUrl = imageUrl.replace(/"/g, "%22");
-
-  return (
-    <div
-      className={cn(
-        "rounded-md border border-[rgba(22,163,74,0.24)] bg-[rgba(22,163,74,0.06)]",
-        compact ? "mt-2 flex items-center gap-2 px-2 py-1.5" : "mb-2 grid min-h-32 place-items-center p-3 text-center"
-      )}
-    >
-      {imageUrl && headerType === "image" ? (
-        <div
-          aria-label="Previa da midia do template"
-          role="img"
-          className={cn(
-            "rounded border border-[var(--admin-border)] bg-white bg-cover bg-center",
-            compact ? "size-10 shrink-0" : "h-28 w-full"
-          )}
-          style={{ backgroundImage: `url("${safeImageUrl}")` }}
-        />
-      ) : (
-        <div className={cn("grid shrink-0 place-items-center rounded-md border border-[var(--admin-border)] bg-white text-[var(--admin-cyan)]", compact ? "size-10" : "size-12")}>
-          <ImageIcon size={compact ? 16 : 22} />
-        </div>
-      )}
-      <div className={compact ? "min-w-0" : "mt-2"}>
-        <p className="text-xs font-semibold text-[var(--admin-foreground)]">
-          {ready ? `Midia de ${label} configurada` : `Header de ${label}`}
-        </p>
-        <p className="mt-0.5 text-[11px] leading-4 text-[var(--admin-muted)]">
-          {ready ? "Pronto para testar o template." : "Informe a midia para liberar o teste."}
-        </p>
-      </div>
-    </div>
   );
 }
 
