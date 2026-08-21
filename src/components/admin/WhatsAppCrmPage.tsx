@@ -26,7 +26,6 @@ import {
   Search,
   Send,
   ShieldAlert,
-  SlidersHorizontal,
   Sparkles,
   StickyNote,
   Tags,
@@ -55,7 +54,7 @@ import type { WillianAgentConfig, WillianInstanceState } from "@/lib/communicati
 import type { WhatsAppHealthCheckStatus, WhatsAppOperationalHealth } from "@/lib/whatsapp/operational-health-types";
 import { cn } from "@/lib/utils";
 
-type PanelTabKey = "inbox" | "agents" | "settings";
+type PanelTabKey = "inbox" | "agents";
 type FilterKey = "todos" | "semresposta" | "handoff" | "quentes" | "sla" | "followup";
 type LeadActionKey =
   | "pause_ai"
@@ -110,7 +109,6 @@ const filterLabels: Record<FilterKey, string> = {
 const panelTabs: Array<{ key: PanelTabKey; label: string; detail: string; icon: ActionIcon }> = [
   { key: "inbox", label: "Inbox", detail: "fila, CRM e conversa", icon: MessageCircle },
   { key: "agents", label: "Agentes", detail: "prompt, voz e conexao", icon: Bot },
-  { key: "settings", label: "Configuracoes", detail: "atendentes e operacao", icon: SlidersHorizontal },
 ];
 
 const crmStages: Array<{ key: WhatsAppCrmStage; label: string; tone: ResourceTone }> = [
