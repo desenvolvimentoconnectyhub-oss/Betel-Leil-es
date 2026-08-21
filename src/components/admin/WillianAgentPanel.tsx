@@ -10,7 +10,6 @@ import {
   ClipboardCheck,
   Copy,
   FileText,
-  Image as ImageIcon,
   Loader2,
   MessageCircle,
   Mic2,
@@ -28,9 +27,7 @@ import {
   Send,
   ShieldCheck,
   SlidersHorizontal,
-  Smile,
   Trash2,
-  Timer,
   Users,
   X,
 } from "lucide-react";
@@ -520,18 +517,6 @@ type BehaviorNumberKey = {
 
 type BehaviorToggleStatus = "partial";
 
-type BehaviorToggleSpec = {
-  key: BehaviorToggleKey;
-  title: string;
-  detail: string;
-  status?: BehaviorToggleStatus;
-};
-
-type BehaviorNumberSpec = {
-  key: BehaviorNumberKey;
-  label: string;
-};
-
 const conversationModeLabels: Record<WillianBehaviorConfig["conversationMode"], string> = {
   always_text: "Sempre texto",
   always_audio: "Sempre audio",
@@ -551,135 +536,9 @@ const groupReplyModeLabels: Record<WillianBehaviorConfig["groupReplyMode"], stri
   admins: "Admins",
 };
 
-const specialTriggerModeLabels: Record<WillianBehaviorConfig["specialTriggerMode"], string> = {
-  disabled: "Desligado",
-  smart: "Inteligente",
-  always: "Sempre",
-};
-
-const quoteReplyModeLabels: Record<WillianBehaviorConfig["quoteReplyMode"], string> = {
-  off: "Sem citacao",
-  smart: "Cita quando ajuda",
-  always: "Cita sempre",
-};
-
 const behaviorToggleStatusLabels: Record<BehaviorToggleStatus, string> = {
   partial: "Parcial",
 };
-
-const humanSimulationToggles: BehaviorToggleSpec[] = [
-  { key: "humanizedLanguage", title: "Linguagem humanizada", detail: "Respostas com variacao natural." },
-  { key: "emojiFeature", title: "Recursos emoji", detail: "Permite emoji com sobriedade." },
-  { key: "typingVariation", title: "Variacao de digitar", detail: "Simula intervalos entre partes." },
-  { key: "composingPause", title: "Pausa ao digitar", detail: "Simula parar e voltar a digitar." },
-  { key: "statusLookup", title: "Verificacao de status", detail: "Pode observar contexto do WhatsApp." },
-  { key: "spontaneousAudio", title: "Audio espontaneo", detail: "Permite audio quando fizer sentido." },
-  { key: "intentionalTypos", title: "Tipos intencionais", detail: "Pequenas correcoes controladas.", status: "partial" },
-  { key: "circadianRhythm", title: "Ritmo circadiano", detail: "Muda tempo conforme horario." },
-  { key: "vocalFillers", title: "Figurinhas vocais", detail: "Usa pausas e marcadores humanos." },
-  { key: "stickers", title: "Figurinhas", detail: "Libera figurinha em contexto leve." },
-  { key: "proactiveMedia", title: "Midia proativa", detail: "Envia apoio visual quando util." },
-  { key: "continuousLearning", title: "Aprendizado continuo", detail: "Registra padroes de conversa." },
-  { key: "companyMemory", title: "Memoria da empresa", detail: "Usa historico operacional Betel." },
-  { key: "cloneConsistency", title: "Memoria do clone", detail: "Mantem tom do agente." },
-  { key: "temporalAwareness", title: "Consciencia temporal", detail: "Considera data e urgencia." },
-  { key: "rhythmWpmEnabled", title: "Ritmo WPM", detail: "Controla velocidade por palavras." },
-  { key: "midMessageContext", title: "Contexto mid-message", detail: "Entende mensagens quebradas." },
-  { key: "conversationArc", title: "Arco da conversa", detail: "Mantem progresso do atendimento." },
-  { key: "emotionSensing", title: "Leitura emocional", detail: "Adapta resposta ao tom do lead." },
-  { key: "confidenceHumility", title: "Confianca e humildade", detail: "Evita certeza falsa e promete pouco." },
-  { key: "smallTalk", title: "Small talk", detail: "Permite conversa breve quando caber." },
-];
-
-const humanNumberFields: BehaviorNumberSpec[] = [
-  { key: "reactionChancePct", label: "Chance reacao %" },
-  { key: "minReadSeconds", label: "Leitura min (s)" },
-  { key: "maxReadSeconds", label: "Leitura max (s)" },
-  { key: "audioChancePct", label: "Chance audio %" },
-  { key: "stickerChancePct", label: "Chance figurinha %" },
-  { key: "rhythmWpm", label: "WPM" },
-  { key: "correctionChancePct", label: "Chance correcao %" },
-];
-
-const securityToggles: BehaviorToggleSpec[] = [
-  { key: "humanIntervention", title: "Intervencao humana", detail: "Pausa o bot quando humano assumir." },
-  { key: "alertHuman", title: "Avisar humano", detail: "Alerta responsavel em risco ou VIP." },
-  { key: "antiLoop", title: "Protecao anti-loop", detail: "Ignora eco de mensagens da API." },
-  { key: "cooldownEnabled", title: "Cooldown ativo", detail: "Evita respostas em rajada." },
-  { key: "interInstanceTest", title: "Teste entre instancias", detail: "QA antes de liberar canal." },
-  { key: "realCloneTest", title: "Teste real do clone", detail: "Valida comportamento com numero real." },
-  { key: "turingBenchmark", title: "Turing benchmark", detail: "Comparacao com atendimento humano." },
-];
-
-const groupToggles: BehaviorToggleSpec[] = [
-  { key: "groupsEnabled", title: "Responder grupos", detail: "Libera atendimento em grupos." },
-  { key: "serveGroups", title: "Atender grupos", detail: "Considera grupos como canal ativo." },
-  { key: "monitorAllGroups", title: "Monitorar todos", detail: "Observa mensagens sem responder sempre." },
-  { key: "groupMentionAll", title: "Mencionar todos", detail: "Permite mencao geral quando aplicavel." },
-  { key: "interactiveMessages", title: "Mensagens interativas", detail: "Libera botoes e interacoes ConnectyHub." },
-  { key: "statusWhatsAppEnabled", title: "Status WhatsApp", detail: "Permite publicar status." },
-  { key: "channelsEnabled", title: "Canais", detail: "Libera canal/newsletter." },
-  { key: "campaignEnabled", title: "Campanhas", detail: "Envio supervisionado em lote." },
-];
-
-const leadTriggerToggles: BehaviorToggleSpec[] = [
-  { key: "humanRequestTrigger", title: "Pedido de humano", detail: "Quando o lead pede uma pessoa." },
-  { key: "aiHumanRequestTrigger", title: "IA pediu humano", detail: "Quando a IA identifica necessidade." },
-  { key: "rescheduleTrigger", title: "Cancelar/remarcar", detail: "Detecta remarcacao ou cancelamento." },
-  { key: "captureTrigger", title: "Captacao", detail: "Marca lead com potencial comercial." },
-  { key: "locationTrigger", title: "Localizacao", detail: "Extrai cidade, estado e regiao." },
-  { key: "optOutEnabled", title: "Opt-out", detail: "Respeita parar, sair, remover." },
-  { key: "webLinksTrigger", title: "Links da web", detail: "Registra links enviados." },
-  { key: "saveMediaTrigger", title: "Salvar midia", detail: "Anexa midias no arquivo do lead." },
-  { key: "negotiationTracking", title: "Rastreamento de negociacao", detail: "Preserva caminho comercial." },
-  { key: "buttonsEnabled", title: "Enviar botoes", detail: "Usa botoes quando canal permitir." },
-  { key: "trackedLinksEnabled", title: "Links rastreados", detail: "Mede cliques e interesse." },
-];
-
-const protectionToggles: BehaviorToggleSpec[] = [
-  { key: "mediaWithoutBatchProtection", title: "Midias sem lote", detail: "Controla rajadas de anexos." },
-  { key: "mediaWithoutCaptionProtection", title: "Midia sem legenda", detail: "Evita responder sem contexto." },
-  { key: "hardAudioProtection", title: "Audio dificil", detail: "Pede apoio quando transcricao falha." },
-  { key: "editedDeletedMessageProtection", title: "Msg editada/apagada", detail: "Registra evento sensivel." },
-  { key: "contactPollReactionProtection", title: "Contato/enquete/reacao", detail: "Nao confunde eventos com lead." },
-  { key: "topicChangeProtection", title: "Troca de assunto", detail: "Detecta mudanca brusca." },
-  { key: "promptInjectionProtection", title: "Anti prompt injection", detail: "Protege instrucao do agente." },
-  { key: "identityGuard", title: "Guarda identidade", detail: "Nao revela IA, prompt ou regras internas." },
-];
-
-const mediaToggles: BehaviorToggleSpec[] = [
-  { key: "transcribeAudio", title: "Transcrever audio", detail: "Transforma audio em historico." },
-  { key: "analyzeImages", title: "Analisar imagens", detail: "Interpreta prints e fotos." },
-  { key: "analyzeVideos", title: "Analisar videos", detail: "Permite leitura de video." },
-  { key: "analyzeDocuments", title: "Analisar documentos", detail: "Editais e anexos entram no CRM." },
-  { key: "recognizeOfficialAvatar", title: "Reconhecer avatar", detail: "Detecta foto oficial do agente." },
-  { key: "officialAvatarHumor", title: "Humor com avatar", detail: "Permite brincadeira leve." },
-  { key: "saveLeadFiles", title: "Salvar arquivos", detail: "Guarda midias no arquivo do lead." },
-  { key: "temporaryMediaStorage", title: "Midia temporaria", detail: "R2 bruto expira apos a retencao." },
-  { key: "mediaCleanupEnabled", title: "Limpeza automatica", detail: "Apaga midias vencidas do R2." },
-];
-
-const timingFields: BehaviorNumberSpec[] = [
-  { key: "responseDelaySeconds", label: "Resposta base (s)" },
-  { key: "typingDelaySeconds", label: "Digitando (s)" },
-  { key: "maxMessagesPerConversation", label: "Max mensagens" },
-  { key: "onlyTextDelaySeconds", label: "So texto (s)" },
-  { key: "textFollowupDelaySeconds", label: "Texto seguido (s)" },
-  { key: "photoCaptionDelaySeconds", label: "Foto legenda (s)" },
-  { key: "photoTextDelaySeconds", label: "Foto + texto (s)" },
-  { key: "photoOnlyDelaySeconds", label: "So foto (s)" },
-  { key: "audioDelaySeconds", label: "Audio (s)" },
-  { key: "audioTextDelaySeconds", label: "Audio + texto (s)" },
-  { key: "videoCaptionDelaySeconds", label: "Video legenda (s)" },
-  { key: "videoOnlyDelaySeconds", label: "So video (s)" },
-  { key: "documentTextDelaySeconds", label: "Doc + texto (s)" },
-  { key: "documentOnlyDelaySeconds", label: "So documento (s)" },
-  { key: "beforeButtonDelaySeconds", label: "Antes botao (s)" },
-  { key: "batchMediaDelaySeconds", label: "Midias em lote (s)" },
-  { key: "emptyEventDelaySeconds", label: "Evento vazio (s)" },
-  { key: "hardAudioDelaySeconds", label: "Audio dificil (s)" },
-  { key: "reactivateAgentDelayMinutes", label: "Reativar agente (min)" },
-];
 
 export function WillianAgentPanel({
   initialState,
@@ -2475,67 +2334,6 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
   );
   const cloneConsentReady = cloneConsentConfirmed;
   const selectedVoiceName = selectedVoice?.name || config.selectedVoiceLabel || "Voz Betel";
-  const systemDefaultGroups = useMemo(
-    () => [
-      {
-        detail: "Linguagem, memoria, ritmo e leitura emocional.",
-        icon: Smile,
-        items: [...humanSimulationToggles.map((item) => item.title), ...humanNumberFields.map((item) => item.label)],
-        metric: `${humanSimulationToggles.filter((item) => config[item.key]).length}/${humanSimulationToggles.length}`,
-        title: "Humanizacao",
-      },
-      {
-        detail: "Handoff, anti-loop, cooldown e testes de qualidade.",
-        icon: ShieldCheck,
-        items: securityToggles.map((item) => item.title),
-        metric: `${securityToggles.filter((item) => config[item.key]).length}/${securityToggles.length}`,
-        title: "Seguranca",
-      },
-      {
-        detail: "Captacao, opt-out, links, botoes e score comercial.",
-        icon: Activity,
-        items: leadTriggerToggles.map((item) => item.title),
-        metric: quoteReplyModeLabels[config.quoteReplyMode],
-        title: "CRM inteligente",
-      },
-      {
-        detail: "Anti-spam, interacoes, mencoes e limites de envio.",
-        icon: Users,
-        items: [
-          ...groupToggles
-            .filter((item) => !["groupsEnabled", "serveGroups", "statusWhatsAppEnabled", "channelsEnabled", "campaignEnabled"].includes(item.key))
-            .map((item) => item.title),
-          "Max status",
-          "Lote campanha",
-          "Delay min/max",
-        ],
-        metric: `${config.minDelaySeconds}-${config.maxDelaySeconds}s`,
-        title: "Multicanal seguro",
-      },
-      {
-        detail: "Protecoes contra eventos incompletos ou fora de contexto.",
-        icon: ShieldCheck,
-        items: protectionToggles.map((item) => item.title),
-        metric: `${protectionToggles.filter((item) => config[item.key]).length}/${protectionToggles.length}`,
-        title: "Contexto seguro",
-      },
-      {
-        detail: "Audio, imagens, documentos, limites e retencao.",
-        icon: ImageIcon,
-        items: mediaToggles.map((item) => item.title),
-        metric: `${mediaToggles.filter((item) => config[item.key]).length}/${mediaToggles.length}`,
-        title: "Midia com IA",
-      },
-      {
-        detail: "Delays por tipo de mensagem e reativacao controlada.",
-        icon: Timer,
-        items: timingFields.map((item) => item.label),
-        metric: config.smartTiming ? "ativo" : "padrao",
-        title: "Temporizadores",
-      },
-    ],
-    [config]
-  );
 
   const loadVoices = useCallback(async (syncConfiguredVoice = false) => {
     setVoiceLoading(true);
@@ -2713,29 +2511,6 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
 
   return (
     <div className="space-y-4">
-      <div className="rounded-lg border border-[rgba(34,197,94,0.24)] bg-[rgba(34,197,94,0.07)] px-4 py-3">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex min-w-0 items-start gap-3">
-            <span className="grid size-9 shrink-0 place-items-center rounded-md border border-[rgba(34,197,94,0.28)] bg-white text-[var(--admin-green)]">
-              <ShieldCheck size={18} />
-            </span>
-            <div className="min-w-0">
-              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-green)]">Padrao do sistema</p>
-              <h3 className="text-sm font-semibold text-[var(--admin-foreground)]">Protecoes, memoria, IA e temporizadores ficam automaticos.</h3>
-            </div>
-          </div>
-          <StatusPill ok label="Tecnico protegido" />
-        </div>
-        <div className="mt-3 grid gap-2 md:grid-cols-3 xl:grid-cols-6">
-          <InfoBox label="Humanizacao" value={`${humanSimulationToggles.filter((item) => config[item.key]).length}/${humanSimulationToggles.length}`} tone="green" />
-          <InfoBox label="Seguranca" value={`${securityToggles.filter((item) => config[item.key]).length}/${securityToggles.length}`} tone="green" />
-          <InfoBox label="CRM IA" value={specialTriggerModeLabels[config.specialTriggerMode]} tone="green" />
-          <InfoBox label="Contexto" value={`${protectionToggles.filter((item) => config[item.key]).length}/${protectionToggles.length}`} tone="green" />
-          <InfoBox label="Midia" value={`${mediaToggles.filter((item) => config[item.key]).length}/${mediaToggles.length}`} tone="green" />
-          <InfoBox label="Timer" value={config.smartTiming ? "Inteligente" : "Padrao"} tone="green" />
-        </div>
-      </div>
-
       <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
         <Panel
           title="Operacao do atendimento"
@@ -2797,7 +2572,6 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
         <Panel
           title="Humano responsavel"
           eyebrow="Handoff / alertas"
-          action={<BehaviorIcon icon={<ShieldCheck size={15} />} label="Automatico" />}
         >
           <TextAreaField
             label="Numeros responsaveis"
@@ -2805,11 +2579,6 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
             value={config.responsibleNumbers}
             onChange={(responsibleNumbers) => setBehavior({ responsibleNumbers })}
           />
-          <div className="mt-3 grid gap-2 md:grid-cols-3">
-            <InfoBox label="Handoff" value={config.humanIntervention ? "Ativo" : "Sistema"} tone="green" />
-            <InfoBox label="Cooldown" value={`${config.cooldownMinutes} min`} tone="green" />
-            <InfoBox label="Limite" value={`${config.maxMessagesPerConversation} msgs`} tone="green" />
-          </div>
         </Panel>
       </div>
 
@@ -2841,7 +2610,6 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
             <Field label="Inicio IA" value={config.quietHoursStart} onChange={(quietHoursStart) => setBehavior({ quietHoursStart })} />
             <Field label="Fim IA" value={config.quietHoursEnd} onChange={(quietHoursEnd) => setBehavior({ quietHoursEnd })} />
             <Field label="Fuso horario" value={config.timezone} onChange={(timezone) => setBehavior({ timezone })} />
-            <InfoBox label="Memoria" value={config.leadMemory && config.cloneMemory ? "Ativa" : "Sistema"} tone="green" />
           </div>
         </Panel>
 
@@ -2856,7 +2624,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
             <CompactToggle title="Canais" detail="Newsletter/canal WhatsApp liberado." checked={config.channelsEnabled} onChange={(checked) => setToggle("channelsEnabled", checked)} />
             <CompactToggle title="Campanhas" detail="Envio em lote supervisionado." checked={config.campaignEnabled} onChange={(checked) => setToggle("campaignEnabled", checked)} />
           </div>
-          <div className="mt-3 grid gap-3 md:grid-cols-2">
+          <div className="mt-3 max-w-sm">
             <SelectField
               label="Responder em grupos"
               value={config.groupReplyMode}
@@ -2867,7 +2635,6 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
               ]}
               onChange={(groupReplyMode) => setBehavior({ groupReplyMode: groupReplyMode as WillianBehaviorConfig["groupReplyMode"] })}
             />
-            <InfoBox label="Anti-spam" value={`${config.minDelaySeconds}-${config.maxDelaySeconds}s`} tone="green" />
           </div>
         </Panel>
       </div>
@@ -3037,75 +2804,6 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
         </details>
       </Panel>
 
-      <Panel
-        title="Padroes automaticos"
-        eyebrow="Sistema / IA / seguranca"
-        action={<BehaviorIcon icon={<ShieldCheck size={15} />} label="Bloqueado" />}
-      >
-        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-          {systemDefaultGroups.map((group) => {
-            const Icon = group.icon;
-            return (
-              <SystemDefaultGroup
-                key={group.title}
-                detail={group.detail}
-                icon={<Icon size={15} />}
-                items={group.items}
-                metric={group.metric}
-                title={group.title}
-              />
-            );
-          })}
-        </div>
-      </Panel>
-    </div>
-  );
-}
-
-function SystemDefaultGroup({
-  detail,
-  icon,
-  items,
-  metric,
-  title,
-}: {
-  detail: string;
-  icon: ReactNode;
-  items: string[];
-  metric: string;
-  title: string;
-}) {
-  const visibleItems = items.slice(0, 5);
-  const extraCount = Math.max(0, items.length - visibleItems.length);
-
-  return (
-    <div className="rounded-md border border-[var(--admin-border)] bg-white p-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-start gap-2">
-          <span className="grid size-7 shrink-0 place-items-center rounded-md border border-[rgba(34,197,94,0.24)] bg-[rgba(34,197,94,0.08)] text-[var(--admin-green)]">
-            {icon}
-          </span>
-          <span className="min-w-0">
-            <span className="block truncate text-xs font-semibold text-[var(--admin-foreground)]">{title}</span>
-            <span className="mt-0.5 line-clamp-2 block text-[11px] leading-4 text-[var(--admin-muted)]">{detail}</span>
-          </span>
-        </div>
-        <span className="shrink-0 rounded-full border border-[rgba(34,197,94,0.24)] bg-[rgba(34,197,94,0.08)] px-2 py-1 text-[9px] font-bold uppercase tracking-[0.08em] text-[var(--admin-green)]">
-          {metric}
-        </span>
-      </div>
-      <div className="mt-2 flex flex-wrap gap-1.5">
-        {visibleItems.map((item) => (
-          <span key={item} className="rounded-md border border-[var(--admin-border)] bg-[rgba(184,122,22,0.05)] px-2 py-1 text-[10px] font-semibold text-[var(--admin-muted)]">
-            {item}
-          </span>
-        ))}
-        {extraCount > 0 && (
-          <span className="rounded-md border border-[rgba(34,197,94,0.24)] bg-[rgba(34,197,94,0.08)] px-2 py-1 text-[10px] font-semibold text-[var(--admin-green)]">
-            +{extraCount}
-          </span>
-        )}
-      </div>
     </div>
   );
 }
