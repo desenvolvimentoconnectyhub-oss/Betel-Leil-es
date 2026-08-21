@@ -4,6 +4,7 @@ import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   DEFAULT_WILLIAN_AGENT_CONFIG,
   DEFAULT_WILLIAN_AGENT_PROMPT,
+  applyWillianSystemBehaviorDefaults,
   type WillianAgentConfig,
 } from "./willian-types";
 
@@ -111,7 +112,7 @@ export function normalizeWillianAgentConfig(input: unknown): WillianAgentConfig 
       firstDefined(source.globalPrompt, source.whatsapp_global_prompt),
       defaults.globalPrompt
     ),
-    behavior: {
+    behavior: applyWillianSystemBehaviorDefaults({
       active: boolField(firstDefined(behavior.active, behavior.agentEnabled), defaults.behavior.active),
       cloneStyle: boolField(behavior.cloneStyle, defaults.behavior.cloneStyle),
       splitReplies: boolField(firstDefined(behavior.splitReplies, behavior.splitMessages), defaults.behavior.splitReplies),
@@ -353,7 +354,7 @@ export function normalizeWillianAgentConfig(input: unknown): WillianAgentConfig 
       quietHoursStart: stringField(behavior.quietHoursStart, defaults.behavior.quietHoursStart),
       quietHoursEnd: stringField(behavior.quietHoursEnd, defaults.behavior.quietHoursEnd),
       timezone: stringField(behavior.timezone, defaults.behavior.timezone),
-    },
+    }),
     qualification: {
       enabled: boolField(qualification.enabled, defaults.qualification.enabled),
       product: stringField(qualification.product, defaults.qualification.product),

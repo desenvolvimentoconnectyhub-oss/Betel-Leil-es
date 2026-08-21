@@ -37,6 +37,7 @@ import {
 import { cn } from "@/lib/utils";
 import {
   DEFAULT_WILLIAN_AGENT_CONFIG,
+  applyWillianSystemBehaviorDefaults,
   type WhatsAppAgentInstanceSummary,
   type WillianAgentConfig,
   type WillianAgentConfigTab,
@@ -73,6 +74,13 @@ const defaultWillianState: WillianInstanceState = {
   emailReady: false,
   missing: [],
 };
+
+function applySystemDefaultsToConfig(config: WillianAgentConfig): WillianAgentConfig {
+  return {
+    ...config,
+    behavior: applyWillianSystemBehaviorDefaults(config.behavior),
+  };
+}
 
 const tabs: Array<{ key: WillianAgentConfigTab; label: string; subtitle: string; icon: typeof MessageCircle }> = [
   { key: "connection", label: "Conexao", subtitle: "Numero e status", icon: Phone },
@@ -683,7 +691,9 @@ export function WillianAgentPanel({
   initialAgentKey?: string;
 }) {
   const [state, setState] = useState<WillianInstanceState>(initialState || defaultWillianState);
-  const [config, setConfig] = useState<WillianAgentConfig>(initialConfig || DEFAULT_WILLIAN_AGENT_CONFIG);
+  const [config, setConfig] = useState<WillianAgentConfig>(() =>
+    applySystemDefaultsToConfig(initialConfig || DEFAULT_WILLIAN_AGENT_CONFIG)
+  );
   const [activeTab, setActiveTab] = useState<WillianAgentConfigTab>("connection");
   const [loading, setLoading] = useState<string | null>(null);
   const [savingConfig, setSavingConfig] = useState(false);
@@ -1011,7 +1021,7 @@ export function WillianAgentPanel({
     async function loadSelectedAgentConfig() {
       const loaded = await fetchAgentConfig(selectedConfigAgentKey, true);
       if (!cancelled && loaded) {
-        setConfig(loaded);
+        setConfig(applySystemDefaultsToConfig(loaded));
       }
       if (!cancelled && !loaded) {
         setFeedback({ type: "err", msg: "Nao foi possivel carregar as configuracoes deste agente." });
@@ -1047,7 +1057,11 @@ export function WillianAgentPanel({
   }, [config.behavior.active, config.qualification.enabled, state]);
 
   function setBehavior(patch: Partial<WillianBehaviorConfig>) {
-    setConfig((prev) => ({ ...prev, status: "needs_review", behavior: { ...prev.behavior, ...patch } }));
+    setConfig((prev) => ({
+      ...prev,
+      status: "needs_review",
+      behavior: applyWillianSystemBehaviorDefaults({ ...prev.behavior, ...patch }),
+    }));
   }
 
   function setQualification(patch: Partial<WillianQualificationConfig>) {
@@ -1073,13 +1087,17 @@ export function WillianAgentPanel({
   async function saveConfig() {
     setSavingConfig(true);
     setFeedback(null);
+    const configToSave = {
+      ...config,
+      behavior: applyWillianSystemBehaviorDefaults(config.behavior),
+    };
     try {
       const res = await fetch(WHATSAPP_AGENT_CONFIG_ENDPOINT, {
         body: JSON.stringify({
-          ...config,
+          ...configToSave,
           agentKey: selectedConfigAgentKey,
           agentName: displayWhatsappAgentName(selectedWhatsappAgent),
-          companyName: selectedWhatsappAgent?.companyName || config.companyName,
+          companyName: selectedWhatsappAgent?.companyName || configToSave.companyName,
           roleTitle: selectedWhatsappAgent?.sector || "Atendimento WhatsApp",
         }),
         headers: { "content-type": "application/json" },
@@ -1089,7 +1107,7 @@ export function WillianAgentPanel({
       if (!res.ok || !result.success) {
         setFeedback({ type: "err", msg: result.error || "Nao foi possivel salvar o comportamento." });
       } else {
-        setConfig(result.data.config);
+        setConfig(applySystemDefaultsToConfig(result.data.config));
         setFeedback({ type: "ok", msg: "Configuracao do agente salva." });
       }
     } catch {
@@ -1105,7 +1123,7 @@ export function WillianAgentPanel({
     setFeedback(null);
     const nextConfig = await fetchAgentConfig(selectedConfigAgentKey);
     if (nextConfig) {
-      setConfig(nextConfig);
+      setConfig(applySystemDefaultsToConfig(nextConfig));
       setFeedback({ type: "ok", msg: "Alteracoes descartadas." });
     }
     setDiscardingConfig(false);
@@ -2456,6 +2474,68 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
     [config.selectedVoiceId, voices]
   );
   const cloneConsentReady = cloneConsentConfirmed;
+  const selectedVoiceName = selectedVoice?.name || config.selectedVoiceLabel || "Voz Betel";
+  const systemDefaultGroups = useMemo(
+    () => [
+      {
+        detail: "Linguagem, memoria, ritmo e leitura emocional.",
+        icon: Smile,
+        items: [...humanSimulationToggles.map((item) => item.title), ...humanNumberFields.map((item) => item.label)],
+        metric: `${humanSimulationToggles.filter((item) => config[item.key]).length}/${humanSimulationToggles.length}`,
+        title: "Humanizacao",
+      },
+      {
+        detail: "Handoff, anti-loop, cooldown e testes de qualidade.",
+        icon: ShieldCheck,
+        items: securityToggles.map((item) => item.title),
+        metric: `${securityToggles.filter((item) => config[item.key]).length}/${securityToggles.length}`,
+        title: "Seguranca",
+      },
+      {
+        detail: "Captacao, opt-out, links, botoes e score comercial.",
+        icon: Activity,
+        items: leadTriggerToggles.map((item) => item.title),
+        metric: quoteReplyModeLabels[config.quoteReplyMode],
+        title: "CRM inteligente",
+      },
+      {
+        detail: "Anti-spam, interacoes, mencoes e limites de envio.",
+        icon: Users,
+        items: [
+          ...groupToggles
+            .filter((item) => !["groupsEnabled", "serveGroups", "statusWhatsAppEnabled", "channelsEnabled", "campaignEnabled"].includes(item.key))
+            .map((item) => item.title),
+          "Max status",
+          "Lote campanha",
+          "Delay min/max",
+        ],
+        metric: `${config.minDelaySeconds}-${config.maxDelaySeconds}s`,
+        title: "Multicanal seguro",
+      },
+      {
+        detail: "Protecoes contra eventos incompletos ou fora de contexto.",
+        icon: ShieldCheck,
+        items: protectionToggles.map((item) => item.title),
+        metric: `${protectionToggles.filter((item) => config[item.key]).length}/${protectionToggles.length}`,
+        title: "Contexto seguro",
+      },
+      {
+        detail: "Audio, imagens, documentos, limites e retencao.",
+        icon: ImageIcon,
+        items: mediaToggles.map((item) => item.title),
+        metric: `${mediaToggles.filter((item) => config[item.key]).length}/${mediaToggles.length}`,
+        title: "Midia com IA",
+      },
+      {
+        detail: "Delays por tipo de mensagem e reativacao controlada.",
+        icon: Timer,
+        items: timingFields.map((item) => item.label),
+        metric: config.smartTiming ? "ativo" : "padrao",
+        title: "Temporizadores",
+      },
+    ],
+    [config]
+  );
 
   const loadVoices = useCallback(async (syncConfiguredVoice = false) => {
     setVoiceLoading(true);
@@ -2632,472 +2712,400 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
   }
 
   return (
-    <div className="space-y-5">
-      <Panel
-        title="Base do agente"
-        eyebrow="Presenca / resposta"
-        action={<BehaviorIcon icon={<SlidersHorizontal size={15} />} label={config.active ? "Ativo" : "Pausado"} />}
-      >
-        <div className="grid gap-3 md:grid-cols-3">
-          <ToggleTile title="Agente ativo" detail="Permite atendimento automatico quando runtime for liberado." checked={config.active} onChange={(active) => setBehavior({ active })} />
-          <ToggleTile title="Marcar como lido" detail="Aciona leitura e atraso antes da resposta." checked={config.viewDelay} onChange={(viewDelay) => setBehavior({ viewDelay })} />
-          <ToggleTile title="Dividir respostas" detail="Mensagens curtas e naturais." checked={config.splitReplies} onChange={(splitReplies) => setBehavior({ splitReplies })} />
+    <div className="space-y-4">
+      <div className="rounded-lg border border-[rgba(34,197,94,0.24)] bg-[rgba(34,197,94,0.07)] px-4 py-3">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
+            <span className="grid size-9 shrink-0 place-items-center rounded-md border border-[rgba(34,197,94,0.28)] bg-white text-[var(--admin-green)]">
+              <ShieldCheck size={18} />
+            </span>
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-green)]">Padrao do sistema</p>
+              <h3 className="text-sm font-semibold text-[var(--admin-foreground)]">Protecoes, memoria, IA e temporizadores ficam automaticos.</h3>
+            </div>
+          </div>
+          <StatusPill ok label="Tecnico protegido" />
         </div>
-        <div className="mt-4 grid gap-3 xl:grid-cols-3">
-          <SegmentedField
-            label="Presenca"
-            value={config.presenceMode}
-            options={[
-              ["reply_only", "So responder"],
-              ["natural", "Natural"],
-              ["always_online", "Online"],
-            ]}
-            onChange={(presenceMode) => setBehavior({ presenceMode: presenceMode as WillianBehaviorConfig["presenceMode"] })}
-          />
-          <SelectField
-            label="Modo de conversa"
-            value={config.conversationMode}
-            options={[
-              ["always_text", "Sempre texto"],
-              ["always_audio", "Sempre audio"],
-              ["mirror", "Espelho"],
-              ["prompt", "Segue prompt"],
-            ]}
-            onChange={(conversationMode) => setBehavior({ conversationMode: conversationMode as WillianBehaviorConfig["conversationMode"] })}
-          />
-          <SelectField label="Disponibilidade" value={config.availability} options={[["business_hours", "Janela Betel"], ["always", "Sempre online"]]} onChange={(availability) => setBehavior({ availability: availability as WillianBehaviorConfig["availability"] })} />
+        <div className="mt-3 grid gap-2 md:grid-cols-3 xl:grid-cols-6">
+          <InfoBox label="Humanizacao" value={`${humanSimulationToggles.filter((item) => config[item.key]).length}/${humanSimulationToggles.length}`} tone="green" />
+          <InfoBox label="Seguranca" value={`${securityToggles.filter((item) => config[item.key]).length}/${securityToggles.length}`} tone="green" />
+          <InfoBox label="CRM IA" value={specialTriggerModeLabels[config.specialTriggerMode]} tone="green" />
+          <InfoBox label="Contexto" value={`${protectionToggles.filter((item) => config[item.key]).length}/${protectionToggles.length}`} tone="green" />
+          <InfoBox label="Midia" value={`${mediaToggles.filter((item) => config[item.key]).length}/${mediaToggles.length}`} tone="green" />
+          <InfoBox label="Timer" value={config.smartTiming ? "Inteligente" : "Padrao"} tone="green" />
         </div>
-        <div className="mt-4">
-          <SegmentedField
-            label="Rapport adaptativo"
-            value={config.rapport}
-            options={[
-              ["disabled", "Desligado"],
-              ["suave", "Suave"],
-              ["forte", "Forte"],
-            ]}
-            onChange={(rapport) => setBehavior({ rapport: rapport as WillianBehaviorConfig["rapport"] })}
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
+        <Panel
+          title="Operacao do atendimento"
+          eyebrow="Status / estilo / presenca"
+          action={<BehaviorIcon icon={<SlidersHorizontal size={15} />} label={config.active ? "Ativo" : "Pausado"} />}
+        >
+          <ToggleTile
+            title="Agente ativo"
+            detail="Atendimento automatico liberado para o runtime."
+            checked={config.active}
+            onChange={(active) => setBehavior({ active })}
           />
-        </div>
-      </Panel>
+          <div className="mt-3 grid gap-3 xl:grid-cols-3">
+            <SegmentedField
+              label="Presenca"
+              value={config.presenceMode}
+              options={[
+                ["reply_only", "So responder"],
+                ["natural", "Natural"],
+                ["always_online", "Online"],
+              ]}
+              onChange={(presenceMode) => setBehavior({ presenceMode: presenceMode as WillianBehaviorConfig["presenceMode"] })}
+            />
+            <SelectField
+              label="Modo de conversa"
+              value={config.conversationMode}
+              options={[
+                ["always_text", "Sempre texto"],
+                ["always_audio", "Sempre audio"],
+                ["mirror", "Espelho"],
+                ["prompt", "Segue prompt"],
+              ]}
+              onChange={(conversationMode) => setBehavior({ conversationMode: conversationMode as WillianBehaviorConfig["conversationMode"] })}
+            />
+            <SelectField
+              label="Disponibilidade"
+              value={config.availability}
+              options={[
+                ["business_hours", "Janela Betel"],
+                ["always", "Sempre online"],
+              ]}
+              onChange={(availability) => setBehavior({ availability: availability as WillianBehaviorConfig["availability"] })}
+            />
+          </div>
+          <div className="mt-3">
+            <SegmentedField
+              label="Tom comercial"
+              value={config.rapport}
+              options={[
+                ["disabled", "Direto"],
+                ["suave", "Natural"],
+                ["forte", "Proximo"],
+              ]}
+              onChange={(rapport) => setBehavior({ rapport: rapport as WillianBehaviorConfig["rapport"] })}
+            />
+          </div>
+        </Panel>
+
+        <Panel
+          title="Humano responsavel"
+          eyebrow="Handoff / alertas"
+          action={<BehaviorIcon icon={<ShieldCheck size={15} />} label="Automatico" />}
+        >
+          <TextAreaField
+            label="Numeros responsaveis"
+            rows={3}
+            value={config.responsibleNumbers}
+            onChange={(responsibleNumbers) => setBehavior({ responsibleNumbers })}
+          />
+          <div className="mt-3 grid gap-2 md:grid-cols-3">
+            <InfoBox label="Handoff" value={config.humanIntervention ? "Ativo" : "Sistema"} tone="green" />
+            <InfoBox label="Cooldown" value={`${config.cooldownMinutes} min`} tone="green" />
+            <InfoBox label="Limite" value={`${config.maxMessagesPerConversation} msgs`} tone="green" />
+          </div>
+        </Panel>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
+        <Panel
+          title="Follow-up e horario"
+          eyebrow="Proativo / janela comercial"
+          action={<BehaviorIcon icon={<Clock3 size={15} />} label={config.followUpEnabled ? "Follow-up" : "Manual"} />}
+        >
+          <div className="grid gap-3 md:grid-cols-2">
+            <ToggleTile
+              title="Follow-up automatico"
+              detail="Retorno comercial supervisionado quando o lead esfriar."
+              checked={config.followUpEnabled}
+              onChange={(followUpEnabled) => setBehavior({ followUpEnabled })}
+            />
+            <ToggleTile
+              title="Janela da IA ativa"
+              detail="Respeita os horarios definidos para atendimento automatico."
+              checked={config.aiWindowActive}
+              onChange={(aiWindowActive) => setBehavior({ aiWindowActive })}
+            />
+          </div>
+          <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <NumberField label="Delay follow-up (min)" value={config.followUpDelayMinutes} onChange={(value) => setNumber("followUpDelayMinutes", value)} />
+            <NumberField label="Max follow-ups" value={config.maxFollowUps} onChange={(value) => setNumber("maxFollowUps", value)} />
+            <Field label="Inicio follow-up" value={config.followUpWindowStart} onChange={(followUpWindowStart) => setBehavior({ followUpWindowStart })} />
+            <Field label="Fim follow-up" value={config.followUpWindowEnd} onChange={(followUpWindowEnd) => setBehavior({ followUpWindowEnd })} />
+            <Field label="Inicio IA" value={config.quietHoursStart} onChange={(quietHoursStart) => setBehavior({ quietHoursStart })} />
+            <Field label="Fim IA" value={config.quietHoursEnd} onChange={(quietHoursEnd) => setBehavior({ quietHoursEnd })} />
+            <Field label="Fuso horario" value={config.timezone} onChange={(timezone) => setBehavior({ timezone })} />
+            <InfoBox label="Memoria" value={config.leadMemory && config.cloneMemory ? "Ativa" : "Sistema"} tone="green" />
+          </div>
+        </Panel>
+
+        <Panel
+          title="Canais permitidos"
+          eyebrow="Grupos / status / campanhas"
+          action={<BehaviorIcon icon={<Users size={15} />} label={groupReplyModeLabels[config.groupReplyMode]} />}
+        >
+          <div className="grid gap-2 md:grid-cols-2">
+            <CompactToggle title="Grupos" detail="Atendimento em grupos liberados." checked={config.groupsEnabled || config.serveGroups} onChange={(checked) => setBehavior({ groupsEnabled: checked, serveGroups: checked })} />
+            <CompactToggle title="Status" detail="Publicacao de status autorizada." checked={config.statusWhatsAppEnabled} onChange={(checked) => setToggle("statusWhatsAppEnabled", checked)} />
+            <CompactToggle title="Canais" detail="Newsletter/canal WhatsApp liberado." checked={config.channelsEnabled} onChange={(checked) => setToggle("channelsEnabled", checked)} />
+            <CompactToggle title="Campanhas" detail="Envio em lote supervisionado." checked={config.campaignEnabled} onChange={(checked) => setToggle("campaignEnabled", checked)} />
+          </div>
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            <SelectField
+              label="Responder em grupos"
+              value={config.groupReplyMode}
+              options={[
+                ["mentions", "Mencoes"],
+                ["admins", "Admins"],
+                ["all", "Todos"],
+              ]}
+              onChange={(groupReplyMode) => setBehavior({ groupReplyMode: groupReplyMode as WillianBehaviorConfig["groupReplyMode"] })}
+            />
+            <InfoBox label="Anti-spam" value={`${config.minDelaySeconds}-${config.maxDelaySeconds}s`} tone="green" />
+          </div>
+        </Panel>
+      </div>
 
       <Panel
         title="Voz do agente"
-        eyebrow="Clone / ElevenLabs / preview"
+        eyebrow="Voz aprovada / preview"
         action={<BehaviorIcon icon={<Mic2 size={15} />} label={voiceCloneStatusLabels[config.voiceCloneStatus]} />}
       >
-        <div className="grid gap-3 xl:grid-cols-4">
-          <Field label="Provedor de voz" value={config.voiceProvider} onChange={(voiceProvider) => setBehavior({ voiceProvider })} />
-          <SelectField
-            label="Status do clone"
-            value={config.voiceCloneStatus}
-            options={[
-              ["inactive", "Inativo"],
-              ["testing", "Teste ativo"],
-              ["active", "Ativo"],
-            ]}
-            onChange={(voiceCloneStatus) => setBehavior({ voiceCloneStatus: voiceCloneStatus as WillianBehaviorConfig["voiceCloneStatus"] })}
-          />
-          <Field label="Voz selecionada" value={config.selectedVoiceLabel} onChange={(selectedVoiceLabel) => setBehavior({ selectedVoiceLabel })} />
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px_180px]">
           <Field label="Buscar voz" value={config.voiceSearch} onChange={(voiceSearch) => setBehavior({ voiceSearch })} placeholder="Nome, categoria ou tipo" />
-        </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-2">
-          <ToggleTile title="Clone de voz" detail="Libera uso da voz clonada do agente." checked={config.voiceCloneEnabled} onChange={(voiceCloneEnabled) => setBehavior({ voiceCloneEnabled })} />
-          <ToggleTile title="Preview de audio" detail="Mostra player de teste antes de salvar." checked={config.audioPreviewEnabled} onChange={(audioPreviewEnabled) => setBehavior({ audioPreviewEnabled })} />
-        </div>
-        <div className="mt-4 grid gap-3 xl:grid-cols-3">
-          <Field label="Origem da voz" value={config.audioVoiceSource} onChange={(audioVoiceSource) => setBehavior({ audioVoiceSource })} placeholder="manual, clone, public" />
-          <Field label="Modelo de audio" value={config.audioModelId} onChange={(audioModelId) => setBehavior({ audioModelId })} placeholder="eleven_multilingual_v2" />
-          <Field label="Owner publico" value={config.audioVoicePublicOwnerId} onChange={(audioVoicePublicOwnerId) => setBehavior({ audioVoicePublicOwnerId })} />
-        </div>
-        <div className="mt-4 rounded-xl border border-[var(--admin-border)] bg-[#050505] p-3">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div>
-              <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Biblioteca ElevenLabs</p>
-              <p className="mt-1 text-sm text-[var(--admin-muted)]">
-                {voiceLoading ? "Carregando vozes..." : `${filteredVoices.length} voz(es) exibida(s)`}
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <ActionButton
-                icon={<RefreshCw size={14} />}
-                label="Atualizar vozes"
-                loading={voiceLoading}
-                onClick={() => void loadVoices(false)}
-              />
-              <ActionButton
-                icon={<Radio size={14} />}
-                label="Testar voz"
-                loading={voiceAction === "preview"}
-                disabled={!config.selectedVoiceId || config.selectedVoiceId === "clone-willian"}
-                onClick={() => void previewVoice()}
-              />
-            </div>
-          </div>
-
-          {voiceError && (
-            <div className="mt-3 rounded-lg border border-[rgba(239,68,68,0.28)] bg-[rgba(239,68,68,0.08)] px-3 py-2 text-xs text-[var(--admin-red)]">
-              {voiceError}
-            </div>
-          )}
-
-          <div className="mt-3 grid max-h-72 gap-2 overflow-y-auto pr-1">
-            {filteredVoices.length ? (
-              filteredVoices.map((voice) => (
-                <VoiceCard
-                  key={voice.voiceId}
-                  active={config.selectedVoiceId === voice.voiceId}
-                  detail={voice.description || [voice.category, Object.values(voice.labels || {}).join(" / ")].filter(Boolean).join(" / ") || voice.voiceId}
-                  label={voice.name}
-                  loading={voiceAction === `select:${voice.voiceId}`}
-                  status={config.selectedVoiceId === voice.voiceId ? "Selecionada" : voice.category || "ElevenLabs"}
-                  onClick={() => void selectVoice(voice)}
-                />
-              ))
-            ) : (
-              <div className="rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.02)] px-4 py-8 text-center text-sm text-[var(--admin-muted)]">
-                {voiceLoading ? "Buscando vozes..." : "Nenhuma voz encontrada. Confira o token na Sala de Manutencao."}
-              </div>
-            )}
+          <InfoBox label="Selecionada" value={selectedVoiceName} tone={config.selectedVoiceId ? "green" : "yellow"} />
+          <div className="flex items-end gap-2">
+            <ActionButton icon={<RefreshCw size={14} />} label="Atualizar" loading={voiceLoading} onClick={() => void loadVoices(false)} />
+            <ActionButton
+              icon={<Radio size={14} />}
+              label="Testar"
+              loading={voiceAction === "preview"}
+              disabled={!config.selectedVoiceId || config.selectedVoiceId === "clone-willian"}
+              onClick={() => void previewVoice()}
+            />
           </div>
         </div>
-        {config.audioPreviewEnabled && (
-          <div className="mt-4 rounded-lg border border-[var(--admin-border)] bg-[#050505] px-4 py-3">
-            {voicePreviewUrl ? (
-              <audio controls src={voicePreviewUrl} className="h-10 w-full" />
-            ) : (
-              <div className="flex flex-wrap items-center gap-3 text-xs text-[var(--admin-muted)]">
-                <BehaviorIcon icon={<Radio size={14} />} label="Preview" />
-                <span className="font-semibold text-white">{selectedVoice?.name || config.selectedVoiceLabel}</span>
-                <span>Use o botao Testar voz para gerar uma amostra.</span>
-              </div>
-            )}
+
+        {voiceError && (
+          <div className="mt-3 rounded-md border border-[rgba(239,68,68,0.28)] bg-[rgba(239,68,68,0.08)] px-3 py-2 text-xs text-[var(--admin-red)]">
+            {voiceError}
           </div>
         )}
-        <div className="mt-4 rounded-lg border border-[var(--admin-border)] bg-white p-4">
-          <div className="flex flex-col gap-2 border-b border-[var(--admin-border)] pb-3 md:flex-row md:items-center md:justify-between">
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Instant voice clone</p>
-              <h3 className="mt-1 text-base font-semibold text-[var(--admin-foreground)]">Criar voz clonada</h3>
-            </div>
-            <StatusPill
-              ok={Boolean(config.voiceCloneConsent && config.voiceCloneConsentAt)}
-              label={config.voiceCloneConsentAt ? `consentido ${formatDateTime(config.voiceCloneConsentAt || "")}` : "consentimento pendente"}
-            />
-          </div>
 
-          <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(220px,0.8fr)_minmax(260px,1.2fr)]">
-            <Field label="Nome da voz" value={cloneName} onChange={setCloneName} />
-            <TextAreaField label="Descricao opcional" rows={2} value={cloneDescription} onChange={setCloneDescription} />
-          </div>
-
-          <label className="mt-3 grid gap-1">
-            <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Amostras de audio</span>
-            <input
-              type="file"
-              accept="audio/*"
-              multiple
-              onChange={(event) => {
-                setCloneFiles(Array.from(event.target.files || []));
-                setVoiceNotice(null);
-              }}
-              className="block h-10 w-full cursor-pointer rounded-md border border-[var(--admin-border)] bg-white text-xs text-[var(--admin-muted)] file:mr-3 file:h-10 file:border-0 file:bg-[rgba(200,90,31,0.1)] file:px-3 file:text-xs file:font-bold file:text-[var(--admin-cyan)]"
-            />
-          </label>
-
-          <button
-            type="button"
-            onClick={() => setCloneConsentConfirmed((checked) => !checked)}
-            className={cn(
-              "mt-3 grid w-full grid-cols-[18px_minmax(0,1fr)] gap-2 rounded-md border p-3 text-left transition",
-              cloneConsentConfirmed
-                ? "border-[rgba(34,197,94,0.28)] bg-[rgba(34,197,94,0.08)]"
-                : "border-[var(--admin-border)] bg-white hover:border-[rgba(200,90,31,0.22)]"
-            )}
-          >
-            <span
-              className={cn(
-                "mt-0.5 grid size-4 place-items-center rounded border",
-                cloneConsentConfirmed
-                  ? "border-[var(--admin-green)] bg-[var(--admin-green)] text-white"
-                  : "border-[var(--admin-border)] bg-white text-transparent"
-              )}
-            >
-              <CheckCircle2 size={11} />
-            </span>
-            <span className="min-w-0">
-              <span className="block text-xs font-semibold text-[var(--admin-foreground)]">
-                Confirmo que tenho os direitos e o consentimento para clonar e usar esta voz.
-              </span>
-              <span className="mt-1 block text-[11px] leading-4 text-[var(--admin-muted)]">
-                Use apenas voz propria ou autorizada pelo titular.
-              </span>
-            </span>
-          </button>
-
-          {voiceNotice && (
-            <div
-              className={cn(
-                "mt-3 flex items-start gap-2 rounded-md border px-3 py-2 text-xs leading-5",
-                voiceNotice.type === "ok" &&
-                  "border-[rgba(34,197,94,0.28)] bg-[rgba(34,197,94,0.08)] text-[var(--admin-green)]",
-                voiceNotice.type === "err" &&
-                  "border-[rgba(239,68,68,0.28)] bg-[rgba(239,68,68,0.08)] text-[var(--admin-red)]",
-                voiceNotice.type === "info" &&
-                  "border-[rgba(184,122,22,0.28)] bg-[rgba(184,122,22,0.08)] text-[var(--admin-yellow)]"
-              )}
-            >
-              {voiceNotice.type === "info" ? (
-                <Loader2 size={14} className="mt-0.5 shrink-0 animate-spin" />
-              ) : voiceNotice.type === "ok" ? (
-                <CheckCircle2 size={14} className="mt-0.5 shrink-0" />
-              ) : (
-                <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-              )}
-              <span>{voiceNotice.msg}</span>
+        <div className="mt-3 grid max-h-56 gap-2 overflow-y-auto pr-1">
+          {filteredVoices.length ? (
+            filteredVoices.map((voice) => (
+              <VoiceCard
+                key={voice.voiceId}
+                active={config.selectedVoiceId === voice.voiceId}
+                detail={voice.description || [voice.category, Object.values(voice.labels || {}).join(" / ")].filter(Boolean).join(" / ") || voice.voiceId}
+                label={voice.name}
+                loading={voiceAction === `select:${voice.voiceId}`}
+                status={config.selectedVoiceId === voice.voiceId ? "Selecionada" : voice.category || "ElevenLabs"}
+                onClick={() => void selectVoice(voice)}
+              />
+            ))
+          ) : (
+            <div className="rounded-md border border-[var(--admin-border)] bg-white px-4 py-6 text-center text-sm text-[var(--admin-muted)]">
+              {voiceLoading ? "Buscando vozes..." : "Nenhuma voz encontrada. Confira o token na Sala de Manutencao."}
             </div>
           )}
+        </div>
 
-          <div className="mt-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <p className="min-w-0 text-xs leading-5 text-[var(--admin-muted)]">
-              {cloneFiles.length
-                ? `${cloneFiles.length} arquivo(s): ${cloneFiles.map((file) => file.name).join(", ")}`
-                : "Envie uma ou mais amostras de voz falada."}
-            </p>
-            <ActionButton
-              icon={<Paperclip size={14} />}
-              label="Clonar voz"
-              loading={voiceAction === "clone"}
-              disabled={!cloneConsentReady || cloneFiles.length === 0}
-              onClick={() => void cloneVoice()}
-            />
+        {voicePreviewUrl && (
+          <div className="mt-3 rounded-md border border-[var(--admin-border)] bg-white px-3 py-2">
+            <audio controls src={voicePreviewUrl} className="h-10 w-full" />
           </div>
-        </div>
-      </Panel>
+        )}
 
-      <Panel
-        title="Simulacao humana"
-        eyebrow="Linguagem / ritmo / memoria"
-        action={<BehaviorIcon icon={<Smile size={15} />} label={`${humanSimulationToggles.filter((item) => config[item.key]).length} ativos`} />}
-      >
-        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-          {humanSimulationToggles.map((item) => (
-            <CompactToggle
-              key={item.key}
-              checked={config[item.key]}
-              detail={item.detail}
-              onChange={(checked) => setToggle(item.key, checked)}
-              status={item.status}
-              title={item.title}
-            />
-          ))}
-        </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-3 xl:grid-cols-7">
-          {humanNumberFields.map((field) => (
-            <NumberField
-              key={field.key}
-              label={field.label}
-              value={config[field.key]}
-              onChange={(value) => setNumber(field.key, value)}
-            />
-          ))}
-        </div>
-      </Panel>
+        <details className="mt-3 rounded-md border border-[var(--admin-border)] bg-white">
+          <summary className="flex min-h-10 cursor-pointer list-none items-center justify-between gap-3 px-3 py-2">
+            <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Avancado de voz</span>
+            <span className="text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--admin-cyan)]">Admin</span>
+          </summary>
+          <div className="border-t border-[var(--admin-border)] p-3">
+            <div className="grid gap-3 xl:grid-cols-4">
+              <Field label="Provedor de voz" value={config.voiceProvider} onChange={(voiceProvider) => setBehavior({ voiceProvider })} />
+              <SelectField
+                label="Status do clone"
+                value={config.voiceCloneStatus}
+                options={[
+                  ["inactive", "Inativo"],
+                  ["testing", "Teste ativo"],
+                  ["active", "Ativo"],
+                ]}
+                onChange={(voiceCloneStatus) => setBehavior({ voiceCloneStatus: voiceCloneStatus as WillianBehaviorConfig["voiceCloneStatus"] })}
+              />
+              <Field label="Modelo de audio" value={config.audioModelId} onChange={(audioModelId) => setBehavior({ audioModelId })} placeholder="eleven_multilingual_v2" />
+              <Field label="Owner publico" value={config.audioVoicePublicOwnerId} onChange={(audioVoicePublicOwnerId) => setBehavior({ audioVoicePublicOwnerId })} />
+            </div>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <ToggleTile title="Clone de voz" detail="Libera uso da voz clonada do agente." checked={config.voiceCloneEnabled} onChange={(voiceCloneEnabled) => setBehavior({ voiceCloneEnabled })} />
+              <ToggleTile title="Preview de audio" detail="Mostra player de teste antes de salvar." checked={config.audioPreviewEnabled} onChange={(audioPreviewEnabled) => setBehavior({ audioPreviewEnabled })} />
+            </div>
+            <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(220px,0.8fr)_minmax(260px,1.2fr)]">
+              <Field label="Nome da voz" value={cloneName} onChange={setCloneName} />
+              <TextAreaField label="Descricao opcional" rows={2} value={cloneDescription} onChange={setCloneDescription} />
+            </div>
+            <label className="mt-3 grid gap-1">
+              <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Amostras de audio</span>
+              <input
+                type="file"
+                accept="audio/*"
+                multiple
+                onChange={(event) => {
+                  setCloneFiles(Array.from(event.target.files || []));
+                  setVoiceNotice(null);
+                }}
+                className="block h-10 w-full cursor-pointer rounded-md border border-[var(--admin-border)] bg-white text-xs text-[var(--admin-muted)] file:mr-3 file:h-10 file:border-0 file:bg-[rgba(200,90,31,0.1)] file:px-3 file:text-xs file:font-bold file:text-[var(--admin-cyan)]"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => setCloneConsentConfirmed((checked) => !checked)}
+              className={cn(
+                "mt-3 grid w-full grid-cols-[18px_minmax(0,1fr)] gap-2 rounded-md border p-3 text-left transition",
+                cloneConsentConfirmed
+                  ? "border-[rgba(34,197,94,0.28)] bg-[rgba(34,197,94,0.08)]"
+                  : "border-[var(--admin-border)] bg-white hover:border-[rgba(200,90,31,0.22)]"
+              )}
+            >
+              <span
+                className={cn(
+                  "mt-0.5 grid size-4 place-items-center rounded border",
+                  cloneConsentConfirmed
+                    ? "border-[var(--admin-green)] bg-[var(--admin-green)] text-white"
+                    : "border-[var(--admin-border)] bg-white text-transparent"
+                )}
+              >
+                <CheckCircle2 size={11} />
+              </span>
+              <span className="min-w-0">
+                <span className="block text-xs font-semibold text-[var(--admin-foreground)]">
+                  Confirmo que tenho os direitos e o consentimento para clonar e usar esta voz.
+                </span>
+                <span className="mt-1 block text-[11px] leading-4 text-[var(--admin-muted)]">
+                  Use apenas voz propria ou autorizada pelo titular.
+                </span>
+              </span>
+            </button>
 
-      <Panel
-        title="Seguranca e testes"
-        eyebrow="Humano / QA / responsaveis"
-        action={<BehaviorIcon icon={<ShieldCheck size={15} />} label={config.humanIntervention ? "Humano ativo" : "Auto"} />}
-      >
-        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-          {securityToggles.map((item) => (
-            <CompactToggle
-              key={item.key}
-              checked={config[item.key]}
-              detail={item.detail}
-              onChange={(checked) => setToggle(item.key, checked)}
-              status={item.status}
-              title={item.title}
-            />
-          ))}
-        </div>
-        <div className="mt-4 grid gap-3 xl:grid-cols-[1.5fr_0.5fr]">
-          <TextAreaField label="Numeros responsaveis" rows={3} value={config.responsibleNumbers} onChange={(responsibleNumbers) => setBehavior({ responsibleNumbers })} />
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-            <NumberField label="Cooldown (min)" value={config.cooldownMinutes} onChange={(cooldownMinutes) => setBehavior({ cooldownMinutes })} />
-            <NumberField label="Max mensagens" value={config.maxMessagesPerConversation} onChange={(maxMessagesPerConversation) => setBehavior({ maxMessagesPerConversation })} />
+            {voiceNotice && (
+              <div
+                className={cn(
+                  "mt-3 flex items-start gap-2 rounded-md border px-3 py-2 text-xs leading-5",
+                  voiceNotice.type === "ok" &&
+                    "border-[rgba(34,197,94,0.28)] bg-[rgba(34,197,94,0.08)] text-[var(--admin-green)]",
+                  voiceNotice.type === "err" &&
+                    "border-[rgba(239,68,68,0.28)] bg-[rgba(239,68,68,0.08)] text-[var(--admin-red)]",
+                  voiceNotice.type === "info" &&
+                    "border-[rgba(184,122,22,0.28)] bg-[rgba(184,122,22,0.08)] text-[var(--admin-yellow)]"
+                )}
+              >
+                {voiceNotice.type === "info" ? (
+                  <Loader2 size={14} className="mt-0.5 shrink-0 animate-spin" />
+                ) : voiceNotice.type === "ok" ? (
+                  <CheckCircle2 size={14} className="mt-0.5 shrink-0" />
+                ) : (
+                  <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                )}
+                <span>{voiceNotice.msg}</span>
+              </div>
+            )}
+
+            <div className="mt-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <p className="min-w-0 text-xs leading-5 text-[var(--admin-muted)]">
+                {cloneFiles.length
+                  ? `${cloneFiles.length} arquivo(s): ${cloneFiles.map((file) => file.name).join(", ")}`
+                  : "Envie uma ou mais amostras de voz falada."}
+              </p>
+              <ActionButton
+                icon={<Paperclip size={14} />}
+                label="Clonar voz"
+                loading={voiceAction === "clone"}
+                disabled={!cloneConsentReady || cloneFiles.length === 0}
+                onClick={() => void cloneVoice()}
+              />
+            </div>
           </div>
-        </div>
+        </details>
       </Panel>
 
       <Panel
-        title="Grupos, status e canais"
-        eyebrow="Multicanal / campanhas"
-        action={<BehaviorIcon icon={<Users size={15} />} label={groupReplyModeLabels[config.groupReplyMode]} />}
+        title="Padroes automaticos"
+        eyebrow="Sistema / IA / seguranca"
+        action={<BehaviorIcon icon={<ShieldCheck size={15} />} label="Bloqueado" />}
       >
         <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-          {groupToggles.map((item) => (
-            <CompactToggle
-              key={item.key}
-              checked={config[item.key]}
-              detail={item.detail}
-              onChange={(checked) => setToggle(item.key, checked)}
-              status={item.status}
-              title={item.title}
-            />
-          ))}
-        </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-5">
-          <SelectField
-            label="Responder em grupos"
-            value={config.groupReplyMode}
-            options={[
-              ["all", "Todos"],
-              ["mentions", "Mencoes"],
-              ["admins", "Admins"],
-            ]}
-            onChange={(groupReplyMode) => setBehavior({ groupReplyMode: groupReplyMode as WillianBehaviorConfig["groupReplyMode"] })}
-          />
-          <NumberField label="Max status" value={config.maxStatuses} onChange={(maxStatuses) => setBehavior({ maxStatuses })} />
-          <NumberField label="Lote campanha" value={config.campaignBatchSize} onChange={(campaignBatchSize) => setBehavior({ campaignBatchSize })} />
-          <NumberField label="Delay min (s)" value={config.minDelaySeconds} onChange={(minDelaySeconds) => setBehavior({ minDelaySeconds })} />
-          <NumberField label="Delay max (s)" value={config.maxDelaySeconds} onChange={(maxDelaySeconds) => setBehavior({ maxDelaySeconds })} />
+          {systemDefaultGroups.map((group) => {
+            const Icon = group.icon;
+            return (
+              <SystemDefaultGroup
+                key={group.title}
+                detail={group.detail}
+                icon={<Icon size={15} />}
+                items={group.items}
+                metric={group.metric}
+                title={group.title}
+              />
+            );
+          })}
         </div>
       </Panel>
+    </div>
+  );
+}
 
-      <Panel
-        title="Gatilhos especiais do lead"
-        eyebrow="CRM / eventos / score"
-        action={<BehaviorIcon icon={<Activity size={15} />} label={specialTriggerModeLabels[config.specialTriggerMode]} />}
-      >
-        <div className="grid gap-3 xl:grid-cols-2">
-          <SegmentedField
-            label="Modo dos gatilhos"
-            value={config.specialTriggerMode}
-            options={[
-              ["disabled", "Desligado"],
-              ["smart", "Inteligente"],
-              ["always", "Sempre"],
-            ]}
-            onChange={(specialTriggerMode) => setBehavior({ specialTriggerMode: specialTriggerMode as WillianBehaviorConfig["specialTriggerMode"] })}
-          />
-          <SegmentedField
-            label="Citar mensagens"
-            value={config.quoteReplyMode}
-            options={[
-              ["off", "Desligado"],
-              ["smart", "Inteligente"],
-              ["always", "Sempre"],
-            ]}
-            onChange={(quoteReplyMode) =>
-              setBehavior({
-                quoteReplyMode: quoteReplyMode as WillianBehaviorConfig["quoteReplyMode"],
-                quotedReplyContext: quoteReplyMode !== "off",
-              })
-            }
-          />
-        </div>
-        <p className="mt-3 text-xs text-[var(--admin-muted)]">
-          {quoteReplyModeLabels[config.quoteReplyMode]}
-        </p>
-        <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-          {leadTriggerToggles.map((item) => (
-            <CompactToggle
-              key={item.key}
-              checked={config[item.key]}
-              detail={item.detail}
-              onChange={(checked) => setToggle(item.key, checked)}
-              status={item.status}
-              title={item.title}
-            />
-          ))}
-        </div>
-      </Panel>
+function SystemDefaultGroup({
+  detail,
+  icon,
+  items,
+  metric,
+  title,
+}: {
+  detail: string;
+  icon: ReactNode;
+  items: string[];
+  metric: string;
+  title: string;
+}) {
+  const visibleItems = items.slice(0, 5);
+  const extraCount = Math.max(0, items.length - visibleItems.length);
 
-      <Panel
-        title="Follow-up e janela de IA"
-        eyebrow="Proativo / horarios"
-        action={<BehaviorIcon icon={<Clock3 size={15} />} label={config.followUpEnabled ? "Follow-up" : "Manual"} />}
-      >
-        <div className="grid gap-3 md:grid-cols-4">
-          <ToggleTile title="Follow-up automatico" detail="Retorno supervisionado quando o lead esfriar." checked={config.followUpEnabled} onChange={(followUpEnabled) => setBehavior({ followUpEnabled })} />
-          <ToggleTile title="Janela da IA ativa" detail="Controla envio dentro da janela." checked={config.aiWindowActive} onChange={(aiWindowActive) => setBehavior({ aiWindowActive })} />
-          <ToggleTile title="Memoria do lead" detail="Mantem preferencias e historico." checked={config.leadMemory} onChange={(leadMemory) => setBehavior({ leadMemory })} />
-          <ToggleTile title="Memoria do clone" detail="Preserva padrao do agente." checked={config.cloneMemory} onChange={(cloneMemory) => setBehavior({ cloneMemory })} />
+  return (
+    <div className="rounded-md border border-[var(--admin-border)] bg-white p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-2">
+          <span className="grid size-7 shrink-0 place-items-center rounded-md border border-[rgba(34,197,94,0.24)] bg-[rgba(34,197,94,0.08)] text-[var(--admin-green)]">
+            {icon}
+          </span>
+          <span className="min-w-0">
+            <span className="block truncate text-xs font-semibold text-[var(--admin-foreground)]">{title}</span>
+            <span className="mt-0.5 line-clamp-2 block text-[11px] leading-4 text-[var(--admin-muted)]">{detail}</span>
+          </span>
         </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-7">
-          <NumberField label="Delay follow-up (min)" value={config.followUpDelayMinutes} onChange={(followUpDelayMinutes) => setBehavior({ followUpDelayMinutes })} />
-          <NumberField label="Max follow-ups" value={config.maxFollowUps} onChange={(maxFollowUps) => setBehavior({ maxFollowUps })} />
-          <Field label="Inicio follow-up" value={config.followUpWindowStart} onChange={(followUpWindowStart) => setBehavior({ followUpWindowStart })} />
-          <Field label="Fim follow-up" value={config.followUpWindowEnd} onChange={(followUpWindowEnd) => setBehavior({ followUpWindowEnd })} />
-          <Field label="Inicio IA" value={config.quietHoursStart} onChange={(quietHoursStart) => setBehavior({ quietHoursStart })} />
-          <Field label="Fim IA" value={config.quietHoursEnd} onChange={(quietHoursEnd) => setBehavior({ quietHoursEnd })} />
-          <Field label="Fuso horario" value={config.timezone} onChange={(timezone) => setBehavior({ timezone })} />
-        </div>
-      </Panel>
-
-      <Panel
-        title="Protecoes de contexto"
-        eyebrow="Anti erro / seguranca"
-        action={<BehaviorIcon icon={<ShieldCheck size={15} />} label={`${protectionToggles.filter((item) => config[item.key]).length} protecoes`} />}
-      >
-        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-          {protectionToggles.map((item) => (
-            <CompactToggle
-              key={item.key}
-              checked={config[item.key]}
-              detail={item.detail}
-              onChange={(checked) => setToggle(item.key, checked)}
-              status={item.status}
-              title={item.title}
-            />
-          ))}
-        </div>
-      </Panel>
-
-      <Panel
-        title="Audio e midia com IA"
-        eyebrow="Analise / anexos / arquivos"
-        action={<BehaviorIcon icon={<ImageIcon size={15} />} label={config.temporaryMediaStorage ? `${config.mediaRetentionHours}h` : `${config.imageAnalysisLimit} imgs`} />}
-      >
-        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-5">
-          {mediaToggles.map((item) => (
-            <CompactToggle
-              key={item.key}
-              checked={config[item.key]}
-              detail={item.detail}
-              onChange={(checked) => setToggle(item.key, checked)}
-              status={item.status}
-              title={item.title}
-            />
-          ))}
-        </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-3">
-          <NumberField label="Limite imagens" value={config.imageAnalysisLimit} onChange={(imageAnalysisLimit) => setBehavior({ imageAnalysisLimit })} />
-          <NumberField label="Limite videos" value={config.videoAnalysisLimit} onChange={(videoAnalysisLimit) => setBehavior({ videoAnalysisLimit })} />
-          <NumberField label="Limite documentos" value={config.documentAnalysisLimit} onChange={(documentAnalysisLimit) => setBehavior({ documentAnalysisLimit })} />
-          <NumberField label="Confianca avatar (%)" value={config.officialAvatarConfidence} onChange={(officialAvatarConfidence) => setBehavior({ officialAvatarConfidence })} />
-          <NumberField label="Retencao midia (h)" value={config.mediaRetentionHours} onChange={(mediaRetentionHours) => setBehavior({ mediaRetentionHours })} />
-        </div>
-      </Panel>
-
-      <Panel
-        title="Temporizadores"
-        eyebrow="Resposta por tipo de mensagem"
-        action={<BehaviorIcon icon={<Timer size={15} />} label={config.smartTiming ? "Smart timing" : "Manual"} />}
-      >
-        <ToggleTile title="Temporizacao inteligente" detail="Ajusta delays pelo tipo de evento e urgencia." checked={config.smartTiming} onChange={(smartTiming) => setBehavior({ smartTiming })} />
-        <div className="mt-4 grid gap-3 md:grid-cols-3 xl:grid-cols-5">
-          {timingFields.map((field) => (
-            <NumberField
-              key={field.key}
-              label={field.label}
-              value={config[field.key]}
-              onChange={(value) => setNumber(field.key, value)}
-            />
-          ))}
-        </div>
-      </Panel>
+        <span className="shrink-0 rounded-full border border-[rgba(34,197,94,0.24)] bg-[rgba(34,197,94,0.08)] px-2 py-1 text-[9px] font-bold uppercase tracking-[0.08em] text-[var(--admin-green)]">
+          {metric}
+        </span>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {visibleItems.map((item) => (
+          <span key={item} className="rounded-md border border-[var(--admin-border)] bg-[rgba(184,122,22,0.05)] px-2 py-1 text-[10px] font-semibold text-[var(--admin-muted)]">
+            {item}
+          </span>
+        ))}
+        {extraCount > 0 && (
+          <span className="rounded-md border border-[rgba(34,197,94,0.24)] bg-[rgba(34,197,94,0.08)] px-2 py-1 text-[10px] font-semibold text-[var(--admin-green)]">
+            +{extraCount}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
