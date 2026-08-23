@@ -12,7 +12,7 @@ export async function AdminLayout({ children }: { children: ReactNode }) {
       <div className="min-h-screen lg:pl-[272px]">
         <AdminTopbar admin={admin} />
         <main className="relative">
-          <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_80%_0%,rgba(200,90,31,0.10),transparent_32%),radial-gradient(circle_at_10%_12%,rgba(184,122,22,0.08),transparent_26%)]" />
+          <div className="pointer-events-none fixed inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.72),rgba(245,247,250,0.94))]" />
           <div className="relative z-10">{children}</div>
         </main>
       </div>

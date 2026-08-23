@@ -89,7 +89,7 @@ const toneText: Record<ResourceTone, string> = {
 };
 
 const toneBg: Record<ResourceTone, string> = {
-  cyan: "border-[rgba(200,90,31,0.24)] bg-[rgba(200,90,31,0.08)]",
+  cyan: "border-[rgba(15,124,144,0.24)] bg-[rgba(15,124,144,0.08)]",
   green: "border-[rgba(34,197,94,0.24)] bg-[rgba(34,197,94,0.08)]",
   yellow: "border-[rgba(234,179,8,0.28)] bg-[rgba(234,179,8,0.08)]",
   red: "border-[rgba(239,68,68,0.30)] bg-[rgba(239,68,68,0.08)]",
@@ -195,7 +195,7 @@ function LeadAvatar({
   return (
     <div
       className={cn(
-        "shrink-0 overflow-hidden rounded-full border border-[rgba(200,90,31,0.24)] bg-[rgba(200,90,31,0.10)] bg-cover bg-center font-bold text-[var(--admin-cyan)] shadow-sm",
+        "shrink-0 overflow-hidden rounded-full border border-[rgba(15,124,144,0.24)] bg-[rgba(15,124,144,0.10)] bg-cover bg-center font-bold text-[var(--admin-cyan)] shadow-sm",
         "inline-flex items-center justify-center",
         sizeClass
       )}
@@ -542,7 +542,7 @@ function OperationalReadinessPanel({
             type="button"
             aria-expanded={detailsOpen}
             onClick={() => setDetailsOpen((value) => !value)}
-            className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-[var(--admin-border)] bg-white px-3 text-xs font-semibold text-[var(--admin-foreground)] transition hover:border-[rgba(200,90,31,0.32)] hover:bg-[rgba(200,90,31,0.06)]"
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-[var(--admin-border)] bg-white px-3 text-xs font-semibold text-[var(--admin-foreground)] transition hover:border-[rgba(15,124,144,0.32)] hover:bg-[rgba(15,124,144,0.06)]"
           >
             Detalhes
             <ChevronDown
@@ -1793,7 +1793,7 @@ export function WhatsAppCrmPage({
                     className={cn(
                       "h-9 rounded-md border px-3 text-xs font-semibold transition",
                       filter === key
-                        ? "border-[rgba(200,90,31,0.28)] bg-[rgba(200,90,31,0.1)] text-[var(--admin-cyan)]"
+                        ? "border-[rgba(15,124,144,0.28)] bg-[rgba(15,124,144,0.10)] text-[var(--admin-cyan)]"
                         : "border-[var(--admin-border)] bg-white text-[var(--admin-muted)] hover:text-[var(--admin-foreground)]"
                     )}
                   >

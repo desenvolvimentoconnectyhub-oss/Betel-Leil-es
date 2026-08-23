@@ -1176,8 +1176,8 @@ export function WillianAgentPanel({
   ) : null;
 
   return (
-    <section className="grid gap-4 xl:grid-cols-[340px_minmax(0,1fr)] xl:items-start">
-      <aside className="min-w-0 xl:sticky xl:top-4">
+    <section className="grid gap-5 2xl:grid-cols-[320px_minmax(0,1fr)] 2xl:items-start">
+      <aside className="min-w-0 2xl:sticky 2xl:top-24">
         <WhatsAppAgentManager
           agents={whatsappAgents}
           companyName={config.companyName}
@@ -1204,9 +1204,9 @@ export function WillianAgentPanel({
       </aside>
 
       {selectedWhatsappAgent ? (
-        <div className="min-w-0 space-y-3">
-          <div className="overflow-hidden rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(81,60,36,0.05)]">
-            <div className="grid gap-3 border-b border-[var(--admin-border)] p-4 xl:grid-cols-[minmax(0,1fr)_150px_160px_auto] xl:items-center">
+        <div className="min-w-0 space-y-4 pb-24">
+          <div className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(15,23,42,0.06)]">
+            <div className="grid gap-4 border-b border-[var(--admin-border)] p-4 xl:grid-cols-[minmax(0,1fr)_130px_170px_auto] xl:items-center">
               <div className="flex min-w-0 items-center gap-3">
                 <WhatsappProfileAvatar
                   connected={selectedAgentConnected}
@@ -1258,14 +1258,14 @@ export function WillianAgentPanel({
                 <div className="relative">
                   <button
                     aria-label="Acoes do agente"
-                    className="grid h-8 w-8 place-items-center rounded-md border border-[var(--admin-border)] bg-white text-[var(--admin-muted)] transition hover:border-[rgba(200,90,31,0.28)] hover:text-[var(--admin-foreground)]"
+                    className="grid h-8 w-8 place-items-center rounded-md border border-[var(--admin-border)] bg-white text-[var(--admin-muted)] transition hover:border-[rgba(15,124,144,0.28)] hover:text-[var(--admin-foreground)]"
                     onClick={() => setAgentActionsOpen((open) => !open)}
                     type="button"
                   >
                     <MoreVertical size={16} />
                   </button>
                   {agentActionsOpen && (
-                    <div className="absolute right-0 top-10 z-20 w-44 overflow-hidden rounded-md border border-[var(--admin-border)] bg-white shadow-lg shadow-[rgba(81,60,36,0.12)]">
+                    <div className="absolute right-0 top-10 z-50 w-44 overflow-hidden rounded-md border border-[var(--admin-border)] bg-white shadow-xl shadow-[rgba(15,23,42,0.16)]">
                       <button
                         className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-semibold text-[var(--admin-red)] transition hover:bg-[rgba(239,68,68,0.08)]"
                         onClick={() => {
@@ -1284,7 +1284,7 @@ export function WillianAgentPanel({
             </div>
             <div className="p-4">
               <p className="mb-3 text-xs font-semibold text-[var(--admin-foreground)]">Saude do agente</p>
-              <div className="grid gap-3 md:grid-cols-3 2xl:grid-cols-6">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
                 <AgentHealthCell
                   icon={<MessageCircle size={15} />}
                   label="WhatsApp"
@@ -1332,11 +1332,11 @@ export function WillianAgentPanel({
           </div>
 
           <div
-            className="overflow-hidden rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-0.5 shadow-sm shadow-[rgba(81,60,36,0.04)]"
+            className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-1 shadow-sm shadow-[rgba(15,23,42,0.04)]"
             role="tablist"
             aria-label="Secoes do agente WhatsApp"
           >
-            <div className="grid min-w-0 grid-cols-2 gap-0.5 md:grid-cols-3 xl:grid-cols-6">
+            <div className="flex min-w-0 gap-1 overflow-x-auto">
               {tabs.map((tab) => {
                 const Icon = tab.icon;
                 const active = activeTab === tab.key;
@@ -1348,16 +1348,16 @@ export function WillianAgentPanel({
                     aria-selected={active}
                     onClick={() => setActiveTab(tab.key)}
                     className={cn(
-                      "grid min-h-8 grid-cols-[14px_minmax(0,1fr)] items-center gap-1 rounded-md px-1.5 text-left transition",
+                      "grid min-h-12 min-w-[158px] grid-cols-[18px_minmax(0,1fr)] items-center gap-2 rounded-md px-3 text-left transition",
                       active
-                        ? "bg-[rgba(200,90,31,0.1)] text-[var(--admin-foreground)] shadow-[inset_0_0_0_1px_rgba(200,90,31,0.18)]"
-                        : "text-[var(--admin-muted)] hover:bg-[rgba(184,122,22,0.07)] hover:text-[var(--admin-foreground)]"
+                        ? "bg-[rgba(15,124,144,0.10)] text-[var(--admin-foreground)] shadow-[inset_0_0_0_1px_rgba(15,124,144,0.18)]"
+                        : "text-[var(--admin-muted)] hover:bg-[rgba(15,124,144,0.06)] hover:text-[var(--admin-foreground)]"
                     )}
                   >
                     <Icon size={13} className={active ? "text-[var(--admin-cyan)]" : "text-[var(--admin-muted)]"} />
                     <span className="min-w-0">
-                      <span className="block truncate text-[11px] font-semibold">{tab.label}</span>
-                      <span className="hidden truncate text-[8px] font-bold uppercase tracking-[0.1em] text-[var(--admin-muted)] xl:block">
+                      <span className="block truncate text-xs font-semibold">{tab.label}</span>
+                      <span className="block truncate text-[8px] font-bold uppercase tracking-[0.1em] text-[var(--admin-muted)]">
                         {tab.subtitle}
                       </span>
                     </span>
@@ -1414,7 +1414,7 @@ export function WillianAgentPanel({
             {feedbackNode}
           </div>
 
-          <div className="sticky bottom-3 z-10 flex flex-col gap-3 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] px-4 py-3 shadow-lg shadow-[rgba(81,60,36,0.10)] sm:flex-row sm:items-center sm:justify-between">
+          <div className="sticky bottom-4 z-30 flex flex-col gap-3 rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.96)] px-4 py-3 shadow-xl shadow-[rgba(15,23,42,0.12)] backdrop-blur sm:flex-row sm:items-center sm:justify-between">
             <div className="flex min-w-0 items-center gap-2">
               <span
                 className={cn(
@@ -1482,7 +1482,7 @@ export function WillianAgentPanel({
               </div>
               <button
                 aria-label="Fechar aviso"
-                className="grid h-9 w-9 place-items-center rounded-md border border-[var(--admin-border)] text-[var(--admin-muted)] transition hover:border-[rgba(200,90,31,0.28)] hover:text-[var(--admin-foreground)]"
+                className="grid h-9 w-9 place-items-center rounded-md border border-[var(--admin-border)] text-[var(--admin-muted)] transition hover:border-[rgba(15,124,144,0.28)] hover:text-[var(--admin-foreground)]"
                 onClick={() => setPasskeyDialogOpen(false)}
                 type="button"
               >
@@ -1613,7 +1613,7 @@ function WhatsAppAgentManager({
                   className={cn(
                     "inline-flex h-8 items-center justify-center gap-1 rounded-md border px-2 text-[10px] font-bold transition",
                     active
-                      ? "border-[rgba(200,90,31,0.28)] bg-[rgba(200,90,31,0.1)] text-[var(--admin-cyan)]"
+                      ? "border-[rgba(15,124,144,0.28)] bg-[rgba(15,124,144,0.10)] text-[var(--admin-cyan)]"
                       : "border-[var(--admin-border)] bg-white text-[var(--admin-muted)] hover:text-[var(--admin-foreground)]"
                   )}
                   onClick={() => setAgentFilter(filter.key)}
@@ -1645,8 +1645,8 @@ function WhatsAppAgentManager({
                 className={cn(
                   "grid w-full grid-cols-[38px_minmax(0,1fr)_auto] items-center gap-3 rounded-lg border p-3 text-left transition",
                   selected
-                    ? "border-[rgba(200,90,31,0.55)] bg-[rgba(200,90,31,0.045)] shadow-[inset_3px_0_0_rgba(200,90,31,0.75)]"
-                    : "border-[var(--admin-border)] bg-white hover:border-[rgba(200,90,31,0.22)] hover:bg-[rgba(184,122,22,0.04)]"
+                    ? "border-[rgba(15,124,144,0.46)] bg-[rgba(15,124,144,0.06)] shadow-[inset_3px_0_0_rgba(15,124,144,0.72)]"
+                    : "border-[var(--admin-border)] bg-white hover:border-[rgba(15,124,144,0.24)] hover:bg-[rgba(15,124,144,0.04)]"
                 )}
               >
                 <CompactAgentAvatar connected={agentConnected} label={displayWhatsappAgentName(agent)} />
@@ -1748,7 +1748,7 @@ function PairingDialog({
           </div>
           <button
             aria-label="Fechar QR Code"
-            className="grid h-9 w-9 place-items-center rounded-md border border-[var(--admin-border)] text-[var(--admin-muted)] transition hover:border-[rgba(200,90,31,0.28)] hover:text-[var(--admin-foreground)]"
+            className="grid h-9 w-9 place-items-center rounded-md border border-[var(--admin-border)] text-[var(--admin-muted)] transition hover:border-[rgba(15,124,144,0.28)] hover:text-[var(--admin-foreground)]"
             onClick={onClose}
             type="button"
           >
@@ -1985,8 +1985,8 @@ function ConnectionTab({
                   className={cn(
                     "min-h-9 rounded-md px-3 text-xs font-bold transition",
                     connectMode === mode
-                      ? "bg-[rgba(200,90,31,0.1)] text-[var(--admin-cyan)] shadow-[inset_0_0_0_1px_rgba(200,90,31,0.18)]"
-                      : "text-[var(--admin-muted)] hover:bg-[rgba(184,122,22,0.07)] hover:text-[var(--admin-foreground)]"
+                      ? "bg-[rgba(15,124,144,0.10)] text-[var(--admin-cyan)] shadow-[inset_0_0_0_1px_rgba(15,124,144,0.18)]"
+                      : "text-[var(--admin-muted)] hover:bg-[rgba(15,124,144,0.06)] hover:text-[var(--admin-foreground)]"
                   )}
                 >
                   {label}
@@ -2245,18 +2245,19 @@ function PromptTab({
           </PromptDrawer>
         </div>
 
-        <div className="mt-4 rounded-xl border border-[var(--admin-border)] bg-[rgba(255,255,255,0.02)] p-4">
-          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Tags do prompt</p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {config.tags.map((tag) => (
-              <span key={tag} className="rounded-md border border-[rgba(255,90,31,0.28)] bg-[rgba(255,90,31,0.08)] px-3 py-1.5 font-mono text-[10px] font-bold text-[var(--admin-cyan)]">
-                {`{{${tag}}}`}
-              </span>
-            ))}
-          </div>
-          <div className="mt-3">
-            <TextAreaField label="Editar tags" rows={3} value={config.tags.join(", ")} onChange={(value) => setPrompt({ tags: csvToArray(value) })} />
-          </div>
+        <div className="mt-4">
+          <PromptDrawer title="Tags do prompt">
+            <div className="flex flex-wrap gap-2">
+              {config.tags.map((tag) => (
+                <span key={tag} className="rounded-md border border-[rgba(15,124,144,0.24)] bg-[rgba(15,124,144,0.08)] px-3 py-1.5 font-mono text-[10px] font-bold text-[var(--admin-cyan)]">
+                  {`{{${tag}}}`}
+                </span>
+              ))}
+            </div>
+            <div className="mt-3">
+              <TextAreaField label="Editar tags" rows={3} value={config.tags.join(", ")} onChange={(value) => setPrompt({ tags: csvToArray(value) })} />
+            </div>
+          </PromptDrawer>
         </div>
       </Panel>
 
@@ -2317,6 +2318,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
   const [cloneDescription, setCloneDescription] = useState("Voz autorizada do agente de WhatsApp para atendimento Betel.");
   const [cloneFiles, setCloneFiles] = useState<File[]>([]);
   const [cloneConsentConfirmed, setCloneConsentConfirmed] = useState(false);
+  const [voiceSectionOpen, setVoiceSectionOpen] = useState(false);
 
   const filteredVoices = useMemo(() => {
     const query = config.voiceSearch.trim().toLowerCase();
@@ -2369,6 +2371,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
   }, [config.audioModelId, config.selectedVoiceId, setBehavior]);
 
   useEffect(() => {
+    if (!voiceSectionOpen) return;
     if (initialVoiceLoadRef.current) return;
     initialVoiceLoadRef.current = true;
 
@@ -2377,7 +2380,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
     }, 0);
 
     return () => window.clearTimeout(timer);
-  }, [loadVoices]);
+  }, [loadVoices, voiceSectionOpen]);
 
   async function selectVoice(voice: ElevenLabsVoice) {
     setVoiceAction(`select:${voice.voiceId}`);
@@ -2639,83 +2642,65 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
         </Panel>
       </div>
 
-      <Panel
+      <DisclosurePanel
         title="Voz do agente"
         eyebrow="Voz aprovada / preview"
+        summary={`Selecionada: ${selectedVoiceName}`}
         action={<BehaviorIcon icon={<Mic2 size={15} />} label={voiceCloneStatusLabels[config.voiceCloneStatus]} />}
+        onToggle={setVoiceSectionOpen}
       >
-        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px_180px]">
-          <Field label="Buscar voz" value={config.voiceSearch} onChange={(voiceSearch) => setBehavior({ voiceSearch })} placeholder="Nome, categoria ou tipo" />
-          <InfoBox label="Selecionada" value={selectedVoiceName} tone={config.selectedVoiceId ? "green" : "yellow"} />
-          <div className="flex items-end gap-2">
-            <ActionButton icon={<RefreshCw size={14} />} label="Atualizar" loading={voiceLoading} onClick={() => void loadVoices(false)} />
-            <ActionButton
-              icon={<Radio size={14} />}
-              label="Testar"
-              loading={voiceAction === "preview"}
-              disabled={!config.selectedVoiceId || config.selectedVoiceId === "clone-willian"}
-              onClick={() => void previewVoice()}
-            />
-          </div>
-        </div>
-
-        {voiceError && (
-          <div className="mt-3 rounded-md border border-[rgba(239,68,68,0.28)] bg-[rgba(239,68,68,0.08)] px-3 py-2 text-xs text-[var(--admin-red)]">
-            {voiceError}
-          </div>
-        )}
-
-        <div className="mt-3 grid max-h-56 gap-2 overflow-y-auto pr-1">
-          {filteredVoices.length ? (
-            filteredVoices.map((voice) => (
-              <VoiceCard
-                key={voice.voiceId}
-                active={config.selectedVoiceId === voice.voiceId}
-                detail={voice.description || [voice.category, Object.values(voice.labels || {}).join(" / ")].filter(Boolean).join(" / ") || voice.voiceId}
-                label={voice.name}
-                loading={voiceAction === `select:${voice.voiceId}`}
-                status={config.selectedVoiceId === voice.voiceId ? "Selecionada" : voice.category || "ElevenLabs"}
-                onClick={() => void selectVoice(voice)}
-              />
-            ))
-          ) : (
-            <div className="rounded-md border border-[var(--admin-border)] bg-white px-4 py-6 text-center text-sm text-[var(--admin-muted)]">
-              {voiceLoading ? "Buscando vozes..." : "Nenhuma voz encontrada. Confira o token na Sala de Manutencao."}
+        <div className="space-y-3">
+          <PromptDrawer title="Escolher voz">
+            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px_auto]">
+              <Field label="Buscar voz" value={config.voiceSearch} onChange={(voiceSearch) => setBehavior({ voiceSearch })} placeholder="Nome, categoria ou tipo" />
+              <InfoBox label="Selecionada" value={selectedVoiceName} tone={config.selectedVoiceId ? "green" : "yellow"} />
+              <div className="flex flex-wrap items-end gap-2">
+                <ActionButton icon={<RefreshCw size={14} />} label="Atualizar" loading={voiceLoading} onClick={() => void loadVoices(false)} />
+                <ActionButton
+                  icon={<Radio size={14} />}
+                  label="Testar"
+                  loading={voiceAction === "preview"}
+                  disabled={!config.selectedVoiceId || config.selectedVoiceId === "clone-willian"}
+                  onClick={() => void previewVoice()}
+                />
+              </div>
             </div>
-          )}
-        </div>
 
-        {voicePreviewUrl && (
-          <div className="mt-3 rounded-md border border-[var(--admin-border)] bg-white px-3 py-2">
-            <audio controls src={voicePreviewUrl} className="h-10 w-full" />
-          </div>
-        )}
+            {voiceError && (
+              <div className="mt-3 rounded-md border border-[rgba(239,68,68,0.28)] bg-[rgba(239,68,68,0.08)] px-3 py-2 text-xs text-[var(--admin-red)]">
+                {voiceError}
+              </div>
+            )}
 
-        <details className="mt-3 rounded-md border border-[var(--admin-border)] bg-white">
-          <summary className="flex min-h-10 cursor-pointer list-none items-center justify-between gap-3 px-3 py-2">
-            <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Avancado de voz</span>
-            <span className="text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--admin-cyan)]">Admin</span>
-          </summary>
-          <div className="border-t border-[var(--admin-border)] p-3">
-            <div className="grid gap-3 xl:grid-cols-4">
-              <Field label="Provedor de voz" value={config.voiceProvider} onChange={(voiceProvider) => setBehavior({ voiceProvider })} />
-              <SelectField
-                label="Status do clone"
-                value={config.voiceCloneStatus}
-                options={[
-                  ["inactive", "Inativo"],
-                  ["testing", "Teste ativo"],
-                  ["active", "Ativo"],
-                ]}
-                onChange={(voiceCloneStatus) => setBehavior({ voiceCloneStatus: voiceCloneStatus as WillianBehaviorConfig["voiceCloneStatus"] })}
-              />
-              <Field label="Modelo de audio" value={config.audioModelId} onChange={(audioModelId) => setBehavior({ audioModelId })} placeholder="eleven_multilingual_v2" />
-              <Field label="Owner publico" value={config.audioVoicePublicOwnerId} onChange={(audioVoicePublicOwnerId) => setBehavior({ audioVoicePublicOwnerId })} />
+            <div className="mt-3 grid max-h-72 gap-2 overflow-y-auto pr-1">
+              {filteredVoices.length ? (
+                filteredVoices.map((voice) => (
+                  <VoiceCard
+                    key={voice.voiceId}
+                    active={config.selectedVoiceId === voice.voiceId}
+                    detail={voice.description || [voice.category, Object.values(voice.labels || {}).join(" / ")].filter(Boolean).join(" / ") || voice.voiceId}
+                    label={voice.name}
+                    loading={voiceAction === `select:${voice.voiceId}`}
+                    status={config.selectedVoiceId === voice.voiceId ? "Selecionada" : voice.category || "ElevenLabs"}
+                    onClick={() => void selectVoice(voice)}
+                  />
+                ))
+              ) : (
+                <div className="rounded-md border border-[var(--admin-border)] bg-white px-4 py-6 text-center text-sm text-[var(--admin-muted)]">
+                  {voiceLoading ? "Buscando vozes..." : "Abra e atualize a biblioteca quando precisar escolher outra voz."}
+                </div>
+              )}
             </div>
-            <div className="mt-3 grid gap-3 md:grid-cols-2">
-              <ToggleTile title="Clone de voz" detail="Libera uso da voz clonada do agente." checked={config.voiceCloneEnabled} onChange={(voiceCloneEnabled) => setBehavior({ voiceCloneEnabled })} />
-              <ToggleTile title="Preview de audio" detail="Mostra player de teste antes de salvar." checked={config.audioPreviewEnabled} onChange={(audioPreviewEnabled) => setBehavior({ audioPreviewEnabled })} />
-            </div>
+
+            {voicePreviewUrl && (
+              <div className="mt-3 rounded-md border border-[var(--admin-border)] bg-white px-3 py-2">
+                <audio controls src={voicePreviewUrl} className="h-10 w-full" />
+              </div>
+            )}
+          </PromptDrawer>
+
+          <PromptDrawer title="Clone de voz">
+            <ToggleTile title="Clone de voz" detail="Libera uso da voz clonada do agente." checked={config.voiceCloneEnabled} onChange={(voiceCloneEnabled) => setBehavior({ voiceCloneEnabled })} />
             <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(220px,0.8fr)_minmax(260px,1.2fr)]">
               <Field label="Nome da voz" value={cloneName} onChange={setCloneName} />
               <TextAreaField label="Descricao opcional" rows={2} value={cloneDescription} onChange={setCloneDescription} />
@@ -2730,7 +2715,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
                   setCloneFiles(Array.from(event.target.files || []));
                   setVoiceNotice(null);
                 }}
-                className="block h-10 w-full cursor-pointer rounded-md border border-[var(--admin-border)] bg-white text-xs text-[var(--admin-muted)] file:mr-3 file:h-10 file:border-0 file:bg-[rgba(200,90,31,0.1)] file:px-3 file:text-xs file:font-bold file:text-[var(--admin-cyan)]"
+                className="block h-10 w-full cursor-pointer rounded-md border border-[var(--admin-border)] bg-white text-xs text-[var(--admin-muted)] file:mr-3 file:h-10 file:border-0 file:bg-[rgba(15,124,144,0.10)] file:px-3 file:text-xs file:font-bold file:text-[var(--admin-cyan)]"
               />
             </label>
             <button
@@ -2740,7 +2725,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
                 "mt-3 grid w-full grid-cols-[18px_minmax(0,1fr)] gap-2 rounded-md border p-3 text-left transition",
                 cloneConsentConfirmed
                   ? "border-[rgba(34,197,94,0.28)] bg-[rgba(34,197,94,0.08)]"
-                  : "border-[var(--admin-border)] bg-white hover:border-[rgba(200,90,31,0.22)]"
+                  : "border-[var(--admin-border)] bg-white hover:border-[rgba(15,124,144,0.26)]"
               )}
             >
               <span
@@ -2772,7 +2757,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
                   voiceNotice.type === "err" &&
                     "border-[rgba(239,68,68,0.28)] bg-[rgba(239,68,68,0.08)] text-[var(--admin-red)]",
                   voiceNotice.type === "info" &&
-                    "border-[rgba(184,122,22,0.28)] bg-[rgba(184,122,22,0.08)] text-[var(--admin-yellow)]"
+                    "border-[rgba(178,106,0,0.28)] bg-[rgba(178,106,0,0.08)] text-[var(--admin-yellow)]"
                 )}
               >
                 {voiceNotice.type === "info" ? (
@@ -2800,9 +2785,30 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
                 onClick={() => void cloneVoice()}
               />
             </div>
-          </div>
-        </details>
-      </Panel>
+          </PromptDrawer>
+
+          <PromptDrawer title="Avancado de voz">
+            <div className="grid gap-3 xl:grid-cols-4">
+              <Field label="Provedor de voz" value={config.voiceProvider} onChange={(voiceProvider) => setBehavior({ voiceProvider })} />
+              <SelectField
+                label="Status do clone"
+                value={config.voiceCloneStatus}
+                options={[
+                  ["inactive", "Inativo"],
+                  ["testing", "Teste ativo"],
+                  ["active", "Ativo"],
+                ]}
+                onChange={(voiceCloneStatus) => setBehavior({ voiceCloneStatus: voiceCloneStatus as WillianBehaviorConfig["voiceCloneStatus"] })}
+              />
+              <Field label="Modelo de audio" value={config.audioModelId} onChange={(audioModelId) => setBehavior({ audioModelId })} placeholder="eleven_multilingual_v2" />
+              <Field label="Owner publico" value={config.audioVoicePublicOwnerId} onChange={(audioVoicePublicOwnerId) => setBehavior({ audioVoicePublicOwnerId })} />
+            </div>
+            <div className="mt-3">
+              <ToggleTile title="Preview de audio" detail="Mostra player de teste antes de salvar." checked={config.audioPreviewEnabled} onChange={(audioPreviewEnabled) => setBehavior({ audioPreviewEnabled })} />
+            </div>
+          </PromptDrawer>
+        </div>
+      </DisclosurePanel>
 
     </div>
   );
@@ -2945,7 +2951,7 @@ function MultichannelTab({
                     className={cn(
                       "rounded-lg border p-2.5 transition",
                       selected
-                        ? "border-[rgba(200,90,31,0.32)] bg-[rgba(200,90,31,0.07)]"
+                        ? "border-[rgba(15,124,144,0.32)] bg-[rgba(15,124,144,0.07)]"
                         : "border-[var(--admin-border)] bg-white"
                     )}
                   >
@@ -2959,7 +2965,7 @@ function MultichannelTab({
                           className={cn(
                             "mt-0.5 grid size-5 place-items-center rounded border text-[10px] font-bold",
                             selected
-                              ? "border-[var(--admin-cyan)] bg-[rgba(200,90,31,0.12)] text-[var(--admin-cyan)]"
+                              ? "border-[var(--admin-cyan)] bg-[rgba(15,124,144,0.12)] text-[var(--admin-cyan)]"
                               : "border-[var(--admin-border)] text-[var(--admin-muted)]"
                           )}
                         >
@@ -3092,13 +3098,17 @@ function MultichannelTab({
             </div>
           </Panel>
 
-          <Panel title="Auditoria recente" eyebrow="Eventos / campanhas / pendencias">
+          <DisclosurePanel
+            title="Auditoria recente"
+            eyebrow="Eventos / campanhas / pendencias"
+            summary={`${communityData.campaigns.length} campanhas, ${communityData.recentEvents.length} eventos observados.`}
+          >
             <div className="grid gap-2 md:grid-cols-2">
               <div className="rounded-lg border border-[var(--admin-border)] bg-white p-2">
                 <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Campanhas</p>
                 <div className="mt-2 space-y-1.5">
                   {communityData.campaigns.slice(0, 4).map((campaign) => (
-                    <div key={campaign.id} className="flex items-center justify-between gap-2 rounded-md bg-[rgba(184,122,22,0.06)] px-2 py-1.5">
+                    <div key={campaign.id} className="flex items-center justify-between gap-2 rounded-md bg-[rgba(15,124,144,0.06)] px-2 py-1.5">
                       <span className="min-w-0">
                         <span className="block truncate text-xs font-semibold text-[var(--admin-foreground)]">{campaign.name}</span>
                         <span className="text-[10px] text-[var(--admin-muted)]">{campaign.targetCount} destinos - {campaign.status}</span>
@@ -3113,7 +3123,7 @@ function MultichannelTab({
                 <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Eventos de grupo</p>
                 <div className="mt-2 space-y-1.5">
                   {communityData.recentEvents.slice(0, 4).map((event) => (
-                    <div key={event.id} className="rounded-md bg-[rgba(184,122,22,0.06)] px-2 py-1.5">
+                    <div key={event.id} className="rounded-md bg-[rgba(15,124,144,0.06)] px-2 py-1.5">
                       <p className="truncate text-xs font-semibold text-[var(--admin-foreground)]">{event.participantName || event.participantPhone || event.providerChatId}</p>
                       <p className="line-clamp-1 text-[10px] text-[var(--admin-muted)]">{event.text || event.messageType}</p>
                     </div>
@@ -3122,7 +3132,7 @@ function MultichannelTab({
                 </div>
               </div>
             </div>
-          </Panel>
+          </DisclosurePanel>
         </div>
       </div>
     </div>
@@ -3141,7 +3151,7 @@ function CommunityMetricCard({
   value: string;
 }) {
   const toneClass: Record<typeof tone, string> = {
-    cyan: "border-[rgba(200,90,31,0.20)] bg-[rgba(200,90,31,0.06)] text-[var(--admin-cyan)]",
+    cyan: "border-[rgba(15,124,144,0.22)] bg-[rgba(15,124,144,0.08)] text-[var(--admin-cyan)]",
     green: "border-[rgba(34,197,94,0.22)] bg-[rgba(34,197,94,0.08)] text-[var(--admin-green)]",
     purple: "border-[rgba(139,92,246,0.20)] bg-[rgba(139,92,246,0.07)] text-[var(--admin-purple)]",
     yellow: "border-[rgba(234,179,8,0.24)] bg-[rgba(234,179,8,0.08)] text-[var(--admin-yellow)]",
@@ -3268,12 +3278,16 @@ function FilesTab({
           </div>
         </Panel>
 
-        <Panel title="Conhecimento operacional" eyebrow="Notas / arquivos planejados">
+        <DisclosurePanel
+          title="Conhecimento operacional"
+          eyebrow="Notas / arquivos planejados"
+          summary="Base, observacoes e lista manual de arquivos."
+        >
           <TextAreaField label="Notas da base de conhecimento" rows={8} value={config.knowledgeNotes} onChange={(knowledgeNotes) => setFiles({ knowledgeNotes })} />
           <div className="mt-3">
             <TextAreaField label="Lista de arquivos" rows={8} value={arrayToLines(config.companyFiles)} onChange={(value) => setFiles({ companyFiles: linesToArray(value) })} />
           </div>
-        </Panel>
+        </DisclosurePanel>
       </div>
 
       <MemoryTab config={memory} setMemory={setMemory} />
@@ -3296,7 +3310,11 @@ function MemoryTab({ config, setMemory }: { config: WillianMemoryConfig; setMemo
         </div>
       </Panel>
 
-      <Panel title="Regras de lead" eyebrow="Stop words / handoff / eventos">
+      <DisclosurePanel
+        title="Regras de lead"
+        eyebrow="Stop words / handoff / eventos"
+        summary="Tags, palavras de parada, eventos importantes e handoff."
+      >
         <div className="grid gap-3 md:grid-cols-2">
           <TextAreaField label="Tags possiveis" rows={6} value={arrayToLines(config.leadTags)} onChange={(value) => setMemory({ leadTags: linesToArray(value) })} />
           <TextAreaField label="Stop words" rows={6} value={arrayToLines(config.stopWords)} onChange={(value) => setMemory({ stopWords: linesToArray(value) })} />
@@ -3305,16 +3323,16 @@ function MemoryTab({ config, setMemory }: { config: WillianMemoryConfig; setMemo
           <TextAreaField label="Eventos importantes" rows={7} value={arrayToLines(config.importantEvents)} onChange={(value) => setMemory({ importantEvents: linesToArray(value) })} />
           <TextAreaField label="Regras de handoff" rows={7} value={arrayToLines(config.handoffRules)} onChange={(value) => setMemory({ handoffRules: linesToArray(value) })} />
         </div>
-      </Panel>
+      </DisclosurePanel>
     </div>
   );
 }
 
 function PromptDrawer({ children, title }: { children: ReactNode; title: string }) {
   return (
-    <details className="group rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.02)]">
+    <details className="group rounded-lg border border-[var(--admin-border)] bg-white">
       <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
-        <span className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-white">{title}</span>
+        <span className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-foreground)]">{title}</span>
         <span className="font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)] group-open:hidden">Abrir</span>
         <span className="hidden font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--admin-cyan)] group-open:inline">Fechar</span>
       </summary>
@@ -3323,17 +3341,54 @@ function PromptDrawer({ children, title }: { children: ReactNode; title: string 
   );
 }
 
+function DisclosurePanel({
+  action,
+  children,
+  eyebrow,
+  onToggle,
+  summary,
+  title,
+}: {
+  action?: ReactNode;
+  children: ReactNode;
+  eyebrow: string;
+  onToggle?: (open: boolean) => void;
+  summary?: string;
+  title: string;
+}) {
+  return (
+    <details
+      className="group rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(15,23,42,0.04)]"
+      onToggle={(event) => onToggle?.(event.currentTarget.open)}
+    >
+      <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-4 px-4 py-3">
+        <span className="min-w-0">
+          <span className="block text-[9px] font-bold uppercase tracking-[0.16em] text-[var(--admin-muted)]">{eyebrow}</span>
+          <span className="mt-0.5 block text-sm font-semibold text-[var(--admin-foreground)]">{title}</span>
+          {summary ? <span className="mt-1 block truncate text-xs text-[var(--admin-muted)]">{summary}</span> : null}
+        </span>
+        <span className="flex shrink-0 items-center gap-3">
+          {action}
+          <span className="font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)] group-open:hidden">Abrir</span>
+          <span className="hidden font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--admin-cyan)] group-open:inline">Fechar</span>
+        </span>
+      </summary>
+      <div className="border-t border-[var(--admin-border)] p-4">{children}</div>
+    </details>
+  );
+}
+
 function Panel({ action, children, eyebrow, title }: { action?: ReactNode; children: ReactNode; eyebrow: string; title: string }) {
   return (
-    <div className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)]">
-      <div className="flex items-center justify-between gap-3 border-b border-[var(--admin-border)] px-3 py-2">
+    <div className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(15,23,42,0.04)]">
+      <div className="flex min-h-14 items-center justify-between gap-3 border-b border-[var(--admin-border)] px-4 py-3">
         <div>
           <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-[var(--admin-muted)]">{eyebrow}</p>
           <h4 className="text-sm font-semibold text-[var(--admin-foreground)]">{title}</h4>
         </div>
         {action}
       </div>
-      <div className="p-2.5">{children}</div>
+      <div className="p-4">{children}</div>
     </div>
   );
 }
@@ -3346,7 +3401,7 @@ function Field({ label, onChange, placeholder, value }: { label: string; onChang
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
-        className="h-9 rounded-md border border-[var(--admin-border)] bg-white px-3 text-sm text-[var(--admin-foreground)] outline-none transition focus:border-[var(--admin-cyan)]"
+        className="h-10 rounded-md border border-[var(--admin-border)] bg-white px-3 text-sm text-[var(--admin-foreground)] outline-none transition focus:border-[var(--admin-cyan)] focus:ring-3 focus:ring-[rgba(15,124,144,0.12)]"
       />
     </label>
   );
@@ -3360,7 +3415,7 @@ function TextAreaField({ label, onChange, rows, value }: { label: string; onChan
         value={value}
         onChange={(event) => onChange(event.target.value)}
         rows={rows}
-        className="w-full rounded-md border border-[var(--admin-border)] bg-white p-2.5 text-sm leading-5 text-[var(--admin-foreground)] outline-none transition focus:border-[var(--admin-cyan)]"
+        className="w-full rounded-md border border-[var(--admin-border)] bg-white p-3 text-sm leading-5 text-[var(--admin-foreground)] outline-none transition focus:border-[var(--admin-cyan)] focus:ring-3 focus:ring-[rgba(15,124,144,0.12)]"
       />
     </label>
   );
@@ -3374,7 +3429,7 @@ function NumberField({ label, onChange, value }: { label: string; onChange: (val
         value={value}
         onChange={(event) => onChange(safeNumber(event.target.value, value))}
         inputMode="numeric"
-        className="h-9 rounded-md border border-[var(--admin-border)] bg-white px-3 text-sm text-[var(--admin-foreground)] outline-none transition focus:border-[var(--admin-cyan)]"
+        className="h-10 rounded-md border border-[var(--admin-border)] bg-white px-3 text-sm text-[var(--admin-foreground)] outline-none transition focus:border-[var(--admin-cyan)] focus:ring-3 focus:ring-[rgba(15,124,144,0.12)]"
       />
     </label>
   );
@@ -3387,7 +3442,7 @@ function SelectField({ label, onChange, options, value }: { label: string; onCha
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="h-9 rounded-md border border-[var(--admin-border)] bg-white px-3 text-sm text-[var(--admin-foreground)] outline-none transition focus:border-[var(--admin-cyan)]"
+        className="h-10 rounded-md border border-[var(--admin-border)] bg-white px-3 text-sm text-[var(--admin-foreground)] outline-none transition focus:border-[var(--admin-cyan)] focus:ring-3 focus:ring-[rgba(15,124,144,0.12)]"
       >
         {options.map(([optionValue, labelText]) => (
           <option key={optionValue} value={optionValue}>{labelText}</option>
@@ -3420,8 +3475,8 @@ function SegmentedField({
             className={cn(
               "min-h-8 rounded-md px-2.5 text-[11px] font-bold text-[var(--admin-muted)] transition",
               value === optionValue
-                ? "bg-[rgba(200,90,31,0.1)] text-[var(--admin-cyan)] shadow-[inset_0_0_0_1px_rgba(200,90,31,0.18)]"
-                : "hover:bg-[rgba(184,122,22,0.07)] hover:text-[var(--admin-foreground)]"
+                ? "bg-[rgba(15,124,144,0.10)] text-[var(--admin-cyan)] shadow-[inset_0_0_0_1px_rgba(15,124,144,0.18)]"
+                : "hover:bg-[rgba(15,124,144,0.06)] hover:text-[var(--admin-foreground)]"
             )}
           >
             {labelText}
@@ -3461,8 +3516,8 @@ function CompactToggle({
       className={cn(
         "flex min-h-12 items-center justify-between gap-2 rounded-md border px-2.5 py-2 text-left transition",
         checked
-          ? "border-[rgba(200,90,31,0.24)] bg-[rgba(200,90,31,0.075)]"
-          : "border-[var(--admin-border)] bg-white hover:border-[rgba(200,90,31,0.18)]"
+          ? "border-[rgba(15,124,144,0.24)] bg-[rgba(15,124,144,0.08)]"
+          : "border-[var(--admin-border)] bg-white hover:border-[rgba(15,124,144,0.22)]"
       )}
     >
       <span className="min-w-0">
@@ -3473,7 +3528,7 @@ function CompactToggle({
               className={cn(
                 "shrink-0 rounded-full border px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-[0.08em]",
                 status === "partial"
-                  ? "border-[rgba(184,122,22,0.28)] bg-[rgba(184,122,22,0.08)] text-[var(--admin-cyan)]"
+                  ? "border-[rgba(15,124,144,0.28)] bg-[rgba(15,124,144,0.08)] text-[var(--admin-cyan)]"
                   : "border-[var(--admin-border)] bg-white text-[var(--admin-muted)]"
               )}
             >
@@ -3483,7 +3538,7 @@ function CompactToggle({
         </span>
         <span className="mt-0.5 line-clamp-2 block text-[11px] leading-4 text-[var(--admin-muted)]">{detail}</span>
       </span>
-      <span className={cn("h-5 w-9 shrink-0 rounded-full border p-0.5 transition", checked ? "border-[rgba(200,90,31,0.45)] bg-[rgba(200,90,31,0.18)]" : "border-[var(--admin-border)] bg-white")}>
+      <span className={cn("h-5 w-9 shrink-0 rounded-full border p-0.5 transition", checked ? "border-[rgba(15,124,144,0.45)] bg-[rgba(15,124,144,0.16)]" : "border-[var(--admin-border)] bg-white")}>
         <span className={cn("block size-3.5 rounded-full transition", checked ? "translate-x-4 bg-[var(--admin-cyan)]" : "bg-[var(--admin-muted)]")} />
       </span>
     </button>
@@ -3512,8 +3567,8 @@ function VoiceCard({
       className={cn(
         "rounded-md border p-2.5 text-left transition",
         active
-          ? "border-[rgba(200,90,31,0.3)] bg-[rgba(200,90,31,0.08)]"
-          : "border-[var(--admin-border)] bg-white hover:border-[rgba(200,90,31,0.18)]"
+          ? "border-[rgba(15,124,144,0.30)] bg-[rgba(15,124,144,0.08)]"
+          : "border-[var(--admin-border)] bg-white hover:border-[rgba(15,124,144,0.22)]"
       )}
     >
       <div className="flex items-start justify-between gap-3">
@@ -3537,15 +3592,15 @@ function ToggleTile({ checked, detail, onChange, title }: { checked: boolean; de
       className={cn(
         "flex min-h-16 items-start justify-between gap-2 rounded-md border p-2.5 text-left transition",
         checked
-          ? "border-[rgba(200,90,31,0.25)] bg-[rgba(200,90,31,0.08)]"
-          : "border-[var(--admin-border)] bg-white hover:border-[rgba(200,90,31,0.18)]"
+          ? "border-[rgba(15,124,144,0.25)] bg-[rgba(15,124,144,0.08)]"
+          : "border-[var(--admin-border)] bg-white hover:border-[rgba(15,124,144,0.22)]"
       )}
     >
       <span>
         <span className="block text-sm font-semibold text-[var(--admin-foreground)]">{title}</span>
         <span className="mt-1 block text-xs leading-5 text-[var(--admin-muted)]">{detail}</span>
       </span>
-      <span className={cn("mt-0.5 h-5 w-9 rounded-full border p-0.5 transition", checked ? "border-[rgba(200,90,31,0.45)] bg-[rgba(200,90,31,0.18)]" : "border-[var(--admin-border)] bg-white")}>
+      <span className={cn("mt-0.5 h-5 w-9 rounded-full border p-0.5 transition", checked ? "border-[rgba(15,124,144,0.45)] bg-[rgba(15,124,144,0.16)]" : "border-[var(--admin-border)] bg-white")}>
         <span className={cn("block size-3.5 rounded-full transition", checked ? "translate-x-4 bg-[var(--admin-cyan)]" : "bg-[var(--admin-muted)]")} />
       </span>
     </button>
@@ -3555,7 +3610,7 @@ function ToggleTile({ checked, detail, onChange, title }: { checked: boolean; de
 function WhatsappProfileAvatar({ connected, imageUrl, label }: { connected: boolean; imageUrl?: string; label: string }) {
   if (imageUrl) {
     return (
-      <div className="relative size-12 overflow-hidden rounded-full border border-[rgba(200,90,31,0.24)] bg-white">
+      <div className="relative size-12 overflow-hidden rounded-full border border-[rgba(15,124,144,0.24)] bg-white">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img alt={`Foto do WhatsApp ${label}`} src={imageUrl} className="size-full object-cover" />
         <span
@@ -3574,7 +3629,7 @@ function WhatsappProfileAvatar({ connected, imageUrl, label }: { connected: bool
         "flex size-12 items-center justify-center rounded-full border text-sm font-bold",
         connected
           ? "border-[rgba(34,197,94,0.35)] bg-[rgba(34,197,94,0.1)] text-[var(--admin-green)]"
-          : "border-[rgba(200,90,31,0.28)] bg-[rgba(200,90,31,0.07)] text-[var(--admin-cyan)]"
+          : "border-[rgba(15,124,144,0.28)] bg-[rgba(15,124,144,0.07)] text-[var(--admin-cyan)]"
       )}
     >
       {agentInitials(label)}
@@ -3589,7 +3644,7 @@ function CompactAgentAvatar({ connected, label }: { connected: boolean; label: s
         "grid size-9 shrink-0 place-items-center rounded-full border text-[11px] font-bold",
         connected
           ? "border-[rgba(34,197,94,0.3)] bg-[rgba(34,197,94,0.08)] text-[var(--admin-green)]"
-          : "border-[rgba(200,90,31,0.24)] bg-[rgba(200,90,31,0.06)] text-[var(--admin-cyan)]"
+          : "border-[rgba(15,124,144,0.24)] bg-[rgba(15,124,144,0.06)] text-[var(--admin-cyan)]"
       )}
     >
       {agentInitials(label)}
@@ -3611,14 +3666,14 @@ function AgentHealthCell({
   value: string;
 }) {
   const toneClass: Record<typeof tone, string> = {
-    cyan: "border-[rgba(200,90,31,0.20)] bg-[rgba(200,90,31,0.06)] text-[var(--admin-cyan)]",
+    cyan: "border-[rgba(15,124,144,0.22)] bg-[rgba(15,124,144,0.08)] text-[var(--admin-cyan)]",
     green: "border-[rgba(34,197,94,0.22)] bg-[rgba(34,197,94,0.08)] text-[var(--admin-green)]",
     purple: "border-[rgba(139,92,246,0.20)] bg-[rgba(139,92,246,0.07)] text-[var(--admin-purple)]",
     yellow: "border-[rgba(234,179,8,0.24)] bg-[rgba(234,179,8,0.08)] text-[var(--admin-yellow)]",
   };
 
   return (
-    <div className="grid min-w-0 grid-cols-[32px_minmax(0,1fr)] gap-2 border-r border-[var(--admin-border)] pr-3 last:border-r-0">
+    <div className="grid min-w-0 grid-cols-[32px_minmax(0,1fr)] gap-2 rounded-md border border-[var(--admin-border)] bg-white px-3 py-2">
       <span className={cn("grid size-8 place-items-center rounded-md border", toneClass[tone])}>{icon}</span>
       <div className="min-w-0">
         <p className="truncate text-[10px] font-semibold text-[var(--admin-muted)]">{label}</p>
@@ -3694,7 +3749,7 @@ function ActionButton({
       className={cn(
         "inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-[11px] font-semibold text-[var(--admin-foreground)] transition disabled:cursor-not-allowed disabled:opacity-45",
         tone === "primary"
-          ? "border-[rgba(200,90,31,0.45)] bg-[var(--admin-cyan)] text-white shadow-sm shadow-[rgba(200,90,31,0.18)] hover:bg-[rgba(180,78,24,1)]"
+          ? "border-[rgba(15,124,144,0.45)] bg-[var(--admin-cyan)] text-white shadow-sm shadow-[rgba(15,124,144,0.18)] hover:bg-[#0b6676]"
           : tone === "danger"
             ? "border-[rgba(239,68,68,0.32)] bg-[rgba(239,68,68,0.08)] hover:border-[var(--admin-red)]"
             : "border-[var(--admin-border)] bg-white hover:border-[var(--admin-cyan)]"
