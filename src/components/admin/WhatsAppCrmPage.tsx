@@ -308,6 +308,29 @@ function scoreTone(score: number): ResourceTone {
   return "muted";
 }
 
+function leadPriorityTone(lead: WhatsAppCrmLeadCard): ResourceTone {
+  if (lead.slaStatus === "vencido" || lead.waitingForReply) return "red";
+  if (lead.humanInterventionActive || lead.slaStatus === "urgente") return "yellow";
+  if (lead.score >= 85) return "cyan";
+  if (lead.score >= 70) return "green";
+  return "muted";
+}
+
+function leadPriorityLabel(lead: WhatsAppCrmLeadCard) {
+  if (lead.slaStatus === "vencido") return "SLA vencido";
+  if (lead.waitingForReply) return "Responder agora";
+  if (lead.humanInterventionActive) return "Humano";
+  if (lead.slaStatus === "urgente") return "SLA urgente";
+  if (lead.score >= 85) return "VIP";
+  if (lead.score >= 70) return "Quente";
+  if (lead.nextFollowUpAt || lead.followUpCount > 0) return "Follow-up";
+  return "Monitorar";
+}
+
+function leadStageIndex(stage: WhatsAppCrmStage) {
+  return Math.max(0, crmStages.findIndex((item) => item.key === stage));
+}
+
 function reviewTone(score: number, verdict: string): ResourceTone {
   const normalized = verdict.toLowerCase();
   if (normalized.includes("bloquear") || score < 55) return "red";
@@ -353,7 +376,7 @@ function LeadScore({ score }: { score: number }) {
         <span className={cn("font-mono text-xs font-bold", toneText[tone])}>{score}</span>
         <span className="text-[10px] uppercase tracking-[0.12em] text-[var(--admin-muted)]">score</span>
       </div>
-      <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+      <div className="h-1.5 overflow-hidden rounded-full bg-[rgba(113,128,140,0.18)]">
         <div className={cn("h-full rounded-full", tone === "cyan" ? "bg-[var(--admin-cyan)]" : tone === "green" ? "bg-[var(--admin-green)]" : tone === "yellow" ? "bg-[var(--admin-yellow)]" : "bg-white/25")} style={{ width: `${Math.max(4, Math.min(score, 100))}%` }} />
       </div>
     </div>
@@ -660,30 +683,43 @@ function OperationalReadinessPanel({
 
 function LeadQueueItem({
   lead,
+  rank,
   selected,
+  total,
   onSelect,
 }: {
   lead: WhatsAppCrmLeadCard;
+  rank: number;
   selected: boolean;
+  total: number;
   onSelect: () => void;
 }) {
+  const priorityTone = leadPriorityTone(lead);
+  const stagePosition = leadStageIndex(lead.crmStage);
+
   return (
     <button
       type="button"
       onClick={onSelect}
       className={cn(
-        "grid w-full gap-3 border-b border-[var(--admin-border)] px-4 py-4 text-left transition last:border-b-0 lg:grid-cols-[minmax(0,1fr)_120px_112px]",
-        selected ? "bg-[rgba(0,243,255,0.06)]" : "hover:bg-[rgba(255,255,255,0.03)]"
+        "grid w-full gap-3 border-b border-[var(--admin-border)] px-4 py-3 text-left transition last:border-b-0 lg:grid-cols-[52px_minmax(0,1fr)_112px]",
+        selected
+          ? "bg-[rgba(15,124,144,0.08)] shadow-[inset_3px_0_0_var(--admin-cyan)]"
+          : "hover:bg-[rgba(15,124,144,0.04)]"
       )}
     >
+      <div className="flex flex-col items-center gap-1 rounded-md border border-[var(--admin-border)] bg-white px-2 py-2">
+        <span className="font-mono text-sm font-bold text-[var(--admin-foreground)]">#{String(rank).padStart(2, "0")}</span>
+        <span className="font-mono text-[9px] text-[var(--admin-muted)]">de {total}</span>
+      </div>
+
       <div className="flex min-w-0 items-start gap-3">
         <LeadAvatar lead={lead} />
-        <div className="min-w-0">
-          <div className="flex min-w-0 items-center gap-2">
-            <p className="truncate text-sm font-semibold text-white">{lead.name}</p>
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <p className="truncate text-sm font-semibold text-[var(--admin-foreground)]">{lead.name}</p>
+            <StatusBadge tone={priorityTone}>{leadPriorityLabel(lead)}</StatusBadge>
             <StatusBadge tone={crmStageTone[lead.crmStage]}>{crmStageLabels[lead.crmStage]}</StatusBadge>
-            {lead.waitingForReply && <StatusBadge tone="red">sem resposta</StatusBadge>}
-            {lead.humanInterventionActive && <StatusBadge tone="yellow">humano</StatusBadge>}
             {lead.optOut && <StatusBadge tone="muted">opt-out</StatusBadge>}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--admin-muted)]">
@@ -695,9 +731,27 @@ function LeadQueueItem({
             {lead.assignedToLabel && <span>resp. {lead.assignedToLabel}</span>}
             <span>{lead.messageCount} msgs</span>
           </div>
-          <p className="mt-3 line-clamp-2 text-xs leading-5 text-[var(--admin-soft)]">{lead.lastMessagePreview}</p>
-          <div className="mt-3 flex flex-wrap gap-1.5">
-            {lead.tags.map((tag) => (
+          <div className="mt-3 grid gap-2 xl:grid-cols-[minmax(0,1fr)_180px] xl:items-center">
+            <p className="line-clamp-2 text-xs leading-5 text-[var(--admin-soft)]">{lead.lastMessagePreview || lead.nextAction}</p>
+            <div className="grid gap-1">
+              <div className="flex gap-1" aria-label={`Etapa ${crmStageLabels[lead.crmStage]}`}>
+                {crmStages.map((stage, index) => (
+                  <span
+                    key={stage.key}
+                    className={cn(
+                      "h-1.5 flex-1 rounded-full",
+                      index <= stagePosition ? "bg-[var(--admin-cyan)]" : "bg-[rgba(113,128,140,0.18)]"
+                    )}
+                  />
+                ))}
+              </div>
+              <span className="truncate text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--admin-muted)]">
+                {crmStageLabels[lead.crmStage]}
+              </span>
+            </div>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {[...lead.tags, ...lead.internalTags].slice(0, 5).map((tag) => (
               <span key={tag} className="rounded border border-[var(--admin-border)] bg-white/[0.03] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--admin-muted)]">
                 {tag}
               </span>
@@ -705,8 +759,8 @@ function LeadQueueItem({
           </div>
         </div>
       </div>
-      <LeadScore score={lead.score} />
       <div className="flex flex-col items-start gap-2 lg:items-end">
+        <LeadScore score={lead.score} />
         <StatusBadge tone={slaTone[lead.slaStatus]}>{slaLabel[lead.slaStatus]}</StatusBadge>
         <span className="inline-flex items-center gap-1 text-xs text-[var(--admin-muted)]">
           <Clock3 size={12} />
@@ -1154,21 +1208,24 @@ function LeadDetail({
 function CrmFunnel({
   leads,
   onSelect,
+  selectedLeadId,
 }: {
   leads: WhatsAppCrmLeadCard[];
   onSelect: (lead: WhatsAppCrmLeadCard) => void;
+  selectedLeadId?: string;
 }) {
   return (
     <DashboardCard
-      title="Funil CRM WhatsApp"
-      eyebrow="entrada / qualificacao / fechamento"
+      title="Mapa do funil"
+      eyebrow="posicao / etapa / proxima acao"
       action={<StatusBadge tone="cyan">{leads.length} leads</StatusBadge>}
+      contentClassName="p-3"
     >
-      <div className="grid gap-3 xl:grid-cols-6">
+      <div className="grid gap-3 overflow-x-auto pb-1 lg:grid-cols-3 2xl:grid-cols-6">
         {crmStages.map((stage) => {
           const stageLeads = leads.filter((lead) => lead.crmStage === stage.key);
           return (
-            <section key={stage.key} className="min-h-[220px] rounded-lg border border-[var(--admin-border)] bg-black/20">
+            <section key={stage.key} className="min-h-[188px] min-w-[220px] rounded-lg border border-[var(--admin-border)] bg-white">
               <div className="flex items-center justify-between gap-2 border-b border-[var(--admin-border)] px-3 py-3">
                 <StatusBadge tone={stage.tone}>{stage.label}</StatusBadge>
                 <span className="font-mono text-xs text-[var(--admin-muted)]">{stageLeads.length}</span>
@@ -1179,13 +1236,18 @@ function CrmFunnel({
                     key={lead.id}
                     type="button"
                     onClick={() => onSelect(lead)}
-                    className="rounded-md border border-[var(--admin-border)] bg-white/[0.02] px-3 py-2 text-left transition hover:border-[var(--admin-cyan)]"
+                    className={cn(
+                      "rounded-md border px-3 py-2 text-left transition hover:border-[var(--admin-cyan)]",
+                      selectedLeadId === lead.id
+                        ? "border-[rgba(15,124,144,0.34)] bg-[rgba(15,124,144,0.08)]"
+                        : "border-[var(--admin-border)] bg-[rgba(245,247,250,0.7)]"
+                    )}
                   >
                     <div className="flex items-start justify-between gap-2">
-                      <p className="min-w-0 truncate text-xs font-semibold text-white">{lead.name}</p>
+                      <p className="min-w-0 truncate text-xs font-semibold text-[var(--admin-foreground)]">{lead.name}</p>
                       <span className={cn("font-mono text-xs font-bold", toneText[scoreTone(lead.score)])}>{lead.score}</span>
                     </div>
-                    <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-[var(--admin-muted)]">{lead.nextAction}</p>
+                    <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-[var(--admin-muted)]">{leadPriorityLabel(lead)} / {lead.nextAction}</p>
                     <div className="mt-2 flex flex-wrap gap-1">
                       {lead.waitingForReply && <StatusBadge tone="red">sem resposta</StatusBadge>}
                       {lead.humanInterventionActive && <StatusBadge tone="yellow">humano</StatusBadge>}
@@ -1193,7 +1255,7 @@ function CrmFunnel({
                   </button>
                 ))}
                 {!stageLeads.length && (
-                  <div className="px-2 py-8 text-center text-xs text-[var(--admin-muted)]">Sem leads nesta etapa.</div>
+                  <div className="px-2 py-7 text-center text-xs text-[var(--admin-muted)]">Sem leads nesta etapa.</div>
                 )}
                 {stageLeads.length > 4 && (
                   <div className="px-2 pb-2 text-center font-mono text-[10px] text-[var(--admin-muted)]">
@@ -1222,7 +1284,7 @@ export function WhatsAppCrmPage({
 }) {
   const router = useRouter();
   const data = crmData.data;
-  const [panelTab, setPanelTab] = useState<PanelTabKey>("agents");
+  const [panelTab, setPanelTab] = useState<PanelTabKey>("inbox");
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<FilterKey>("todos");
   const [selectedId, setSelectedId] = useState<string | null>(data.leads[0]?.id || null);
@@ -1766,69 +1828,86 @@ export function WhatsAppCrmPage({
         </section>
       ) : (
         <>
-      <section className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(380px,0.75fr)]">
-        <DashboardCard
-          title="Fila de atendimento"
-          eyebrow="leads / mensagens / prioridade"
-          action={<StatusBadge tone="cyan">{filteredLeads.length} na visao</StatusBadge>}
-          contentClassName="p-0"
-        >
-          <div className="border-b border-[var(--admin-border)] p-4">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div className="relative min-w-0 flex-1">
-                <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--admin-muted)]" />
-                <input
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Buscar lead, telefone, agente ou mensagem"
-                  className="h-10 w-full rounded-lg border border-[var(--admin-border)] bg-white pl-9 pr-3 text-sm text-[var(--admin-foreground)] outline-none placeholder:text-[var(--admin-muted)] focus:border-[var(--admin-cyan)]"
-                />
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {(Object.keys(filterLabels) as FilterKey[]).map((key) => (
-                  <button
-                    key={key}
-                    type="button"
-                    onClick={() => setFilter(key)}
-                    className={cn(
-                      "h-9 rounded-md border px-3 text-xs font-semibold transition",
-                      filter === key
-                        ? "border-[rgba(15,124,144,0.28)] bg-[rgba(15,124,144,0.10)] text-[var(--admin-cyan)]"
-                        : "border-[var(--admin-border)] bg-white text-[var(--admin-muted)] hover:text-[var(--admin-foreground)]"
-                    )}
-                  >
-                    {filterLabels[key]} {counts[key]}
-                  </button>
-                ))}
+      <section className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_430px] 2xl:items-start">
+        <div className="grid min-w-0 gap-4">
+          <CrmFunnel
+            leads={data.leads}
+            selectedLeadId={selectedLead?.id}
+            onSelect={(lead) => {
+              setFilter("todos");
+              setSearch("");
+              setSelectedId(lead.id);
+              setManualReply("");
+              setContextDraft(contextDraftFromLead(lead));
+              setStageDraft(stageDraftFromLead(lead));
+            }}
+          />
+
+          <DashboardCard
+            title="Fila priorizada"
+            eyebrow="ranking / SLA / etapa"
+            action={<StatusBadge tone="cyan">{filteredLeads.length} na visao</StatusBadge>}
+            contentClassName="p-0"
+          >
+            <div className="border-b border-[var(--admin-border)] p-4">
+              <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
+                <div className="relative min-w-0">
+                  <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--admin-muted)]" />
+                  <input
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                    placeholder="Buscar lead, telefone, agente ou mensagem"
+                    className="h-10 w-full rounded-lg border border-[var(--admin-border)] bg-white pl-9 pr-3 text-sm text-[var(--admin-foreground)] outline-none placeholder:text-[var(--admin-muted)] focus:border-[var(--admin-cyan)] focus:ring-3 focus:ring-[rgba(15,124,144,0.12)]"
+                  />
+                </div>
+                <div className="flex flex-wrap gap-2 xl:justify-end">
+                  {(Object.keys(filterLabels) as FilterKey[]).map((key) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setFilter(key)}
+                      className={cn(
+                        "h-9 rounded-md border px-3 text-xs font-semibold transition",
+                        filter === key
+                          ? "border-[rgba(15,124,144,0.28)] bg-[rgba(15,124,144,0.10)] text-[var(--admin-cyan)]"
+                          : "border-[var(--admin-border)] bg-white text-[var(--admin-muted)] hover:border-[rgba(15,124,144,0.24)] hover:text-[var(--admin-foreground)]"
+                      )}
+                    >
+                      {filterLabels[key]} {counts[key]}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
-          </div>
-          <div className="max-h-[740px] overflow-auto">
-            {filteredLeads.length ? (
-              filteredLeads.map((lead) => (
-                <LeadQueueItem
-                  key={lead.id}
-                  lead={lead}
-                  selected={selectedLead?.id === lead.id}
-                  onSelect={() => {
-                    setSelectedId(lead.id);
-                    setManualReply("");
-                    setContextDraft(contextDraftFromLead(lead));
-                    setStageDraft(stageDraftFromLead(lead));
-                  }}
-                />
-              ))
-            ) : (
-              <div className="px-4 py-10 text-center text-sm text-[var(--admin-muted)]">
-                Nenhum atendimento encontrado para este filtro.
-              </div>
-            )}
-          </div>
-        </DashboardCard>
+            <div className="max-h-[760px] overflow-auto">
+              {filteredLeads.length ? (
+                filteredLeads.map((lead, index) => (
+                  <LeadQueueItem
+                    key={lead.id}
+                    lead={lead}
+                    rank={index + 1}
+                    total={filteredLeads.length}
+                    selected={selectedLead?.id === lead.id}
+                    onSelect={() => {
+                      setSelectedId(lead.id);
+                      setManualReply("");
+                      setContextDraft(contextDraftFromLead(lead));
+                      setStageDraft(stageDraftFromLead(lead));
+                    }}
+                  />
+                ))
+              ) : (
+                <div className="px-4 py-10 text-center text-sm text-[var(--admin-muted)]">
+                  Nenhum atendimento encontrado para este filtro.
+                </div>
+              )}
+            </div>
+          </DashboardCard>
+        </div>
 
-        <div className="grid content-start gap-4">
-          <DashboardCard title="Cockpit do CRM" eyebrow="prioridade / automacao">
-            <div className="grid gap-2 sm:grid-cols-2">
+        <aside className="grid min-w-0 gap-4 2xl:sticky 2xl:top-24 2xl:self-start">
+          <DashboardCard title="Operacao agora" eyebrow="triagem / automacao">
+            <div className="grid gap-2 sm:grid-cols-2 2xl:grid-cols-1">
               {cockpitCards.map((card) => {
                 const Icon = card.icon;
                 return (
@@ -1847,32 +1926,42 @@ export function WhatsAppCrmPage({
             </div>
           </DashboardCard>
 
-          <LeadDetail
-            lead={selectedLead}
-            busyAction={busyAction}
-            manualReply={manualReply}
-            contextDraft={selectedContextDraft}
-            stageDraft={selectedStageDraft}
-            onLeadAction={(action, lead) => void runLeadAction(action, lead)}
-            onManualReplyChange={setManualReply}
-            onSendManualReply={(lead) => void sendManualReply(lead)}
-            onContextDraftChange={(patch) => {
-              if (selectedLead) updateLeadContextDraft(selectedLead, patch);
-            }}
-            onSaveContext={(lead) => void saveLeadContext(lead)}
-            onStageDraftChange={(patch) => {
-              if (selectedLead) updateLeadStageDraft(selectedLead, patch);
-            }}
-            onSaveStage={(lead) => void saveLeadStage(lead)}
-          />
+          <div className="2xl:max-h-[calc(100vh-360px)] 2xl:overflow-auto 2xl:pr-1">
+            <LeadDetail
+              lead={selectedLead}
+              busyAction={busyAction}
+              manualReply={manualReply}
+              contextDraft={selectedContextDraft}
+              stageDraft={selectedStageDraft}
+              onLeadAction={(action, lead) => void runLeadAction(action, lead)}
+              onManualReplyChange={setManualReply}
+              onSendManualReply={(lead) => void sendManualReply(lead)}
+              onContextDraftChange={(patch) => {
+                if (selectedLead) updateLeadContextDraft(selectedLead, patch);
+              }}
+              onSaveContext={(lead) => void saveLeadContext(lead)}
+              onStageDraftChange={(patch) => {
+                if (selectedLead) updateLeadStageDraft(selectedLead, patch);
+              }}
+              onSaveStage={(lead) => void saveLeadStage(lead)}
+            />
+          </div>
 
-          <DashboardCard title="Atendentes" eyebrow="numeros / agentes / carga">
-            <div className="grid gap-3">
+          <details className="group rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(81,60,36,0.06)]">
+            <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-4 px-4">
+              <span className="min-w-0">
+                <span className="block font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--admin-muted)]">numeros / agentes / carga</span>
+                <span className="block truncate text-sm font-semibold text-[var(--admin-foreground)]">Atendentes</span>
+              </span>
+              <span className="font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)] group-open:hidden">Abrir</span>
+              <span className="hidden font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--admin-cyan)] group-open:inline">Fechar</span>
+            </summary>
+            <div className="grid gap-3 border-t border-[var(--admin-border)] p-4">
               {data.agents.map((agent) => (
-                <article key={agent.agentKey} className="rounded-lg border border-[var(--admin-border)] bg-white/[0.02] px-3 py-3">
+                <article key={agent.agentKey} className="rounded-lg border border-[var(--admin-border)] bg-white px-3 py-3">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-white">{agent.name}</p>
+                      <p className="truncate text-sm font-semibold text-[var(--admin-foreground)]">{agent.name}</p>
                       <p className="mt-1 truncate font-mono text-[10px] text-[var(--admin-muted)]">{agent.agentKey}</p>
                     </div>
                     <StatusBadge tone={agent.connected ? "green" : "yellow"}>{agent.connected ? "online" : agent.status}</StatusBadge>
@@ -1886,22 +1975,8 @@ export function WhatsAppCrmPage({
                 </article>
               ))}
             </div>
-          </DashboardCard>
-        </div>
-      </section>
-
-      <section className="mt-4">
-        <CrmFunnel
-          leads={data.leads}
-          onSelect={(lead) => {
-            setFilter("todos");
-            setSearch("");
-            setSelectedId(lead.id);
-            setManualReply("");
-            setContextDraft(contextDraftFromLead(lead));
-            setStageDraft(stageDraftFromLead(lead));
-          }}
-        />
+          </details>
+        </aside>
       </section>
 
       <section className="mt-4 grid gap-4 xl:grid-cols-2">
@@ -1943,9 +2018,9 @@ export function WhatsAppCrmPage({
           <div className="grid gap-2">
             {data.followUps.length ? (
               data.followUps.slice(0, 8).map((followUp) => (
-                <div key={followUp.id} className="grid gap-3 rounded-md border border-[var(--admin-border)] bg-white/[0.02] px-3 py-3 sm:grid-cols-[minmax(0,1fr)_120px]">
+                <div key={followUp.id} className="grid gap-3 rounded-md border border-[var(--admin-border)] bg-white px-3 py-3 sm:grid-cols-[minmax(0,1fr)_120px]">
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-white">{followUp.leadName}</p>
+                    <p className="truncate text-sm font-semibold text-[var(--admin-foreground)]">{followUp.leadName}</p>
                     <p className="mt-1 truncate text-xs text-[var(--admin-muted)]">{followUp.reason} / {formatPhone(followUp.phone)}</p>
                   </div>
                   <div className="flex flex-col items-start gap-1 sm:items-end">
@@ -1957,7 +2032,7 @@ export function WhatsAppCrmPage({
                 </div>
               ))
             ) : (
-              <div className="flex items-center gap-3 rounded-md border border-[var(--admin-border)] bg-white/[0.02] px-3 py-4 text-sm text-[var(--admin-muted)]">
+              <div className="flex items-center gap-3 rounded-md border border-[var(--admin-border)] bg-white px-3 py-4 text-sm text-[var(--admin-muted)]">
                 <PauseCircle size={16} />
                 Nenhum follow-up registrado ainda.
               </div>
@@ -1971,9 +2046,9 @@ export function WhatsAppCrmPage({
               .filter((lead) => lead.humanInterventionActive || lead.slaStatus === "vencido" || lead.score >= 85)
               .slice(0, 8)
               .map((lead) => (
-                <div key={lead.id} className="flex items-center justify-between gap-3 rounded-md border border-[var(--admin-border)] bg-white/[0.02] px-3 py-3">
+                <div key={lead.id} className="flex items-center justify-between gap-3 rounded-md border border-[var(--admin-border)] bg-white px-3 py-3">
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-white">{lead.name}</p>
+                    <p className="truncate text-sm font-semibold text-[var(--admin-foreground)]">{lead.name}</p>
                     <p className="mt-1 truncate text-xs text-[var(--admin-muted)]">{lead.nextAction}</p>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
@@ -1985,7 +2060,7 @@ export function WhatsAppCrmPage({
                 </div>
               ))}
             {!data.leads.some((lead) => lead.humanInterventionActive || lead.slaStatus === "vencido" || lead.score >= 85) && (
-              <div className="rounded-md border border-[var(--admin-border)] bg-white/[0.02] px-3 py-4 text-sm text-[var(--admin-muted)]">
+              <div className="rounded-md border border-[var(--admin-border)] bg-white px-3 py-4 text-sm text-[var(--admin-muted)]">
                 Sem atendimento critico na visao atual.
               </div>
             )}
@@ -1993,21 +2068,29 @@ export function WhatsAppCrmPage({
         </DashboardCard>
       </section>
 
-      <section className="mt-4">
-        <DashboardCard
-          title="Auditoria IA"
-          eyebrow="naturalidade / utilidade / transparencia"
-          action={<Gauge size={16} className="text-[var(--admin-cyan)]" />}
-        >
+      <details className="group mt-4 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(81,60,36,0.06)]">
+        <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-4 px-4">
+          <span className="min-w-0">
+            <span className="block font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--admin-muted)]">naturalidade / utilidade / transparencia</span>
+            <span className="block truncate text-sm font-semibold text-[var(--admin-foreground)]">Auditoria IA</span>
+          </span>
+          <span className="flex shrink-0 items-center gap-3">
+            <StatusBadge tone={reviewAlerts ? "yellow" : "cyan"}>{data.reviews.length} reviews</StatusBadge>
+            <Gauge size={16} className="text-[var(--admin-cyan)]" />
+            <span className="font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)] group-open:hidden">Abrir</span>
+            <span className="hidden font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--admin-cyan)] group-open:inline">Fechar</span>
+          </span>
+        </summary>
+        <div className="border-t border-[var(--admin-border)] p-4">
           <div className="grid gap-2 xl:grid-cols-2">
             {data.reviews.length ? (
               data.reviews.slice(0, 10).map((review) => {
                 const tone = reviewTone(review.score, review.verdict);
                 return (
-                  <article key={review.id} className="rounded-md border border-[var(--admin-border)] bg-white/[0.02] px-3 py-3">
+                  <article key={review.id} className="rounded-md border border-[var(--admin-border)] bg-white px-3 py-3">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-white">{review.leadName}</p>
+                        <p className="truncate text-sm font-semibold text-[var(--admin-foreground)]">{review.leadName}</p>
                         <p className="mt-1 truncate text-xs text-[var(--admin-muted)]">
                           {review.reviewType} / {review.agentKey} / {formatRelative(review.createdAt)}
                         </p>
@@ -2021,7 +2104,7 @@ export function WhatsAppCrmPage({
                     {review.flags.length > 0 && (
                       <div className="mt-3 flex flex-wrap gap-1.5">
                         {review.flags.slice(0, 5).map((flag) => (
-                          <span key={flag} className="rounded border border-[var(--admin-border)] bg-black/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--admin-muted)]">
+                          <span key={flag} className="rounded border border-[var(--admin-border)] bg-[rgba(245,247,250,0.7)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--admin-muted)]">
                             {flag}
                           </span>
                         ))}
@@ -2031,13 +2114,13 @@ export function WhatsAppCrmPage({
                 );
               })
             ) : (
-              <div className="rounded-md border border-[var(--admin-border)] bg-white/[0.02] px-3 py-4 text-sm text-[var(--admin-muted)]">
+              <div className="rounded-md border border-[var(--admin-border)] bg-white px-3 py-4 text-sm text-[var(--admin-muted)]">
                 Nenhuma auditoria registrada ainda.
               </div>
             )}
           </div>
-        </DashboardCard>
-      </section>
+        </div>
+      </details>
         </>
       )}
     </div>

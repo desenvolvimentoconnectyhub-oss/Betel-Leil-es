@@ -5,11 +5,11 @@ import { cn } from "@/lib/utils";
 type StatusTone = "cyan" | "green" | "yellow" | "red" | "purple" | "muted";
 
 const toneClass: Record<StatusTone, string> = {
-  cyan: "border-[rgba(255,90,31,0.32)] bg-[rgba(255,90,31,0.09)] text-[var(--admin-cyan)]",
+  cyan: "border-[rgba(15,124,144,0.30)] bg-[rgba(15,124,144,0.09)] text-[var(--admin-cyan)]",
   green: "border-[rgba(34,197,94,0.28)] bg-[rgba(34,197,94,0.08)] text-[var(--admin-green)]",
   yellow: "border-[rgba(234,179,8,0.28)] bg-[rgba(234,179,8,0.08)] text-[var(--admin-yellow)]",
   red: "border-[rgba(239,68,68,0.32)] bg-[rgba(239,68,68,0.08)] text-[var(--admin-red)]",
-  purple: "border-[rgba(196,122,44,0.3)] bg-[rgba(196,122,44,0.09)] text-[var(--admin-purple)]",
+  purple: "border-[rgba(105,86,184,0.30)] bg-[rgba(105,86,184,0.09)] text-[var(--admin-purple)]",
   muted: "border-[var(--admin-border)] bg-[rgba(255,255,255,0.03)] text-[var(--admin-muted)]",
 };
 
