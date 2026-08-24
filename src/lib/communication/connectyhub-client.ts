@@ -2042,10 +2042,12 @@ function whatsappInstanceSummaryFromRow(row: Record<string, unknown>): WhatsAppA
         cleanString(whatsappProfile.profileImageUrl) ||
         cleanString(whatsappProfile.displayName))
   );
+  const terminallyDisconnected = connectionStateIsTerminallyDisconnected(status);
   const connected =
-    status === "connected" ||
-    Boolean(row.connected_at) ||
-    (!connectionStateIsTerminallyDisconnected(status) && hasSyncedProfile);
+    !terminallyDisconnected &&
+    (status === "connected" ||
+      Boolean(row.connected_at) ||
+      hasSyncedProfile);
 
   return {
     agentKey,
@@ -2061,7 +2063,7 @@ function whatsappInstanceSummaryFromRow(row: Record<string, unknown>): WhatsAppA
     status,
     runtimeStatus,
     connected,
-    connectedAt: cleanString(row.connected_at) || undefined,
+    connectedAt: terminallyDisconnected ? undefined : cleanString(row.connected_at) || undefined,
     updatedAt: cleanString(row.updated_at) || undefined,
   };
 }
@@ -2218,17 +2220,12 @@ function willianStateLooksConnected(state: WillianInstanceState) {
     state.finalStatus ||
     state.connection?.finalStatus ||
     state.connection?.status;
-  const hasSyncedProfile = Boolean(
-    cleanString(state.phoneNumber) &&
-      (cleanString(state.profileImageSyncedAt) ||
-        cleanString(state.profileImageUrl) ||
-        cleanString(state.displayName))
-  );
+  if (connectionStateIsTerminallyDisconnected(status)) return false;
 
   return Boolean(
     state.status?.connected ||
       state.status?.loggedIn ||
-      (!connectionStateIsTerminallyDisconnected(status) && hasSyncedProfile)
+      normalizeConnectionState(status, false) === "connected"
   );
 }
 
@@ -2252,10 +2249,18 @@ function ensureWillianSummary(
   const hasWillian = summaries.some(
     (summary) => summary.agentKey === WILLIAN_AGENT_KEY || summary.instanceName === state.instanceName
   );
-  const connected = willianStateLooksConnected(state);
+  const stateStatus =
+    state.status?.state ||
+    state.finalStatus ||
+    state.connection?.finalStatus ||
+    state.connection?.status;
+  const stateDisconnected = connectionStateIsTerminallyDisconnected(stateStatus);
+  const connected = stateDisconnected ? false : willianStateLooksConnected(state);
   if (hasWillian) {
     return summaries.map((summary) => {
       if (summary.agentKey !== WILLIAN_AGENT_KEY && summary.instanceName !== state.instanceName) return summary;
+      const disconnected = stateDisconnected || connectionStateIsTerminallyDisconnected(summary.status);
+      const summaryConnected = disconnected ? false : summary.connected || connected;
       return {
         ...summary,
         agentName: summary.agentName || WILLIAN_AGENT_NAME,
@@ -2265,9 +2270,9 @@ function ensureWillianSummary(
         displayName: summary.displayName || state.displayName,
         profileImageUrl: summary.profileImageUrl || state.profileImageUrl,
         profileImageSyncedAt: summary.profileImageSyncedAt || state.profileImageSyncedAt,
-        status: summary.connected || connected ? "connected" : summary.status || state.status?.state || "draft",
-        connected: summary.connected || connected,
-        connectedAt: summary.connectedAt || (connected ? state.profileImageSyncedAt : undefined),
+        status: disconnected ? "disconnected" : summaryConnected ? "connected" : summary.status || state.status?.state || "draft",
+        connected: summaryConnected,
+        connectedAt: disconnected ? undefined : summary.connectedAt || (summaryConnected ? state.profileImageSyncedAt : undefined),
         updatedAt: summary.updatedAt || state.profileImageSyncedAt,
       };
     });
