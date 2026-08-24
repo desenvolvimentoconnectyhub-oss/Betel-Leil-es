@@ -1944,6 +1944,14 @@ function ConnectionTab({
               onClick={() => runInstanceAction("generateQr", connectionPayload)}
             />
             <ActionButton
+              disabled={!selectedHasInstance}
+              icon={<RefreshCw size={14} />}
+              label="Resetar sessão"
+              loading={loading === "reset"}
+              onClick={() => runInstanceAction("reset", connectionPayload)}
+              tone="danger"
+            />
+            <ActionButton
               icon={<Power size={14} />}
               label="Desconectar"
               loading={loading === "disconnectWhatsappAgent"}
