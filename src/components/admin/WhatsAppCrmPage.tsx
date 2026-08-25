@@ -9,7 +9,6 @@ import {
   ChevronDown,
   CheckCircle2,
   ClipboardCheck,
-  Clock3,
   ExternalLink,
   Flame,
   Gauge,
@@ -327,10 +326,6 @@ function leadPriorityLabel(lead: WhatsAppCrmLeadCard) {
   return "Monitorar";
 }
 
-function leadStageIndex(stage: WhatsAppCrmStage) {
-  return Math.max(0, crmStages.findIndex((item) => item.key === stage));
-}
-
 function reviewTone(score: number, verdict: string): ResourceTone {
   const normalized = verdict.toLowerCase();
   if (normalized.includes("bloquear") || score < 55) return "red";
@@ -348,16 +343,6 @@ function TimelineMessageIcon({ item }: { item: WhatsAppCrmTimelineItem }) {
   return <Bot size={13} />;
 }
 
-function messageKindLabel(item: WhatsAppCrmTimelineItem) {
-  const messageType = item.messageType.toLowerCase();
-  const mimeType = item.mediaMimeType.toLowerCase();
-  if (messageType.includes("audio") || mimeType.includes("audio")) return "Audio";
-  if (messageType.includes("image") || mimeType.includes("image")) return "Imagem";
-  if (item.mediaUrl) return "Midia";
-  if (item.authorType === "human") return "Humano";
-  return "Texto";
-}
-
 function timelineTimestamp(value: string) {
   const time = new Date(value).getTime();
   return Number.isFinite(time) ? time : 0;
@@ -370,7 +355,7 @@ function sortedTimeline(items: WhatsAppCrmTimelineItem[]) {
 function timelineActorLabel(item: WhatsAppCrmTimelineItem) {
   if (item.direction === "inbound") return item.authorLabel || "Lead";
   if (item.authorType === "human") return item.authorLabel || "Atendente";
-  if (item.authorType === "ai") return item.authorLabel && item.authorLabel !== "Agente" ? item.authorLabel : "Evelyn";
+  if (item.authorType === "ai") return "Evelyn";
   return item.authorLabel || "Sistema";
 }
 
@@ -715,19 +700,15 @@ function OperationalReadinessPanel({
 
 function LeadQueueItem({
   lead,
-  rank,
   selected,
-  total,
   onSelect,
 }: {
   lead: WhatsAppCrmLeadCard;
-  rank: number;
   selected: boolean;
-  total: number;
   onSelect: () => void;
 }) {
   const priorityTone = leadPriorityTone(lead);
-  const stagePosition = leadStageIndex(lead.crmStage);
+  const visibleTags = [...lead.tags, ...lead.internalTags].slice(0, 2);
 
   return (
     <button
@@ -740,67 +721,32 @@ function LeadQueueItem({
           : "hover:bg-[rgba(15,124,144,0.04)]"
       )}
     >
-      <div className="flex min-w-0 items-start justify-between gap-3">
-        <div className="flex min-w-0 items-start gap-3">
-          <LeadAvatar lead={lead} size="sm" />
-          <div className="min-w-0">
-            <div className="flex min-w-0 items-center gap-2">
+      <div className="grid min-w-0 grid-cols-[36px_minmax(0,1fr)] gap-3">
+        <LeadAvatar lead={lead} size="sm" />
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-start justify-between gap-2">
+            <div className="min-w-0">
               <p className="truncate text-sm font-semibold text-[var(--admin-foreground)]">{lead.name}</p>
-              <span className="shrink-0 font-mono text-[10px] text-[var(--admin-muted)]">
-                #{String(rank).padStart(2, "0")}/{total}
-              </span>
+              <p className="mt-0.5 truncate text-[11px] text-[var(--admin-muted)]">{formatPhone(lead.phone)}</p>
             </div>
-            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-[var(--admin-muted)]">
-              <span className="inline-flex min-w-0 items-center gap-1">
-                <Phone size={11} />
-                <span className="truncate">{formatPhone(lead.phone)}</span>
-              </span>
-              <span>{lead.messageCount} msgs</span>
-              {lead.assignedToLabel && <span>resp. {lead.assignedToLabel}</span>}
-            </div>
+            <span className="shrink-0 text-[11px] text-[var(--admin-muted)]">{formatRelative(lead.lastMessageAt)}</span>
           </div>
-        </div>
-        <StatusBadge tone={priorityTone}>{leadPriorityLabel(lead)}</StatusBadge>
-      </div>
 
-      <p className="line-clamp-2 text-xs leading-5 text-[var(--admin-soft)]">{lead.lastMessagePreview || lead.nextAction}</p>
+          <p className="mt-2 line-clamp-2 text-xs leading-5 text-[var(--admin-soft)]">
+            {lead.lastMessagePreview || lead.nextAction}
+          </p>
 
-      <div className="grid grid-cols-[minmax(0,1fr)_74px] items-center gap-3">
-        <div className="grid gap-1">
-          <div className="flex gap-1" aria-label={`Etapa ${crmStageLabels[lead.crmStage]}`}>
-            {crmStages.map((stage, index) => (
-              <span
-                key={stage.key}
-                className={cn(
-                  "h-1.5 flex-1 rounded-full",
-                  index <= stagePosition ? "bg-[var(--admin-cyan)]" : "bg-[rgba(113,128,140,0.18)]"
-                )}
-              />
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <StatusBadge tone={priorityTone}>{leadPriorityLabel(lead)}</StatusBadge>
+            <StatusBadge tone={crmStageTone[lead.crmStage]}>{crmStageLabels[lead.crmStage]}</StatusBadge>
+            {lead.humanInterventionActive && <StatusBadge tone="yellow">em atendimento</StatusBadge>}
+            {visibleTags.map((tag) => (
+              <span key={tag} className="rounded border border-[var(--admin-border)] bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--admin-muted)]">
+                {tag}
+              </span>
             ))}
           </div>
-          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-            <StatusBadge tone={crmStageTone[lead.crmStage]}>{crmStageLabels[lead.crmStage]}</StatusBadge>
-            <StatusBadge tone={slaTone[lead.slaStatus]}>{slaLabel[lead.slaStatus]}</StatusBadge>
-          </div>
         </div>
-        <div className="rounded-md border border-[var(--admin-border)] bg-white px-2 py-1.5 text-right">
-          <span className={cn("block font-mono text-base font-bold leading-none", toneText[scoreTone(lead.score)])}>
-            {lead.score}
-          </span>
-          <span className="text-[9px] uppercase tracking-[0.1em] text-[var(--admin-muted)]">score</span>
-        </div>
-      </div>
-
-      <div className="flex flex-wrap gap-1.5">
-        {[...lead.tags, ...lead.internalTags].slice(0, 4).map((tag) => (
-          <span key={tag} className="rounded border border-[var(--admin-border)] bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--admin-muted)]">
-            {tag}
-          </span>
-        ))}
-        <span className="inline-flex items-center gap-1 text-[10px] text-[var(--admin-muted)]">
-          <Clock3 size={11} />
-          {formatRelative(lead.lastMessageAt)}
-        </span>
       </div>
     </button>
   );
@@ -827,15 +773,15 @@ function ChatBubble({ item }: { item: WhatsAppCrmTimelineItem }) {
     <div className={cn("mb-3 flex last:mb-0", isOutbound ? "justify-end" : "justify-start")}>
       <div
         className={cn(
-          "max-w-[92%] rounded-lg border px-3 py-2 shadow-sm sm:max-w-[84%]",
+          "max-w-[92%] rounded-lg border px-3.5 py-2.5 shadow-sm sm:max-w-[78%]",
           isOutbound
             ? item.authorType === "human"
               ? "rounded-br-sm border-[rgba(234,179,8,0.28)] bg-[#fff6d8]"
-              : "rounded-br-sm border-[#b7ddb0] bg-[#d9fdd3]"
-            : "rounded-bl-sm border-white bg-white"
+              : "rounded-br-sm border-[#bde7b7] bg-[#d9fdd3]"
+            : "rounded-bl-sm border-[#f5efe6] bg-white"
         )}
       >
-        <div className="mb-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <div className="mb-1.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
           <span className={cn("inline-flex min-w-0 items-center gap-1.5 text-[11px] font-semibold", toneText[itemTone])}>
             <TimelineMessageIcon item={item} />
             <span className="truncate">{timelineActorLabel(item)}</span>
@@ -861,24 +807,6 @@ function ChatBubble({ item }: { item: WhatsAppCrmTimelineItem }) {
             <ExternalLink size={12} />
           </a>
         )}
-        <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          <span className="rounded border border-[var(--admin-border)] bg-white/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--admin-muted)]">
-            {messageKindLabel(item)}
-          </span>
-          {item.deliveryStatus && (
-            <span className="rounded border border-[var(--admin-border)] bg-white/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--admin-muted)]">
-              {item.deliveryStatus}
-            </span>
-          )}
-          {item.providerMessageId && (
-            <span
-              title={item.providerMessageId}
-              className="rounded border border-[var(--admin-border)] bg-white/60 px-2 py-0.5 font-mono text-[10px] text-[var(--admin-muted)]"
-            >
-              id {item.providerMessageId.slice(0, 10)}
-            </span>
-          )}
-        </div>
       </div>
     </div>
   );
@@ -909,13 +837,13 @@ function LiveChatPanel({
 
   const timeline = sortedTimeline(lead.timeline);
   const statusTone = conversationStatusTone(lead);
-  const ToggleIcon = lead.humanInterventionActive ? Bot : UserCheck;
   const toggleAction: LeadActionKey = lead.humanInterventionActive ? "resume_ai" : "pause_ai";
   const toggleLabel = lead.humanInterventionActive ? "Retomar IA" : "Assumir";
+  const toggleBusy = busyAction === `${lead.id}:${toggleAction}`;
 
   return (
-    <section className="grid min-h-[720px] min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(81,60,36,0.06)]">
-      <div className="flex min-h-16 flex-wrap items-center justify-between gap-3 border-b border-[var(--admin-border)] px-4 py-3">
+    <section className="grid min-h-[640px] min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(81,60,36,0.06)] xl:h-[calc(100vh-230px)] xl:max-h-[820px]">
+      <div className="flex min-h-16 flex-wrap items-center justify-between gap-3 border-b border-[var(--admin-border)] bg-white px-4 py-3">
         <div className="flex min-w-0 items-center gap-3">
           <LeadAvatar lead={lead} />
           <div className="min-w-0">
@@ -935,16 +863,34 @@ function LiveChatPanel({
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <ActionButton
-            icon={ToggleIcon}
-            tone={lead.humanInterventionActive ? "green" : "yellow"}
-            busy={busyAction === `${lead.id}:${toggleAction}`}
+          <button
+            type="button"
             disabled={lead.optOut}
             onClick={() => onLeadAction(toggleAction, lead)}
             title={lead.humanInterventionActive ? "Retomar atendimento automatico" : "Pausar a IA e assumir atendimento humano"}
+            className={cn(
+              "inline-flex h-9 items-center justify-center gap-2 rounded-md border px-3 text-xs font-semibold text-[#fffaf0] shadow-sm transition disabled:cursor-not-allowed disabled:opacity-55",
+              lead.humanInterventionActive
+                ? "border-[var(--admin-green)] bg-[var(--admin-green)] hover:bg-[#0f6d4f]"
+                : "border-[var(--admin-cyan)] bg-[var(--admin-cyan)] hover:bg-[#0b6676]"
+            )}
           >
+            {toggleBusy ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : lead.humanInterventionActive ? (
+              <Bot size={14} />
+            ) : (
+              <UserCheck size={14} />
+            )}
             {toggleLabel}
-          </ActionButton>
+          </button>
+          <a
+            href="#crm-do-lead"
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-[rgba(18,128,92,0.24)] bg-[rgba(18,128,92,0.08)] px-3 text-xs font-semibold text-[var(--admin-green)] transition hover:border-[var(--admin-green)] hover:bg-[rgba(18,128,92,0.12)]"
+          >
+            <ClipboardCheck size={14} />
+            CRM do lead
+          </a>
           {lead.whatsappUrl && (
             <a
               href={lead.whatsappUrl}
@@ -959,7 +905,15 @@ function LiveChatPanel({
         </div>
       </div>
 
-      <div className="min-h-[460px] overflow-auto bg-[#f7f1e8] px-3 py-4 sm:px-4">
+      <div
+        className="min-h-0 overflow-auto px-3 py-4 sm:px-5"
+        style={{
+          backgroundColor: "#f7f1e8",
+          backgroundImage:
+            "radial-gradient(circle at 18px 18px, rgba(89, 104, 117, 0.06) 1.4px, transparent 1.4px), radial-gradient(circle at 42px 42px, rgba(15, 124, 144, 0.045) 1.2px, transparent 1.2px)",
+          backgroundSize: "56px 56px",
+        }}
+      >
         {timeline.length ? (
           timeline.map((item) => <ChatBubble key={item.id} item={item} />)
         ) : (
@@ -969,7 +923,7 @@ function LiveChatPanel({
         )}
       </div>
 
-      <div className="border-t border-[var(--admin-border)] bg-white p-3">
+      <div className="border-t border-[var(--admin-border)] bg-[#f9fafb] p-3">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <span className="inline-flex items-center gap-2 text-xs font-semibold text-[var(--admin-foreground)]">
             <Send size={14} className="text-[var(--admin-cyan)]" />
@@ -979,13 +933,13 @@ function LiveChatPanel({
             {lead.humanInterventionActive ? "humano ativo" : "opcional"}
           </StatusBadge>
         </div>
-        <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
+        <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_132px] lg:items-end">
           <textarea
             value={manualReply}
             onChange={(event) => onManualReplyChange(event.target.value)}
             placeholder="Digite uma resposta aqui no painel"
             rows={3}
-            className="min-h-[78px] w-full resize-none rounded-md border border-[var(--admin-border)] bg-white px-3 py-2 text-sm leading-6 text-[var(--admin-foreground)] outline-none placeholder:text-[var(--admin-muted)] focus:border-[var(--admin-cyan)] focus:ring-3 focus:ring-[rgba(15,124,144,0.12)]"
+            className="min-h-[66px] w-full resize-none rounded-lg border border-[var(--admin-border)] bg-white px-4 py-3 text-sm leading-6 text-[var(--admin-foreground)] outline-none placeholder:text-[var(--admin-muted)] focus:border-[var(--admin-cyan)] focus:ring-3 focus:ring-[rgba(15,124,144,0.12)]"
           />
           <div className="flex items-center justify-between gap-3 lg:grid lg:justify-items-end">
             <span className="text-[10px] text-[var(--admin-muted)]">{manualReply.trim().length}/2200</span>
@@ -1064,7 +1018,7 @@ function LeadDetail({
                   href={lead.whatsappUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-1 text-xs font-semibold text-[var(--admin-cyan)] transition hover:text-white"
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-[var(--admin-cyan)] transition hover:text-[var(--admin-foreground)]"
                 >
                   Abrir WhatsApp
                   <ExternalLink size={12} />
@@ -1076,50 +1030,74 @@ function LeadDetail({
         <LeadScore score={lead.score} />
       </div>
 
-      <div className="mt-5 grid gap-2 sm:grid-cols-2">
-        <InfoCell label="Agente" value={lead.agentName} />
-        <InfoCell label="Origem" value={lead.source} />
-        <InfoCell label="Etapa CRM" value={crmStageLabels[lead.crmStage]} />
-        <InfoCell label="Status" value={lead.status} />
-        <InfoCell label="Responsavel" value={lead.assignedToLabel || "Fila IA"} />
-        <InfoCell label="Ultima direcao" value={directionLabel(lead.lastMessageDirection)} />
-        <InfoCell label="Ultima msg" value={formatDateTime(lead.lastMessageAt)} />
-      </div>
-
       <div className={cn("mt-5 rounded-lg border px-4 py-3", toneBg[lead.humanInterventionActive ? "yellow" : "cyan"])}>
-        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--admin-muted)]">Proxima acao</p>
+        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--admin-muted)]">Resumo inteligente</p>
         <p className="mt-2 text-sm leading-6 text-[var(--admin-foreground)]">{lead.nextAction}</p>
       </div>
 
+      <div className="mt-5">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <p className="text-xs font-semibold text-[var(--admin-foreground)]">Panorama de qualificacao</p>
+          <span className="font-mono text-[10px] text-[var(--admin-muted)]">{filled}/6 campos</span>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {qualificationItems.map(([label, value]) => (
+            <InfoCell key={label} label={label} value={value} />
+          ))}
+        </div>
+      </div>
+
+      <details className="group mt-4 rounded-lg border border-[var(--admin-border)] bg-white">
+        <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3">
+          <span className="text-xs font-semibold text-[var(--admin-foreground)]">Ficha tecnica</span>
+          <span className="font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)] group-open:hidden">Abrir</span>
+          <span className="hidden font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--admin-cyan)] group-open:inline">Fechar</span>
+        </summary>
+        <div className="grid gap-2 border-t border-[var(--admin-border)] p-3 sm:grid-cols-2">
+          <InfoCell label="Agente" value={lead.agentName} />
+          <InfoCell label="Origem" value={lead.source} />
+          <InfoCell label="Etapa CRM" value={crmStageLabels[lead.crmStage]} />
+          <InfoCell label="Status" value={lead.status} />
+          <InfoCell label="Responsavel" value={lead.assignedToLabel || "Fila IA"} />
+          <InfoCell label="Ultima direcao" value={directionLabel(lead.lastMessageDirection)} />
+          <InfoCell label="Ultima msg" value={formatDateTime(lead.lastMessageAt)} />
+        </div>
+      </details>
+
       {lead.runtimeDecision.primaryIntent && (
-        <div className="mt-3 rounded-lg border border-[var(--admin-border)] bg-white/[0.02] p-3">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <p className="inline-flex items-center gap-2 text-xs font-semibold text-[var(--admin-foreground)]">
+        <details className="group mt-3 rounded-lg border border-[var(--admin-border)] bg-white">
+          <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3">
+            <span className="inline-flex min-w-0 items-center gap-2 text-xs font-semibold text-[var(--admin-foreground)]">
               <Bot size={14} className="text-[var(--admin-cyan)]" />
               Motor de atendimento
-            </p>
-            <StatusBadge tone={lead.runtimeDecision.riskFlags.length ? "yellow" : "cyan"}>
-              {lead.runtimeDecision.stage ? crmStageLabels[lead.runtimeDecision.stage] : lead.runtimeDecision.primaryIntent}
-            </StatusBadge>
+            </span>
+            <span className="flex shrink-0 items-center gap-2">
+              <StatusBadge tone={lead.runtimeDecision.riskFlags.length ? "yellow" : "cyan"}>
+                {lead.runtimeDecision.stage ? crmStageLabels[lead.runtimeDecision.stage] : lead.runtimeDecision.primaryIntent}
+              </StatusBadge>
+              <ChevronDown size={14} className="text-[var(--admin-muted)] transition-transform group-open:rotate-180" />
+            </span>
+          </summary>
+          <div className="border-t border-[var(--admin-border)] p-3">
+            <div className="grid gap-2 sm:grid-cols-3">
+              <InfoCell label="Intencao" value={lead.runtimeDecision.primaryIntent} />
+              <InfoCell label="Confianca" value={formatHealthPercent(lead.runtimeDecision.confidence)} />
+              <InfoCell label="Atualizado" value={formatRelative(lead.runtimeDecision.updatedAt)} />
+            </div>
+            <div className="mt-3 grid gap-2">
+              {lead.runtimeDecision.qualificationMissing.length > 0 && (
+                <p className="rounded border border-[rgba(234,179,8,0.28)] bg-[rgba(234,179,8,0.08)] px-2 py-1.5 text-xs leading-5 text-[var(--admin-yellow)]">
+                  Falta coletar: {lead.runtimeDecision.qualificationMissing.slice(0, 3).join(", ")}
+                </p>
+              )}
+              {lead.runtimeDecision.riskFlags.length > 0 && (
+                <p className="rounded border border-[rgba(239,68,68,0.28)] bg-[rgba(239,68,68,0.08)] px-2 py-1.5 text-xs leading-5 text-[var(--admin-red)]">
+                  Risco: {lead.runtimeDecision.riskFlags.slice(0, 3).join(", ")}
+                </p>
+              )}
+            </div>
           </div>
-          <div className="grid gap-2 sm:grid-cols-3">
-            <InfoCell label="Intencao" value={lead.runtimeDecision.primaryIntent} />
-            <InfoCell label="Confianca" value={formatHealthPercent(lead.runtimeDecision.confidence)} />
-            <InfoCell label="Atualizado" value={formatRelative(lead.runtimeDecision.updatedAt)} />
-          </div>
-          <div className="mt-3 grid gap-2">
-            {lead.runtimeDecision.qualificationMissing.length > 0 && (
-              <p className="rounded border border-[rgba(234,179,8,0.28)] bg-[rgba(234,179,8,0.08)] px-2 py-1.5 text-xs leading-5 text-[var(--admin-yellow)]">
-                Falta coletar: {lead.runtimeDecision.qualificationMissing.slice(0, 3).join(", ")}
-              </p>
-            )}
-            {lead.runtimeDecision.riskFlags.length > 0 && (
-              <p className="rounded border border-[rgba(239,68,68,0.28)] bg-[rgba(239,68,68,0.08)] px-2 py-1.5 text-xs leading-5 text-[var(--admin-red)]">
-                Risco: {lead.runtimeDecision.riskFlags.slice(0, 3).join(", ")}
-              </p>
-            )}
-          </div>
-        </div>
+        </details>
       )}
 
       <div className="mt-3 rounded-lg border border-[var(--admin-border)] bg-white/[0.02] p-3">
@@ -1133,7 +1111,7 @@ function LeadDetail({
             <select
               value={selectedCrmStage}
               onChange={(event) => onStageDraftChange({ crmStage: event.target.value as WhatsAppCrmStage })}
-              className="h-9 rounded-md border border-[var(--admin-border)] bg-black/20 px-3 text-sm text-white outline-none focus:border-[var(--admin-cyan)]"
+              className="h-9 rounded-md border border-[var(--admin-border)] bg-white px-3 text-sm text-[var(--admin-foreground)] outline-none focus:border-[var(--admin-cyan)]"
             >
               {crmStages.map((stage) => (
                 <option key={stage.key} value={stage.key}>
@@ -1172,7 +1150,7 @@ function LeadDetail({
               value={contextDraft.assignedToLabel}
               onChange={(event) => onContextDraftChange({ assignedToLabel: event.target.value })}
               placeholder="Nome do atendente"
-              className="h-9 rounded-md border border-[var(--admin-border)] bg-black/20 px-3 text-sm text-white outline-none placeholder:text-[var(--admin-muted)] focus:border-[var(--admin-cyan)]"
+              className="h-9 rounded-md border border-[var(--admin-border)] bg-white px-3 text-sm text-[var(--admin-foreground)] outline-none placeholder:text-[var(--admin-muted)] focus:border-[var(--admin-cyan)]"
             />
           </label>
           <label className="grid gap-1.5">
@@ -1184,7 +1162,7 @@ function LeadDetail({
               value={contextDraft.internalTags}
               onChange={(event) => onContextDraftChange({ internalTags: event.target.value })}
               placeholder="ex: visita, edital, documentacao"
-              className="h-9 rounded-md border border-[var(--admin-border)] bg-black/20 px-3 text-sm text-white outline-none placeholder:text-[var(--admin-muted)] focus:border-[var(--admin-cyan)]"
+              className="h-9 rounded-md border border-[var(--admin-border)] bg-white px-3 text-sm text-[var(--admin-foreground)] outline-none placeholder:text-[var(--admin-muted)] focus:border-[var(--admin-cyan)]"
             />
           </label>
         </div>
@@ -1193,7 +1171,7 @@ function LeadDetail({
           onChange={(event) => onContextDraftChange({ internalNotes: event.target.value })}
           placeholder="Notas internas do atendimento"
           rows={3}
-          className="mt-2 min-h-[84px] w-full resize-none rounded-md border border-[var(--admin-border)] bg-black/20 px-3 py-2 text-sm leading-6 text-white outline-none placeholder:text-[var(--admin-muted)] focus:border-[var(--admin-cyan)]"
+          className="mt-2 min-h-[84px] w-full resize-none rounded-md border border-[var(--admin-border)] bg-white px-3 py-2 text-sm leading-6 text-[var(--admin-foreground)] outline-none placeholder:text-[var(--admin-muted)] focus:border-[var(--admin-cyan)]"
         />
         <div className="mt-2 flex items-center justify-between gap-3">
           <span className="text-[10px] text-[var(--admin-muted)]">{contextDraft.internalNotes.trim().length}/1800</span>
@@ -1222,9 +1200,13 @@ function LeadDetail({
         </div>
       )}
 
-      <div className="mt-5">
-        <p className="mb-3 text-xs font-semibold text-[var(--admin-foreground)]">Comandos da conversa</p>
-        <div className="grid gap-2 sm:grid-cols-2">
+      <details className="group mt-4 rounded-lg border border-[var(--admin-border)] bg-white">
+        <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3">
+          <span className="text-xs font-semibold text-[var(--admin-foreground)]">Acoes administrativas</span>
+          <span className="font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)] group-open:hidden">Abrir</span>
+          <span className="hidden font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--admin-cyan)] group-open:inline">Fechar</span>
+        </summary>
+        <div className="grid gap-2 border-t border-[var(--admin-border)] p-3 sm:grid-cols-2">
           <ActionButton
             icon={UserCheck}
             tone="yellow"
@@ -1285,8 +1267,6 @@ function LeadDetail({
           >
             Cancelar FUP
           </ActionButton>
-        </div>
-        <div className="mt-2 grid gap-2 sm:grid-cols-2">
           <ActionButton
             icon={ThumbsUp}
             tone="green"
@@ -1308,105 +1288,8 @@ function LeadDetail({
             Revisar resposta
           </ActionButton>
         </div>
-      </div>
+      </details>
 
-      <div className="mt-5">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <p className="text-xs font-semibold text-[var(--admin-foreground)]">Qualificacao</p>
-          <span className="font-mono text-[10px] text-[var(--admin-muted)]">{filled}/6 campos</span>
-        </div>
-        <div className="grid gap-2 sm:grid-cols-2">
-          {qualificationItems.map(([label, value]) => (
-            <InfoCell key={label} label={label} value={value} />
-          ))}
-        </div>
-      </div>
-
-    </DashboardCard>
-  );
-}
-
-function AuctionContextPanel({ lead }: { lead?: WhatsAppCrmLeadCard }) {
-  if (!lead) {
-    return (
-      <DashboardCard title="Contexto de leilao" eyebrow="interesse / imovel / risco">
-        <div className="py-8 text-center text-sm text-[var(--admin-muted)]">Sem lead selecionado.</div>
-      </DashboardCard>
-    );
-  }
-
-  const qualificationItems = [
-    ["Capital", lead.qualification.capital],
-    ["Regiao", lead.qualification.region],
-    ["Tipo de imovel", lead.qualification.propertyType],
-    ["Objetivo", lead.qualification.objective],
-    ["Experiencia", lead.qualification.experience],
-    ["Prazo", lead.qualification.urgency],
-  ] as const;
-  const missing = lead.runtimeDecision.qualificationMissing.slice(0, 5);
-  const risks = lead.runtimeDecision.riskFlags.slice(0, 5);
-  const allTags = [...lead.tags, ...lead.internalTags].slice(0, 8);
-
-  return (
-    <DashboardCard
-      title="Contexto de leilao"
-      eyebrow="interesse / imovel / risco"
-      action={<StatusBadge tone={leadPriorityTone(lead)}>{leadPriorityLabel(lead)}</StatusBadge>}
-    >
-      <div className="grid gap-2">
-        {qualificationItems.map(([label, value]) => (
-          <InfoCell key={label} label={label} value={value} />
-        ))}
-      </div>
-
-      <div className="mt-4 grid gap-2">
-        <div className="rounded-md border border-[var(--admin-border)] bg-white px-3 py-3">
-          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Proxima acao</p>
-          <p className="mt-2 text-sm leading-6 text-[var(--admin-foreground)]">{lead.nextAction}</p>
-        </div>
-
-        {missing.length > 0 && (
-          <div className="rounded-md border border-[rgba(234,179,8,0.28)] bg-[rgba(234,179,8,0.08)] px-3 py-3">
-            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-yellow)]">Falta qualificar</p>
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {missing.map((item) => (
-                <span key={item} className="rounded border border-[rgba(234,179,8,0.28)] bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--admin-yellow)]">
-                  {item}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {risks.length > 0 && (
-          <div className="rounded-md border border-[rgba(239,68,68,0.28)] bg-[rgba(239,68,68,0.08)] px-3 py-3">
-            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-red)]">Alertas</p>
-            <div className="mt-2 grid gap-1.5">
-              {risks.map((item) => (
-                <p key={item} className="text-xs leading-5 text-[var(--admin-red)]">{item}</p>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div className="rounded-md border border-[var(--admin-border)] bg-white px-3 py-3">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Tags</p>
-            <span className="font-mono text-[10px] text-[var(--admin-muted)]">{allTags.length}</span>
-          </div>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {allTags.length ? (
-              allTags.map((tag) => (
-                <span key={tag} className="rounded border border-[var(--admin-border)] bg-[rgba(245,247,250,0.8)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--admin-muted)]">
-                  {tag}
-                </span>
-              ))
-            ) : (
-              <span className="text-xs text-[var(--admin-muted)]">Sem tags registradas.</span>
-            )}
-          </div>
-        </div>
-      </div>
     </DashboardCard>
   );
 }
@@ -1966,33 +1849,35 @@ export function WhatsAppCrmPage({
         </div>
       </nav>
 
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {overviewCards.map((card) => {
-          const Icon = card.icon;
-          const value = card.label === "Conexao WhatsApp" && card.value.includes("/")
-            ? card.value.replace("/", " de ")
-            : card.value;
-          return (
-            <article
-              key={card.label}
-              className="grid min-h-[82px] grid-cols-[38px_minmax(0,1fr)] items-center gap-3 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-3 shadow-sm shadow-[rgba(81,60,36,0.04)]"
-            >
-              <span className={cn("grid size-8 shrink-0 place-items-center rounded-md border", toneBg[card.tone])}>
-                <Icon size={15} className={toneText[card.tone]} />
-              </span>
-              <div className="min-w-0">
-                <p className="truncate text-xs font-semibold text-[var(--admin-muted)]">{card.label}</p>
-                <p className={cn("mt-1 truncate font-mono text-xl font-bold leading-none tracking-tight", toneText[card.tone])}>
-                  {value}
-                </p>
-                <p className="mt-1 truncate text-xs leading-4 text-[var(--admin-muted)]">{card.detail}</p>
-              </div>
-            </article>
-          );
-        })}
-      </section>
+      {panelTab === "settings" && (
+        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {overviewCards.map((card) => {
+            const Icon = card.icon;
+            const value = card.label === "Conexao WhatsApp" && card.value.includes("/")
+              ? card.value.replace("/", " de ")
+              : card.value;
+            return (
+              <article
+                key={card.label}
+                className="grid min-h-[82px] grid-cols-[38px_minmax(0,1fr)] items-center gap-3 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-3 shadow-sm shadow-[rgba(81,60,36,0.04)]"
+              >
+                <span className={cn("grid size-8 shrink-0 place-items-center rounded-md border", toneBg[card.tone])}>
+                  <Icon size={15} className={toneText[card.tone]} />
+                </span>
+                <div className="min-w-0">
+                  <p className="truncate text-xs font-semibold text-[var(--admin-muted)]">{card.label}</p>
+                  <p className={cn("mt-1 truncate font-mono text-xl font-bold leading-none tracking-tight", toneText[card.tone])}>
+                    {value}
+                  </p>
+                  <p className="mt-1 truncate text-xs leading-4 text-[var(--admin-muted)]">{card.detail}</p>
+                </div>
+              </article>
+            );
+          })}
+        </section>
+      )}
 
-      {operationalHealth && (
+      {panelTab === "settings" && operationalHealth && (
         <section>
           <OperationalReadinessPanel
             health={operationalHealth}
@@ -2034,8 +1919,8 @@ export function WhatsAppCrmPage({
         </section>
       ) : (
         <>
-      <section className="grid gap-4 xl:grid-cols-[350px_minmax(0,1fr)] 2xl:grid-cols-[350px_minmax(0,1fr)_400px] 2xl:items-start">
-        <aside className="min-w-0 overflow-hidden rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(81,60,36,0.06)]">
+      <section className="grid gap-3 xl:grid-cols-[340px_minmax(0,1fr)] 2xl:grid-cols-[340px_minmax(560px,1fr)_360px] 2xl:items-start">
+        <aside className="grid min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(81,60,36,0.06)] xl:h-[calc(100vh-230px)] xl:max-h-[820px] xl:min-h-[640px]">
           <div className="border-b border-[var(--admin-border)] p-4">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -2076,14 +1961,12 @@ export function WhatsAppCrmPage({
             </div>
           </div>
 
-          <div className="max-h-[760px] min-h-[520px] overflow-auto">
+          <div className="min-h-0 overflow-auto">
             {filteredLeads.length ? (
-              filteredLeads.map((lead, index) => (
+              filteredLeads.map((lead) => (
                 <LeadQueueItem
                   key={lead.id}
                   lead={lead}
-                  rank={index + 1}
-                  total={filteredLeads.length}
                   selected={selectedLead?.id === lead.id}
                   onSelect={() => {
                     setSelectedId(lead.id);
@@ -2110,44 +1993,24 @@ export function WhatsAppCrmPage({
           onLeadAction={(action, lead) => void runLeadAction(action, lead)}
         />
 
-        <aside className="grid min-w-0 gap-4 xl:col-span-2 2xl:col-span-1 2xl:sticky 2xl:top-24 2xl:max-h-[calc(100vh-120px)] 2xl:overflow-auto 2xl:pr-1">
-          <DashboardCard title="Operacao agora" eyebrow="triagem / automacao">
-            <div className="grid gap-2 sm:grid-cols-2 2xl:grid-cols-1">
-              {cockpitCards.map((card) => {
-                const Icon = card.icon;
-                return (
-                  <div key={card.label} className={cn("rounded-md border px-3 py-3", toneBg[card.tone])}>
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="truncate text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--admin-muted)]">
-                        {card.label}
-                      </p>
-                      <Icon size={14} className={toneText[card.tone]} />
-                    </div>
-                    <p className={cn("mt-2 font-mono text-xl font-bold", toneText[card.tone])}>{card.value}</p>
-                    <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-[var(--admin-muted)]">{card.detail}</p>
-                  </div>
-                );
-              })}
-            </div>
-          </DashboardCard>
-
-          <LeadDetail
-            lead={selectedLead}
-            busyAction={busyAction}
-            contextDraft={selectedContextDraft}
-            stageDraft={selectedStageDraft}
-            onLeadAction={(action, lead) => void runLeadAction(action, lead)}
-            onContextDraftChange={(patch) => {
-              if (selectedLead) updateLeadContextDraft(selectedLead, patch);
-            }}
-            onSaveContext={(lead) => void saveLeadContext(lead)}
-            onStageDraftChange={(patch) => {
-              if (selectedLead) updateLeadStageDraft(selectedLead, patch);
-            }}
-            onSaveStage={(lead) => void saveLeadStage(lead)}
-          />
-
-          <AuctionContextPanel lead={selectedLead} />
+        <aside className="grid min-w-0 gap-3 xl:col-span-2 2xl:col-span-1 2xl:sticky 2xl:top-24 2xl:h-[calc(100vh-230px)] 2xl:max-h-[820px] 2xl:overflow-auto 2xl:pr-1">
+          <div id="crm-do-lead">
+            <LeadDetail
+              lead={selectedLead}
+              busyAction={busyAction}
+              contextDraft={selectedContextDraft}
+              stageDraft={selectedStageDraft}
+              onLeadAction={(action, lead) => void runLeadAction(action, lead)}
+              onContextDraftChange={(patch) => {
+                if (selectedLead) updateLeadContextDraft(selectedLead, patch);
+              }}
+              onSaveContext={(lead) => void saveLeadContext(lead)}
+              onStageDraftChange={(patch) => {
+                if (selectedLead) updateLeadStageDraft(selectedLead, patch);
+              }}
+              onSaveStage={(lead) => void saveLeadStage(lead)}
+            />
+          </div>
 
           <details className="group rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(81,60,36,0.06)]">
             <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-4 px-4">
@@ -2181,7 +2044,50 @@ export function WhatsAppCrmPage({
         </aside>
       </section>
 
-      <section className="mt-4 grid gap-4">
+      <details className="group mt-4 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(81,60,36,0.06)]">
+        <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-4 px-4">
+          <span className="min-w-0">
+            <span className="block font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--admin-muted)]">triagem / automacao / funil</span>
+            <span className="block truncate text-sm font-semibold text-[var(--admin-foreground)]">Painel operacional</span>
+          </span>
+          <span className="flex shrink-0 items-center gap-3">
+            <StatusBadge tone={criticalLeads.length ? "red" : "green"}>{criticalLeads.length} criticos</StatusBadge>
+            <ChevronDown size={16} className="text-[var(--admin-cyan)] transition-transform group-open:rotate-180" />
+          </span>
+        </summary>
+        <div className="grid gap-4 border-t border-[var(--admin-border)] p-4">
+        <DashboardCard title="Operacao agora" eyebrow="triagem / automacao" contentClassName="p-3">
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+            {cockpitCards.map((card) => {
+              const Icon = card.icon;
+              return (
+                <div key={card.label} className={cn("rounded-md border px-3 py-3", toneBg[card.tone])}>
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="truncate text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--admin-muted)]">
+                      {card.label}
+                    </p>
+                    <Icon size={14} className={toneText[card.tone]} />
+                  </div>
+                  <p className={cn("mt-2 font-mono text-xl font-bold", toneText[card.tone])}>{card.value}</p>
+                  <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-[var(--admin-muted)]">{card.detail}</p>
+                </div>
+              );
+            })}
+          </div>
+        </DashboardCard>
+
+        {operationalHealth && (
+          <OperationalReadinessPanel
+            health={operationalHealth}
+            busy={busyAction === "health:refresh"}
+            onRefresh={() => {
+              setBusyAction("health:refresh");
+              router.refresh();
+              window.setTimeout(() => setBusyAction(null), 500);
+            }}
+          />
+        )}
+
         <CrmFunnel
           leads={data.leads}
           selectedLeadId={selectedLead?.id}
@@ -2283,7 +2189,8 @@ export function WhatsAppCrmPage({
           </div>
         </DashboardCard>
         </div>
-      </section>
+        </div>
+      </details>
 
       <details className="group mt-4 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(81,60,36,0.06)]">
         <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-4 px-4">
