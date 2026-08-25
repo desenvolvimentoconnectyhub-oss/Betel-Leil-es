@@ -3,7 +3,6 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
 import { Activity, ChevronDown, HeartPulse } from "lucide-react";
 import { filterAdminNavGroupsForUser } from "@/lib/admin/access";
 import { adminNavGroups, getCanonicalAdminHref } from "@/lib/admin/modules";
@@ -93,20 +92,27 @@ export function AdminSidebarContent({
   );
 }
 
-export function AdminSidebar({ admin }: { admin?: AdminSessionUser }) {
+export function AdminSidebar({
+  admin,
+  expanded,
+  onExpandedChange,
+}: {
+  admin?: AdminSessionUser;
+  expanded: boolean;
+  onExpandedChange: (expanded: boolean) => void;
+}) {
   const pathname = usePathname();
   const activeHref = getCanonicalAdminHref(pathname);
-  const [expanded, setExpanded] = useState(false);
   const collapsed = !expanded;
 
   return (
     <aside
-      onMouseEnter={() => setExpanded(true)}
-      onMouseLeave={() => setExpanded(false)}
-      onFocusCapture={() => setExpanded(true)}
+      onMouseEnter={() => onExpandedChange(true)}
+      onMouseLeave={() => onExpandedChange(false)}
+      onFocusCapture={() => onExpandedChange(true)}
       onBlurCapture={(event) => {
         const nextTarget = event.relatedTarget instanceof Node ? event.relatedTarget : null;
-        if (!event.currentTarget.contains(nextTarget)) setExpanded(false);
+        if (!event.currentTarget.contains(nextTarget)) onExpandedChange(false);
       }}
       className={cn(
         "fixed inset-y-0 left-0 z-30 hidden overflow-hidden border-r border-[var(--admin-border)] bg-[var(--admin-sidebar)] transition-[width,box-shadow] duration-200 ease-out lg:block",
