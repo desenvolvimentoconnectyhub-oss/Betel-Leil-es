@@ -23,6 +23,7 @@ import type { AdminSessionUser } from "@/lib/auth/types";
 function getTitle(pathname: string) {
   if (pathname === "/admin") return "Dashboard";
   if (pathname === "/admin/maintenance") return "Manutencao";
+  if (pathname === "/admin/whatsapp/agente") return "Agente Evelyn";
   const slug = pathname.split("/").filter(Boolean)[1];
   return (slug && getAdminModule(slug)?.title) || "Admin";
 }

@@ -60,7 +60,7 @@ export default async function AgentProfileRoute({
   const { agentKey } = await params;
 
   if (!agentKey || agentKey.length > 80) notFound();
-  if (await isWhatsAppAgentRoute(agentKey)) redirect("/admin/whatsapp");
+  if (await isWhatsAppAgentRoute(agentKey)) redirect("/admin/whatsapp/agente");
 
   const profileData = await getAgentByKey(agentKey);
 

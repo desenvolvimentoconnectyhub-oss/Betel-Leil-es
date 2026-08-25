@@ -35,6 +35,7 @@ import {
 import type { ComponentType, CSSProperties } from "react";
 import type {
   DataResult,
+  WhatsAppCrmAgentSummary,
   WhatsAppCrmData,
   WhatsAppCrmLeadCard,
   WhatsAppCrmStage,
@@ -392,6 +393,32 @@ function LeadAvatar({
       title={safeImageUrl ? "Foto sincronizada do WhatsApp" : "Foto do WhatsApp ainda nao sincronizada"}
     >
       {!safeImageUrl && leadInitials(lead)}
+    </div>
+  );
+}
+
+function agentInitials(agent?: Pick<WhatsAppCrmAgentSummary, "name" | "agentKey">) {
+  const source = agent?.name || agent?.agentKey || "Agente";
+  const words = source
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .split(/\s+/)
+    .map((word) => word.trim())
+    .filter(Boolean);
+  const initials = words.slice(0, 2).map((word) => word[0]?.toUpperCase()).join("");
+  return initials || "AI";
+}
+
+function AgentAvatar({ agent }: { agent?: Pick<WhatsAppCrmAgentSummary, "agentKey" | "name" | "profileImageUrl"> }) {
+  const safeImageUrl = (agent?.profileImageUrl || "").replace(/"/g, "%22");
+  const label = agent?.name || "Agente de WhatsApp";
+
+  return (
+    <div
+      className="inline-flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[rgba(15,124,144,0.22)] bg-[rgba(15,124,144,0.10)] bg-cover bg-center text-[10px] font-bold text-[var(--admin-cyan)] shadow-sm shadow-[rgba(15,124,144,0.12)]"
+      style={safeImageUrl ? { backgroundImage: `url("${safeImageUrl}")` } : undefined}
+      title={safeImageUrl ? `${label} - foto do WhatsApp` : `${label} - foto ainda nao sincronizada`}
+    >
+      {!safeImageUrl && agentInitials(agent)}
     </div>
   );
 }
@@ -1668,6 +1695,10 @@ export function WhatsAppCrmPage({ crmData }: { crmData: DataResult<WhatsAppCrmDa
   }, [data.leads, filter, search]);
 
   const selectedLead = filteredLeads.find((lead) => lead.id === selectedId) || filteredLeads[0];
+  const activeAgent =
+    (selectedLead && data.agents.find((agent) => agent.agentKey === selectedLead.agentKey)) ||
+    data.agents.find((agent) => agent.connected) ||
+    data.agents[0];
   const selectedContextDraft =
     selectedLead && contextDraft.leadId === selectedLead.id ? contextDraft : contextDraftFromLead(selectedLead);
   const selectedStageDraft =
@@ -1881,9 +1912,12 @@ export function WhatsAppCrmPage({ crmData }: { crmData: DataResult<WhatsAppCrmDa
                 </p>
                 <h2 className="mt-0.5 truncate text-lg font-semibold text-[var(--admin-foreground)]">Atendimento</h2>
               </div>
-              <div className="flex shrink-0 flex-col items-end gap-1">
-                <LiveSyncBadge sync={liveSync} />
-                <StatusBadge tone="cyan" className="h-5 px-1.5 text-[9px]">{filteredLeads.length} na visao</StatusBadge>
+              <div className="flex shrink-0 items-start gap-2">
+                <AgentAvatar agent={activeAgent} />
+                <div className="flex flex-col items-end gap-1">
+                  <LiveSyncBadge sync={liveSync} />
+                  <StatusBadge tone="cyan" className="h-5 px-1.5 text-[9px]">{filteredLeads.length} na visao</StatusBadge>
+                </div>
               </div>
             </div>
 

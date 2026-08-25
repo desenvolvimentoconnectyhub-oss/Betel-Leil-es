@@ -30,6 +30,7 @@ async function loadWhatsAppCrmData() {
             name: "Agente de WhatsApp",
             status: "planned",
             phone: "",
+            profileImageUrl: "",
             instanceName: WILLIAN_DEFAULT_INSTANCE_NAME,
             connected: false,
             conversations: 0,

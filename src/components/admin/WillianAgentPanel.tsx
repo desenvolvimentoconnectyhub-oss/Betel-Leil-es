@@ -50,7 +50,7 @@ import {
 
 const defaultWillianState: WillianInstanceState = {
   agentKey: "multichannel-dispatch",
-  agentName: "Willian",
+  agentName: "Evelyn",
   baseUrl: "https://www.connectyhub.com.br/api/v1",
   baseUrlSource: "default",
   adminTokenConfigured: false,

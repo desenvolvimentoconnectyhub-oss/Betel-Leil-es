@@ -23,6 +23,7 @@ export type WhatsAppCrmAgentSummary = {
   name: string;
   status: string;
   phone: string;
+  profileImageUrl: string;
   instanceName: string;
   connected: boolean;
   conversations: number;
@@ -335,6 +336,39 @@ function leadProfileImageContext(lead: DbRow, conversation: DbRow, profile?: DbR
   ]);
 
   return { profileImageUrl, profileImageSyncedAt };
+}
+
+function agentProfileImageUrl(agent?: DbRow, instance?: DbRow) {
+  const agentMetadata = asRecord(agent?.metadata);
+  const instanceMetadata = asRecord(instance?.metadata);
+  return normalizeLeadProfileImageUrl(
+    firstString(
+      [
+        asRecord(agent),
+        asRecord(instance),
+        agentMetadata,
+        instanceMetadata,
+        asRecord(agentMetadata.whatsappProfile),
+        asRecord(agentMetadata.whatsapp_profile),
+        asRecord(instanceMetadata.whatsappProfile),
+        asRecord(instanceMetadata.whatsapp_profile),
+      ],
+      [
+        "profileImageUrl",
+        "profile_image_url",
+        "profilePictureUrl",
+        "profile_picture_url",
+        "profilePicUrl",
+        "profile_pic_url",
+        "pictureUrl",
+        "picture_url",
+        "photoUrl",
+        "photo_url",
+        "avatarUrl",
+        "avatar_url",
+      ]
+    )
+  );
 }
 
 const profileImageHydrationLimit = 8;
@@ -751,6 +785,7 @@ function fallbackData(): WhatsAppCrmData {
         name: "Agente de WhatsApp",
         status: "planned",
         phone: "",
+        profileImageUrl: "",
         instanceName: "",
         connected: false,
         conversations: 3,
@@ -1229,6 +1264,7 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
       name: asString(agent?.name, agentKey === defaultAgentKey ? "Agente de WhatsApp" : agentKey),
       status: asString(agent?.status, asString(instance?.status, "draft")),
       phone: asString(instance?.phone),
+      profileImageUrl: agentProfileImageUrl(agent, instance),
       instanceName: asString(instance?.instance_name),
       connected,
       conversations: cards.length,

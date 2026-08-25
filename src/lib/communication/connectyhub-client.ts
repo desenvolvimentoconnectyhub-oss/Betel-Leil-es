@@ -6,7 +6,7 @@ import { resolveSystemWhatsAppSender } from "./system-whatsapp-sender";
 import type { WhatsAppAgentInstanceSummary, WillianConnectionInfo, WillianInstanceState } from "./willian-types";
 
 export const WILLIAN_AGENT_KEY = "multichannel-dispatch";
-export const WILLIAN_AGENT_NAME = "Willian";
+export const WILLIAN_AGENT_NAME = "Evelyn";
 export const WILLIAN_DEFAULT_INSTANCE_NAME = "willian-betel";
 export const GLOBAL_WHATSAPP_AGENT_KEY = WILLIAN_AGENT_KEY;
 export const GLOBAL_WHATSAPP_AGENT_NAME = "WhatsApp Global";
