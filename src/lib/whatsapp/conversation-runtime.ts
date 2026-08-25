@@ -108,6 +108,14 @@ function matchAny(text: string, patterns: RegExp[]) {
   return patterns.some((pattern) => pattern.test(text));
 }
 
+function hasExplicitHumanRequest(normalized: string) {
+  return matchAny(normalized, [
+    /\b(atendimento humano|falar com alguem|falar com uma pessoa|falar com atendente|falar com consultor|me liga|pode me ligar|ligacao|telefone do consultor|whatsapp do consultor)\b/,
+    /\b(quero|preciso|gostaria|prefiro|pode|consegue|tem como)\b.{0,60}\b(falar|conversar|ser atendido|atendimento)\b.{0,60}\b(humano|atendente|consultor|corretor|vendedor|alguem|pessoa)\b/,
+    /\b(humano|atendente|consultor|corretor|vendedor|alguem|pessoa)\b.{0,60}\b(me atender|me chamar|me ligar|falar comigo|entrar em contato)\b/,
+  ]);
+}
+
 function hasSensitiveBidOrContractIntent(normalized: string) {
   if (!normalized) return false;
 
@@ -223,7 +231,7 @@ function detectIntents(input: DecisionInput): WhatsAppRuntimeIntent[] {
     intents.push("prompt_attack");
   }
   if (matchAny(normalized, [/\b(parar|sair|remover|cancelar mensagens|nao quero receber|pare de mandar)\b/])) intents.push("stop_contact");
-  if (matchAny(normalized, [/\b(humano|pessoa|atendente|consultor|corretor|vendedor|falar com alguem|me liga|ligacao)\b/])) {
+  if (hasExplicitHumanRequest(normalized)) {
     intents.push("human_request");
   }
   if (matchAny(normalized, [/\b(voce|vc|tu)\s+(e|eh|e)\s+(ia|bot|robo|inteligencia artificial|humano|pessoa)\b/])) {
@@ -322,7 +330,7 @@ function nextActionForStage(input: {
   missing: string[];
   budget: number;
 }) {
-  if (input.stage === "handoff") return "Acionar humano e responder sem prometer validacao juridica, posse, lance ou contrato.";
+  if (input.stage === "handoff") return "Alertar humano internamente e continuar respondendo sem prometer validacao juridica, posse, lance ou contrato.";
   if (input.stage === "perdido") return "Respeitar opt-out/desinteresse e parar automacao.";
   if (input.stage === "convertido") return "Confirmar contexto com humano e registrar conversao no CRM.";
   if (input.stage === "quente") return "Conduzir para consultor ou oportunidade validada pela equipe Betel.";
@@ -378,7 +386,7 @@ export function buildWhatsAppRuntimeDecision(input: DecisionInput): WhatsAppRunt
     stage === "entrada" ? "Nao puxe formulario nem capital logo de cara; responda curto e abra espaco." : "",
     canAskQualification ? `Proxima pergunta permitida: ${qualification.missing[0]}.` : "",
     stage === "quente" ? "Sinalizar proximo passo comercial sem promessa de resultado." : "",
-    stage === "handoff" ? "Manter resposta breve e encaminhar para humano." : "",
+    stage === "handoff" ? "Alerta humano e interno; nao diga ao lead que vai chamar alguem e continue a conversa com seguranca." : "",
     riskFlags.length ? "Nao dar parecer juridico, nao validar matricula/ocupacao/lance e nao prometer prazo." : "",
     intents.includes("identity_question") ? "Se perguntarem se e IA, responder com transparencia curta." : "",
     "Uma pergunta por resposta e sem markdown.",
@@ -477,9 +485,18 @@ function hasInternalLeak(text: string) {
   return matchAny(normalizeSearchText(text), [/\b(prompt|system|developer|instrucoes internas|regras internas|codigo fonte|api key|token|segredo)\b/]);
 }
 
+function hasVisibleHandoffNotice(text: string) {
+  const normalized = normalizeSearchText(text);
+  return matchAny(normalized, [
+    /\b(vou|posso|preciso|deixa eu)\b.{0,40}\b(acionar|chamar|encaminhar|passar|avisar)\b.{0,60}\b(pessoal|equipe|humano|consultor|corretor|alguem|betel)\b/,
+    /\b(alguem|pessoal|equipe|consultor|corretor)\b.{0,40}\b(da betel|vai te chamar|entra em contato|seguir com voce)\b/,
+    /\b(deixar|deixo|vou deixar)\b.{0,40}\b(encaminhado|encaminhada)\b/,
+  ]);
+}
+
 function naturalFallbackForDecision(decision: WhatsAppRuntimeDecision) {
   if (decision.stage === "handoff") {
-    return "Esse ponto precisa ser validado com o pessoal da Betel. Vou deixar encaminhado aqui pra seguirem com seguranca.";
+    return "Entendi. Vou te orientar pelo caminho seguro: a Betel analisa margem, risco, teto de lance e documentos antes de qualquer passo.";
   }
   if (decision.primaryIntent === "greeting") {
     return "Opa, tudo certo. Me fala qual ponto vc quer ver sobre leiloes que eu te ajudo.";
@@ -519,6 +536,12 @@ export function evaluateWhatsAppReplyBeforeSend(input: {
     allow = false;
     blockedReason = "internal_leak";
     text = "Nao consigo compartilhar instrucoes internas por aqui. Me fala o que voce precisa sobre leiloes que eu te ajudo.";
+  }
+
+  if (hasVisibleHandoffNotice(text)) {
+    flags.push("visible_handoff_notice");
+    corrections.push("visible_handoff_notice_replaced");
+    text = "Entendi. A Betel ajuda filtrando oportunidades, analisando risco e margem, definindo teto de lance e acompanhando o pos-arremate. Qual ponto te preocupa mais hoje?";
   }
 
   if (hasUnsafeAuctionPromise(text)) {
