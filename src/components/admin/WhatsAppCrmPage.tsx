@@ -231,6 +231,19 @@ function leadPriorityLabel(lead: WhatsAppCrmLeadCard) {
   return "Monitorar";
 }
 
+function leadHeatBadge(lead: WhatsAppCrmLeadCard): { label: string; tone: ResourceTone } {
+  const temperature = lead.temperature.toLowerCase();
+  if (lead.optOut || lead.crmStage === "perdido") return { label: "Frio", tone: "red" };
+  if (temperature.includes("vip") || lead.score >= 85) return { label: "VIP", tone: "cyan" };
+  if (temperature.includes("quente") || lead.crmStage === "quente" || lead.score >= 70) {
+    return { label: "Quente", tone: "green" };
+  }
+  if (temperature.includes("morno") || lead.crmStage === "qualificando" || lead.score >= 40) {
+    return { label: "Morno", tone: "yellow" };
+  }
+  return { label: "Frio", tone: "muted" };
+}
+
 function reviewTone(score: number, verdict: string): ResourceTone {
   const normalized = verdict.toLowerCase();
   if (normalized.includes("bloquear") || score < 55) return "red";
@@ -362,8 +375,7 @@ function LeadQueueItem({
   selected: boolean;
   onSelect: () => void;
 }) {
-  const priorityTone = leadPriorityTone(lead);
-  const visibleTags = [...lead.tags, ...lead.internalTags].slice(0, 2);
+  const heat = leadHeatBadge(lead);
 
   return (
     <button
@@ -384,22 +396,9 @@ function LeadQueueItem({
               <p className="truncate text-[13px] font-semibold text-[var(--admin-foreground)]">{lead.name}</p>
               <p className="mt-0.5 truncate text-[11px] text-[var(--admin-muted)]">{formatPhone(lead.phone)}</p>
             </div>
-            <span className="shrink-0 text-[10px] text-[var(--admin-muted)]">{formatRelative(lead.lastMessageAt)}</span>
-          </div>
-
-          <p className="mt-1.5 line-clamp-2 text-[11px] leading-4 text-[var(--admin-soft)]">
-            {lead.lastMessagePreview || lead.nextAction}
-          </p>
-
-          <div className="mt-1.5 flex min-w-0 flex-wrap gap-1">
-            <StatusBadge tone={priorityTone} className="h-5 px-1.5 text-[9px]">{leadPriorityLabel(lead)}</StatusBadge>
-            <StatusBadge tone={crmStageTone[lead.crmStage]} className="h-5 px-1.5 text-[9px]">{crmStageLabels[lead.crmStage]}</StatusBadge>
-            {lead.humanInterventionActive && <StatusBadge tone="yellow" className="h-5 px-1.5 text-[9px]">em atendimento</StatusBadge>}
-            {visibleTags.map((tag) => (
-              <span key={tag} className="max-w-[112px] truncate rounded border border-[var(--admin-border)] bg-white px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.06em] text-[var(--admin-muted)]">
-                {tag}
-              </span>
-            ))}
+            <StatusBadge tone={heat.tone} className="h-5 shrink-0 px-1.5 text-[9px]">
+              {heat.label}
+            </StatusBadge>
           </div>
         </div>
       </div>
@@ -1446,7 +1445,7 @@ export function WhatsAppCrmPage({ crmData }: { crmData: DataResult<WhatsAppCrmDa
               />
             </div>
 
-            <div className="mt-2.5 flex gap-1.5 overflow-x-auto pb-1">
+            <div className="mt-2.5 flex flex-wrap gap-1.5">
               {(Object.keys(filterLabels) as FilterKey[]).map((key) => (
                 <button
                   key={key}
