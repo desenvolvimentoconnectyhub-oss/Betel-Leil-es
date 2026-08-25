@@ -29,7 +29,7 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-import type { ComponentType } from "react";
+import type { ComponentType, CSSProperties } from "react";
 import type {
   DataResult,
   WhatsAppCrmData,
@@ -103,6 +103,14 @@ const crmStages: Array<{ key: WhatsAppCrmStage; label: string; tone: ResourceTon
 
 const crmStageLabels = Object.fromEntries(crmStages.map((stage) => [stage.key, stage.label])) as Record<WhatsAppCrmStage, string>;
 const crmStageTone = Object.fromEntries(crmStages.map((stage) => [stage.key, stage.tone])) as Record<WhatsAppCrmStage, ResourceTone>;
+const whatsappChatBackgroundStyle: CSSProperties = {
+  backgroundColor: "#f7f1e8",
+  backgroundImage:
+    'linear-gradient(rgba(247, 241, 232, 0.48), rgba(247, 241, 232, 0.48)), url("/images/fundo-whatsapp.jpg")',
+  backgroundPosition: "center top",
+  backgroundRepeat: "repeat",
+  backgroundSize: "420px auto",
+};
 
 function formatDateTime(value: string) {
   if (!value) return "Sem data";
@@ -557,12 +565,7 @@ function LiveChatPanel({
 
       <div
         className="min-h-0 overflow-auto px-3 py-4 sm:px-5"
-        style={{
-          backgroundColor: "#f7f1e8",
-          backgroundImage:
-            "radial-gradient(circle at 18px 18px, rgba(89, 104, 117, 0.06) 1.4px, transparent 1.4px), radial-gradient(circle at 42px 42px, rgba(15, 124, 144, 0.045) 1.2px, transparent 1.2px)",
-          backgroundSize: "56px 56px",
-        }}
+        style={whatsappChatBackgroundStyle}
       >
         {timeline.length ? (
           timeline.map((item) => <ChatBubble key={item.id} item={item} />)
@@ -1110,12 +1113,7 @@ function LeadFileModal({
 
             <div
               className="min-h-0 overflow-auto px-4 py-5 sm:px-6"
-              style={{
-                backgroundColor: "#f7f1e8",
-                backgroundImage:
-                  "radial-gradient(circle at 18px 18px, rgba(89, 104, 117, 0.06) 1.4px, transparent 1.4px), radial-gradient(circle at 42px 42px, rgba(15, 124, 144, 0.045) 1.2px, transparent 1.2px)",
-                backgroundSize: "56px 56px",
-              }}
+              style={whatsappChatBackgroundStyle}
             >
               {timeline.length ? (
                 timeline.map((item) => <ChatBubble key={item.id} item={item} />)
