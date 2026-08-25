@@ -53,9 +53,17 @@ export type WhatsAppRuntimeDecision = {
   followUpCandidate: boolean;
   canAskQualification: boolean;
   riskFlags: string[];
+  meetingSchedule: WhatsAppMeetingScheduleCandidate | null;
   guidance: string[];
   promptContext: string;
   memoryPatch: Record<string, unknown>;
+};
+
+export type WhatsAppMeetingScheduleCandidate = {
+  requested: boolean;
+  confirmed: boolean;
+  label: string;
+  dueMinutes: number | null;
 };
 
 export type WhatsAppPreSendEvaluation = {
@@ -110,9 +118,18 @@ function matchAny(text: string, patterns: RegExp[]) {
 
 function hasExplicitHumanRequest(normalized: string) {
   return matchAny(normalized, [
-    /\b(atendimento humano|falar com alguem|falar com uma pessoa|falar com atendente|falar com consultor|me liga|pode me ligar|ligacao|telefone do consultor|whatsapp do consultor)\b/,
-    /\b(quero|preciso|gostaria|prefiro|pode|consegue|tem como)\b.{0,60}\b(falar|conversar|ser atendido|atendimento)\b.{0,60}\b(humano|atendente|consultor|corretor|vendedor|alguem|pessoa)\b/,
-    /\b(humano|atendente|consultor|corretor|vendedor|alguem|pessoa)\b.{0,60}\b(me atender|me chamar|me ligar|falar comigo|entrar em contato)\b/,
+    /\b(atendimento humano|falar com alguem|falar com uma pessoa|falar com atendente|falar com humano|quero humano|prefiro humano)\b/,
+    /\b(quero|preciso|gostaria|prefiro|pode|consegue|tem como)\b.{0,60}\b(falar|conversar|ser atendido|atendimento)\b.{0,60}\b(humano|atendente|alguem|pessoa)\b/,
+    /\b(humano|atendente|alguem|pessoa)\b.{0,60}\b(me atender|me chamar|me ligar|falar comigo|entrar em contato)\b/,
+  ]);
+}
+
+function hasMeetingOrCallRequest(normalized: string) {
+  return matchAny(normalized, [
+    /\b(reuniao|ligacao|agenda|agendar|marcar|horario|melhor periodo|periodo para contato)\b/,
+    /\b(diretor comercial|sdr|consultor|especialista)\b/,
+    /\b(me liga|pode me ligar|podem me ligar|me chama|pode chamar|vamos falar|posso falar|falarmos|falar por telefone|entrar em contato)\b/,
+    /\b(5 minutos|cinco minutos|minutos para falar|minutos para falarmos)\b/,
   ]);
 }
 
@@ -193,7 +210,7 @@ function detectQualification(input: DecisionInput, normalized: string) {
     capital: qualificationValue(profile, ["capitalAmount", "capital_amount", "capital"]) || (budget > 0 ? String(budget) : ""),
     meeting:
       qualificationValue(profile, ["meetingInterest", "meeting_interest"]) ||
-      (matchAny(normalized, [/\b(reuniao|diretor comercial|consultor|me chama|pode chamar|faz sentido|vamos falar)\b/])
+      (matchAny(normalized, [/\b(reuniao|ligacao|diretor comercial|consultor|sdr|me chama|pode chamar|me liga|pode me ligar|faz sentido|vamos falar|5 minutos|cinco minutos|melhor periodo)\b/])
         ? "texto_atual"
         : ""),
   };
@@ -214,12 +231,81 @@ function detectQualification(input: DecisionInput, normalized: string) {
   return { answered, missing, budget };
 }
 
+function detectMeetingScheduleCandidate(input: DecisionInput): WhatsAppMeetingScheduleCandidate | null {
+  const normalized = normalizeSearchText(input.inboundText);
+  const exactTime = normalized.match(/\b([01]?\d|2[0-3])(?:[:h]([0-5]\d))?\b/);
+  const inFiveMinutes = matchAny(normalized, [/\b(5 minutos|cinco minutos|minutos para falar|em cinco|minutos para falarmos)\b/]);
+  const now = matchAny(normalized, [/\b(agora|ja pode|pode ser agora|nesse momento)\b/]);
+  const todayAfternoon = matchAny(normalized, [/\b(hoje a tarde|hoje de tarde|periodo da tarde|melhor periodo.*tarde|tarde)\b/]);
+  const morning = matchAny(normalized, [/\b(amanha de manha|pela manha|periodo da manha|manha)\b/]);
+  const tomorrow = matchAny(normalized, [/\b(amanha|proximo dia|outro dia)\b/]);
+  const scheduleWindowMentioned = Boolean(exactTime) || inFiveMinutes || now || todayAfternoon || morning || tomorrow;
+  const askedMeetingTime = recentAgentAskedMeetingTime(input.history);
+  const hasMeetingContext = hasMeetingOrCallRequest(normalized) || (scheduleWindowMentioned && askedMeetingTime);
+  if (!hasMeetingContext) return null;
+
+  const affirmative = matchAny(normalized, [/\b(sim|pode|confirmo|confirmado|combinado|fechado|ok|beleza|blz|claro|vamos)\b/]);
+  const confirmed =
+    affirmative ||
+    inFiveMinutes ||
+    now ||
+    Boolean(exactTime) ||
+    (scheduleWindowMentioned && (askedMeetingTime || normalized.includes("melhor periodo")));
+
+  if (inFiveMinutes || now) {
+    return {
+      requested: true,
+      confirmed,
+      label: inFiveMinutes ? "em ate 5 minutos" : "agora",
+      dueMinutes: inFiveMinutes ? 5 : 2,
+    };
+  }
+
+  if (exactTime) {
+    const minute = exactTime[2] ? `:${exactTime[2]}` : "h";
+    return {
+      requested: true,
+      confirmed,
+      label: `${exactTime[1]}${minute}`,
+      dueMinutes: 15,
+    };
+  }
+
+  if (todayAfternoon || morning || tomorrow) {
+    return {
+      requested: true,
+      confirmed,
+      label: todayAfternoon ? "hoje a tarde" : morning ? "pela manha" : "amanha",
+      dueMinutes: todayAfternoon ? 60 : tomorrow ? 24 * 60 : 180,
+    };
+  }
+
+  return {
+    requested: true,
+    confirmed: false,
+    label: "horario ainda nao confirmado",
+    dueMinutes: null,
+  };
+}
+
 function lastMessageTime(history: WhatsAppRuntimeMessageContext[], direction: string) {
   return history
     .filter((message) => message.direction === direction)
     .map((message) => new Date(message.createdAt).getTime())
     .filter(Number.isFinite)
     .sort((a, b) => b - a)[0] || 0;
+}
+
+function recentAgentAskedMeetingTime(history: WhatsAppRuntimeMessageContext[]) {
+  return history
+    .filter((message) => message.direction === "outbound" && cleanString(message.text))
+    .slice(-3)
+    .some((message) =>
+      matchAny(normalizeSearchText(message.text), [
+        /\b(qual horario|horario fica|melhor horario|melhor periodo|periodo fica)\b/,
+        /\b(ligacao|reuniao|te ligar|falar com o comercial|sdr|diretor comercial)\b/,
+      ])
+    );
 }
 
 function detectIntents(input: DecisionInput): WhatsAppRuntimeIntent[] {
@@ -237,7 +323,7 @@ function detectIntents(input: DecisionInput): WhatsAppRuntimeIntent[] {
   if (matchAny(normalized, [/\b(voce|vc|tu)\s+(e|eh|e)\s+(ia|bot|robo|inteligencia artificial|humano|pessoa)\b/])) {
     intents.push("identity_question");
   }
-  if (matchAny(normalized, [/\b(advogado|juridico|processo|acao judicial|procon|fraude|golpe|denuncia|matricula|edital|documentacao)\b/])) {
+  if (matchAny(normalized, [/\b(advogado|juridico|processo judicial|acao judicial|procon|fraude|golpe|denuncia|matricula|edital|documentacao)\b/])) {
     intents.push("legal_risk");
   }
   if (matchAny(normalized, [/\b(ocupad|desocup|posse|morador|inquilino|imissao|mandado)\b/])) intents.push("occupied_property");
@@ -259,7 +345,7 @@ function detectIntents(input: DecisionInput): WhatsAppRuntimeIntent[] {
   if (matchAny(normalized, [/\b(medo|receio|inseguro|nao entendo|primeira vez|duvida|travado|problema)\b/])) {
     intents.push("objection_or_fear");
   }
-  if (matchAny(normalized, [/\b(reuniao|diretor comercial|me chama|pode chamar|agenda|marcar|ligar|whatsapp do consultor)\b/])) {
+  if (hasMeetingOrCallRequest(normalized)) {
     intents.push("meeting_request");
   }
   if (matchAny(normalized, [/\b(quero|tenho interesse|manda|envia|ver oportunidade|vamos|fechar|contratar|começar|comecar)\b/])) {
@@ -311,6 +397,7 @@ function inferStage(input: DecisionInput, intents: WhatsAppRuntimeIntent[], qual
   }
   if (
     score >= input.config.vipScore ||
+    score >= input.config.qualifiedScore ||
     intents.includes("meeting_request") ||
     intents.includes("buying_intent") ||
     qualification.answered.length >= 4 ||
@@ -329,11 +416,14 @@ function nextActionForStage(input: {
   primaryIntent: WhatsAppRuntimeIntent;
   missing: string[];
   budget: number;
+  meetingSchedule: WhatsAppMeetingScheduleCandidate | null;
 }) {
+  if (input.meetingSchedule?.confirmed) return `Registrar ligacao com SDR ${input.meetingSchedule.label} e continuar tirando duvidas ate o contato.`;
+  if (input.meetingSchedule?.requested) return "Confirmar um horario objetivo para ligacao com SDR e manter a conversa ativa.";
   if (input.stage === "handoff") return "Alertar humano internamente e continuar respondendo sem prometer validacao juridica, posse, lance ou contrato.";
   if (input.stage === "perdido") return "Respeitar opt-out/desinteresse e parar automacao.";
   if (input.stage === "convertido") return "Confirmar contexto com humano e registrar conversao no CRM.";
-  if (input.stage === "quente") return "Conduzir para consultor ou oportunidade validada pela equipe Betel.";
+  if (input.stage === "quente") return "Tirar a ultima duvida e conduzir para ligacao com SDR/comercial, pedindo um horario objetivo.";
   if (input.primaryIntent === "greeting") return "Responder curto e deixar o lead dizer o assunto antes de qualificar.";
   if (input.missing.length) return `Coletar ${input.missing[0]} com uma pergunta natural depois de entregar valor.`;
   if (input.budget > 0) return "Confirmar regiao/tipo de imovel e encaminhar proximo passo.";
@@ -361,6 +451,7 @@ export function buildWhatsAppRuntimeDecision(input: DecisionInput): WhatsAppRunt
   const normalized = normalizeSearchText(input.inboundText);
   const baseIntents = detectIntents(input);
   const qualification = detectQualification(input, normalized);
+  const meetingSchedule = detectMeetingScheduleCandidate(input);
   const intents = uniqueStrings(
     qualification.answered.some((item) => ["objetivo", "prioridade", "receio", "capital liquido", "proximo passo"].includes(item))
       ? [...baseIntents, "qualification_answer"]
@@ -381,18 +472,29 @@ export function buildWhatsAppRuntimeDecision(input: DecisionInput): WhatsAppRunt
     primaryIntent,
     missing: qualification.missing,
     budget: qualification.budget,
+    meetingSchedule,
   });
   const guidance = [
     stage === "entrada" ? "Nao puxe formulario nem capital logo de cara; responda curto e abra espaco." : "",
     canAskQualification ? `Proxima pergunta permitida: ${qualification.missing[0]}.` : "",
-    stage === "quente" ? "Sinalizar proximo passo comercial sem promessa de resultado." : "",
+    stage === "quente" ? "Lead quente deve continuar em atendimento automatico, tirar duvidas e caminhar para ligacao com SDR." : "",
+    meetingSchedule?.confirmed ? "O lead aceitou ligacao: confirme de forma natural e mantenha a conversa viva ate o SDR entrar." : "",
+    meetingSchedule?.requested && !meetingSchedule.confirmed ? "O lead abriu porta para ligacao: peca um horario objetivo em vez de encaminhar para humano." : "",
     stage === "handoff" ? "Alerta humano e interno; nao diga ao lead que vai chamar alguem e continue a conversa com seguranca." : "",
     riskFlags.length ? "Nao dar parecer juridico, nao validar matricula/ocupacao/lance e nao prometer prazo." : "",
     intents.includes("identity_question") ? "Se perguntarem se e IA, responder com transparencia curta." : "",
     "Uma pergunta por resposta e sem markdown.",
   ].filter(Boolean);
   const confidence = Math.min(0.98, 0.38 + Math.min(intents.length, 5) * 0.1 + qualification.answered.length * 0.06 + (riskFlags.length ? 0.12 : 0));
-  const nextActionDueMinutes = stage === "handoff" ? 15 : stage === "quente" ? 60 : followUpCandidate ? 120 : null;
+  const nextActionDueMinutes = meetingSchedule?.confirmed
+    ? meetingSchedule.dueMinutes
+    : stage === "handoff"
+      ? 15
+      : stage === "quente"
+        ? 60
+        : followUpCandidate
+          ? 120
+          : null;
   const promptContext = [
     `Intencao principal: ${primaryIntent}.`,
     `Intencoes secundarias: ${intents.join(", ")}.`,
@@ -416,10 +518,11 @@ export function buildWhatsAppRuntimeDecision(input: DecisionInput): WhatsAppRunt
     qualificationMissing: qualification.missing,
     shouldHandoff: stage === "handoff" && Boolean(reason),
     handoffReason: reason,
-    alertHuman: stage === "quente" || stage === "handoff",
+    alertHuman: stage === "quente" || stage === "handoff" || Boolean(meetingSchedule?.confirmed),
     followUpCandidate,
     canAskQualification,
     riskFlags,
+    meetingSchedule,
     guidance,
     promptContext,
     memoryPatch: {
@@ -436,9 +539,10 @@ export function buildWhatsAppRuntimeDecision(input: DecisionInput): WhatsAppRunt
         qualificationMissing: qualification.missing,
         shouldHandoff: stage === "handoff" && Boolean(reason),
         handoffReason: reason || null,
-        alertHuman: stage === "quente" || stage === "handoff",
+        alertHuman: stage === "quente" || stage === "handoff" || Boolean(meetingSchedule?.confirmed),
         followUpCandidate,
         riskFlags,
+        meetingSchedule,
         textPreview: clampText(input.inboundText, 180),
         updatedAt: new Date().toISOString(),
       },
@@ -448,6 +552,7 @@ export function buildWhatsAppRuntimeDecision(input: DecisionInput): WhatsAppRunt
         stage,
         nextAction,
         qualificationMissing: qualification.missing,
+        meetingSchedule,
         updatedAt: new Date().toISOString(),
       },
       crm_stage: stage,
@@ -495,6 +600,12 @@ function hasVisibleHandoffNotice(text: string) {
 }
 
 function naturalFallbackForDecision(decision: WhatsAppRuntimeDecision) {
+  if (decision.meetingSchedule?.confirmed) {
+    return `Perfeito. Vou deixar registrado pra ligacao ${decision.meetingSchedule.label}. Enquanto isso, qual ponto vc quer entender melhor sobre a Betel?`;
+  }
+  if (decision.meetingSchedule?.requested || decision.stage === "quente") {
+    return "Perfeito. Pelo que vc contou, faz sentido uma ligacao rapida com a Betel. Qual horario fica melhor pra vc?";
+  }
   if (decision.stage === "handoff") {
     return "Entendi. Vou te orientar pelo caminho seguro: a Betel analisa margem, risco, teto de lance e documentos antes de qualquer passo.";
   }
@@ -541,7 +652,7 @@ export function evaluateWhatsAppReplyBeforeSend(input: {
   if (hasVisibleHandoffNotice(text)) {
     flags.push("visible_handoff_notice");
     corrections.push("visible_handoff_notice_replaced");
-    text = "Entendi. A Betel ajuda filtrando oportunidades, analisando risco e margem, definindo teto de lance e acompanhando o pos-arremate. Qual ponto te preocupa mais hoje?";
+    text = naturalFallbackForDecision(input.decision);
   }
 
   if (hasUnsafeAuctionPromise(text)) {

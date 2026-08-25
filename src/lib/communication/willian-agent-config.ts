@@ -10,7 +10,7 @@ import {
 
 const WILLIAN_AGENT_CONFIG_KEY = "BETEL_WILLIAN_AGENT_CONFIG";
 const WILLIAN_AGENT_KEY = "multichannel-dispatch";
-const WILLIAN_AGENT_NAME = "Willian";
+const WILLIAN_AGENT_NAME = "Evelyn";
 
 function whatsappAgentConfigKey(agentKey: string) {
   return `BETEL_WHATSAPP_AGENT_CONFIG_${agentKey.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`;

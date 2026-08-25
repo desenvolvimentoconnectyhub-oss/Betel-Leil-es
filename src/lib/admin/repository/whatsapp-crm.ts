@@ -637,8 +637,8 @@ function nextAction(input: {
 }) {
   if (input.optOut) return "Respeitar opt-out; nao enviar nova mensagem.";
   if (input.humanInterventionActive) return "Humano assumir a conversa e registrar decisao no CRM.";
-  if (input.score >= 85) return "Priorizar atendimento humano e validar oportunidade aderente.";
-  if (input.score >= 70) return "Enviar proximo passo consultivo e confirmar capital/regiao.";
+  if (input.score >= 85) return "Priorizar ligacao com SDR e continuar tirando duvidas ate o contato.";
+  if (input.score >= 70) return "Enviar proximo passo consultivo e confirmar horario para ligacao.";
   if (timestamp(input.lastInboundAt) > timestamp(input.lastOutboundAt)) {
     return "Responder a ultima mensagem e fazer uma pergunta de qualificacao.";
   }
