@@ -9,6 +9,7 @@ import type {
   SdrLeadConfirmationStatus,
   SdrAppointmentStatus,
   WhatsAppSdrAppointmentData,
+  WhatsAppSdrAppointmentMessageTemplates,
   WhatsAppSdrAppointmentMetrics,
   WhatsAppSdrAppointmentRecipient,
   WhatsAppSdrAppointmentSettings,
@@ -56,11 +57,32 @@ const DEFAULT_TIMEZONE = "America/Sao_Paulo";
 const DEFAULT_BUSINESS_START_HOUR = 8;
 const DEFAULT_BUSINESS_END_HOUR = 19;
 const DEFAULT_MAX_BOOKINGS_PER_HOUR = 2;
+const DEFAULT_LEAD_CONFIRMATION_MINUTES_BEFORE = 30;
+const DEFAULT_ADMIN_UNCONFIRMED_NOTICE_MINUTES_BEFORE = 10;
 const ACTIVE_STATUSES: SdrAppointmentStatus[] = ["pending_confirmation", "scheduled", "notified"];
 const RESCHEDULE_REQUESTED_STATUS: SdrLeadConfirmationStatus = "reschedule_requested";
 const MAX_SUMMARY_LENGTH = 900;
 const MAX_BRIEFING_LENGTH = 1200;
 const CONFIRMATION_ACTIONS = new Set(["confirm", "reschedule"]);
+
+export const DEFAULT_SDR_APPOINTMENT_MESSAGE_TEMPLATES: WhatsAppSdrAppointmentMessageTemplates = {
+  adminScheduled:
+    "Nova ligacao agendada BTL\nLead: {{lead_nome}}\nTelefone: {{lead_telefone}}\n{{lead_email_linha}}Horario: {{horario}}\n\nResumo para abordagem:\n{{resumo_sdr}}",
+  leadConfirmation:
+    "Oi, {{lead_primeiro_nome}}. Passando para confirmar: sua ligacao com a Betel esta marcada para {{horario}}. Esse horario continua bom pra voce?",
+  leadConfirmedReply:
+    "Perfeito, {{lead_primeiro_nome}}. Horario confirmado para {{horario}}. A equipe da Betel ja foi avisada.",
+  leadReschedulePrompt:
+    "Claro, {{lead_primeiro_nome}}. Me fala o novo dia e horario que fica melhor entre {{hora_inicio}} e {{hora_fim}}, que eu confiro a agenda por aqui.",
+  adminLeadConfirmed:
+    "Confirmacao de ligacao BTL\nLead: {{lead_nome}}\nTelefone: {{lead_telefone}}\nHorario confirmado: {{horario}}\n\nResumo para abordagem:\n{{resumo_sdr}}",
+  adminRescheduleRequested:
+    "Lead pediu para remarcar a ligacao BTL\nLead: {{lead_nome}}\nTelefone: {{lead_telefone}}\nHorario atual: {{horario}}\nA Evelyn vai coletar o novo dia e horario e atualizar a agenda.",
+  adminRescheduled:
+    "Ligacao BTL reagendada\nLead: {{lead_nome}}\nTelefone: {{lead_telefone}}\nNovo horario: {{horario}}\n\nResumo para abordagem:\n{{resumo_sdr}}",
+  adminUnconfirmedReminder:
+    "Aviso BTL: ligacao mantida sem confirmacao do lead\nLead: {{lead_nome}}\nTelefone: {{lead_telefone}}\nHorario: {{horario}}\nO lead nao confirmou e nao pediu remarcacao. Seguimos considerando a ligacao como marcada.\n\nResumo:\n{{resumo_sdr}}",
+};
 
 const datePartsFormatter = new Intl.DateTimeFormat("en-CA", {
   timeZone: DEFAULT_TIMEZONE,
@@ -115,6 +137,12 @@ function asNumber(value: unknown, fallback = 0): number {
   return fallback;
 }
 
+function asClampedInteger(value: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Math.round(asNumber(value, fallback));
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+}
+
 function clampText(value: string, limit: number): string {
   const text = value.replace(/\s+/g, " ").trim();
   if (text.length <= limit) return text;
@@ -153,12 +181,12 @@ function hourBucketIso(scheduledFor: string) {
   return localDateTimeToIso({ ...parts, minute: 0 });
 }
 
-function reminderDueAtIso(scheduledFor: string) {
-  return new Date(Date.parse(scheduledFor) - 10 * 60_000).toISOString();
+function reminderDueAtIso(scheduledFor: string, settings: WhatsAppSdrAppointmentSettings) {
+  return new Date(Date.parse(scheduledFor) - settings.adminUnconfirmedNoticeMinutesBefore * 60_000).toISOString();
 }
 
-function confirmationDueAtIso(scheduledFor: string) {
-  return new Date(Date.parse(scheduledFor) - 30 * 60_000).toISOString();
+function confirmationDueAtIso(scheduledFor: string, settings: WhatsAppSdrAppointmentSettings) {
+  return new Date(Date.parse(scheduledFor) - settings.leadConfirmationMinutesBefore * 60_000).toISOString();
 }
 
 function sameLocalDay(left: Date, right: Date) {
@@ -261,8 +289,26 @@ function emptySettings(): WhatsAppSdrAppointmentSettings {
     businessStartHour: DEFAULT_BUSINESS_START_HOUR,
     businessEndHour: DEFAULT_BUSINESS_END_HOUR,
     maxBookingsPerHour: DEFAULT_MAX_BOOKINGS_PER_HOUR,
+    leadConfirmationMinutesBefore: DEFAULT_LEAD_CONFIRMATION_MINUTES_BEFORE,
+    adminUnconfirmedNoticeMinutesBefore: DEFAULT_ADMIN_UNCONFIRMED_NOTICE_MINUTES_BEFORE,
+    messageTemplates: DEFAULT_SDR_APPOINTMENT_MESSAGE_TEMPLATES,
     updatedAt: null,
   };
+}
+
+function normalizeMessageTemplates(value: unknown): WhatsAppSdrAppointmentMessageTemplates {
+  const record = asRecord(value);
+  return Object.fromEntries(
+    Object.entries(DEFAULT_SDR_APPOINTMENT_MESSAGE_TEMPLATES).map(([key, fallback]) => {
+      const template = asString(record[key]).trim();
+      return [key, template || fallback];
+    }),
+  ) as WhatsAppSdrAppointmentMessageTemplates;
+}
+
+function settingsFlow(row: Record<string, unknown> | null | undefined) {
+  const metadata = asRecord(row?.metadata);
+  return asRecord(metadata.sdrAppointmentFlow);
 }
 
 function normalizeSettings(
@@ -273,6 +319,20 @@ function normalizeSettings(
   if (!row) return { ...fallback, notificationAdminUserId: recipient?.id ?? null, notificationAdminUserName: recipient?.displayName ?? null, notificationAdminUserPhone: recipient?.phone ?? null };
 
   const notificationAdminUserId = recipient?.id ?? asNullableString(row.notification_admin_user_id) ?? null;
+  const flow = settingsFlow(row);
+  const leadConfirmationMinutesBefore = asClampedInteger(
+    flow.leadConfirmationMinutesBefore,
+    fallback.leadConfirmationMinutesBefore,
+    1,
+    1440,
+  );
+  const adminUnconfirmedNoticeMinutesBefore = asClampedInteger(
+    flow.adminUnconfirmedNoticeMinutesBefore,
+    fallback.adminUnconfirmedNoticeMinutesBefore,
+    0,
+    Math.max(0, leadConfirmationMinutesBefore - 1),
+  );
+
   return {
     notificationAdminUserId,
     notificationAdminUserName: recipient?.displayName ?? null,
@@ -281,6 +341,9 @@ function normalizeSettings(
     businessStartHour: asNumber(row.business_start_hour, fallback.businessStartHour),
     businessEndHour: asNumber(row.business_end_hour, fallback.businessEndHour),
     maxBookingsPerHour: asNumber(row.max_bookings_per_hour, fallback.maxBookingsPerHour),
+    leadConfirmationMinutesBefore,
+    adminUnconfirmedNoticeMinutesBefore,
+    messageTemplates: normalizeMessageTemplates(flow.messageTemplates),
     updatedAt: asNullableString(row.updated_at),
   };
 }
@@ -288,7 +351,7 @@ function normalizeSettings(
 async function maybeReadSettingsRow(supabase: SupabaseAdminClient) {
   const { data, error } = await supabase
     .from("whatsapp_sdr_settings")
-    .select("notification_admin_user_id, timezone, business_start_hour, business_end_hour, max_bookings_per_hour, updated_at")
+    .select("notification_admin_user_id, timezone, business_start_hour, business_end_hour, max_bookings_per_hour, metadata, updated_at")
     .eq("id", true)
     .maybeSingle();
 
@@ -342,29 +405,108 @@ export async function getWhatsAppSdrAppointmentSettings(): Promise<WhatsAppSdrAp
 }
 
 export async function saveWhatsAppSdrAppointmentSettings(input: {
-  notificationAdminUserId: string | null;
+  notificationAdminUserId?: string | null;
+  businessStartHour?: number;
+  businessEndHour?: number;
+  maxBookingsPerHour?: number;
+  leadConfirmationMinutesBefore?: number;
+  adminUnconfirmedNoticeMinutesBefore?: number;
+  messageTemplates?: Partial<WhatsAppSdrAppointmentMessageTemplates>;
 }): Promise<WhatsAppSdrAppointmentSettings> {
   const supabase = getSupabaseAdminClient();
   if (!supabase) return emptySettings();
 
-  const selectedRecipient = input.notificationAdminUserId
-    ? await getRecipientById(supabase, input.notificationAdminUserId)
+  const currentRow = await maybeReadSettingsRow(supabase);
+  const currentRecipient = await resolveNotificationRecipient(supabase, currentRow);
+  const current = normalizeSettings(currentRow, currentRecipient);
+  const nextRecipientId = Object.prototype.hasOwnProperty.call(input, "notificationAdminUserId")
+    ? input.notificationAdminUserId ?? null
+    : current.notificationAdminUserId;
+  const selectedRecipient = nextRecipientId
+    ? await getRecipientById(supabase, nextRecipientId)
     : null;
+  const businessStartHour = asClampedInteger(input.businessStartHour, current.businessStartHour, 0, 23);
+  const businessEndHour = asClampedInteger(input.businessEndHour, current.businessEndHour, 1, 24);
+  const validBusinessHours = businessStartHour < businessEndHour;
+  const leadConfirmationMinutesBefore = asClampedInteger(
+    input.leadConfirmationMinutesBefore,
+    current.leadConfirmationMinutesBefore,
+    1,
+    1440,
+  );
+  const adminUnconfirmedNoticeMinutesBefore = asClampedInteger(
+    input.adminUnconfirmedNoticeMinutesBefore,
+    current.adminUnconfirmedNoticeMinutesBefore,
+    0,
+    Math.max(0, leadConfirmationMinutesBefore - 1),
+  );
+  const messageTemplates = normalizeMessageTemplates({
+    ...current.messageTemplates,
+    ...(input.messageTemplates || {}),
+  });
+  const metadata = asRecord(currentRow?.metadata);
+  const previousFlow = settingsFlow(currentRow);
+  const nextMetadata = {
+    ...metadata,
+    sdrAppointmentFlow: {
+      ...previousFlow,
+      leadConfirmationMinutesBefore,
+      adminUnconfirmedNoticeMinutesBefore,
+      messageTemplates,
+    },
+  };
 
   await supabase.from("whatsapp_sdr_settings").upsert(
     {
       id: true,
       notification_admin_user_id: selectedRecipient?.id ?? null,
       timezone: DEFAULT_TIMEZONE,
-      business_start_hour: DEFAULT_BUSINESS_START_HOUR,
-      business_end_hour: DEFAULT_BUSINESS_END_HOUR,
-      max_bookings_per_hour: DEFAULT_MAX_BOOKINGS_PER_HOUR,
+      business_start_hour: validBusinessHours ? businessStartHour : current.businessStartHour,
+      business_end_hour: validBusinessHours ? businessEndHour : current.businessEndHour,
+      max_bookings_per_hour: asClampedInteger(input.maxBookingsPerHour, current.maxBookingsPerHour, 1, 10),
+      metadata: nextMetadata,
       updated_at: new Date().toISOString(),
     },
     { onConflict: "id" },
   );
 
-  return getWhatsAppSdrAppointmentSettings();
+  const saved = await getWhatsAppSdrAppointmentSettings();
+  await refreshPendingAppointmentDueDates(supabase, saved);
+  return saved;
+}
+
+async function refreshPendingAppointmentDueDates(
+  supabase: SupabaseAdminClient,
+  settings: WhatsAppSdrAppointmentSettings,
+) {
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("whatsapp_sdr_appointments")
+    .select("id, scheduled_for, confirmation_sent_at, admin_reminder_sent_at")
+    .in("status", ACTIVE_STATUSES)
+    .eq("lead_confirmation_status", "pending")
+    .gt("scheduled_for", now)
+    .limit(1000);
+
+  if (error || !Array.isArray(data)) return;
+
+  await Promise.all(
+    data.map((row) => {
+      const record = asRecord(row);
+      const scheduledFor = asString(record.scheduled_for);
+      if (!scheduledFor) return Promise.resolve();
+
+      const update: Record<string, unknown> = {};
+      if (!asNullableString(record.confirmation_sent_at)) {
+        update.confirmation_due_at = confirmationDueAtIso(scheduledFor, settings);
+      }
+      if (!asNullableString(record.admin_reminder_sent_at)) {
+        update.reminder_due_at = reminderDueAtIso(scheduledFor, settings);
+      }
+      if (Object.keys(update).length === 0) return Promise.resolve();
+      return supabase.from("whatsapp_sdr_appointments").update(update).eq("id", asString(record.id));
+    }),
+  );
 }
 
 async function mapRecipientsById(ids: string[]) {
@@ -916,84 +1058,68 @@ async function insertAppointmentTimelineNote(
   });
 }
 
-function scheduledNotificationText(appointment: WhatsAppSdrAppointmentSummary) {
-  return [
-    "Nova ligacao agendada BTL",
-    `Lead: ${appointment.leadName}`,
-    `Telefone: ${appointment.leadPhone || "nao informado"}`,
-    appointment.leadEmail ? `Email: ${appointment.leadEmail}` : null,
-    `Horario: ${appointment.scheduleLabel}`,
-    "",
-    "Resumo para abordagem:",
-    appointment.sdrBriefing,
-  ]
-    .filter((line): line is string => Boolean(line))
-    .join("\n");
+function businessHourLabel(hour: number) {
+  return `${String(hour).padStart(2, "0")}h`;
 }
 
-function adminLeadConfirmedText(appointment: WhatsAppSdrAppointmentSummary) {
-  return [
-    "Confirmacao de ligacao BTL",
-    `Lead: ${appointment.leadName}`,
-    `Telefone: ${appointment.leadPhone || "nao informado"}`,
-    `Horario confirmado: ${appointment.scheduleLabel}`,
-    "",
-    "Resumo para abordagem:",
-    appointment.sdrBriefing || appointment.conversationSummary,
-  ]
-    .filter((line): line is string => Boolean(line))
-    .join("\n");
+function renderAppointmentTemplate(
+  template: string,
+  appointment: WhatsAppSdrAppointmentSummary,
+  settings: WhatsAppSdrAppointmentSettings,
+) {
+  const summary = appointment.sdrBriefing || appointment.conversationSummary || "Resumo ainda nao gerado.";
+  const replacements: Record<string, string> = {
+    lead_nome: appointment.leadName || "Lead",
+    lead_primeiro_nome: leadFirstName(appointment.leadName || "Lead"),
+    lead_telefone: appointment.leadPhone || "nao informado",
+    lead_email: appointment.leadEmail || "nao informado",
+    lead_email_linha: appointment.leadEmail ? `Email: ${appointment.leadEmail}\n` : "",
+    horario: appointment.scheduleLabel || formatAppointmentDateTime(appointment.scheduledFor),
+    resumo: summary,
+    resumo_sdr: summary,
+    hora_inicio: businessHourLabel(settings.businessStartHour),
+    hora_fim: businessHourLabel(settings.businessEndHour),
+    limite_por_hora: String(settings.maxBookingsPerHour),
+    minutos_confirmacao_lead: String(settings.leadConfirmationMinutesBefore),
+    minutos_aviso_admin: String(settings.adminUnconfirmedNoticeMinutesBefore),
+  };
+
+  return template
+    .replace(/{{\s*([a-zA-Z0-9_]+)\s*}}/g, (_, key: string) => replacements[key] ?? "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
-function adminRescheduleRequestedText(appointment: WhatsAppSdrAppointmentSummary) {
-  return [
-    "Lead pediu para remarcar a ligacao BTL",
-    `Lead: ${appointment.leadName}`,
-    `Telefone: ${appointment.leadPhone || "nao informado"}`,
-    `Horario atual: ${appointment.scheduleLabel}`,
-    "A Evelyn vai coletar o novo dia e horario e atualizar a agenda.",
-  ].join("\n");
+function scheduledNotificationText(appointment: WhatsAppSdrAppointmentSummary, settings: WhatsAppSdrAppointmentSettings) {
+  return renderAppointmentTemplate(settings.messageTemplates.adminScheduled, appointment, settings);
 }
 
-function adminRescheduledText(appointment: WhatsAppSdrAppointmentSummary) {
-  return [
-    "Ligacao BTL reagendada",
-    `Lead: ${appointment.leadName}`,
-    `Telefone: ${appointment.leadPhone || "nao informado"}`,
-    `Novo horario: ${appointment.scheduleLabel}`,
-    "",
-    "Resumo para abordagem:",
-    appointment.sdrBriefing || appointment.conversationSummary,
-  ]
-    .filter((line): line is string => Boolean(line))
-    .join("\n");
+function adminLeadConfirmedText(appointment: WhatsAppSdrAppointmentSummary, settings: WhatsAppSdrAppointmentSettings) {
+  return renderAppointmentTemplate(settings.messageTemplates.adminLeadConfirmed, appointment, settings);
 }
 
-function adminReminderText(appointment: WhatsAppSdrAppointmentSummary) {
-  return [
-    "Aviso BTL: ligacao mantida sem confirmacao do lead",
-    `Lead: ${appointment.leadName}`,
-    `Telefone: ${appointment.leadPhone || "nao informado"}`,
-    `Horario: ${appointment.scheduleLabel}`,
-    "O lead nao confirmou e nao pediu remarcacao. Seguimos considerando a ligacao como marcada.",
-    "",
-    "Resumo:",
-    appointment.sdrBriefing || appointment.conversationSummary,
-  ]
-    .filter((line): line is string => Boolean(line))
-    .join("\n");
+function adminRescheduleRequestedText(appointment: WhatsAppSdrAppointmentSummary, settings: WhatsAppSdrAppointmentSettings) {
+  return renderAppointmentTemplate(settings.messageTemplates.adminRescheduleRequested, appointment, settings);
 }
 
-function leadConfirmationText(appointment: WhatsAppSdrAppointmentSummary) {
-  return `Oi, ${leadFirstName(appointment.leadName)}. Passando para confirmar: sua ligacao com a Betel esta marcada para ${appointment.scheduleLabel}. Esse horario continua bom pra voce?`;
+function adminRescheduledText(appointment: WhatsAppSdrAppointmentSummary, settings: WhatsAppSdrAppointmentSettings) {
+  return renderAppointmentTemplate(settings.messageTemplates.adminRescheduled, appointment, settings);
 }
 
-function leadReschedulePromptText(appointment: WhatsAppSdrAppointmentSummary) {
-  return `Claro, ${leadFirstName(appointment.leadName)}. Me fala o novo dia e horario que fica melhor entre 08h e 19h, que eu confiro a agenda por aqui.`;
+function adminReminderText(appointment: WhatsAppSdrAppointmentSummary, settings: WhatsAppSdrAppointmentSettings) {
+  return renderAppointmentTemplate(settings.messageTemplates.adminUnconfirmedReminder, appointment, settings);
 }
 
-function leadConfirmedReplyText(appointment: WhatsAppSdrAppointmentSummary) {
-  return `Perfeito, ${leadFirstName(appointment.leadName)}. Horario confirmado para ${appointment.scheduleLabel}. A equipe da Betel ja foi avisada.`;
+function leadConfirmationText(appointment: WhatsAppSdrAppointmentSummary, settings: WhatsAppSdrAppointmentSettings) {
+  return renderAppointmentTemplate(settings.messageTemplates.leadConfirmation, appointment, settings);
+}
+
+function leadReschedulePromptText(appointment: WhatsAppSdrAppointmentSummary, settings: WhatsAppSdrAppointmentSettings) {
+  return renderAppointmentTemplate(settings.messageTemplates.leadReschedulePrompt, appointment, settings);
+}
+
+function leadConfirmedReplyText(appointment: WhatsAppSdrAppointmentSummary, settings: WhatsAppSdrAppointmentSettings) {
+  return renderAppointmentTemplate(settings.messageTemplates.leadConfirmedReply, appointment, settings);
 }
 
 function appointmentActionButton(appointment: WhatsAppSdrAppointmentSummary) {
@@ -1304,12 +1430,12 @@ async function rescheduleExistingAppointment(input: {
       lead_confirmation_requested_at: null,
       lead_confirmed_at: null,
       lead_reschedule_requested_at: null,
-      confirmation_due_at: confirmationDueAtIso(scheduledFor),
+      confirmation_due_at: confirmationDueAtIso(scheduledFor, settings),
       confirmation_sent_at: null,
       admin_confirmation_notified_at: null,
       lead_reminder_sent_at: null,
       admin_reminder_sent_at: null,
-      reminder_due_at: reminderDueAtIso(scheduledFor),
+      reminder_due_at: reminderDueAtIso(scheduledFor, settings),
       reschedule_note: `Remarcado em ${now}`,
       notification_payload: {
         ...notificationPayload,
@@ -1333,7 +1459,7 @@ async function rescheduleExistingAppointment(input: {
     agentKey: input.agentKey,
     providerInstanceId,
     recipient,
-    text: adminRescheduledText(appointment),
+    text: adminRescheduledText(appointment, settings),
     trackIdSuffix: `rescheduled-${Date.parse(scheduledFor)}`,
   });
 
@@ -1459,8 +1585,8 @@ export async function createSdrAppointmentFromRuntimeDecision(
     sdr_briefing: sdrBriefing,
     qualification_snapshot: qualificationSnapshot,
     lead_confirmation_status: "pending" satisfies SdrLeadConfirmationStatus,
-    confirmation_due_at: confirmationDueAtIso(scheduledFor),
-    reminder_due_at: reminderDueAtIso(scheduledFor),
+    confirmation_due_at: confirmationDueAtIso(scheduledFor, settings),
+    reminder_due_at: reminderDueAtIso(scheduledFor, settings),
     notification_payload: {
       recipientAdminUserId: recipient.id,
       recipientName: recipient.displayName,
@@ -1492,7 +1618,7 @@ export async function createSdrAppointmentFromRuntimeDecision(
     agentKey: input.agentKey,
     providerInstanceId: input.providerInstanceId,
     recipient,
-    text: scheduledNotificationText(appointment),
+    text: scheduledNotificationText(appointment, settings),
     trackIdSuffix: "scheduled",
   });
 
@@ -1581,6 +1707,9 @@ async function markAppointmentLeadAction(input: {
   const now = new Date().toISOString();
   const providerInstanceId = await providerInstanceIdForAppointment(supabase, appointment);
   const recipient = await recipientForAppointment(supabase, appointment);
+  const settingsRow = await maybeReadSettingsRow(supabase);
+  const settingsRecipient = await resolveNotificationRecipient(supabase, settingsRow);
+  const settings = normalizeSettings(settingsRow, settingsRecipient);
   const agentKey = appointment.agentKey || "";
 
   if (!providerInstanceId || !agentKey) {
@@ -1627,7 +1756,7 @@ async function markAppointmentLeadAction(input: {
       appointment: updated,
       agentKey,
       providerInstanceId,
-      text: leadConfirmedReplyText(updated),
+      text: leadConfirmedReplyText(updated, settings),
       trackIdSuffix: "lead-confirmed-reply",
     });
     leadReplySent = Boolean(leadReply.ok);
@@ -1639,7 +1768,7 @@ async function markAppointmentLeadAction(input: {
         agentKey,
         providerInstanceId,
         recipient,
-        text: adminLeadConfirmedText(updated),
+        text: adminLeadConfirmedText(updated, settings),
         trackIdSuffix: "lead-confirmed",
       });
       adminNotified = Boolean(adminDelivery.ok);
@@ -1709,7 +1838,7 @@ async function markAppointmentLeadAction(input: {
     appointment: updated,
     agentKey,
     providerInstanceId,
-    text: leadReschedulePromptText(updated),
+    text: leadReschedulePromptText(updated, settings),
     trackIdSuffix: "lead-reschedule-prompt",
   });
 
@@ -1720,7 +1849,7 @@ async function markAppointmentLeadAction(input: {
       agentKey,
       providerInstanceId,
       recipient,
-      text: adminRescheduleRequestedText(updated),
+      text: adminRescheduleRequestedText(updated, settings),
       trackIdSuffix: "lead-reschedule-requested",
     });
     adminNotified = Boolean(adminDelivery.ok);
@@ -1818,6 +1947,7 @@ export async function handleSdrAppointmentInboundControl(input: {
 async function processLeadConfirmationDue(
   supabase: SupabaseAdminClient,
   appointment: WhatsAppSdrAppointmentSummary,
+  settings: WhatsAppSdrAppointmentSettings,
 ) {
   if (!isAppointmentActive(appointment)) return { ok: true, skipped: true, reason: "inactive" };
   if (appointment.leadConfirmationStatus !== "pending") return { ok: true, skipped: true, reason: "already_answered" };
@@ -1829,7 +1959,7 @@ async function processLeadConfirmationDue(
     appointment,
     agentKey,
     providerInstanceId,
-    text: leadConfirmationText(appointment),
+    text: leadConfirmationText(appointment, settings),
     trackIdSuffix: "lead-confirmation",
     actionButton: appointmentActionButton(appointment),
   });
@@ -1860,6 +1990,7 @@ async function processLeadConfirmationDue(
 async function processAdminReminderDue(
   supabase: SupabaseAdminClient,
   appointment: WhatsAppSdrAppointmentSummary,
+  settings: WhatsAppSdrAppointmentSettings,
 ) {
   if (!isAppointmentActive(appointment)) return { ok: true, skipped: true, reason: "inactive" };
   if (appointment.leadConfirmationStatus !== "pending") {
@@ -1879,7 +2010,7 @@ async function processAdminReminderDue(
     agentKey,
     providerInstanceId,
     recipient,
-    text: adminReminderText(appointment),
+    text: adminReminderText(appointment, settings),
     trackIdSuffix: "admin-reminder",
   });
 
@@ -1913,6 +2044,7 @@ export async function runWhatsAppSdrAppointmentAutomation(input: { now?: string;
   const nowMs = Date.parse(nowIso) || Date.now();
   const limit = input.limit ?? 25;
   const activeStatuses = ACTIVE_STATUSES;
+  const settings = await getWhatsAppSdrAppointmentSettings();
 
   const [confirmationsResult, adminRemindersResult] = await Promise.all([
     supabase
@@ -1967,8 +2099,8 @@ export async function runWhatsAppSdrAppointmentAutomation(input: { now?: string;
   if (confirmationsResult.error) errors.push(`confirmations: ${confirmationsResult.error.message}`);
   if (adminRemindersResult.error) errors.push(`admin_unconfirmed_notices: ${adminRemindersResult.error.message}`);
 
-  await processRows(confirmationsResult.data as unknown[], (appointment) => processLeadConfirmationDue(supabase, appointment), "confirmationsSent");
-  await processRows(adminRemindersResult.data as unknown[], (appointment) => processAdminReminderDue(supabase, appointment), "adminUnconfirmedNoticesSent");
+  await processRows(confirmationsResult.data as unknown[], (appointment) => processLeadConfirmationDue(supabase, appointment, settings), "confirmationsSent");
+  await processRows(adminRemindersResult.data as unknown[], (appointment) => processAdminReminderDue(supabase, appointment, settings), "adminUnconfirmedNoticesSent");
 
   return {
     ok: errors.length === 0,

@@ -6,7 +6,7 @@ import {
   saveWhatsAppSdrAppointmentSettings,
   updateWhatsAppSdrAppointmentStatus,
 } from "@/lib/whatsapp/sdr-appointments";
-import type { SdrAppointmentStatus } from "@/lib/whatsapp/sdr-appointment-types";
+import type { SdrAppointmentStatus, WhatsAppSdrAppointmentMessageTemplates } from "@/lib/whatsapp/sdr-appointment-types";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -15,6 +15,20 @@ const STATUS_OPTIONS = new Set<SdrAppointmentStatus>(["scheduled", "notified", "
 
 function cleanString(value: unknown, fallback = "") {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function cleanInteger(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.round(value);
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value.replace(",", "."));
+    if (Number.isFinite(parsed)) return Math.round(parsed);
+  }
+  return undefined;
+}
+
+function cleanMessageTemplates(value: unknown): Partial<WhatsAppSdrAppointmentMessageTemplates> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Partial<WhatsAppSdrAppointmentMessageTemplates>;
 }
 
 function revalidateAgendaPaths() {
@@ -41,8 +55,43 @@ export async function POST(request: Request) {
   const action = cleanString(body.action);
 
   if (action === "save_settings") {
+    const businessStartHour = cleanInteger(body.businessStartHour);
+    const businessEndHour = cleanInteger(body.businessEndHour);
+    const maxBookingsPerHour = cleanInteger(body.maxBookingsPerHour);
+    const leadConfirmationMinutesBefore = cleanInteger(body.leadConfirmationMinutesBefore);
+    const adminUnconfirmedNoticeMinutesBefore = cleanInteger(body.adminUnconfirmedNoticeMinutesBefore);
+
+    if (
+      businessStartHour !== undefined &&
+      businessEndHour !== undefined &&
+      (businessStartHour < 0 || businessStartHour > 23 || businessEndHour < 1 || businessEndHour > 24 || businessStartHour >= businessEndHour)
+    ) {
+      return NextResponse.json({ success: false, error: "Informe uma janela de atendimento valida." }, { status: 400 });
+    }
+
+    if (maxBookingsPerHour !== undefined && (maxBookingsPerHour < 1 || maxBookingsPerHour > 10)) {
+      return NextResponse.json({ success: false, error: "O limite por hora deve ficar entre 1 e 10." }, { status: 400 });
+    }
+
+    if (
+      leadConfirmationMinutesBefore !== undefined &&
+      adminUnconfirmedNoticeMinutesBefore !== undefined &&
+      adminUnconfirmedNoticeMinutesBefore >= leadConfirmationMinutesBefore
+    ) {
+      return NextResponse.json(
+        { success: false, error: "O aviso ao admin sem confirmacao deve acontecer depois da pergunta ao lead." },
+        { status: 400 },
+      );
+    }
+
     const settings = await saveWhatsAppSdrAppointmentSettings({
       notificationAdminUserId: cleanString(body.notificationAdminUserId) || null,
+      businessStartHour,
+      businessEndHour,
+      maxBookingsPerHour,
+      leadConfirmationMinutesBefore,
+      adminUnconfirmedNoticeMinutesBefore,
+      messageTemplates: cleanMessageTemplates(body.messageTemplates),
     });
 
     revalidateAgendaPaths();

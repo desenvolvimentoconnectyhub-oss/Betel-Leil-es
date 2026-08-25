@@ -18,6 +18,17 @@ export type WhatsAppSdrAppointmentRecipient = {
   status: string;
 };
 
+export type WhatsAppSdrAppointmentMessageTemplates = {
+  adminScheduled: string;
+  leadConfirmation: string;
+  leadConfirmedReply: string;
+  leadReschedulePrompt: string;
+  adminLeadConfirmed: string;
+  adminRescheduleRequested: string;
+  adminRescheduled: string;
+  adminUnconfirmedReminder: string;
+};
+
 export type WhatsAppSdrAppointmentSettings = {
   notificationAdminUserId: string | null;
   notificationAdminUserName: string | null;
@@ -26,6 +37,9 @@ export type WhatsAppSdrAppointmentSettings = {
   businessStartHour: number;
   businessEndHour: number;
   maxBookingsPerHour: number;
+  leadConfirmationMinutesBefore: number;
+  adminUnconfirmedNoticeMinutesBefore: number;
+  messageTemplates: WhatsAppSdrAppointmentMessageTemplates;
   updatedAt: string | null;
 };
 
