@@ -92,6 +92,7 @@ const INBOUND_BATCH_HISTORY_MS = 5 * 60 * 1000;
 const INBOUND_BATCH_MAX_MESSAGES = 8;
 const TEXT_REPLY_SPLIT_THRESHOLD = 150;
 const TEXT_REPLY_PART_LIMIT = 150;
+const TEXT_REPLY_TOTAL_LIMIT = 420;
 const AUDIO_REPLY_PART_LIMIT = 2000;
 const MAX_TEXT_REPLY_PARTS = 4;
 const MAX_AUDIO_REPLY_PARTS = 3;
@@ -233,6 +234,18 @@ function compactWhatsAppReplyBubble(text: string) {
   return normalizeWhatsAppReplyText(text)
     .replace(/\n{2,}/g, "\n")
     .trim();
+}
+
+function limitTextReplyTotal(text: string, limit = TEXT_REPLY_TOTAL_LIMIT) {
+  const normalized = normalizeWhatsAppReplyText(text);
+  if (!normalized || normalized.length <= limit) return normalized;
+
+  const slice = normalized.slice(0, limit);
+  const sentenceBreak = Math.max(slice.lastIndexOf("."), slice.lastIndexOf("?"), slice.lastIndexOf("!"));
+  if (sentenceBreak >= Math.floor(limit * 0.55)) return slice.slice(0, sentenceBreak + 1).trim();
+
+  const softBreak = slice.slice(0, Math.max(1, limit - 3)).replace(/\s+\S*$/, "").trim();
+  return softBreak ? `${softBreak}...` : slice.trim();
 }
 
 function hardSplitReplyUnit(text: string, limit: number) {
@@ -4545,7 +4558,7 @@ async function generateWhatsappAgentReply(
         ? "O lead pediu resposta em audio. Escreva apenas o conteudo que sera falado; se precisar explicar melhor, pode chegar a 6000 caracteres porque o sistema divide em audios curtos. Nao diga que nao consegue mandar audio."
         : input.audioReplyPossible
           ? "Esta resposta pode sair em audio pelo modo do canal. Se precisar explicar melhor, pode escrever uma fala natural de ate 6000 caracteres; o sistema divide em audios curtos."
-        : "",
+          : `Se a resposta for em texto, escreva no maximo ${TEXT_REPLY_TOTAL_LIMIT} caracteres no total.`,
       "Se o lead disser que e iniciante, primeira vez, esta com duvida ou pedir como funciona o trabalho/assessoria/proposta da Betel, explique em passos simples antes de qualificar. Nao encaminhe para humano so por isso.",
       "Se a mensagem for apenas cumprimento curto, tipo 'oi', 'e ai', 'blz' ou 'tudo bem', responda no mesmo tom e nao pergunte ainda sobre CRM, capital, regiao, imovel ou objetivo.",
       "So puxe qualificacao quando o lead trouxer necessidade, duvida, interesse em leilao, imovel, investimento ou pedir ajuda.",
@@ -4627,7 +4640,7 @@ async function generateWhatsappAgentReply(
     const generationLimit =
       input.audioReplyRequested || input.audioReplyPossible
         ? AUDIO_REPLY_PART_LIMIT * MAX_AUDIO_REPLY_PARTS
-        : 1200;
+        : TEXT_REPLY_TOTAL_LIMIT;
     const text = clampText(result.response.text(), generationLimit);
     return { ok: Boolean(text), reason: text ? "generated" : "empty_reply", model: modelName, text };
   } catch (error) {
@@ -5139,10 +5152,13 @@ async function processWhatsappAgentRuntime(
     history: runtimeContext.messages,
     decision: runtimeDecision,
   });
-  const responseText = preSendEvaluation.text;
+  const responseText = audioReplyPossible
+    ? preSendEvaluation.text
+    : limitTextReplyTotal(preSendEvaluation.text);
   const replyGuardCorrections = uniqueStrings([
     ...guardedReply.corrections,
     ...preSendEvaluation.corrections,
+    ...(responseText !== preSendEvaluation.text ? ["text_total_limit_applied"] : []),
   ]);
   const replyActionButton = runtimeActionButton(config, trackId);
   if (replyGuardCorrections.length || preSendEvaluation.flags.length || !preSendEvaluation.allow) {
@@ -5250,10 +5266,11 @@ async function processWhatsappAgentRuntime(
   const audioDeliveryAccepted =
     audioDeliveries.length > 0 && audioDeliveries.every((delivery) => delivery.ok || delivery.deliveryUnconfirmed);
   const shouldFallbackToText = wantsAudio && !audioDeliveryPartiallyAccepted;
+  const textFallbackResponse = limitTextReplyTotal(responseText);
   const textFallbackReplyParts =
     wantsAudio && config.behavior.splitReplies
-      ? splitWhatsAppReply(responseText, { enabled: true, mode: "text" })
-      : [responseText];
+      ? splitWhatsAppReply(textFallbackResponse, { enabled: true, mode: "text" })
+      : [textFallbackResponse];
   const acceptedAudioParts = plannedReplyParts.filter((_, index) => {
     const delivery = audioDeliveries[index];
     return delivery?.ok || delivery?.deliveryUnconfirmed;
