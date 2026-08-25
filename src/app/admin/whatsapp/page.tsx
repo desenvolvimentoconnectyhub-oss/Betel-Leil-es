@@ -1,46 +1,9 @@
 import { WhatsAppCrmPage } from "@/components/admin/WhatsAppCrmPage";
 import { getWhatsAppCrmData } from "@/lib/admin/repository";
-import { getWillianInstanceState, WILLIAN_AGENT_KEY, WILLIAN_AGENT_NAME, WILLIAN_DEFAULT_INSTANCE_NAME } from "@/lib/communication/connectyhub-client";
-import { getWillianAgentConfig } from "@/lib/communication/willian-agent-config";
-import { getWhatsAppOperationalHealth } from "@/lib/whatsapp/operational-health";
-import {
-  DEFAULT_WILLIAN_AGENT_CONFIG,
-  type WillianAgentConfig,
-  type WillianInstanceState,
-} from "@/lib/communication/willian-types";
-import type { WhatsAppOperationalHealth } from "@/lib/whatsapp/operational-health-types";
+import { WILLIAN_AGENT_KEY, WILLIAN_DEFAULT_INSTANCE_NAME } from "@/lib/communication/connectyhub-client";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-
-const fallbackWillianInstance: WillianInstanceState = {
-  agentKey: WILLIAN_AGENT_KEY,
-  agentName: WILLIAN_AGENT_NAME,
-  baseUrl: "https://www.connectyhub.com.br/api/v1",
-  baseUrlSource: "default",
-  adminTokenConfigured: false,
-  adminTokenSource: "missing",
-  adminTokenPreview: "",
-  adminTokenLooksValid: false,
-  instanceName: WILLIAN_DEFAULT_INSTANCE_NAME,
-  instanceTokenConfigured: false,
-  instanceTokenPreview: "",
-  webhookUrl: "",
-  webhookConfiguredUrl: "",
-  webhookSecretConfigured: false,
-  whatsappProviderReleased: false,
-  whatsappReady: false,
-  emailProvider: "resend",
-  emailTokenConfigured: false,
-  emailFromConfigured: false,
-  emailReady: false,
-  missing: [
-    "CONNECTYHUB_API_TOKEN",
-    "CONNECTYHUB_WEBHOOK_URL",
-    "CONNECTYHUB_WEBHOOK_SECRET",
-    "BETEL_WHATSAPP_PROVIDER_RELEASED=true",
-  ],
-};
 
 function errorMessage(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback;
@@ -85,51 +48,8 @@ async function loadWhatsAppCrmData() {
   }
 }
 
-async function loadWillianInstanceState(): Promise<WillianInstanceState> {
-  try {
-    return await getWillianInstanceState({ checkRemote: false });
-  } catch (error) {
-    return {
-      ...fallbackWillianInstance,
-      lastError: `Falha ao carregar instancia WhatsApp: ${errorMessage(error, "erro inesperado")}`,
-    };
-  }
-}
-
-async function loadWillianAgentConfig(): Promise<WillianAgentConfig> {
-  try {
-    return await getWillianAgentConfig();
-  } catch {
-    return {
-      ...DEFAULT_WILLIAN_AGENT_CONFIG,
-      status: "needs_review",
-      updatedAt: new Date().toISOString(),
-    };
-  }
-}
-
-async function loadOperationalHealth(): Promise<WhatsAppOperationalHealth | null> {
-  try {
-    return await getWhatsAppOperationalHealth({ checkRemote: false });
-  } catch {
-    return null;
-  }
-}
-
 export default async function WhatsAppAdminPage() {
-  const [crmData, willianInstance, willianAgentConfig, operationalHealth] = await Promise.all([
-    loadWhatsAppCrmData(),
-    loadWillianInstanceState(),
-    loadWillianAgentConfig(),
-    loadOperationalHealth(),
-  ]);
+  const crmData = await loadWhatsAppCrmData();
 
-  return (
-    <WhatsAppCrmPage
-      crmData={crmData}
-      operationalHealth={operationalHealth}
-      willianAgentConfig={willianAgentConfig}
-      willianInstance={willianInstance}
-    />
-  );
+  return <WhatsAppCrmPage crmData={crmData} />;
 }

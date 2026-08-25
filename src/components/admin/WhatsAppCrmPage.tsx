@@ -3,29 +3,21 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  AlertTriangle,
   Bot,
   CalendarClock,
   ChevronDown,
   CheckCircle2,
   ClipboardCheck,
   ExternalLink,
-  Flame,
-  Gauge,
   Headphones,
   Loader2,
   MessageCircle,
   Paperclip,
-  PauseCircle,
   Phone,
-  Play,
-  Radio,
   RefreshCw,
   Save,
   Search,
   Send,
-  ShieldAlert,
-  Sparkles,
   StickyNote,
   Tags,
   ThumbsDown,
@@ -33,8 +25,8 @@ import {
   UserCheck,
   UserMinus,
   UserRound,
-  Users,
   UserX,
+  X,
   XCircle,
 } from "lucide-react";
 import type { ComponentType } from "react";
@@ -45,15 +37,10 @@ import type {
   WhatsAppCrmStage,
   WhatsAppCrmTimelineItem,
 } from "@/lib/admin/repository";
-import { DashboardCard } from "@/components/admin/DashboardCard";
 import { StatusBadge } from "@/components/admin/StatusBadge";
-import { WillianAgentPanel } from "@/components/admin/WillianAgentPanel";
 import type { ResourceTone } from "@/lib/admin/resources";
-import type { WillianAgentConfig, WillianInstanceState } from "@/lib/communication/willian-types";
-import type { WhatsAppHealthCheckStatus, WhatsAppOperationalHealth } from "@/lib/whatsapp/operational-health-types";
 import { cn } from "@/lib/utils";
 
-type PanelTabKey = "attendance" | "settings";
 type FilterKey = "todos" | "semresposta" | "handoff" | "quentes" | "sla" | "followup";
 type LeadActionKey =
   | "pause_ai"
@@ -105,11 +92,6 @@ const filterLabels: Record<FilterKey, string> = {
   followup: "Follow-up",
 };
 
-const panelTabs: Array<{ key: PanelTabKey; label: string; detail: string; icon: ActionIcon }> = [
-  { key: "attendance", label: "Atendimento", detail: "chat ao vivo e CRM", icon: Headphones },
-  { key: "settings", label: "Configurar Evelyn", detail: "prompt, voz e conexao", icon: Bot },
-];
-
 const crmStages: Array<{ key: WhatsAppCrmStage; label: string; tone: ResourceTone }> = [
   { key: "entrada", label: "Entrada", tone: "muted" },
   { key: "qualificando", label: "Qualificando", tone: "yellow" },
@@ -121,20 +103,6 @@ const crmStages: Array<{ key: WhatsAppCrmStage; label: string; tone: ResourceTon
 
 const crmStageLabels = Object.fromEntries(crmStages.map((stage) => [stage.key, stage.label])) as Record<WhatsAppCrmStage, string>;
 const crmStageTone = Object.fromEntries(crmStages.map((stage) => [stage.key, stage.tone])) as Record<WhatsAppCrmStage, ResourceTone>;
-
-const slaTone: Record<WhatsAppCrmLeadCard["slaStatus"], ResourceTone> = {
-  ok: "green",
-  urgente: "yellow",
-  vencido: "red",
-  pausado: "muted",
-};
-
-const slaLabel: Record<WhatsAppCrmLeadCard["slaStatus"], string> = {
-  ok: "No prazo",
-  urgente: "Urgente",
-  vencido: "SLA vencido",
-  pausado: "Pausado",
-};
 
 function formatDateTime(value: string) {
   if (!value) return "Sem data";
@@ -203,77 +171,6 @@ function LeadAvatar({
     >
       {!safeImageUrl && leadInitials(lead)}
     </div>
-  );
-}
-
-function getMetric(data: WhatsAppCrmData, label: string, fallback: Omit<WhatsAppCrmData["metrics"][number], "label">) {
-  const found = data.metrics.find((metric) => metric.label.toLowerCase() === label.toLowerCase());
-  return found || { label, ...fallback };
-}
-
-function whatsappStatusLooksDisconnected(value: unknown) {
-  const status = String(value || "").trim().toLowerCase().replace(/\s+/g, "_");
-  return Boolean(
-    status.includes("disconnect") ||
-      status.includes("not_connected") ||
-      status.includes("notconnected") ||
-      status.includes("not_logged") ||
-      status.includes("notlogged") ||
-      status.includes("logout") ||
-      status.includes("qr") ||
-      status.includes("scan") ||
-      status.includes("pair") ||
-      ["close", "closed", "offline", "deleted", "archived"].includes(status)
-  );
-}
-
-function whatsappStatusLooksTerminallyDisconnected(value: unknown) {
-  const status = String(value || "").trim().toLowerCase().replace(/\s+/g, "_");
-  return Boolean(
-    status.includes("disconnect") ||
-      status.includes("not_connected") ||
-      status.includes("notconnected") ||
-      status.includes("not_logged") ||
-      status.includes("notlogged") ||
-      status.includes("logout") ||
-      ["close", "closed", "offline", "deleted", "archived"].includes(status)
-  );
-}
-
-function whatsappStatusLooksConnected(value: unknown) {
-  const status = String(value || "").trim().toLowerCase().replace(/\s+/g, "_");
-  if (!status || whatsappStatusLooksDisconnected(status)) return false;
-  return (
-    status.includes("connect") ||
-    ["open", "online", "ready", "logged", "loggedin", "logged_in", "authenticated"].includes(status)
-  );
-}
-
-function hasActiveWhatsappAgent(agent: {
-  connected?: boolean;
-  connectedAt?: string;
-  displayName?: string;
-  phoneNumber?: string;
-  profileImageSyncedAt?: string;
-  profileImageUrl?: string;
-  runtimeStatus?: string;
-  status?: string;
-}) {
-  const runtimeStatus = String(agent.runtimeStatus || "").toLowerCase();
-  if (["paused", "pausado", "inactive", "disabled", "archived", "deleted"].includes(runtimeStatus)) return false;
-
-  const hasSyncedProfile = Boolean(
-    agent.phoneNumber &&
-      (agent.profileImageSyncedAt ||
-        agent.profileImageUrl ||
-        agent.displayName)
-  );
-
-  return Boolean(
-    agent.connected ||
-      agent.connectedAt ||
-      whatsappStatusLooksConnected(agent.status) ||
-      (!whatsappStatusLooksTerminallyDisconnected(agent.status) && hasSyncedProfile)
   );
 }
 
@@ -402,7 +299,7 @@ function LeadScore({ score }: { score: number }) {
 
 function InfoCell({ label, value }: { label: string; value: string }) {
   return (
-    <div className="min-w-0 rounded-md border border-[var(--admin-border)] bg-[rgba(255,255,255,0.02)] px-3 py-2">
+    <div className="min-w-0 rounded-xl border border-[var(--admin-border)] bg-[#fbfdff] px-3 py-2">
       <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-[var(--admin-muted)]">{label}</p>
       <p className="mt-1 truncate text-sm text-[var(--admin-foreground)]">{value || "Nao informado"}</p>
     </div>
@@ -433,7 +330,7 @@ function ActionButton({
       disabled={disabled || busy}
       title={title || children}
       className={cn(
-        "inline-flex h-9 items-center justify-center gap-2 rounded-md border px-3 text-xs font-semibold text-[var(--admin-foreground)] transition disabled:cursor-not-allowed disabled:opacity-55",
+        "inline-flex h-9 items-center justify-center gap-2 rounded-full border px-3 text-xs font-semibold text-[var(--admin-foreground)] transition disabled:cursor-not-allowed disabled:opacity-55",
         toneBg[tone],
         !disabled && !busy ? "hover:border-white/50 hover:bg-white/[0.06]" : ""
       )}
@@ -446,256 +343,6 @@ function ActionButton({
 
 function formatHealthPercent(value: number) {
   return `${Math.round(Math.max(0, Math.min(value, 1)) * 100)}%`;
-}
-
-function healthCheckIcon(status: WhatsAppHealthCheckStatus) {
-  if (status === "ok") return CheckCircle2;
-  if (status === "warning") return AlertTriangle;
-  return XCircle;
-}
-
-function OperationalReadinessPanel({
-  health,
-  busy,
-  onRefresh,
-}: {
-  health: WhatsAppOperationalHealth;
-  busy?: boolean;
-  onRefresh: () => void;
-}) {
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  const blockers = health.readiness.blockers;
-  const warnings = health.readiness.warnings;
-  const nextActions = health.readiness.nextActions.slice(0, 5);
-  const readinessTone = health.readiness.tone;
-  const canServeTone: ResourceTone = health.readiness.canAutoServePrivateChats ? "green" : "red";
-  const canConvertTone: ResourceTone = health.readiness.canConvertWithFollowUp ? "green" : "yellow";
-  const blockerTone: ResourceTone = blockers.length ? "red" : "green";
-  const warningTone: ResourceTone = warnings.length ? "yellow" : "green";
-  const firstAction = nextActions[0] || "Manter monitoramento e auditoria recorrente.";
-
-  return (
-    <section className="min-w-0 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] text-[var(--admin-foreground)] shadow-sm shadow-[rgba(81,60,36,0.05)]">
-      <div className="grid gap-3 p-3 xl:grid-cols-[220px_minmax(0,1fr)_auto] xl:items-center">
-        <div className={cn("rounded-md border px-3 py-2", toneBg[readinessTone])}>
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--admin-muted)]">
-                Prontidao
-              </p>
-              <div className="mt-1 flex items-baseline gap-2">
-                <p className={cn("font-mono text-2xl font-bold leading-none", toneText[readinessTone])}>
-                  {health.readiness.score}
-                </p>
-                <span className="truncate text-xs font-semibold text-[var(--admin-foreground)]">
-                  {health.readiness.label}
-                </span>
-              </div>
-            </div>
-            <Gauge size={18} className={toneText[readinessTone]} />
-          </div>
-          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/50">
-            <div
-              className={cn(
-                "h-full rounded-full",
-                readinessTone === "green"
-                  ? "bg-[var(--admin-green)]"
-                  : readinessTone === "yellow"
-                    ? "bg-[var(--admin-yellow)]"
-                    : "bg-[var(--admin-red)]"
-              )}
-              style={{ width: `${Math.max(4, health.readiness.score)}%` }}
-            />
-          </div>
-        </div>
-
-        <div className="grid min-w-0 gap-2 sm:grid-cols-2 2xl:grid-cols-5">
-          <div className="min-h-[58px] rounded-md border border-[var(--admin-border)] bg-white/[0.02] px-3 py-2">
-            <div className="flex items-center justify-between gap-2">
-              <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--admin-muted)]">
-                Atender
-              </p>
-              <CheckCircle2 size={14} className={toneText[canServeTone]} />
-            </div>
-            <p className={cn("mt-1 text-sm font-semibold", toneText[canServeTone])}>
-              {health.readiness.canAutoServePrivateChats ? "Liberado" : "Bloqueado"}
-            </p>
-          </div>
-
-          <div className="min-h-[58px] rounded-md border border-[var(--admin-border)] bg-white/[0.02] px-3 py-2">
-            <div className="flex items-center justify-between gap-2">
-              <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--admin-muted)]">
-                Converter
-              </p>
-              <Flame size={14} className={toneText[canConvertTone]} />
-            </div>
-            <p className={cn("mt-1 text-sm font-semibold", toneText[canConvertTone])}>
-              {health.readiness.canConvertWithFollowUp ? "Liberado" : "Pendente"}
-            </p>
-          </div>
-
-          <div className="min-h-[58px] rounded-md border border-[var(--admin-border)] bg-white/[0.02] px-3 py-2">
-            <div className="flex items-center justify-between gap-2">
-              <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--admin-muted)]">
-                Bloqueios
-              </p>
-              <ShieldAlert size={14} className={toneText[blockerTone]} />
-            </div>
-            <p className={cn("mt-1 text-sm font-semibold", toneText[blockerTone])}>
-              {blockers.length ? blockers.length : "0"}
-            </p>
-          </div>
-
-          <div className="min-h-[58px] rounded-md border border-[var(--admin-border)] bg-white/[0.02] px-3 py-2">
-            <div className="flex items-center justify-between gap-2">
-              <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--admin-muted)]">
-                Alertas
-              </p>
-              <AlertTriangle size={14} className={toneText[warningTone]} />
-            </div>
-            <p className={cn("mt-1 text-sm font-semibold", toneText[warningTone])}>
-              {warnings.length ? warnings.length : "0"}
-            </p>
-          </div>
-
-          <div className="min-h-[58px] rounded-md border border-[var(--admin-border)] bg-white/[0.02] px-3 py-2 sm:col-span-2 2xl:col-span-1">
-            <div className="flex items-center justify-between gap-2">
-              <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--admin-muted)]">
-                Proxima acao
-              </p>
-              <ClipboardCheck size={14} className="text-[var(--admin-muted)]" />
-            </div>
-            <p className="mt-1 line-clamp-1 text-xs font-medium leading-5 text-[var(--admin-foreground)]">
-              {firstAction}
-            </p>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center justify-start gap-2 xl:justify-end">
-          <StatusBadge tone={health.source === "supabase" ? "green" : "yellow"}>
-            {health.source === "supabase" ? "dados reais" : "fallback"}
-          </StatusBadge>
-          <ActionButton icon={RefreshCw} tone="muted" busy={busy} onClick={onRefresh}>
-            Atualizar
-          </ActionButton>
-          <button
-            type="button"
-            aria-expanded={detailsOpen}
-            onClick={() => setDetailsOpen((value) => !value)}
-            className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-[var(--admin-border)] bg-white px-3 text-xs font-semibold text-[var(--admin-foreground)] transition hover:border-[rgba(15,124,144,0.32)] hover:bg-[rgba(15,124,144,0.06)]"
-          >
-            Detalhes
-            <ChevronDown
-              size={14}
-              className={cn("transition-transform", detailsOpen ? "rotate-180" : "")}
-            />
-          </button>
-        </div>
-      </div>
-
-      {detailsOpen && (
-        <div className="grid gap-3 border-t border-[var(--admin-border)] p-3 xl:grid-cols-[minmax(0,1fr)_340px]">
-          <div className="min-w-0 overflow-hidden rounded-md border border-[var(--admin-border)]">
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[760px] text-left text-xs">
-                <thead className="border-b border-[var(--admin-border)] bg-[rgba(81,60,36,0.04)]">
-                  <tr className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--admin-muted)]">
-                    <th className="px-3 py-2 font-semibold">Area</th>
-                    <th className="px-3 py-2 font-semibold">Status</th>
-                    <th className="px-3 py-2 font-semibold">Impacto</th>
-                    <th className="px-3 py-2 font-semibold">Acao</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--admin-border)]">
-                  {health.checks.map((check) => {
-                    const Icon = healthCheckIcon(check.status);
-                    const tone: ResourceTone = check.status === "ok" ? "green" : check.status === "warning" ? "yellow" : "red";
-                    return (
-                      <tr key={check.id} className="align-top">
-                        <td className="px-3 py-2">
-                          <span className="inline-flex items-center gap-2 font-semibold text-[var(--admin-foreground)]">
-                            <Icon size={14} className={toneText[tone]} />
-                            {check.label}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2">
-                          <StatusBadge tone={tone}>
-                            {check.status === "ok" ? "ok" : check.status === "warning" ? "atencao" : "critico"}
-                          </StatusBadge>
-                        </td>
-                        <td className="px-3 py-2 leading-5 text-[var(--admin-muted)]">{check.summary}</td>
-                        <td className={cn("px-3 py-2 leading-5", toneText[tone])}>{check.action}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div className="grid gap-3">
-            <div className="rounded-md border border-[var(--admin-border)] bg-white/[0.02] px-3 py-3">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-xs font-semibold text-[var(--admin-foreground)]">Prioridade operacional</p>
-                <StatusBadge tone={readinessTone}>{health.readiness.label}</StatusBadge>
-              </div>
-              <div className="mt-3 grid gap-2">
-                {(blockers.length ? blockers : ["Sem bloqueios criticos."]).slice(0, 3).map((item) => (
-                  <p
-                    key={item}
-                    className={cn(
-                      "rounded border-l-2 bg-white/[0.02] px-2 py-1.5 text-xs leading-5",
-                      blockers.length
-                        ? "border-l-[var(--admin-red)] text-[var(--admin-red)]"
-                        : "border-l-[var(--admin-green)] text-[var(--admin-green)]"
-                    )}
-                  >
-                    {item}
-                  </p>
-                ))}
-                {warnings.slice(0, 3).map((item) => (
-                  <p
-                    key={item}
-                    className="rounded border-l-2 border-l-[var(--admin-yellow)] bg-white/[0.02] px-2 py-1.5 text-xs leading-5 text-[var(--admin-yellow)]"
-                  >
-                    {item}
-                  </p>
-                ))}
-              </div>
-            </div>
-
-            <div className="rounded-md border border-[var(--admin-border)] bg-white/[0.02] px-3 py-3">
-              <p className="text-xs font-semibold text-[var(--admin-foreground)]">Proximos passos</p>
-              <ol className="mt-3 grid gap-2">
-                {nextActions.length ? (
-                  nextActions.map((item, index) => (
-                    <li
-                      key={item}
-                      className="grid grid-cols-[22px_minmax(0,1fr)] gap-2 text-xs leading-5 text-[var(--admin-muted)]"
-                    >
-                      <span className="grid size-5 place-items-center rounded border border-[var(--admin-border)] font-mono text-[10px] text-[var(--admin-foreground)]">
-                        {index + 1}
-                      </span>
-                      <span>{item}</span>
-                    </li>
-                  ))
-                ) : (
-                  <li className="text-xs text-[var(--admin-muted)]">Manter monitoramento e auditoria recorrente.</li>
-                )}
-              </ol>
-            </div>
-
-            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
-              <InfoCell label="Follow-up falha" value={formatHealthPercent(health.followUps.failureRate)} />
-              <InfoCell label="Reviews" value={`${health.quality.averageScore}/100`} />
-              <InfoCell label="Grupos ativos" value={`${health.groups.destinationsActive}/${health.groups.destinationsTotal}`} />
-              <InfoCell label="Templates Meta" value={`${health.metaOfficial.templatesApproved}/${health.metaOfficial.templatesTotal}`} />
-            </div>
-          </div>
-        </div>
-      )}
-    </section>
-  );
 }
 
 function LeadQueueItem({
@@ -819,6 +466,7 @@ function LiveChatPanel({
   onManualReplyChange,
   onSendManualReply,
   onLeadAction,
+  onOpenLeadFile,
 }: {
   lead?: WhatsAppCrmLeadCard;
   busyAction: string | null;
@@ -826,6 +474,7 @@ function LiveChatPanel({
   onManualReplyChange: (value: string) => void;
   onSendManualReply: (lead: WhatsAppCrmLeadCard) => void;
   onLeadAction: (action: LeadActionKey, lead: WhatsAppCrmLeadCard) => void;
+  onOpenLeadFile: () => void;
 }) {
   if (!lead) {
     return (
@@ -842,7 +491,7 @@ function LiveChatPanel({
   const toggleBusy = busyAction === `${lead.id}:${toggleAction}`;
 
   return (
-    <section className="grid min-h-[640px] min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(81,60,36,0.06)] xl:h-[calc(100vh-230px)] xl:max-h-[820px]">
+    <section className="grid min-h-[640px] min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-[22px] border border-[rgba(15,124,144,0.16)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(81,60,36,0.08)] xl:h-[calc(100vh-188px)] xl:max-h-[820px]">
       <div className="flex min-h-16 flex-wrap items-center justify-between gap-3 border-b border-[var(--admin-border)] bg-white px-4 py-3">
         <div className="flex min-w-0 items-center gap-3">
           <LeadAvatar lead={lead} />
@@ -869,7 +518,7 @@ function LiveChatPanel({
             onClick={() => onLeadAction(toggleAction, lead)}
             title={lead.humanInterventionActive ? "Retomar atendimento automatico" : "Pausar a IA e assumir atendimento humano"}
             className={cn(
-              "inline-flex h-9 items-center justify-center gap-2 rounded-md border px-3 text-xs font-semibold text-[#fffaf0] shadow-sm transition disabled:cursor-not-allowed disabled:opacity-55",
+              "inline-flex h-9 items-center justify-center gap-2 rounded-full border px-4 text-xs font-semibold text-[#fffaf0] shadow-sm transition disabled:cursor-not-allowed disabled:opacity-55",
               lead.humanInterventionActive
                 ? "border-[var(--admin-green)] bg-[var(--admin-green)] hover:bg-[#0f6d4f]"
                 : "border-[var(--admin-cyan)] bg-[var(--admin-cyan)] hover:bg-[#0b6676]"
@@ -884,19 +533,20 @@ function LiveChatPanel({
             )}
             {toggleLabel}
           </button>
-          <a
-            href="#crm-do-lead"
-            className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-[rgba(18,128,92,0.24)] bg-[rgba(18,128,92,0.08)] px-3 text-xs font-semibold text-[var(--admin-green)] transition hover:border-[var(--admin-green)] hover:bg-[rgba(18,128,92,0.12)]"
+          <button
+            type="button"
+            onClick={onOpenLeadFile}
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-full border border-[rgba(18,128,92,0.24)] bg-[rgba(18,128,92,0.08)] px-4 text-xs font-semibold text-[var(--admin-green)] transition hover:border-[var(--admin-green)] hover:bg-[rgba(18,128,92,0.12)]"
           >
             <ClipboardCheck size={14} />
             CRM do lead
-          </a>
+          </button>
           {lead.whatsappUrl && (
             <a
               href={lead.whatsappUrl}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-[var(--admin-border)] bg-white px-3 text-xs font-semibold text-[var(--admin-foreground)] transition hover:border-[var(--admin-cyan)]"
+              className="inline-flex h-9 items-center justify-center gap-2 rounded-full border border-[var(--admin-border)] bg-white px-4 text-xs font-semibold text-[var(--admin-foreground)] transition hover:border-[var(--admin-cyan)]"
             >
               <ExternalLink size={14} />
               WhatsApp
@@ -983,9 +633,9 @@ function LeadDetail({
 }) {
   if (!lead) {
     return (
-      <DashboardCard title="Arquivo inteligente do lead" eyebrow="whatsapp / crm">
+      <div className="rounded-2xl border border-[var(--admin-border)] bg-white p-6">
         <div className="py-10 text-center text-sm text-[var(--admin-muted)]">Nenhum lead na fila atual.</div>
-      </DashboardCard>
+      </div>
     );
   }
 
@@ -1001,11 +651,7 @@ function LeadDetail({
   const selectedCrmStage = stageDraft.crmStage || lead.crmStage;
 
   return (
-    <DashboardCard
-      title="Arquivo inteligente do lead"
-      eyebrow="perfil / qualificacao / proxima acao"
-      action={<StatusBadge tone={slaTone[lead.slaStatus]}>{slaLabel[lead.slaStatus]}</StatusBadge>}
-    >
+    <div className="grid gap-3">
       <div className="flex items-start justify-between gap-4">
         <div className="flex min-w-0 items-start gap-3">
           <LeadAvatar lead={lead} size="lg" />
@@ -1290,96 +936,219 @@ function LeadDetail({
         </div>
       </details>
 
-    </DashboardCard>
+    </div>
   );
 }
 
-function CrmFunnel({
-  leads,
-  onSelect,
-  selectedLeadId,
+function LeadSidePanel({
+  lead,
+  onOpenLeadFile,
 }: {
-  leads: WhatsAppCrmLeadCard[];
-  onSelect: (lead: WhatsAppCrmLeadCard) => void;
-  selectedLeadId?: string;
+  lead?: WhatsAppCrmLeadCard;
+  onOpenLeadFile: () => void;
 }) {
+  if (!lead) {
+    return (
+      <aside className="rounded-[22px] border border-[rgba(15,124,144,0.14)] bg-white p-5 text-sm text-[var(--admin-muted)] shadow-sm shadow-[rgba(81,60,36,0.06)]">
+        Nenhum lead selecionado.
+      </aside>
+    );
+  }
+
+  const qualificationItems = [
+    ["Capital", lead.qualification.capital],
+    ["Regiao", lead.qualification.region],
+    ["Objetivo", lead.qualification.objective],
+    ["Experiencia", lead.qualification.experience],
+    ["Prazo", lead.qualification.urgency],
+    ["Tipo", lead.qualification.propertyType],
+  ] as const;
+  const filled = qualificationItems.filter(([, value]) => hasQualificationValue(value)).length;
+  const lastInbound = sortedTimeline(lead.timeline)
+    .filter((item) => item.direction === "inbound")
+    .at(-1);
+
   return (
-    <DashboardCard
-      title="Mapa do funil"
-      eyebrow="posicao / etapa / proxima acao"
-      action={<StatusBadge tone="cyan">{leads.length} leads</StatusBadge>}
-      contentClassName="p-3"
-    >
-      <div className="grid gap-3 overflow-x-auto pb-1 lg:grid-cols-3 2xl:grid-cols-6">
-        {crmStages.map((stage) => {
-          const stageLeads = leads.filter((lead) => lead.crmStage === stage.key);
-          return (
-            <section key={stage.key} className="min-h-[188px] min-w-[220px] rounded-lg border border-[var(--admin-border)] bg-white">
-              <div className="flex items-center justify-between gap-2 border-b border-[var(--admin-border)] px-3 py-3">
-                <StatusBadge tone={stage.tone}>{stage.label}</StatusBadge>
-                <span className="font-mono text-xs text-[var(--admin-muted)]">{stageLeads.length}</span>
-              </div>
-              <div className="grid gap-2 p-2">
-                {stageLeads.slice(0, 4).map((lead) => (
-                  <button
-                    key={lead.id}
-                    type="button"
-                    onClick={() => onSelect(lead)}
-                    className={cn(
-                      "rounded-md border px-3 py-2 text-left transition hover:border-[var(--admin-cyan)]",
-                      selectedLeadId === lead.id
-                        ? "border-[rgba(15,124,144,0.34)] bg-[rgba(15,124,144,0.08)]"
-                        : "border-[var(--admin-border)] bg-[rgba(245,247,250,0.7)]"
-                    )}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="min-w-0 truncate text-xs font-semibold text-[var(--admin-foreground)]">{lead.name}</p>
-                      <span className={cn("font-mono text-xs font-bold", toneText[scoreTone(lead.score)])}>{lead.score}</span>
-                    </div>
-                    <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-[var(--admin-muted)]">{leadPriorityLabel(lead)} / {lead.nextAction}</p>
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      {lead.waitingForReply && <StatusBadge tone="red">sem resposta</StatusBadge>}
-                      {lead.humanInterventionActive && <StatusBadge tone="yellow">humano</StatusBadge>}
-                    </div>
-                  </button>
-                ))}
-                {!stageLeads.length && (
-                  <div className="px-2 py-7 text-center text-xs text-[var(--admin-muted)]">Sem leads nesta etapa.</div>
-                )}
-                {stageLeads.length > 4 && (
-                  <div className="px-2 pb-2 text-center font-mono text-[10px] text-[var(--admin-muted)]">
-                    +{stageLeads.length - 4} no filtro
-                  </div>
-                )}
-              </div>
-            </section>
-          );
-        })}
-      </div>
-    </DashboardCard>
+    <aside className="grid min-w-0 gap-3 2xl:sticky 2xl:top-24 2xl:h-[calc(100vh-188px)] 2xl:max-h-[820px] 2xl:overflow-auto">
+      <section className="overflow-hidden rounded-[22px] border border-[rgba(15,124,144,0.14)] bg-white shadow-sm shadow-[rgba(81,60,36,0.06)]">
+        <div className="border-b border-[var(--admin-border)] bg-[#fbfdff] px-4 py-4">
+          <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--admin-muted)]">
+            arquivo do lead
+          </p>
+          <div className="mt-2 flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h3 className="truncate text-xl font-semibold text-[var(--admin-foreground)]">Perfil rapido</h3>
+              <p className="mt-1 text-sm text-[var(--admin-muted)]">{filled}/6 campos de qualificacao</p>
+            </div>
+            <StatusBadge tone={crmStageTone[lead.crmStage]}>{crmStageLabels[lead.crmStage]}</StatusBadge>
+          </div>
+        </div>
+
+        <div className="grid gap-4 p-4">
+          <div className={cn("rounded-2xl border px-4 py-3", toneBg[leadPriorityTone(lead)])}>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs font-semibold text-[var(--admin-foreground)]">{leadPriorityLabel(lead)}</span>
+              <LeadScore score={lead.score} />
+            </div>
+            <p className="mt-3 text-sm leading-6 text-[var(--admin-foreground)]">{lead.nextAction}</p>
+          </div>
+
+          <div className="grid gap-2">
+            {qualificationItems.slice(0, 4).map(([label, value]) => (
+              <InfoCell key={label} label={label} value={value} />
+            ))}
+          </div>
+
+          <div className="rounded-2xl border border-[var(--admin-border)] bg-[#fbfdff] px-4 py-3">
+            <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--admin-muted)]">
+              ultima entrada
+            </p>
+            <p className="mt-2 line-clamp-4 text-sm leading-6 text-[var(--admin-foreground)]">
+              {lastInbound?.text || lastInbound?.transcript || lead.lastMessagePreview || "Sem mensagem recente do lead."}
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={onOpenLeadFile}
+            className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-full border border-[rgba(18,128,92,0.26)] bg-[rgba(18,128,92,0.08)] px-4 text-sm font-semibold text-[var(--admin-green)] transition hover:border-[var(--admin-green)] hover:bg-[rgba(18,128,92,0.12)]"
+          >
+            <ClipboardCheck size={16} />
+            CRM do lead
+          </button>
+        </div>
+      </section>
+    </aside>
   );
 }
 
-export function WhatsAppCrmPage({
-  crmData,
-  operationalHealth,
-  willianAgentConfig,
-  willianInstance,
+function LeadFileModal({
+  open,
+  lead,
+  busyAction,
+  contextDraft,
+  stageDraft,
+  onClose,
+  onLeadAction,
+  onContextDraftChange,
+  onSaveContext,
+  onStageDraftChange,
+  onSaveStage,
 }: {
-  crmData: DataResult<WhatsAppCrmData>;
-  operationalHealth?: WhatsAppOperationalHealth | null;
-  willianAgentConfig?: WillianAgentConfig;
-  willianInstance?: WillianInstanceState;
+  open: boolean;
+  lead?: WhatsAppCrmLeadCard;
+  busyAction: string | null;
+  contextDraft: ContextDraft;
+  stageDraft: StageDraft;
+  onClose: () => void;
+  onLeadAction: (action: LeadActionKey, lead: WhatsAppCrmLeadCard) => void;
+  onContextDraftChange: (patch: Partial<ContextDraft>) => void;
+  onSaveContext: (lead: WhatsAppCrmLeadCard) => void;
+  onStageDraftChange: (patch: Partial<StageDraft>) => void;
+  onSaveStage: (lead: WhatsAppCrmLeadCard) => void;
 }) {
+  if (!open || !lead) return null;
+
+  const timeline = sortedTimeline(lead.timeline);
+
+  return (
+    <div className="fixed inset-0 z-50 bg-[rgba(15,23,42,0.22)] p-3 backdrop-blur-sm sm:p-6">
+      <section className="mx-auto grid h-[calc(100vh-24px)] max-w-[1380px] grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-[24px] border border-[rgba(15,124,144,0.18)] bg-white shadow-2xl shadow-[rgba(15,23,42,0.18)] sm:h-[calc(100vh-48px)]">
+        <header className="flex min-h-20 flex-wrap items-center justify-between gap-4 border-b border-[var(--admin-border)] bg-white px-5 py-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <LeadAvatar lead={lead} size="lg" />
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="truncate text-xl font-semibold text-[var(--admin-foreground)]">Arquivo inteligente do lead</h2>
+                <StatusBadge tone={crmStageTone[lead.crmStage]}>{crmStageLabels[lead.crmStage]}</StatusBadge>
+              </div>
+              <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-[var(--admin-muted)]">
+                <span className="font-semibold text-[var(--admin-foreground)]">{lead.name}</span>
+                <span>{formatPhone(lead.phone)}</span>
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="grid size-10 place-items-center rounded-full border border-[var(--admin-border)] bg-white text-[var(--admin-muted)] transition hover:border-[var(--admin-cyan)] hover:text-[var(--admin-foreground)]"
+            title="Fechar arquivo do lead"
+          >
+            <X size={18} />
+          </button>
+        </header>
+
+        <div className="grid min-h-0 lg:grid-cols-[380px_minmax(0,1fr)]">
+          <div className="min-h-0 overflow-auto border-r border-[var(--admin-border)] bg-[#f8fbff] p-4">
+            <LeadDetail
+              lead={lead}
+              busyAction={busyAction}
+              contextDraft={contextDraft}
+              stageDraft={stageDraft}
+              onLeadAction={onLeadAction}
+              onContextDraftChange={onContextDraftChange}
+              onSaveContext={onSaveContext}
+              onStageDraftChange={onStageDraftChange}
+              onSaveStage={onSaveStage}
+            />
+          </div>
+
+          <section className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] bg-white">
+            <div className="flex min-h-20 items-center justify-between gap-4 border-b border-[var(--admin-border)] px-5 py-4">
+              <div className="flex min-w-0 items-center gap-3">
+                <LeadAvatar lead={lead} />
+                <div className="min-w-0">
+                  <p className="truncate text-base font-semibold text-[var(--admin-foreground)]">{lead.name}</p>
+                  <p className="mt-1 text-sm text-[var(--admin-muted)]">{formatPhone(lead.phone)}</p>
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <StatusBadge tone={conversationStatusTone(lead)}>{conversationStatusLabel(lead)}</StatusBadge>
+                <StatusBadge tone="cyan">{lead.messageCount} mensagens</StatusBadge>
+              </div>
+            </div>
+
+            <div
+              className="min-h-0 overflow-auto px-4 py-5 sm:px-6"
+              style={{
+                backgroundColor: "#f7f1e8",
+                backgroundImage:
+                  "radial-gradient(circle at 18px 18px, rgba(89, 104, 117, 0.06) 1.4px, transparent 1.4px), radial-gradient(circle at 42px 42px, rgba(15, 124, 144, 0.045) 1.2px, transparent 1.2px)",
+                backgroundSize: "56px 56px",
+              }}
+            >
+              {timeline.length ? (
+                timeline.map((item) => <ChatBubble key={item.id} item={item} />)
+              ) : (
+                <div className="grid min-h-[320px] place-items-center rounded-2xl border border-dashed border-[var(--admin-border)] bg-white/70 px-4 text-center text-sm text-[var(--admin-muted)]">
+                  Sem historico salvo para este lead.
+                </div>
+              )}
+            </div>
+
+            <div className="border-t border-[rgba(18,128,92,0.18)] bg-[rgba(18,128,92,0.08)] px-5 py-3 text-sm text-[var(--admin-foreground)]">
+              <span className="inline-flex items-center gap-2">
+                <MessageCircle size={16} className="text-[var(--admin-green)]" />
+                WhatsApp - status {lead.conversationStatus || "open"} - {formatDateTime(lead.lastMessageAt)}
+              </span>
+            </div>
+          </section>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+export function WhatsAppCrmPage({ crmData }: { crmData: DataResult<WhatsAppCrmData> }) {
   const router = useRouter();
   const data = crmData.data;
-  const [panelTab, setPanelTab] = useState<PanelTabKey>("attendance");
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<FilterKey>("todos");
   const [selectedId, setSelectedId] = useState<string | null>(data.leads[0]?.id || null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<FeedbackState>(null);
   const [manualReply, setManualReply] = useState("");
+  const [leadFileOpen, setLeadFileOpen] = useState(false);
   const [contextDraft, setContextDraft] = useState<ContextDraft>(() => contextDraftFromLead(data.leads[0]));
   const [stageDraft, setStageDraft] = useState<StageDraft>(() => stageDraftFromLead(data.leads[0]));
 
@@ -1563,44 +1332,6 @@ export function WhatsAppCrmPage({
     }
   }
 
-  async function runFollowUpCommand(command: "preview" | "schedule" | "process") {
-    const labels = {
-      preview: "Simulacao de follow-up concluida.",
-      schedule: "Follow-ups elegiveis foram agendados.",
-      process: "Worker de follow-up processado.",
-    };
-    setBusyAction(`followups:${command}`);
-    setFeedback(null);
-    try {
-      if (command === "preview") {
-        const response = await fetch("/api/admin/whatsapp/followups?limit=80", { cache: "no-store" });
-        const result = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-        if (!response.ok || result.ok === false) throw new Error(typeof result.error === "string" ? result.error : "Falha na simulacao.");
-        const eligible = typeof result.eligibleCount === "number" ? result.eligibleCount : 0;
-        const skipped = typeof result.skippedCount === "number" ? result.skippedCount : 0;
-        setFeedback({ type: "ok", msg: `${labels.preview} Elegiveis: ${eligible}. Ignorados: ${skipped}.` });
-        return;
-      }
-
-      const result =
-        command === "schedule"
-          ? await postJson("/api/admin/whatsapp/followups", { dryRun: false, limit: 80 })
-          : await postJson("/api/admin/whatsapp/followups/worker", { dryRun: false, limit: 10, allowQuietHours: true });
-      const dataRecord = result.data && typeof result.data === "object" ? (result.data as Record<string, unknown>) : result;
-      const queued = typeof dataRecord.queuedCount === "number" ? ` Agendados: ${dataRecord.queuedCount}.` : "";
-      const processed = Array.isArray(dataRecord.processed) ? ` Processados: ${dataRecord.processed.length}.` : "";
-      setFeedback({ type: "ok", msg: `${labels[command]}${queued}${processed}` });
-      refreshSoon();
-    } catch (error) {
-      setFeedback({
-        type: "err",
-        msg: error instanceof Error ? error.message : "Falha no comando de follow-up.",
-      });
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
   async function runReviewCommand() {
     setBusyAction("reviews:audit");
     setFeedback(null);
@@ -1661,136 +1392,14 @@ export function WhatsAppCrmPage({
     }
   }
 
-  const openConversationsMetric = getMetric(data, "Conversas abertas", {
-    value: String(data.leads.filter((lead) => lead.conversationStatus !== "closed").length),
-    detail: "fila de atendimento",
-    tone: "cyan",
-  });
-  const handoffMetric = getMetric(data, "Handoff humano", {
-    value: String(counts.handoff),
-    detail: "pedem humano ou revisao",
-    tone: counts.handoff ? "yellow" : "green",
-  });
-  const hotLeadsMetric = getMetric(data, "Leads quentes", {
-    value: String(counts.quentes),
-    detail: "score 70+",
-    tone: "green",
-  });
-  const qualityMetric = getMetric(data, "Qualidade IA", {
-    value: data.reviews.length
-      ? String(Math.round(data.reviews.reduce((sum, review) => sum + Math.max(0, review.score), 0) / data.reviews.length))
-      : "-",
-    detail: "auditoria das conversas",
-    tone: data.reviews.length ? "green" : "muted",
-  });
-  const agentInstances = willianInstance?.agentInstances || [];
-  const configuredAgentCount = Math.max(data.agents.length, agentInstances.length, willianAgentConfig ? 1 : 0);
-  const primaryAgentConnected = Boolean(
-    willianInstance &&
-      hasActiveWhatsappAgent({
-        connected: Boolean(willianInstance.status?.connected || willianInstance.status?.loggedIn),
-        connectedAt: willianInstance.profileImageSyncedAt,
-        displayName: willianInstance.displayName,
-        phoneNumber: willianInstance.phoneNumber,
-        profileImageSyncedAt: willianInstance.profileImageSyncedAt,
-        profileImageUrl: willianInstance.profileImageUrl,
-        runtimeStatus: willianInstance.primaryAgentPaused ? "paused" : "active",
-        status: willianInstance.status?.state || willianInstance.finalStatus || willianInstance.connection?.status,
-      })
-  );
-  const connectedAgentCount =
-    agentInstances.length > 0
-      ? Math.max(agentInstances.filter(hasActiveWhatsappAgent).length, primaryAgentConnected ? 1 : 0)
-      : data.agents.filter((agent) => agent.connected).length;
-  const primaryConnected = connectedAgentCount > 0;
-  const criticalLeads = data.leads.filter(
-    (lead) => lead.humanInterventionActive || lead.slaStatus === "vencido" || lead.score >= 85
-  );
-  const pendingFollowUps = data.followUps.filter(
-    (followUp) => !["sent", "cancelled", "canceled", "failed"].includes(followUp.status.toLowerCase())
-  );
-  const reviewAlerts = data.reviews.filter((review) => review.score > 0 && review.score < 62).length;
-  const overviewCards: Array<{
-    label: string;
-    value: string;
-    detail: string;
-    icon: ActionIcon;
-    tone: ResourceTone;
-  }> = [
-    {
-      label: "Conexao WhatsApp",
-      value: primaryConnected ? `${connectedAgentCount}/${configuredAgentCount || 1}` : "pendente",
-      detail: primaryConnected ? "agentes online" : "aguardando leitura do QR",
-      icon: Radio,
-      tone: primaryConnected ? "green" : "yellow",
-    },
-    {
-      label: openConversationsMetric.label,
-      value: openConversationsMetric.value,
-      detail: openConversationsMetric.detail,
-      icon: MessageCircle,
-      tone: openConversationsMetric.tone,
-    },
-    {
-      label: handoffMetric.label,
-      value: handoffMetric.value,
-      detail: handoffMetric.detail,
-      icon: Users,
-      tone: handoffMetric.tone,
-    },
-    {
-      label: qualityMetric.label,
-      value: qualityMetric.value,
-      detail: reviewAlerts ? `${reviewAlerts} alertas de revisao` : qualityMetric.detail,
-      icon: Sparkles,
-      tone: reviewAlerts ? "yellow" : qualityMetric.tone,
-    },
-  ];
-  const cockpitCards: Array<{
-    label: string;
-    value: string;
-    detail: string;
-    icon: ActionIcon;
-    tone: ResourceTone;
-  }> = [
-    {
-      label: "Leads quentes",
-      value: hotLeadsMetric.value,
-      detail: hotLeadsMetric.detail,
-      icon: Flame,
-      tone: hotLeadsMetric.tone,
-    },
-    {
-      label: "Sem resposta",
-      value: String(counts.semresposta),
-      detail: "ultima mensagem foi do lead",
-      icon: AlertTriangle,
-      tone: counts.semresposta ? "red" : "green",
-    },
-    {
-      label: "Follow-ups",
-      value: String(pendingFollowUps.length),
-      detail: data.followUps.length ? "pendentes ou agendados" : "sem fila pendente",
-      icon: CalendarClock,
-      tone: pendingFollowUps.length ? "yellow" : "muted",
-    },
-    {
-      label: "Fila critica",
-      value: String(criticalLeads.length),
-      detail: "handoff, SLA ou score alto",
-      icon: ShieldAlert,
-      tone: criticalLeads.length ? "red" : "green",
-    },
-  ];
-
   return (
     <div className="mx-auto grid min-h-screen max-w-[1760px] gap-4 px-4 py-4 lg:px-6">
       <header className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
         <div className="min-w-0">
           <p className="text-xs font-medium text-[var(--admin-muted)]">Betel AI / Agentes WhatsApp / Atendimento</p>
-          <h1 className="mt-2 text-2xl font-semibold tracking-tight text-[var(--admin-foreground)]">Atendimento WhatsApp</h1>
+          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-[var(--admin-foreground)]">Atendimento WhatsApp</h1>
           <p className="mt-1 text-sm text-[var(--admin-muted)]">
-            Central para acompanhar conversas ao vivo, assumir atendimentos e manter o CRM do lead em ordem.
+            Acompanhe conversas ao vivo, assuma atendimentos e abra o arquivo completo do lead quando precisar.
           </p>
         </div>
         <div className="flex flex-col gap-1.5 lg:items-end">
@@ -1824,82 +1433,15 @@ export function WhatsAppCrmPage({
         </div>
       </header>
 
-      <nav className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] px-3 shadow-sm shadow-[rgba(81,60,36,0.04)]">
-        <div className="flex min-w-0 gap-5 overflow-x-auto">
-          {panelTabs.map((tab) => {
-            const Icon = tab.icon;
-            const active = panelTab === tab.key;
-            return (
-              <button
-                key={tab.key}
-                type="button"
-                onClick={() => setPanelTab(tab.key)}
-                className={cn(
-                  "relative inline-flex h-11 shrink-0 items-center gap-2 border-b-2 px-1 text-sm font-semibold transition",
-                  active
-                    ? "border-[var(--admin-cyan)] text-[var(--admin-cyan)]"
-                    : "border-transparent text-[var(--admin-muted)] hover:text-[var(--admin-foreground)]"
-                )}
-              >
-                <Icon size={15} />
-                {tab.label}
-              </button>
-            );
-          })}
-        </div>
-      </nav>
-
-      {panelTab === "settings" && (
-        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {overviewCards.map((card) => {
-            const Icon = card.icon;
-            const value = card.label === "Conexao WhatsApp" && card.value.includes("/")
-              ? card.value.replace("/", " de ")
-              : card.value;
-            return (
-              <article
-                key={card.label}
-                className="grid min-h-[82px] grid-cols-[38px_minmax(0,1fr)] items-center gap-3 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-3 shadow-sm shadow-[rgba(81,60,36,0.04)]"
-              >
-                <span className={cn("grid size-8 shrink-0 place-items-center rounded-md border", toneBg[card.tone])}>
-                  <Icon size={15} className={toneText[card.tone]} />
-                </span>
-                <div className="min-w-0">
-                  <p className="truncate text-xs font-semibold text-[var(--admin-muted)]">{card.label}</p>
-                  <p className={cn("mt-1 truncate font-mono text-xl font-bold leading-none tracking-tight", toneText[card.tone])}>
-                    {value}
-                  </p>
-                  <p className="mt-1 truncate text-xs leading-4 text-[var(--admin-muted)]">{card.detail}</p>
-                </div>
-              </article>
-            );
-          })}
-        </section>
-      )}
-
-      {panelTab === "settings" && operationalHealth && (
-        <section>
-          <OperationalReadinessPanel
-            health={operationalHealth}
-            busy={busyAction === "health:refresh"}
-            onRefresh={() => {
-              setBusyAction("health:refresh");
-              router.refresh();
-              window.setTimeout(() => setBusyAction(null), 500);
-            }}
-          />
-        </section>
-      )}
-
       {crmData.reason && (
-        <div className="rounded-md border border-[rgba(234,179,8,0.28)] bg-[rgba(234,179,8,0.08)] px-3 py-2 text-xs text-[var(--admin-yellow)]">
+        <div className="rounded-[18px] border border-[rgba(234,179,8,0.28)] bg-[rgba(234,179,8,0.08)] px-4 py-3 text-xs text-[var(--admin-yellow)]">
           {crmData.reason}
         </div>
       )}
       {feedback && (
         <div
           className={cn(
-            "rounded-md border px-3 py-2 text-xs",
+            "rounded-[18px] border px-4 py-3 text-xs",
             feedback.type === "ok"
               ? "border-[rgba(34,197,94,0.28)] bg-[rgba(34,197,94,0.08)] text-[var(--admin-green)]"
               : "border-[rgba(239,68,68,0.32)] bg-[rgba(239,68,68,0.08)] text-[var(--admin-red)]"
@@ -1909,25 +1451,15 @@ export function WhatsAppCrmPage({
         </div>
       )}
 
-      {panelTab === "settings" ? (
-        <section>
-          <WillianAgentPanel
-            initialAgentKey={willianAgentConfig?.agentKey || willianInstance?.agentKey}
-            initialConfig={willianAgentConfig}
-            initialState={willianInstance}
-          />
-        </section>
-      ) : (
-        <>
       <section className="grid gap-3 xl:grid-cols-[340px_minmax(0,1fr)] 2xl:grid-cols-[340px_minmax(560px,1fr)_360px] 2xl:items-start">
-        <aside className="grid min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(81,60,36,0.06)] xl:h-[calc(100vh-230px)] xl:max-h-[820px] xl:min-h-[640px]">
-          <div className="border-b border-[var(--admin-border)] p-4">
+        <aside className="grid min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-[22px] border border-[rgba(15,124,144,0.14)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(81,60,36,0.08)] xl:h-[calc(100vh-188px)] xl:max-h-[820px] xl:min-h-[640px]">
+          <div className="border-b border-[var(--admin-border)] bg-[#fbfdff] p-4">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--admin-muted)]">
+                <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--admin-muted)]">
                   central whatsapp
                 </p>
-                <h2 className="mt-1 truncate text-lg font-semibold text-[var(--admin-foreground)]">Atendimento</h2>
+                <h2 className="mt-1 truncate text-xl font-semibold text-[var(--admin-foreground)]">Atendimento</h2>
               </div>
               <StatusBadge tone="cyan">{filteredLeads.length} na visao</StatusBadge>
             </div>
@@ -1938,7 +1470,7 @@ export function WhatsAppCrmPage({
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder="Buscar lead, telefone ou mensagem"
-                className="h-10 w-full rounded-lg border border-[var(--admin-border)] bg-white pl-9 pr-3 text-sm text-[var(--admin-foreground)] outline-none placeholder:text-[var(--admin-muted)] focus:border-[var(--admin-cyan)] focus:ring-3 focus:ring-[rgba(15,124,144,0.12)]"
+                className="h-11 w-full rounded-full border border-[var(--admin-border)] bg-white pl-9 pr-4 text-sm text-[var(--admin-foreground)] outline-none placeholder:text-[var(--admin-muted)] focus:border-[var(--admin-cyan)] focus:ring-3 focus:ring-[rgba(15,124,144,0.12)]"
               />
             </div>
 
@@ -1949,7 +1481,7 @@ export function WhatsAppCrmPage({
                   type="button"
                   onClick={() => setFilter(key)}
                   className={cn(
-                    "inline-flex h-9 shrink-0 items-center rounded-md border px-3 text-xs font-semibold transition",
+                    "inline-flex h-9 shrink-0 items-center rounded-full border px-3 text-xs font-semibold transition",
                     filter === key
                       ? "border-[rgba(15,124,144,0.28)] bg-[rgba(15,124,144,0.10)] text-[var(--admin-cyan)]"
                       : "border-[var(--admin-border)] bg-white text-[var(--admin-muted)] hover:border-[rgba(15,124,144,0.24)] hover:text-[var(--admin-foreground)]"
@@ -1971,6 +1503,7 @@ export function WhatsAppCrmPage({
                   onSelect={() => {
                     setSelectedId(lead.id);
                     setManualReply("");
+                    setLeadFileOpen(false);
                     setContextDraft(contextDraftFromLead(lead));
                     setStageDraft(stageDraftFromLead(lead));
                   }}
@@ -1991,262 +1524,29 @@ export function WhatsAppCrmPage({
           onManualReplyChange={setManualReply}
           onSendManualReply={(lead) => void sendManualReply(lead)}
           onLeadAction={(action, lead) => void runLeadAction(action, lead)}
+          onOpenLeadFile={() => setLeadFileOpen(true)}
         />
 
-        <aside className="grid min-w-0 gap-3 xl:col-span-2 2xl:col-span-1 2xl:sticky 2xl:top-24 2xl:h-[calc(100vh-230px)] 2xl:max-h-[820px] 2xl:overflow-auto 2xl:pr-1">
-          <div id="crm-do-lead">
-            <LeadDetail
-              lead={selectedLead}
-              busyAction={busyAction}
-              contextDraft={selectedContextDraft}
-              stageDraft={selectedStageDraft}
-              onLeadAction={(action, lead) => void runLeadAction(action, lead)}
-              onContextDraftChange={(patch) => {
-                if (selectedLead) updateLeadContextDraft(selectedLead, patch);
-              }}
-              onSaveContext={(lead) => void saveLeadContext(lead)}
-              onStageDraftChange={(patch) => {
-                if (selectedLead) updateLeadStageDraft(selectedLead, patch);
-              }}
-              onSaveStage={(lead) => void saveLeadStage(lead)}
-            />
-          </div>
-
-          <details className="group rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(81,60,36,0.06)]">
-            <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-4 px-4">
-              <span className="min-w-0">
-                <span className="block font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--admin-muted)]">numeros / agentes / carga</span>
-                <span className="block truncate text-sm font-semibold text-[var(--admin-foreground)]">Atendentes</span>
-              </span>
-              <span className="font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)] group-open:hidden">Abrir</span>
-              <span className="hidden font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--admin-cyan)] group-open:inline">Fechar</span>
-            </summary>
-            <div className="grid gap-3 border-t border-[var(--admin-border)] p-4">
-              {data.agents.map((agent) => (
-                <article key={agent.agentKey} className="rounded-lg border border-[var(--admin-border)] bg-white px-3 py-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-[var(--admin-foreground)]">{agent.name}</p>
-                      <p className="mt-1 truncate font-mono text-[10px] text-[var(--admin-muted)]">{agent.agentKey}</p>
-                    </div>
-                    <StatusBadge tone={agent.connected ? "green" : "yellow"}>{agent.connected ? "online" : agent.status}</StatusBadge>
-                  </div>
-                  <div className="mt-3 grid grid-cols-4 gap-2 text-center">
-                    <InfoCell label="Abertas" value={String(agent.openConversations)} />
-                    <InfoCell label="Handoff" value={String(agent.handoffs)} />
-                    <InfoCell label="Score" value={String(agent.averageScore)} />
-                    <InfoCell label="Numero" value={agent.phone || "-"} />
-                  </div>
-                </article>
-              ))}
-            </div>
-          </details>
-        </aside>
+        <LeadSidePanel lead={selectedLead} onOpenLeadFile={() => setLeadFileOpen(true)} />
       </section>
 
-      <details className="group mt-4 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(81,60,36,0.06)]">
-        <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-4 px-4">
-          <span className="min-w-0">
-            <span className="block font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--admin-muted)]">triagem / automacao / funil</span>
-            <span className="block truncate text-sm font-semibold text-[var(--admin-foreground)]">Painel operacional</span>
-          </span>
-          <span className="flex shrink-0 items-center gap-3">
-            <StatusBadge tone={criticalLeads.length ? "red" : "green"}>{criticalLeads.length} criticos</StatusBadge>
-            <ChevronDown size={16} className="text-[var(--admin-cyan)] transition-transform group-open:rotate-180" />
-          </span>
-        </summary>
-        <div className="grid gap-4 border-t border-[var(--admin-border)] p-4">
-        <DashboardCard title="Operacao agora" eyebrow="triagem / automacao" contentClassName="p-3">
-          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-            {cockpitCards.map((card) => {
-              const Icon = card.icon;
-              return (
-                <div key={card.label} className={cn("rounded-md border px-3 py-3", toneBg[card.tone])}>
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="truncate text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--admin-muted)]">
-                      {card.label}
-                    </p>
-                    <Icon size={14} className={toneText[card.tone]} />
-                  </div>
-                  <p className={cn("mt-2 font-mono text-xl font-bold", toneText[card.tone])}>{card.value}</p>
-                  <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-[var(--admin-muted)]">{card.detail}</p>
-                </div>
-              );
-            })}
-          </div>
-        </DashboardCard>
-
-        {operationalHealth && (
-          <OperationalReadinessPanel
-            health={operationalHealth}
-            busy={busyAction === "health:refresh"}
-            onRefresh={() => {
-              setBusyAction("health:refresh");
-              router.refresh();
-              window.setTimeout(() => setBusyAction(null), 500);
-            }}
-          />
-        )}
-
-        <CrmFunnel
-          leads={data.leads}
-          selectedLeadId={selectedLead?.id}
-          onSelect={(lead) => {
-            setFilter("todos");
-            setSearch("");
-            setSelectedId(lead.id);
-            setManualReply("");
-            setContextDraft(contextDraftFromLead(lead));
-            setStageDraft(stageDraftFromLead(lead));
-          }}
-        />
-
-        <div className="grid gap-4 xl:grid-cols-2">
-        <DashboardCard
-          title="Follow-ups"
-          eyebrow="agendados / pendentes"
-          action={
-            <div className="flex flex-wrap justify-end gap-2">
-              <ActionButton
-                icon={Play}
-                tone="muted"
-                busy={busyAction === "followups:preview"}
-                onClick={() => void runFollowUpCommand("preview")}
-                title="Simular follow-ups elegiveis sem agendar"
-              >
-                Simular
-              </ActionButton>
-              <ActionButton
-                icon={CalendarClock}
-                tone="yellow"
-                busy={busyAction === "followups:schedule"}
-                onClick={() => void runFollowUpCommand("schedule")}
-                title="Agendar follow-ups elegiveis"
-              >
-                Agendar
-              </ActionButton>
-              <ActionButton
-                icon={Send}
-                tone="green"
-                busy={busyAction === "followups:process"}
-                onClick={() => void runFollowUpCommand("process")}
-                title="Processar follow-ups vencidos agora"
-              >
-                Enviar
-              </ActionButton>
-            </div>
-          }
-        >
-          <div className="grid gap-2">
-            {data.followUps.length ? (
-              data.followUps.slice(0, 8).map((followUp) => (
-                <div key={followUp.id} className="grid gap-3 rounded-md border border-[var(--admin-border)] bg-white px-3 py-3 sm:grid-cols-[minmax(0,1fr)_120px]">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-[var(--admin-foreground)]">{followUp.leadName}</p>
-                    <p className="mt-1 truncate text-xs text-[var(--admin-muted)]">{followUp.reason} / {formatPhone(followUp.phone)}</p>
-                  </div>
-                  <div className="flex flex-col items-start gap-1 sm:items-end">
-                    <StatusBadge tone={followUp.status === "failed" ? "red" : followUp.status === "sent" ? "green" : "yellow"}>
-                      {followUp.status}
-                    </StatusBadge>
-                    <span className="text-[10px] text-[var(--admin-muted)]">{formatDateTime(followUp.scheduledFor)}</span>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <div className="flex items-center gap-3 rounded-md border border-[var(--admin-border)] bg-white px-3 py-4 text-sm text-[var(--admin-muted)]">
-                <PauseCircle size={16} />
-                Nenhum follow-up registrado ainda.
-              </div>
-            )}
-          </div>
-        </DashboardCard>
-
-        <DashboardCard title="Fila critica" eyebrow="handoff / sla / quente" action={<ShieldAlert size={16} className="text-[var(--admin-red)]" />}>
-          <div className="grid gap-2">
-            {data.leads
-              .filter((lead) => lead.humanInterventionActive || lead.slaStatus === "vencido" || lead.score >= 85)
-              .slice(0, 8)
-              .map((lead) => (
-                <div key={lead.id} className="flex items-center justify-between gap-3 rounded-md border border-[var(--admin-border)] bg-white px-3 py-3">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-[var(--admin-foreground)]">{lead.name}</p>
-                    <p className="mt-1 truncate text-xs text-[var(--admin-muted)]">{lead.nextAction}</p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    {lead.score >= 85 && <Flame size={15} className="text-[var(--admin-cyan)]" />}
-                    <StatusBadge tone={lead.humanInterventionActive ? "yellow" : slaTone[lead.slaStatus]}>
-                      {lead.humanInterventionActive ? "humano" : slaLabel[lead.slaStatus]}
-                    </StatusBadge>
-                  </div>
-                </div>
-              ))}
-            {!data.leads.some((lead) => lead.humanInterventionActive || lead.slaStatus === "vencido" || lead.score >= 85) && (
-              <div className="rounded-md border border-[var(--admin-border)] bg-white px-3 py-4 text-sm text-[var(--admin-muted)]">
-                Sem atendimento critico na visao atual.
-              </div>
-            )}
-          </div>
-        </DashboardCard>
-        </div>
-        </div>
-      </details>
-
-      <details className="group mt-4 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(81,60,36,0.06)]">
-        <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-4 px-4">
-          <span className="min-w-0">
-            <span className="block font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--admin-muted)]">naturalidade / utilidade / transparencia</span>
-            <span className="block truncate text-sm font-semibold text-[var(--admin-foreground)]">Auditoria IA</span>
-          </span>
-          <span className="flex shrink-0 items-center gap-3">
-            <StatusBadge tone={reviewAlerts ? "yellow" : "cyan"}>{data.reviews.length} reviews</StatusBadge>
-            <Gauge size={16} className="text-[var(--admin-cyan)]" />
-            <span className="font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)] group-open:hidden">Abrir</span>
-            <span className="hidden font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--admin-cyan)] group-open:inline">Fechar</span>
-          </span>
-        </summary>
-        <div className="border-t border-[var(--admin-border)] p-4">
-          <div className="grid gap-2 xl:grid-cols-2">
-            {data.reviews.length ? (
-              data.reviews.slice(0, 10).map((review) => {
-                const tone = reviewTone(review.score, review.verdict);
-                return (
-                  <article key={review.id} className="rounded-md border border-[var(--admin-border)] bg-white px-3 py-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-[var(--admin-foreground)]">{review.leadName}</p>
-                        <p className="mt-1 truncate text-xs text-[var(--admin-muted)]">
-                          {review.reviewType} / {review.agentKey} / {formatRelative(review.createdAt)}
-                        </p>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        <span className={cn("font-mono text-lg font-bold", toneText[tone])}>{review.score || "-"}</span>
-                        <StatusBadge tone={tone}>{review.verdict}</StatusBadge>
-                      </div>
-                    </div>
-                    {review.notes && <p className="mt-3 line-clamp-2 text-xs leading-5 text-[var(--admin-muted)]">{review.notes}</p>}
-                    {review.flags.length > 0 && (
-                      <div className="mt-3 flex flex-wrap gap-1.5">
-                        {review.flags.slice(0, 5).map((flag) => (
-                          <span key={flag} className="rounded border border-[var(--admin-border)] bg-[rgba(245,247,250,0.7)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--admin-muted)]">
-                            {flag}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </article>
-                );
-              })
-            ) : (
-              <div className="rounded-md border border-[var(--admin-border)] bg-white px-3 py-4 text-sm text-[var(--admin-muted)]">
-                Nenhuma auditoria registrada ainda.
-              </div>
-            )}
-          </div>
-        </div>
-      </details>
-        </>
-      )}
+      <LeadFileModal
+        open={leadFileOpen}
+        lead={selectedLead}
+        busyAction={busyAction}
+        contextDraft={selectedContextDraft}
+        stageDraft={selectedStageDraft}
+        onClose={() => setLeadFileOpen(false)}
+        onLeadAction={(action, lead) => void runLeadAction(action, lead)}
+        onContextDraftChange={(patch) => {
+          if (selectedLead) updateLeadContextDraft(selectedLead, patch);
+        }}
+        onSaveContext={(lead) => void saveLeadContext(lead)}
+        onStageDraftChange={(patch) => {
+          if (selectedLead) updateLeadStageDraft(selectedLead, patch);
+        }}
+        onSaveStage={(lead) => void saveLeadStage(lead)}
+      />
     </div>
   );
 }
