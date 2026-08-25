@@ -23,12 +23,17 @@ export type WhatsAppHumanizationPlan = {
     readDelayMs: number;
     firstDelayMs: number;
     finalDelayMs: number;
+    firstProviderSendDelayMs: number;
+    finalProviderSendDelayMs: number;
+    providerSendDelayCapMs: number;
     presenceMode: string;
     reason: string;
   };
 };
 
 const MAX_PROVIDER_DELAY_MS = 300000;
+const MAX_PROVIDER_SEND_FIRST_DELAY_MS = 5000;
+const MAX_PROVIDER_SEND_PART_GAP_MS = 2500;
 const MAX_TEXT_TYPING_MS = 45000;
 const MAX_AUDIO_RECORDING_MS = 70000;
 
@@ -55,6 +60,10 @@ function jitter(value: number, seed: string, strength = 0.22) {
   const ratio = deterministicRatio(seed);
   const multiplier = 1 - strength / 2 + ratio * strength;
   return Math.round(value * multiplier);
+}
+
+function providerSendDelayCapMs(index: number) {
+  return MAX_PROVIDER_SEND_FIRST_DELAY_MS + Math.max(0, index) * MAX_PROVIDER_SEND_PART_GAP_MS;
 }
 
 function localHourInTimezone(timezone: string) {
@@ -168,6 +177,7 @@ export function buildWhatsAppHumanizationPlan(input: {
 
     accumulatedDelay += (index === 0 ? readDelay : 0) + baseDelay + activeDelay;
     const delayMs = clamp(accumulatedDelay, 0, MAX_PROVIDER_DELAY_MS);
+    const sendDelayMs = clamp(delayMs, 0, providerSendDelayCapMs(index));
 
     return {
       index,
@@ -175,7 +185,7 @@ export function buildWhatsAppHumanizationPlan(input: {
       presence: input.mode === "audio" ? "recording" : "composing",
       presenceDelayMs: delayMs,
       sendOptions: {
-        delayMs,
+        delayMs: sendDelayMs,
         readChat: true,
         readMessages: input.config.behavior.viewDelay,
       },
@@ -189,8 +199,11 @@ export function buildWhatsAppHumanizationPlan(input: {
     parts: plannedParts,
     summary: {
       readDelayMs: readDelay,
-      firstDelayMs: plannedParts[0]?.sendOptions.delayMs || 0,
-      finalDelayMs: plannedParts.at(-1)?.sendOptions.delayMs || 0,
+      firstDelayMs: plannedParts[0]?.presenceDelayMs || 0,
+      finalDelayMs: plannedParts.at(-1)?.presenceDelayMs || 0,
+      firstProviderSendDelayMs: plannedParts[0]?.sendOptions.delayMs || 0,
+      finalProviderSendDelayMs: plannedParts.at(-1)?.sendOptions.delayMs || 0,
+      providerSendDelayCapMs: providerSendDelayCapMs(Math.max(0, plannedParts.length - 1)),
       presenceMode: input.config.behavior.presenceMode,
       reason: enabled ? "behavior_humanization_enabled" : "behavior_humanization_disabled",
     },

@@ -181,6 +181,7 @@ export async function sendWhatsAppAgentVoiceReply(input: {
   trackId: string;
   decision: WhatsAppVoiceDecision;
   sendOptions?: WhatsAppAgentSendOptions;
+  synthesisTimeoutMs?: number;
 }): Promise<WhatsAppVoiceDeliveryResult> {
   const startedMs = Date.now();
   const processedAt = new Date().toISOString();
@@ -204,6 +205,7 @@ export async function sendWhatsAppAgentVoiceReply(input: {
       modelId: input.decision.modelId,
       text: input.text,
       maxChars: input.decision.maxAudioChars,
+      timeoutMs: input.synthesisTimeoutMs,
     });
   } catch (error) {
     return {

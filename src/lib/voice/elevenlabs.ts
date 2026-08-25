@@ -329,11 +329,13 @@ export async function synthesizeElevenLabsPreview(input: {
   text?: string;
   modelId?: string;
   maxChars?: number;
+  timeoutMs?: number;
 }) {
   const config = await getElevenLabsConfig();
   const voiceId = cleanString(input.voiceId || config.willianVoiceId.value || config.defaultVoiceId.value);
   const modelId = cleanString(input.modelId || config.defaultModelId.value, DEFAULT_MODEL_ID);
   const maxChars = Math.max(80, Math.min(input.maxChars || 2000, 2500));
+  const timeoutMs = Math.max(5000, Math.min(input.timeoutMs || 45000, 45000));
   const text = cleanString(
     input.text,
     "Ola, aqui e a Betel. Estou validando a voz de atendimento."
@@ -359,7 +361,7 @@ export async function synthesizeElevenLabsPreview(input: {
         use_speaker_boost: true,
       },
     }),
-    signal: AbortSignal.timeout(45000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
 
   const contentType = res.headers.get("content-type") || "audio/mpeg";

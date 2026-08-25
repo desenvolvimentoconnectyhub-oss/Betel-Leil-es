@@ -88,8 +88,10 @@ function clampText(value: string, limit = 2400) {
 }
 
 const INBOUND_BATCH_MAX_WAIT_MS = 20000;
+const INBOUND_MEDIA_BATCH_MAX_WAIT_MS = 5000;
 const INBOUND_BATCH_HISTORY_MS = 5 * 60 * 1000;
 const INBOUND_BATCH_MAX_MESSAGES = 8;
+const RUNTIME_AUDIO_SYNTHESIS_TIMEOUT_MS = 12000;
 const TEXT_REPLY_SPLIT_THRESHOLD = 150;
 const TEXT_REPLY_PART_LIMIT = 150;
 const TEXT_REPLY_TOTAL_LIMIT = 420;
@@ -3229,9 +3231,10 @@ function inboundBatchDelayMs(config: WillianAgentConfig, input: InboundBatchDela
   const baseDelay = behavior.responseDelaySeconds;
   const mediaBatchDelay = behavior.mediaWithoutBatchProtection ? behavior.batchMediaDelaySeconds : 0;
   const captionlessMediaDelayEnabled = behavior.mediaWithoutCaptionProtection && !hasText;
+  const timingKind = inboundBatchTimingKind(input);
   let delaySeconds = baseDelay;
 
-  switch (inboundBatchTimingKind(input)) {
+  switch (timingKind) {
     case "audio":
       delaySeconds = firstPositiveNumber(
         mediaBatchDelay,
@@ -3275,7 +3278,8 @@ function inboundBatchDelayMs(config: WillianAgentConfig, input: InboundBatchDela
       break;
   }
 
-  return clampNumberValue(delaySecondsToMs(delaySeconds), 0, INBOUND_BATCH_MAX_WAIT_MS);
+  const maxWaitMs = timingKind === "text" || timingKind === "empty" ? INBOUND_BATCH_MAX_WAIT_MS : INBOUND_MEDIA_BATCH_MAX_WAIT_MS;
+  return clampNumberValue(delaySecondsToMs(delaySeconds), 0, maxWaitMs);
 }
 
 function maxIsoDate(...values: string[]) {
@@ -5147,6 +5151,7 @@ async function processWhatsappAgentRuntime(
             trackId: `${trackId}-audio-${index + 1}`,
             decision: voiceDecision,
             sendOptions: humanizationPlan.parts[index]?.sendOptions,
+            synthesisTimeoutMs: RUNTIME_AUDIO_SYNTHESIS_TIMEOUT_MS,
           })
         )
       )

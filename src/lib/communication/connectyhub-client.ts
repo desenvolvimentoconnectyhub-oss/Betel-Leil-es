@@ -14,6 +14,7 @@ export const GLOBAL_WHATSAPP_DEFAULT_INSTANCE_NAME = WILLIAN_DEFAULT_INSTANCE_NA
 export const CONNECTYHUB_PROVIDER = "connectyhub";
 const CONNECTYHUB_CONNECT_SYSTEM_NAME = "ViralCheck";
 const CONNECTYHUB_TEXT_SEND_TIMEOUT_MS = 30000;
+const CONNECTYHUB_PRESENCE_TIMEOUT_MS = 3000;
 export const CONNECTYHUB_WEBHOOK_EVENTS = [
   "messages",
   "messages_update",
@@ -1645,7 +1646,7 @@ export async function sendWhatsAppAgentChatPresence(input: {
           ...(clampDelayMs(input.delayMs) > 0 ? { delay: clampDelayMs(input.delayMs) } : {}),
         },
       },
-      timeoutMs: 10000,
+      timeoutMs: CONNECTYHUB_PRESENCE_TIMEOUT_MS,
     });
 
     return {
@@ -1696,7 +1697,7 @@ export async function setWhatsAppAgentInstancePresence(input: {
           presence: input.presence,
         },
       },
-      timeoutMs: 10000,
+      timeoutMs: CONNECTYHUB_PRESENCE_TIMEOUT_MS,
     });
 
     return {
