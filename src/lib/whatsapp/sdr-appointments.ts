@@ -154,20 +154,11 @@ function hourBucketIso(scheduledFor: string) {
 }
 
 function reminderDueAtIso(scheduledFor: string) {
-  return new Date(Date.parse(scheduledFor) - 5 * 60_000).toISOString();
+  return new Date(Date.parse(scheduledFor) - 10 * 60_000).toISOString();
 }
 
 function confirmationDueAtIso(scheduledFor: string) {
-  const scheduledAt = Date.parse(scheduledFor);
-  const parts = localParts(new Date(scheduledFor));
-  const noonConfirmation = localDateTimeToIso({ ...parts, hour: 12, minute: 30 });
-  const thirtyMinutesBefore = scheduledAt - 30 * 60_000;
-  const dueAt =
-    Date.parse(noonConfirmation) < thirtyMinutesBefore
-      ? noonConfirmation
-      : new Date(scheduledAt - 2 * 60 * 60_000).toISOString();
-
-  return dueAt;
+  return new Date(Date.parse(scheduledFor) - 30 * 60_000).toISOString();
 }
 
 function sameLocalDay(left: Date, right: Date) {
@@ -895,8 +886,7 @@ async function insertAppointmentTimelineNote(
     lead_confirmed: "lead confirmou a ligacao",
     lead_reschedule_requested: "lead pediu para remarcar",
     rescheduled: "ligacao remarcada",
-    lead_reminder_sent: "lembrete enviado ao lead",
-    admin_reminder_sent: "lembrete enviado ao administrador",
+    admin_unconfirmed_notice_sent: "administrador avisado sem confirmacao do lead",
     completed: "ligacao concluida",
     cancelled: "ligacao cancelada",
     missed: "ligacao perdida",
@@ -981,11 +971,11 @@ function adminRescheduledText(appointment: WhatsAppSdrAppointmentSummary) {
 
 function adminReminderText(appointment: WhatsAppSdrAppointmentSummary) {
   return [
-    "Lembrete BTL: ligacao em 5 minutos",
+    "Aviso BTL: ligacao mantida sem confirmacao do lead",
     `Lead: ${appointment.leadName}`,
     `Telefone: ${appointment.leadPhone || "nao informado"}`,
     `Horario: ${appointment.scheduleLabel}`,
-    `Confirmacao do lead: ${leadConfirmationStatusLabel(appointment.leadConfirmationStatus)}`,
+    "O lead nao confirmou e nao pediu remarcacao. Seguimos considerando a ligacao como marcada.",
     "",
     "Resumo:",
     appointment.sdrBriefing || appointment.conversationSummary,
@@ -994,18 +984,8 @@ function adminReminderText(appointment: WhatsAppSdrAppointmentSummary) {
     .join("\n");
 }
 
-function leadConfirmationStatusLabel(status: SdrLeadConfirmationStatus) {
-  if (status === "confirmed") return "confirmada";
-  if (status === "reschedule_requested") return "remarcacao solicitada";
-  return "pendente";
-}
-
 function leadConfirmationText(appointment: WhatsAppSdrAppointmentSummary) {
-  return `Oi, ${leadFirstName(appointment.leadName)}. Sua ligacao com a Betel esta marcada para ${appointment.scheduleLabel}. Confirma esse horario?`;
-}
-
-function leadReminderText(appointment: WhatsAppSdrAppointmentSummary) {
-  return `Oi, ${leadFirstName(appointment.leadName)}. Sua ligacao com a Betel e daqui 5 minutos. Confirmado?`;
+  return `Oi, ${leadFirstName(appointment.leadName)}. Passando para confirmar: sua ligacao com a Betel esta marcada para ${appointment.scheduleLabel}. Esse horario continua bom pra voce?`;
 }
 
 function leadReschedulePromptText(appointment: WhatsAppSdrAppointmentSummary) {
@@ -1877,58 +1857,13 @@ async function processLeadConfirmationDue(
   return { ok: true, appointmentId: appointment.id };
 }
 
-async function processLeadReminderDue(
-  supabase: SupabaseAdminClient,
-  appointment: WhatsAppSdrAppointmentSummary,
-) {
-  if (!isAppointmentActive(appointment)) return { ok: true, skipped: true, reason: "inactive" };
-  if (appointment.leadConfirmationStatus === RESCHEDULE_REQUESTED_STATUS) {
-    return { ok: true, skipped: true, reason: "reschedule_requested" };
-  }
-  if (Date.parse(appointment.scheduledFor) <= Date.now() - 2 * 60_000) {
-    return { ok: true, skipped: true, reason: "past_appointment" };
-  }
-
-  const providerInstanceId = await providerInstanceIdForAppointment(supabase, appointment);
-  const agentKey = appointment.agentKey || "";
-  const delivery = await sendAppointmentLeadMessage({
-    appointment,
-    agentKey,
-    providerInstanceId,
-    text: leadReminderText(appointment),
-    trackIdSuffix: "lead-reminder",
-    actionButton: appointment.leadConfirmationStatus === "pending" ? appointmentActionButton(appointment) : undefined,
-  });
-
-  if (!delivery.ok) return { ok: false, error: "errorMessage" in delivery ? delivery.errorMessage : "lead_reminder_failed" };
-
-  const notificationPayload = await latestNotificationPayload(supabase, appointment.id, appointment.notificationPayload);
-  const { data } = await supabase
-    .from("whatsapp_sdr_appointments")
-    .update({
-      lead_reminder_sent_at: new Date().toISOString(),
-      notification_payload: {
-        ...notificationPayload,
-        leadReminderDelivery: delivery,
-      },
-    })
-    .eq("id", appointment.id)
-    .select("*")
-    .single();
-
-  const updated = data ? await summarizeAppointmentData(supabase, data) : appointment;
-  await updateMetadataWithAppointment(supabase, updated, "lead_reminder_sent");
-  await insertAppointmentTimelineNote(supabase, updated, "lead_reminder_sent");
-  return { ok: true, appointmentId: appointment.id };
-}
-
 async function processAdminReminderDue(
   supabase: SupabaseAdminClient,
   appointment: WhatsAppSdrAppointmentSummary,
 ) {
   if (!isAppointmentActive(appointment)) return { ok: true, skipped: true, reason: "inactive" };
-  if (appointment.leadConfirmationStatus === RESCHEDULE_REQUESTED_STATUS) {
-    return { ok: true, skipped: true, reason: "reschedule_requested" };
+  if (appointment.leadConfirmationStatus !== "pending") {
+    return { ok: true, skipped: true, reason: "lead_already_answered" };
   }
   if (Date.parse(appointment.scheduledFor) <= Date.now() - 2 * 60_000) {
     return { ok: true, skipped: true, reason: "past_appointment" };
@@ -1965,8 +1900,8 @@ async function processAdminReminderDue(
     .single();
 
   const updated = data ? await summarizeAppointmentData(supabase, data) : appointment;
-  await updateMetadataWithAppointment(supabase, updated, "admin_reminder_sent");
-  await insertAppointmentTimelineNote(supabase, updated, "admin_reminder_sent");
+  await updateMetadataWithAppointment(supabase, updated, "admin_unconfirmed_notice_sent");
+  await insertAppointmentTimelineNote(supabase, updated, "admin_unconfirmed_notice_sent");
   return { ok: true, appointmentId: appointment.id };
 }
 
@@ -1979,7 +1914,7 @@ export async function runWhatsAppSdrAppointmentAutomation(input: { now?: string;
   const limit = input.limit ?? 25;
   const activeStatuses = ACTIVE_STATUSES;
 
-  const [confirmationsResult, leadRemindersResult, adminRemindersResult] = await Promise.all([
+  const [confirmationsResult, adminRemindersResult] = await Promise.all([
     supabase
       .from("whatsapp_sdr_appointments")
       .select("*")
@@ -1995,18 +1930,7 @@ export async function runWhatsAppSdrAppointmentAutomation(input: { now?: string;
       .from("whatsapp_sdr_appointments")
       .select("*")
       .in("status", activeStatuses)
-      .neq("lead_confirmation_status", RESCHEDULE_REQUESTED_STATUS)
-      .is("lead_reminder_sent_at", null)
-      .not("reminder_due_at", "is", null)
-      .lte("reminder_due_at", nowIso)
-      .gt("scheduled_for", new Date(nowMs - 2 * 60_000).toISOString())
-      .order("scheduled_for", { ascending: true })
-      .limit(limit),
-    supabase
-      .from("whatsapp_sdr_appointments")
-      .select("*")
-      .in("status", activeStatuses)
-      .neq("lead_confirmation_status", RESCHEDULE_REQUESTED_STATUS)
+      .eq("lead_confirmation_status", "pending")
       .is("admin_reminder_sent_at", null)
       .not("reminder_due_at", "is", null)
       .lte("reminder_due_at", nowIso)
@@ -2018,15 +1942,14 @@ export async function runWhatsAppSdrAppointmentAutomation(input: { now?: string;
   const errors: string[] = [];
   const result = {
     confirmationsSent: 0,
-    leadRemindersSent: 0,
-    adminRemindersSent: 0,
+    adminUnconfirmedNoticesSent: 0,
     skipped: 0,
   };
 
   const processRows = async (
     rows: unknown[] | null | undefined,
     handler: (appointment: WhatsAppSdrAppointmentSummary) => Promise<{ ok: boolean; skipped?: boolean; error?: string }>,
-    counter: keyof Pick<typeof result, "confirmationsSent" | "leadRemindersSent" | "adminRemindersSent">,
+    counter: keyof Pick<typeof result, "confirmationsSent" | "adminUnconfirmedNoticesSent">,
   ) => {
     for (const row of rows || []) {
       const appointment = await summarizeAppointmentData(supabase, row);
@@ -2042,12 +1965,10 @@ export async function runWhatsAppSdrAppointmentAutomation(input: { now?: string;
   };
 
   if (confirmationsResult.error) errors.push(`confirmations: ${confirmationsResult.error.message}`);
-  if (leadRemindersResult.error) errors.push(`lead_reminders: ${leadRemindersResult.error.message}`);
-  if (adminRemindersResult.error) errors.push(`admin_reminders: ${adminRemindersResult.error.message}`);
+  if (adminRemindersResult.error) errors.push(`admin_unconfirmed_notices: ${adminRemindersResult.error.message}`);
 
   await processRows(confirmationsResult.data as unknown[], (appointment) => processLeadConfirmationDue(supabase, appointment), "confirmationsSent");
-  await processRows(leadRemindersResult.data as unknown[], (appointment) => processLeadReminderDue(supabase, appointment), "leadRemindersSent");
-  await processRows(adminRemindersResult.data as unknown[], (appointment) => processAdminReminderDue(supabase, appointment), "adminRemindersSent");
+  await processRows(adminRemindersResult.data as unknown[], (appointment) => processAdminReminderDue(supabase, appointment), "adminUnconfirmedNoticesSent");
 
   return {
     ok: errors.length === 0,

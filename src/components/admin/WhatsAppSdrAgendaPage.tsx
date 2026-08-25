@@ -142,12 +142,7 @@ function AppointmentCard({
             ) : null}
             {appointment.adminReminderSentAt ? (
               <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-emerald-700">
-                admin lembrado
-              </span>
-            ) : null}
-            {appointment.leadReminderSentAt ? (
-              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-emerald-700">
-                lead lembrado
+                admin avisado
               </span>
             ) : null}
           </div>

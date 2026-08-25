@@ -636,9 +636,9 @@ function SdrAppointmentBlock({
                 Confirmacao enviada
               </StatusBadge>
             ) : null}
-            {appointment.leadReminderSentAt || appointment.adminReminderSentAt ? (
+            {appointment.adminReminderSentAt ? (
               <StatusBadge tone="green" className="h-5 px-1.5 text-[9px]">
-                Lembrete enviado
+                Admin avisado
               </StatusBadge>
             ) : null}
           </div>
