@@ -101,6 +101,19 @@ const MAX_TEXT_REPLY_PARTS = 4;
 const MAX_AUDIO_REPLY_PARTS = 3;
 const TEXT_REPLY_CONTINUATION_NOTE = "Se quiser, sigo no proximo ponto.";
 
+type QuotedReplyContext = {
+  providerMessageId: string;
+  participant: string;
+  authorLabel: string;
+  direction: string;
+  messageType: string;
+  text: string;
+  mediaUrl: string;
+  mediaMimeType: string;
+  source: string;
+  matchedMessageId: string;
+};
+
 function clampNumberValue(value: number, min: number, max: number) {
   if (!Number.isFinite(value)) return min;
   return Math.max(min, Math.min(max, value));
@@ -455,6 +468,8 @@ type RuntimeMessageContext = {
   authorType: string;
   authorLabel: string;
   messageType: string;
+  providerMessageId: string;
+  quotedReply: QuotedReplyContext | null;
   text: string;
   createdAt: string;
 };
@@ -495,7 +510,8 @@ function formatConversationHistory(messages: RuntimeMessageContext[]) {
     .slice(-12)
     .map((message) => {
       const side = message.direction === "outbound" ? "Agente" : "Lead";
-      return `${side}: ${message.text}`;
+      const quotedReply = message.quotedReply ? `\n  Respondendo a: ${quotedReplyDisplayText(message.quotedReply)}` : "";
+      return `${side}: ${message.text}${quotedReply}`;
     })
     .join("\n");
 }
@@ -1706,6 +1722,460 @@ function firstCleanString(...values: unknown[]) {
   return "";
 }
 
+function normalizeProviderMessageId(value: unknown) {
+  const raw =
+    typeof value === "number" && Number.isFinite(value)
+      ? String(value)
+      : cleanString(value);
+  return raw ? raw.replace(/^.+:/, "") : "";
+}
+
+function firstRecord(...values: unknown[]) {
+  for (const value of values) {
+    const record = asRecord(value);
+    if (Object.keys(record).length) return record;
+  }
+  return {};
+}
+
+const quotedReplyCandidateKeys = new Set(
+  [
+    "contextInfo",
+    "messageContextInfo",
+    "quoted",
+    "quotedMessage",
+    "quotedMsg",
+    "quoted_message",
+    "quotedMessageInfo",
+    "quoted_message_info",
+    "replyTo",
+    "reply_to",
+    "replyToMessage",
+    "reply_to_message",
+    "repliedMessage",
+    "replied_message",
+    "repliedTo",
+    "replied_to",
+  ].map((key) => key.toLowerCase())
+);
+
+function pushQuotedCandidate(candidates: Record<string, unknown>[], value: unknown) {
+  if (!value || typeof value !== "object") return;
+  if (Array.isArray(value)) {
+    for (const item of value) pushQuotedCandidate(candidates, item);
+    return;
+  }
+  const record = asRecord(value);
+  if (Object.keys(record).length) candidates.push(record);
+}
+
+function collectQuotedCandidateRecords(
+  payload: unknown,
+  candidates: Record<string, unknown>[] = [],
+  depth = 0,
+  seen = new WeakSet<object>()
+) {
+  if (!payload || typeof payload !== "object" || depth > 7) return candidates;
+  if (seen.has(payload)) return candidates;
+  seen.add(payload);
+
+  if (Array.isArray(payload)) {
+    for (const item of payload) collectQuotedCandidateRecords(item, candidates, depth + 1, seen);
+    return candidates;
+  }
+
+  const record = asRecord(payload);
+  for (const [key, value] of Object.entries(record)) {
+    if (quotedReplyCandidateKeys.has(key.toLowerCase())) pushQuotedCandidate(candidates, value);
+    if (value && typeof value === "object") collectQuotedCandidateRecords(value, candidates, depth + 1, seen);
+  }
+  return candidates;
+}
+
+function extractTextFromMessageLike(value: unknown, depth = 0): string {
+  if (depth > 5) return "";
+  if (typeof value === "string") return cleanString(value);
+  if (!value || typeof value !== "object") return "";
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = extractTextFromMessageLike(item, depth + 1);
+      if (found) return found;
+    }
+    return "";
+  }
+
+  const record = asRecord(value);
+  const direct = firstCleanString(
+    record.text,
+    record.body,
+    record.conversation,
+    record.caption,
+    record.selectedDisplayText,
+    record.selectedRowId,
+    record.contentText,
+    record.displayText,
+    record.title,
+    record.description,
+    record.transcript,
+    record.transcription
+  );
+  if (direct) return direct;
+
+  const nestedKeys = [
+    "message",
+    "quotedMessage",
+    "quoted_message",
+    "quotedMsg",
+    "quoted",
+    "extendedTextMessage",
+    "imageMessage",
+    "videoMessage",
+    "documentMessage",
+    "audioMessage",
+    "buttonsResponseMessage",
+    "listResponseMessage",
+    "templateButtonReplyMessage",
+    "interactiveResponseMessage",
+    "ephemeralMessage",
+    "viewOnceMessage",
+    "viewOnceMessageV2",
+  ];
+  for (const key of nestedKeys) {
+    const found = extractTextFromMessageLike(record[key], depth + 1);
+    if (found) return found;
+  }
+
+  return "";
+}
+
+function extractMediaUrlFromMessageLike(value: unknown, depth = 0): string {
+  if (depth > 5 || !value || typeof value !== "object") return "";
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = extractMediaUrlFromMessageLike(item, depth + 1);
+      if (found) return found;
+    }
+    return "";
+  }
+
+  const record = asRecord(value);
+  const direct = firstCleanString(
+    record.mediaUrl,
+    record.media_url,
+    record.downloadUrl,
+    record.download_url,
+    record.fileUrl,
+    record.file_url,
+    record.url,
+    record.URL
+  );
+  if (direct) return direct;
+
+  for (const nested of Object.values(record)) {
+    const found = extractMediaUrlFromMessageLike(nested, depth + 1);
+    if (found) return found;
+  }
+  return "";
+}
+
+function extractMimeTypeFromMessageLike(value: unknown, depth = 0): string {
+  if (depth > 5 || !value || typeof value !== "object") return "";
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = extractMimeTypeFromMessageLike(item, depth + 1);
+      if (found) return found;
+    }
+    return "";
+  }
+
+  const record = asRecord(value);
+  const direct = firstCleanString(
+    record.mimeType,
+    record.mimetype,
+    record.mediaMimeType,
+    record.media_mime_type,
+    record.contentType,
+    record.content_type
+  );
+  if (direct) return direct;
+
+  for (const nested of Object.values(record)) {
+    const found = extractMimeTypeFromMessageLike(nested, depth + 1);
+    if (found) return found;
+  }
+  return "";
+}
+
+function extractMessageTypeFromMessageLike(value: unknown): string {
+  const record = asRecord(value);
+  const direct = firstCleanString(record.messageType, record.mediaType, record.type, record.kind);
+  if (direct) return direct;
+
+  const typedContainers = [
+    "conversation",
+    "extendedTextMessage",
+    "imageMessage",
+    "videoMessage",
+    "documentMessage",
+    "audioMessage",
+    "stickerMessage",
+    "buttonsResponseMessage",
+    "listResponseMessage",
+    "templateButtonReplyMessage",
+    "interactiveResponseMessage",
+  ];
+  for (const key of typedContainers) {
+    if (record[key] !== undefined) return key === "conversation" || key === "extendedTextMessage" ? "text" : key.replace(/Message$/, "").toLowerCase();
+  }
+  return "";
+}
+
+function normalizeQuotedReplyContext(value: unknown): QuotedReplyContext | null {
+  const record = asRecord(value);
+  if (!Object.keys(record).length) return null;
+  const providerMessageId = normalizeProviderMessageId(record.providerMessageId || record.provider_message_id);
+  const text = cleanString(record.text);
+  const mediaUrl = cleanString(record.mediaUrl || record.media_url);
+  if (!providerMessageId && !text && !mediaUrl) return null;
+
+  return {
+    providerMessageId,
+    participant: cleanString(record.participant || record.participantJid || record.participant_jid),
+    authorLabel: cleanString(record.authorLabel || record.author_label),
+    direction: cleanString(record.direction),
+    messageType: cleanString(record.messageType || record.message_type, text ? "text" : ""),
+    text,
+    mediaUrl,
+    mediaMimeType: cleanString(record.mediaMimeType || record.media_mime_type),
+    source: cleanString(record.source, "stored_payload"),
+    matchedMessageId: cleanString(record.matchedMessageId || record.matched_message_id),
+  };
+}
+
+function quotedReplyProviderMessageId(record: Record<string, unknown>) {
+  const key = asRecord(record.key);
+  const contextInfo = asRecord(record.contextInfo || record.messageContextInfo);
+  return normalizeProviderMessageId(
+    firstDefined(
+      record.providerMessageId,
+      record.provider_message_id,
+      record.quotedMessageId,
+      record.quoted_message_id,
+      record.quotedStanzaId,
+      record.stanzaId,
+      record.replyMessageId,
+      record.reply_message_id,
+      record.replyToMessageId,
+      record.reply_to_message_id,
+      record.contextMessageId,
+      record.messageId,
+      key.id,
+      key._serialized,
+      contextInfo.providerMessageId,
+      contextInfo.quotedMessageId,
+      contextInfo.stanzaId,
+      findFirstString(record, [
+        "providerMessageId",
+        "provider_message_id",
+        "quotedMessageId",
+        "quoted_message_id",
+        "quotedStanzaId",
+        "stanzaId",
+        "replyMessageId",
+        "reply_to_message_id",
+        "replyToMessageId",
+        "contextMessageId",
+        "messageId",
+      ])
+    )
+  );
+}
+
+function extractQuotedReplyContext(
+  payload: Record<string, unknown>,
+  currentProviderMessageId = ""
+): QuotedReplyContext | null {
+  const normalizedCurrentId = normalizeProviderMessageId(currentProviderMessageId);
+  const candidates = collectQuotedCandidateRecords(payload);
+  for (const candidate of candidates) {
+    const quotedMessage = firstRecord(
+      candidate.quotedMessage,
+      candidate.quoted_message,
+      candidate.quotedMsg,
+      candidate.quoted,
+      candidate.message,
+      candidate.originalMessage,
+      candidate.repliedMessage,
+      candidate.replyToMessage
+    );
+    const sourceRecord = Object.keys(quotedMessage).length ? quotedMessage : candidate;
+    const providerMessageId = quotedReplyProviderMessageId(candidate) || quotedReplyProviderMessageId(quotedMessage);
+    const text =
+      firstCleanString(
+        candidate.quotedText,
+        candidate.quoted_text,
+        candidate.replyText,
+        candidate.reply_text,
+        candidate.body,
+        candidate.text
+      ) ||
+      extractTextFromMessageLike(sourceRecord) ||
+      extractTextFromMessageLike(candidate);
+    const mediaUrl = extractMediaUrlFromMessageLike(sourceRecord) || extractMediaUrlFromMessageLike(candidate);
+    const mediaMimeType = extractMimeTypeFromMessageLike(sourceRecord) || extractMimeTypeFromMessageLike(candidate);
+    const messageType =
+      extractMessageTypeFromMessageLike(sourceRecord) ||
+      extractMessageTypeFromMessageLike(candidate) ||
+      (mediaMimeType ? mediaMimeType.split("/")[0] : text ? "text" : "");
+
+    if (!providerMessageId && !text && !mediaUrl) continue;
+    if (providerMessageId && providerMessageId === normalizedCurrentId && !text && !mediaUrl) continue;
+
+    return {
+      providerMessageId,
+      participant: firstCleanString(
+        candidate.participant,
+        candidate.quotedParticipant,
+        candidate.participantJid,
+        candidate.participant_jid,
+        asRecord(candidate.key).participant,
+        asRecord(candidate.key).remoteJid
+      ),
+      authorLabel: firstCleanString(candidate.authorLabel, candidate.author_label, candidate.pushName, candidate.senderName),
+      direction: "",
+      messageType,
+      text,
+      mediaUrl,
+      mediaMimeType,
+      source: "connectyhub_payload",
+      matchedMessageId: "",
+    };
+  }
+  return null;
+}
+
+function quotedReplyFromPayload(payload: unknown): QuotedReplyContext | null {
+  const record = asRecord(payload);
+  return (
+    normalizeQuotedReplyContext(record.betel_quoted_reply || record.betelQuotedReply) ||
+    extractQuotedReplyContext(record)
+  );
+}
+
+function quotedReplyDisplayText(quote: QuotedReplyContext) {
+  const actor =
+    quote.direction === "outbound"
+      ? "Agente"
+      : quote.direction === "inbound"
+        ? "Lead"
+        : quote.authorLabel || "Mensagem";
+  const body =
+    quote.text ||
+    (quote.mediaUrl
+      ? `[${quote.messageType || quote.mediaMimeType || "midia"}]`
+      : quote.providerMessageId
+        ? `[mensagem ${quote.providerMessageId}]`
+        : "");
+  return body ? `${actor}: ${clampText(body, 500)}` : "";
+}
+
+function formatQuotedReplyPromptContext(quote: QuotedReplyContext | null, currentText = "") {
+  if (!quote) return "";
+  const cited = quotedReplyDisplayText(quote);
+  return [
+    "O lead respondeu citando uma mensagem anterior do WhatsApp.",
+    cited ? `Mensagem citada: ${cited}` : "",
+    currentText ? `Mensagem atual do lead: ${clampText(currentText, 500)}` : "",
+    "Use a mensagem citada para entender a referencia. Nao fale termos tecnicos como citacao, reply ou contextoInfo para o lead.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function formatBatchedQuotedReplyContext(messages: BatchedInboundMessage[]) {
+  const lines = messages
+    .map((message, index) => {
+      const quote = message.quotedReply;
+      if (!quote) return "";
+      const cited = quotedReplyDisplayText(quote);
+      const currentText = cleanString(message.controlText || message.text);
+      return [
+        `Mensagem ${index + 1} do lead respondeu a uma mensagem anterior.`,
+        cited ? `Mensagem citada: ${cited}` : "",
+        currentText ? `Mensagem atual do lead: ${clampText(currentText, 500)}` : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+    })
+    .filter(Boolean);
+  return lines.join("\n");
+}
+
+function mergeQuotedReplyWithStoredMessage(
+  quote: QuotedReplyContext,
+  row: Record<string, unknown>
+): QuotedReplyContext {
+  const storedText = cleanString(row.text || row.transcript);
+  const storedMediaUrl = cleanString(row.media_url);
+  return {
+    ...quote,
+    providerMessageId: quote.providerMessageId || normalizeProviderMessageId(row.provider_message_id),
+    participant: quote.participant || cleanString(row.provider_chat_id),
+    authorLabel: quote.authorLabel || cleanString(row.author_label),
+    direction: quote.direction || cleanString(row.direction),
+    messageType: quote.messageType || cleanString(row.message_type, storedText ? "text" : ""),
+    text: quote.text || storedText,
+    mediaUrl: quote.mediaUrl || storedMediaUrl,
+    mediaMimeType: quote.mediaMimeType || cleanString(row.media_mime_type),
+    source: quote.source === "stored_payload" ? quote.source : "stored_message_match",
+    matchedMessageId: quote.matchedMessageId || cleanString(row.id),
+  };
+}
+
+async function resolveQuotedReplyContext(
+  supabase: NonNullable<ReturnType<typeof getSupabaseAdminClient>>,
+  conversationId: string,
+  quote: QuotedReplyContext | null
+) {
+  if (!quote?.providerMessageId || !conversationId) return quote;
+  const { data } = await supabase
+    .from("whatsapp_conversation_messages")
+    .select("id,direction,author_type,author_label,message_type,text,transcript,media_url,media_mime_type,provider_message_id,provider_chat_id")
+    .eq("conversation_id", conversationId)
+    .eq("provider_message_id", quote.providerMessageId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data ? mergeQuotedReplyWithStoredMessage(quote, data as Record<string, unknown>) : quote;
+}
+
+async function resolveQuotedRepliesForMessages<T extends { quotedReply: QuotedReplyContext | null }>(
+  supabase: NonNullable<ReturnType<typeof getSupabaseAdminClient>>,
+  conversationId: string,
+  messages: T[]
+) {
+  const ids = [
+    ...new Set(messages.map((message) => message.quotedReply?.providerMessageId).filter((id): id is string => Boolean(id))),
+  ];
+  if (!conversationId || !ids.length) return messages;
+
+  const { data } = await supabase
+    .from("whatsapp_conversation_messages")
+    .select("id,direction,author_type,author_label,message_type,text,transcript,media_url,media_mime_type,provider_message_id,provider_chat_id")
+    .eq("conversation_id", conversationId)
+    .in("provider_message_id", ids);
+  const rowsByProviderMessageId = new Map(
+    ((data || []) as Record<string, unknown>[]).map((row) => [normalizeProviderMessageId(row.provider_message_id), row])
+  );
+
+  return messages.map((message) => {
+    const quote = message.quotedReply;
+    if (!quote?.providerMessageId) return message;
+    const row = rowsByProviderMessageId.get(quote.providerMessageId);
+    return row ? { ...message, quotedReply: mergeQuotedReplyWithStoredMessage(quote, row) } : message;
+  });
+}
+
 function isProviderContactLabel(value: string) {
   const normalized = value.toLowerCase();
   return (
@@ -1863,6 +2333,7 @@ function extractWebhookMessage(payload: Record<string, unknown>) {
   const groupName = isGroup
     ? firstCleanString(message.groupName, data.groupName, chat.name, findFirstString(data, ["groupName", "group_name", "subject", "chatName", "chat_name", "title"]))
     : "";
+  const quotedReply = extractQuotedReplyContext(data, providerMessageId) || extractQuotedReplyContext(payload, providerMessageId);
 
   return {
     providerMessageId,
@@ -1880,6 +2351,7 @@ function extractWebhookMessage(payload: Record<string, unknown>) {
     participantJid,
     participantPhone,
     groupName,
+    quotedReply,
     identitySource,
     identityReliable,
     identityWarnings,
@@ -2998,6 +3470,7 @@ async function persistWebhookCrm(
     preliminaryInboundText ||
     inboundStickerContext ||
     (hardMediaFallback ? "Midia recebida sem analise automatica." : "");
+  const quotedReply = await resolveQuotedReplyContext(supabase, conversationId, message.quotedReply);
   const messagePayload = {
     ...payload,
     betel_identity: {
@@ -3021,6 +3494,12 @@ async function persistWebhookCrm(
       hasGeneratedMediaContext: Boolean(mediaMetadata || hardAudioFallback || hardMediaFallback),
       mediaKind: mediaAnalysis?.kind || detectedMediaKind || null,
     },
+    ...(quotedReply
+      ? {
+          betel_quoted_reply: quotedReply,
+          betelQuotedReply: quotedReply,
+        }
+      : {}),
     ...(mediaMetadata ? { betel_media_analysis: mediaMetadata } : {}),
   };
 
@@ -3129,6 +3608,8 @@ async function persistWebhookCrm(
       transcribedAudio: Boolean(generatedTranscript),
       audioResolutionSource: audioResolution?.source || null,
       audioResolutionError: audioResolution?.error || null,
+      lastQuotedReply: quotedReply,
+      last_quoted_reply: quotedReply,
     },
   });
 
@@ -3162,6 +3643,7 @@ async function persistWebhookCrm(
       runtimeText: hardAudioFallback || hardMediaFallback || inboundText,
       leadText: leadAuthoredText || null,
       controlText: leadAuthoredText || null,
+      quotedReply,
     },
   };
 }
@@ -3198,6 +3680,7 @@ type BatchedInboundMessage = {
   occurredAt: string;
   messageType: string;
   mediaMimeType: string;
+  quotedReply: QuotedReplyContext | null;
 };
 
 type InboundBatchDelayInput = {
@@ -3341,6 +3824,7 @@ async function loadRecentInboundBatch(
     currentEventId: string;
     fallbackText: string;
     fallbackControlText: string;
+    fallbackQuotedReply?: QuotedReplyContext | null;
   }
 ) {
   const { data: lastOutbound } = await supabase
@@ -3368,7 +3852,7 @@ async function loadRecentInboundBatch(
   if (lowerBound) query = query.gte("occurred_at", lowerBound);
 
   const { data } = await query;
-  const messages = ((data || []) as Record<string, unknown>[])
+  let messages = ((data || []) as Record<string, unknown>[])
     .map((message): BatchedInboundMessage => ({
       text: cleanString(message.text),
       controlText: leadControlTextFromMessagePayload(message.payload, cleanString(message.text)),
@@ -3376,8 +3860,10 @@ async function loadRecentInboundBatch(
       occurredAt: cleanString(message.occurred_at || message.created_at),
       messageType: cleanString(message.message_type, "text"),
       mediaMimeType: cleanString(message.media_mime_type),
+      quotedReply: quotedReplyFromPayload(message.payload),
     }))
     .filter((message) => message.text);
+  messages = await resolveQuotedRepliesForMessages(supabase, input.conversationId, messages);
 
   if (!messages.some((message) => message.webhookEventId === input.currentEventId)) {
     return [
@@ -3388,6 +3874,7 @@ async function loadRecentInboundBatch(
         occurredAt: new Date().toISOString(),
         messageType: "text",
         mediaMimeType: "",
+        quotedReply: input.fallbackQuotedReply || null,
       },
     ];
   }
@@ -3407,6 +3894,7 @@ async function waitForInboundBatchWindow(
     controlText: string;
     messageType: string;
     mimeType: string;
+    quotedReply?: QuotedReplyContext | null;
   }
 ) {
   const timingText = cleanString(input.controlText);
@@ -3422,6 +3910,9 @@ async function waitForInboundBatchWindow(
       text: input.text,
       controlText: input.controlText,
       messages: [] as BatchedInboundMessage[],
+      quotedReplyContext: input.config.behavior.quotedReplyContext
+        ? formatQuotedReplyPromptContext(input.quotedReply || null, input.controlText || input.text)
+        : "",
     };
   }
 
@@ -3476,6 +3967,9 @@ async function waitForInboundBatchWindow(
       text: input.text,
       controlText: input.controlText,
       messages: [] as BatchedInboundMessage[],
+      quotedReplyContext: input.config.behavior.quotedReplyContext
+        ? formatQuotedReplyPromptContext(input.quotedReply || null, input.controlText || input.text)
+        : "",
     };
   }
 
@@ -3484,6 +3978,7 @@ async function waitForInboundBatchWindow(
     currentEventId: input.eventId,
     fallbackText: input.text,
     fallbackControlText: input.controlText,
+    fallbackQuotedReply: input.quotedReply || null,
   });
 
   return {
@@ -3494,6 +3989,10 @@ async function waitForInboundBatchWindow(
       ? formatBatchedControlText(messages, input.controlText)
       : input.controlText,
     messages,
+    quotedReplyContext: input.config.behavior.quotedReplyContext
+      ? formatBatchedQuotedReplyContext(messages) ||
+        formatQuotedReplyPromptContext(input.quotedReply || null, input.controlText || input.text)
+      : "",
   };
 }
 
@@ -3543,7 +4042,7 @@ async function loadRuntimePromptContext(
   const [messagesResult, leadResult, profileResult] = await Promise.all([
     supabase
       .from("whatsapp_conversation_messages")
-      .select("direction,author_type,author_label,message_type,text,created_at")
+      .select("direction,author_type,author_label,message_type,text,transcript,media_url,media_mime_type,provider_message_id,payload,created_at")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
       .limit(12),
@@ -3559,16 +4058,19 @@ async function loadRuntimePromptContext(
       .maybeSingle(),
   ]);
 
-  const messages = ((messagesResult.data || []) as Record<string, unknown>[])
+  let messages = ((messagesResult.data || []) as Record<string, unknown>[])
     .reverse()
     .map((message): RuntimeMessageContext => ({
       direction: cleanString(message.direction),
       authorType: cleanString(message.author_type),
       authorLabel: cleanString(message.author_label),
       messageType: cleanString(message.message_type, "text"),
-      text: cleanString(message.text),
+      providerMessageId: normalizeProviderMessageId(message.provider_message_id),
+      quotedReply: quotedReplyFromPayload(message.payload),
+      text: cleanString(message.text || message.transcript),
       createdAt: cleanString(message.created_at),
     }));
+  messages = await resolveQuotedRepliesForMessages(supabase, conversationId, messages);
   const lead = asRecord(leadResult.data);
   const profile = asRecord(profileResult.data);
 
@@ -4516,6 +5018,7 @@ async function generateWhatsappAgentReply(
     opportunitiesContext: string;
     globalBehaviorPrompt: string;
     runtimeDecisionContext?: string;
+    quotedReplyContext?: string;
   }
 ) {
   const apiKey = await getGeminiApiKey();
@@ -4591,6 +5094,7 @@ async function generateWhatsappAgentReply(
       "Se o contexto de runtime mencionar handoff ou humano, trate isso como alerta interno silencioso; nao encerre a conversa e nao peca para o lead mandar oportunidade/regiao so para encaminhar.",
       "Nao separe em varios blocos quando a resposta couber em uma bolha de 150 caracteres.",
       "Se o lead enviou varias mensagens em sequencia, responda ao conjunto uma unica vez.",
+      "Quando o lead responder citando uma mensagem anterior, trate a mensagem citada como o assunto exato da resposta atual.",
       "Faca no maximo uma pergunta por resposta.",
       input.audioReplyRequested
         ? "O lead pediu resposta em audio. Escreva apenas o conteudo que sera falado; se precisar explicar melhor, pode chegar a 6000 caracteres porque o sistema divide em audios curtos. Nao diga que nao consegue mandar audio."
@@ -4678,6 +5182,10 @@ async function generateWhatsappAgentReply(
       "Historico recente da conversa:",
       formatConversationHistory(input.history),
       "",
+      "Contexto de mensagem citada no WhatsApp:",
+      input.quotedReplyContext || "Nenhuma mensagem citada neste envio.",
+      "Se houver mensagem citada, responda ao texto atual do lead considerando essa referencia, sem mencionar que recebeu uma citacao.",
+      "",
       `Lead: ${leadPersonalName || input.phone}`,
       `Telefone: ${input.phone}`,
       "Mensagem recebida:",
@@ -4722,6 +5230,7 @@ async function processWhatsappAgentRuntime(
   const providerInstanceId = cleanString(crmResult.providerInstanceId);
   const agentKey = cleanString(crmResult.agentKey);
   const eventId = cleanString(crmResult.eventId);
+  const inboundQuotedReply = normalizeQuotedReplyContext(inbound.quotedReply) || quotedReplyFromPayload(payload);
 
   if (!crmResult.ok || crmResult.skipped || !text || !phone || !conversationId || !leadId) {
     return { ok: true, skipped: true, reason: "not_runtime_eligible" };
@@ -4828,6 +5337,7 @@ async function processWhatsappAgentRuntime(
     controlText,
     messageType: inboundMessageType,
     mimeType: inboundMimeType,
+    quotedReply: inboundQuotedReply,
   });
   if (inboundBatch.skipped) {
     return {
@@ -4841,6 +5351,13 @@ async function processWhatsappAgentRuntime(
 
   const runtimeText = inboundBatch.text || text;
   const runtimeControlText = cleanString(inboundBatch.controlText || controlText);
+  const quotedReplyContext = config.behavior.quotedReplyContext ? cleanString(inboundBatch.quotedReplyContext) : "";
+  const runtimeUnderstandingText = quotedReplyContext
+    ? `${quotedReplyContext}\n\nMensagem recebida agora:\n${runtimeText}`
+    : runtimeText;
+  const runtimeControlUnderstandingText = quotedReplyContext
+    ? `${quotedReplyContext}\n\nMensagem recebida agora:\n${runtimeControlText || runtimeText}`
+    : runtimeControlText || runtimeText;
   const audioReplyRequested = leadRequestedWhatsAppAudioReply(runtimeControlText);
   const inboundIsAudio = isAudioMessage(inboundMessageType, inboundMimeType);
   const runtimeMediaKind =
@@ -4881,7 +5398,7 @@ async function processWhatsappAgentRuntime(
     config.behavior.promptInjectionProtection &&
     Boolean(runtimeControlText && looksLikePromptInjection(runtimeControlText));
   const topicChange = config.behavior.topicChangeProtection
-    ? detectTopicChange(runtimeText, runtimeContext.messages)
+    ? detectTopicChange(runtimeUnderstandingText, runtimeContext.messages)
     : null;
   if (topicChange) {
     runtimeContext.lead.metadata = {
@@ -4904,7 +5421,7 @@ async function processWhatsappAgentRuntime(
   }
 
   const runtimeDecision = buildWhatsAppRuntimeDecision({
-    inboundText: runtimeControlText || runtimeText,
+    inboundText: runtimeControlUnderstandingText,
     lead: runtimeContext.lead,
     history: runtimeContext.messages,
     config: {
@@ -4924,6 +5441,21 @@ async function processWhatsappAgentRuntime(
     eventId,
     decision: runtimeDecision,
   });
+
+  if (quotedReplyContext) {
+    await insertRuntimeEvent(supabase, {
+      agentKey,
+      eventType: "whatsapp_agent_runtime_quoted_reply_context",
+      status: "included",
+      message: "Mensagem citada no WhatsApp incluida no contexto da IA.",
+      payload: {
+        eventId,
+        leadId,
+        conversationId,
+        quotedReplyPreview: clampText(quotedReplyContext, 1000),
+      },
+    });
+  }
 
   if ((config.behavior.interInstanceTest || config.behavior.realCloneTest) && isResponsibleTestNumber(config, phone)) {
     await insertRuntimeEvent(supabase, {
@@ -5056,7 +5588,7 @@ async function processWhatsappAgentRuntime(
   const globalBehaviorPrompt = buildWhatsAppGlobalRuntimePrompt(globalBehavior, config.globalPrompt);
   const opportunitiesContext = await loadWhatsAppOpportunityContext(supabase, {
     profile: runtimeContext.profile,
-    inboundText: `${runtimeText}\n${formatConversationHistory(runtimeContext.messages)}`,
+    inboundText: `${runtimeUnderstandingText}\n${formatConversationHistory(runtimeContext.messages)}`,
   });
   const shouldAskPersonalName =
     config.behavior.identityGuard &&
@@ -5090,6 +5622,7 @@ async function processWhatsappAgentRuntime(
         opportunitiesContext,
         globalBehaviorPrompt,
         runtimeDecisionContext: runtimeDecision.promptContext,
+        quotedReplyContext,
       });
   if (casualGreeting) {
     await insertRuntimeEvent(supabase, {
@@ -5333,6 +5866,7 @@ async function processWhatsappAgentRuntime(
       action_button: !wantsAudio || shouldFallbackToText ? replyActionButton || null : null,
       behavior_guard_original_text:
         replyGuardCorrections.length ? clampText(generated.text, 1000) : null,
+      quoted_reply_context: quotedReplyContext ? clampText(quotedReplyContext, 1000) : null,
       voice_decision: voiceDecision,
       audio_requested: voiceDecision.audioRequested,
       audio_delivered: audioDeliveryPartiallyAccepted,
@@ -5466,6 +6000,7 @@ async function processWhatsappAgentRuntime(
         shouldFallbackToText && audioDeliveries[0]
           ? audioDeliveries[0].errorMessage || audioDeliveries[0].providerStatus
           : voiceDecision.fallbackReason || null,
+      quotedReplyContext: quotedReplyContext ? clampText(quotedReplyContext, 1000) : null,
       promptPayload: {
         agentActive: config.behavior.active,
         qualificationEnabled: config.qualification.enabled,
