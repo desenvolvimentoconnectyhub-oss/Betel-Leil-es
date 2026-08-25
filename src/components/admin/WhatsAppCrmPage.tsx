@@ -549,17 +549,6 @@ function LiveChatPanel({
             <ClipboardCheck size={14} />
             CRM do lead
           </button>
-          {lead.whatsappUrl && (
-            <a
-              href={lead.whatsappUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex h-9 items-center justify-center gap-2 rounded-full border border-[var(--admin-border)] bg-white px-4 text-xs font-semibold text-[var(--admin-foreground)] transition hover:border-[var(--admin-cyan)]"
-            >
-              <ExternalLink size={14} />
-              WhatsApp
-            </a>
-          )}
         </div>
       </div>
 
@@ -943,13 +932,7 @@ function LeadDetail({
   );
 }
 
-function LeadSidePanel({
-  lead,
-  onOpenLeadFile,
-}: {
-  lead?: WhatsAppCrmLeadCard;
-  onOpenLeadFile: () => void;
-}) {
+function LeadSidePanel({ lead }: { lead?: WhatsAppCrmLeadCard }) {
   if (!lead) {
     return (
       <aside className="rounded-[22px] border border-[rgba(15,124,144,0.14)] bg-white p-5 text-sm text-[var(--admin-muted)] shadow-sm shadow-[rgba(81,60,36,0.06)]">
@@ -1010,15 +993,6 @@ function LeadSidePanel({
               {lastInbound?.text || lastInbound?.transcript || lead.lastMessagePreview || "Sem mensagem recente do lead."}
             </p>
           </div>
-
-          <button
-            type="button"
-            onClick={onOpenLeadFile}
-            className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-full border border-[rgba(18,128,92,0.26)] bg-[rgba(18,128,92,0.08)] px-4 text-sm font-semibold text-[var(--admin-green)] transition hover:border-[var(--admin-green)] hover:bg-[rgba(18,128,92,0.12)]"
-          >
-            <ClipboardCheck size={16} />
-            CRM do lead
-          </button>
         </div>
       </section>
     </aside>
@@ -1525,7 +1499,7 @@ export function WhatsAppCrmPage({ crmData }: { crmData: DataResult<WhatsAppCrmDa
           onOpenLeadFile={() => setLeadFileOpen(true)}
         />
 
-        <LeadSidePanel lead={selectedLead} onOpenLeadFile={() => setLeadFileOpen(true)} />
+        <LeadSidePanel lead={selectedLead} />
       </section>
 
       <LeadFileModal
