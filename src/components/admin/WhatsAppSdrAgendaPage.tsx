@@ -90,6 +90,18 @@ function statusClassName(status: SdrAppointmentStatus) {
   return "border-amber-200 bg-amber-50 text-amber-700";
 }
 
+function leadConfirmationLabel(status: WhatsAppSdrAppointmentSummary["leadConfirmationStatus"]) {
+  if (status === "confirmed") return "lead confirmou";
+  if (status === "reschedule_requested") return "remarcando";
+  return "confirmacao pendente";
+}
+
+function leadConfirmationClassName(status: WhatsAppSdrAppointmentSummary["leadConfirmationStatus"]) {
+  if (status === "confirmed") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (status === "reschedule_requested") return "border-amber-200 bg-amber-50 text-amber-700";
+  return "border-slate-200 bg-slate-50 text-slate-600";
+}
+
 function isActiveAppointment(appointment: WhatsAppSdrAppointmentSummary) {
   return ACTIVE_STATUSES.includes(appointment.status);
 }
@@ -118,6 +130,26 @@ function AppointmentCard({
             <span>{appointment.leadPhone || "telefone nao informado"}</span>
             <span>-</span>
             <span>{dateTimeFormatter.format(new Date(appointment.scheduledFor)).replace(".", "")}</span>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <span className={cn("rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em]", leadConfirmationClassName(appointment.leadConfirmationStatus))}>
+              {leadConfirmationLabel(appointment.leadConfirmationStatus)}
+            </span>
+            {appointment.confirmationSentAt ? (
+              <span className="rounded-full border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-cyan-700">
+                pedido enviado
+              </span>
+            ) : null}
+            {appointment.adminReminderSentAt ? (
+              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-emerald-700">
+                admin lembrado
+              </span>
+            ) : null}
+            {appointment.leadReminderSentAt ? (
+              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-emerald-700">
+                lead lembrado
+              </span>
+            ) : null}
           </div>
         </div>
         <span className="rounded-full border border-cyan-200 bg-cyan-50 px-2 py-1 text-[10px] font-bold text-cyan-700">
@@ -476,6 +508,9 @@ export function WhatsAppSdrAgendaPage({ initialData }: WhatsAppSdrAgendaPageProp
                     </div>
                     <p className="mt-3 text-sm font-semibold text-cyan-800">
                       {dateTimeFormatter.format(new Date(appointment.scheduledFor)).replace(".", "")}
+                    </p>
+                    <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--admin-muted)]">
+                      {leadConfirmationLabel(appointment.leadConfirmationStatus)}
                     </p>
                     <p className="mt-2 line-clamp-3 text-xs leading-5 text-[var(--admin-soft)]">{appointment.sdrBriefing}</p>
                   </article>

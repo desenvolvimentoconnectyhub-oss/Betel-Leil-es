@@ -167,6 +167,12 @@ function sdrAppointmentTone(status: string): ResourceTone {
   return "yellow";
 }
 
+function sdrLeadConfirmationLabel(status: string) {
+  if (status === "confirmed") return "Lead confirmou";
+  if (status === "reschedule_requested") return "Remarcar";
+  return "Confirmacao pendente";
+}
+
 function dateMs(value: string) {
   const time = new Date(value).getTime();
   return Number.isFinite(time) ? time : 0;
@@ -621,6 +627,21 @@ function SdrAppointmentBlock({
       {!compact && (
         <div className="mt-2 grid gap-1.5 text-[12px] leading-5 text-[var(--admin-soft)]">
           <p>Responsavel: {appointment.assignedAdminName || "usuario nao definido"}</p>
+          <div className="flex flex-wrap gap-1.5">
+            <StatusBadge tone={appointment.leadConfirmationStatus === "confirmed" ? "green" : appointment.leadConfirmationStatus === "reschedule_requested" ? "yellow" : "muted"} className="h-5 px-1.5 text-[9px]">
+              {sdrLeadConfirmationLabel(appointment.leadConfirmationStatus)}
+            </StatusBadge>
+            {appointment.confirmationSentAt ? (
+              <StatusBadge tone="cyan" className="h-5 px-1.5 text-[9px]">
+                Confirmacao enviada
+              </StatusBadge>
+            ) : null}
+            {appointment.leadReminderSentAt || appointment.adminReminderSentAt ? (
+              <StatusBadge tone="green" className="h-5 px-1.5 text-[9px]">
+                Lembrete enviado
+              </StatusBadge>
+            ) : null}
+          </div>
           <p className="line-clamp-2">{appointment.sdrBriefing || appointment.conversationSummary || "Resumo ainda nao gerado."}</p>
         </div>
       )}

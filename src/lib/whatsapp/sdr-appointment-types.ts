@@ -7,6 +7,8 @@ export type SdrAppointmentStatus =
   | "cancelled"
   | "rescheduled";
 
+export type SdrLeadConfirmationStatus = "pending" | "confirmed" | "reschedule_requested";
+
 export type WhatsAppSdrAppointmentRecipient = {
   id: string;
   displayName: string;
@@ -49,6 +51,17 @@ export type WhatsAppSdrAppointmentSummary = {
   sdrBriefing: string;
   qualificationSnapshot: Record<string, unknown>;
   notificationPayload: Record<string, unknown>;
+  leadConfirmationStatus: SdrLeadConfirmationStatus;
+  leadConfirmationRequestedAt: string | null;
+  leadConfirmedAt: string | null;
+  leadRescheduleRequestedAt: string | null;
+  confirmationDueAt: string | null;
+  confirmationSentAt: string | null;
+  adminConfirmationNotifiedAt: string | null;
+  leadReminderSentAt: string | null;
+  adminReminderSentAt: string | null;
+  reminderDueAt: string | null;
+  rescheduleNote: string | null;
   notifiedAt: string | null;
   completedAt: string | null;
   cancelledAt: string | null;

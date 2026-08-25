@@ -45,7 +45,7 @@ import {
   evaluateWhatsAppReplyBeforeSend,
   type WhatsAppRuntimeDecision,
 } from "@/lib/whatsapp/conversation-runtime";
-import { createSdrAppointmentFromRuntimeDecision } from "@/lib/whatsapp/sdr-appointments";
+import { createSdrAppointmentFromRuntimeDecision, handleSdrAppointmentInboundControl } from "@/lib/whatsapp/sdr-appointments";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -5283,6 +5283,28 @@ async function processWhatsappAgentRuntime(
       payload: { eventId, leadId, conversationId, controlPreview: clampText(controlText, 160) },
     });
     return { ok: true, skipped: true, reason: "opt_out" };
+  }
+
+  const appointmentControl = await handleSdrAppointmentInboundControl({
+    leadId,
+    conversationId,
+    text: controlText || text,
+  });
+  if (appointmentControl.handled) {
+    await insertRuntimeEvent(supabase, {
+      agentKey,
+      eventType: "whatsapp_agent_runtime_sdr_appointment_action",
+      status: appointmentControl.action,
+      message: "Resposta do lead sobre agendamento SDR processada antes da IA.",
+      payload: {
+        eventId,
+        leadId,
+        conversationId,
+        action: appointmentControl.action,
+        result: appointmentControl.result,
+      },
+    });
+    return { ok: true, replied: true, reason: "sdr_appointment_action", appointmentAction: appointmentControl };
   }
 
   const { data: conversation } = await supabase
