@@ -475,6 +475,12 @@ function TimelineMessageIcon({ item }: { item: WhatsAppCrmTimelineItem }) {
   return <Bot size={13} />;
 }
 
+function isAudioTimelineItem(item: WhatsAppCrmTimelineItem) {
+  const messageType = item.messageType.toLowerCase();
+  const mimeType = item.mediaMimeType.toLowerCase();
+  return messageType.includes("audio") || messageType.includes("ptt") || mimeType.includes("audio");
+}
+
 function timelineTimestamp(value: string) {
   const time = new Date(value).getTime();
   return Number.isFinite(time) ? time : 0;
@@ -632,6 +638,7 @@ function ChatBubble({ item }: { item: WhatsAppCrmTimelineItem }) {
   const isOutbound = item.direction === "outbound";
   const isInbound = item.direction === "inbound";
   const isSystem = !isOutbound && !isInbound;
+  const isAudio = isAudioTimelineItem(item);
   const itemTone: ResourceTone = item.authorType === "human" ? "yellow" : item.tone;
   const body = item.text || item.transcript || "Mensagem sem texto.";
 
@@ -671,7 +678,35 @@ function ChatBubble({ item }: { item: WhatsAppCrmTimelineItem }) {
             {item.transcript}
           </div>
         )}
-        {item.mediaUrl && (
+        {item.mediaUrl && isAudio && (
+          <div className="mt-2 rounded-lg border border-[rgba(15,124,144,0.14)] bg-white/80 px-2.5 py-2">
+            <div className="mb-1.5 flex items-center justify-between gap-2 text-[10px] font-semibold text-[var(--admin-muted)]">
+              <span className="inline-flex items-center gap-1.5">
+                <Headphones size={13} className="text-[var(--admin-cyan)]" />
+                Ouvir audio
+              </span>
+              <a
+                href={item.mediaUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-[10px] font-semibold text-[var(--admin-cyan)] transition hover:text-[var(--admin-foreground)]"
+                title="Abrir audio em nova aba se o navegador nao reproduzir aqui"
+              >
+                abrir
+                <ExternalLink size={11} />
+              </a>
+            </div>
+            <audio
+              controls
+              preload="metadata"
+              src={item.mediaUrl}
+              className="h-9 w-full min-w-[220px] max-w-full rounded-full"
+            >
+              Seu navegador nao conseguiu reproduzir este audio.
+            </audio>
+          </div>
+        )}
+        {item.mediaUrl && !isAudio && (
           <a
             href={item.mediaUrl}
             target="_blank"
