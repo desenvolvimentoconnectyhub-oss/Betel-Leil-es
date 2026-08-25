@@ -108,6 +108,30 @@ function matchAny(text: string, patterns: RegExp[]) {
   return patterns.some((pattern) => pattern.test(text));
 }
 
+function hasSensitiveBidOrContractIntent(normalized: string) {
+  if (!normalized) return false;
+
+  if (
+    matchAny(normalized, [
+      /\b(pix|deposito|sinal|boleto|dados bancarios|pagamento agora|pagar agora)\b/,
+      /\b(assinar|fechar|contratar|formalizar)\b.{0,60}\b(contrato|assessoria|servico)\b/,
+      /\b(contrato|assessoria|servico)\b.{0,60}\b(assinar|fechar|contratar|formalizar|pagar)\b/,
+    ])
+  ) {
+    return true;
+  }
+
+  return matchAny(normalized, [
+    /\b(arrematei|arrematado|arrematada)\b/,
+    /\b(quero|vou|posso|devo|preciso|pretendo)\b.{0,60}\b(arrematar|arrematacao)\b/,
+    /\b(arrematar|arrematacao)\b.{0,60}\b(quero|vou|posso|devo|preciso|pretendo)\b/,
+    /\b(lance)\b.{0,60}\b(qual|quanto|valor|dar|fazer|ofertar|enviar|devo|posso|vou|quero|preciso|limite|teto)\b/,
+    /\b(qual|quanto|valor|dar|fazer|ofertar|enviar|devo|posso|vou|quero|preciso|limite|teto)\b.{0,60}\b(lance)\b/,
+    /\b(proposta|oferta)\b.{0,60}\b(imovel|leilao|arremat|valor|enviar|fazer|dar|ofertar|aceita|oferecer)\b/,
+    /\b(fazer|enviar|dar|ofertar|oferecer|aceitar)\b.{0,60}\b(proposta|oferta)\b/,
+  ]);
+}
+
 function budgetFromText(text: string) {
   const normalized = normalizeSearchText(text);
   const explicitCurrency = normalized.match(/r\$\s?([\d.,]+)\s?(milhao|milhoes|mi|mil|k)?/i);
@@ -209,7 +233,7 @@ function detectIntents(input: DecisionInput): WhatsAppRuntimeIntent[] {
     intents.push("legal_risk");
   }
   if (matchAny(normalized, [/\b(ocupad|desocup|posse|morador|inquilino|imissao|mandado)\b/])) intents.push("occupied_property");
-  if (matchAny(normalized, [/\b(contrato|assinar|pix|deposito|sinal|boleto|pagamento|dados bancarios|lance|arrematar|proposta)\b/])) {
+  if (hasSensitiveBidOrContractIntent(normalized)) {
     intents.push("bid_or_contract_sensitive");
   }
   if (budgetFromText(input.inboundText) > 0 || matchAny(normalized, [/\b(capital|orcamento|budget|tenho para investir|posso investir)\b/])) {

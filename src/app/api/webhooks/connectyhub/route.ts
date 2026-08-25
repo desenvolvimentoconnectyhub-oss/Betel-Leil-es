@@ -1217,7 +1217,11 @@ function detectAiHumanNeed(input: {
   if (/\b(procon|processar|processo judicial|acao judicial|advogado|juridico|golpe|fraude|denuncia|reclamacao|ameaca|policia)\b/.test(normalized)) {
     return "risk_or_complaint";
   }
-  if (/\b(assinar contrato|contrato|pix|deposito|sinal|pagamento agora|dados bancarios)\b/.test(normalized)) {
+  const financialOrContractSensitive =
+    /\b(pix|deposito|sinal|boleto|dados bancarios|pagamento agora|pagar agora)\b/.test(normalized) ||
+    /\b(assinar|fechar|contratar|formalizar)\b.{0,60}\b(contrato|assessoria|servico)\b/.test(normalized) ||
+    /\b(contrato|assessoria|servico)\b.{0,60}\b(assinar|fechar|contratar|formalizar|pagar)\b/.test(normalized);
+  if (financialOrContractSensitive) {
     return "financial_or_contract_sensitive";
   }
   if (/\b(tenho mais de|capital de|tenho capital|posso investir)\b/.test(normalized) && budgetFromText(input.text) >= 500000) {
@@ -4540,6 +4544,7 @@ async function generateWhatsappAgentReply(
         : input.audioReplyPossible
           ? "Esta resposta pode sair em audio pelo modo do canal. Se precisar explicar melhor, pode escrever uma fala natural de ate 6000 caracteres; o sistema divide em audios curtos."
         : "",
+      "Se o lead disser que e iniciante, primeira vez, esta com duvida ou pedir como funciona o trabalho/assessoria/proposta da Betel, explique em passos simples antes de qualificar. Nao encaminhe para humano so por isso.",
       "Se a mensagem for apenas cumprimento curto, tipo 'oi', 'e ai', 'blz' ou 'tudo bem', responda no mesmo tom e nao pergunte ainda sobre CRM, capital, regiao, imovel ou objetivo.",
       "So puxe qualificacao quando o lead trouxer necessidade, duvida, interesse em leilao, imovel, investimento ou pedir ajuda.",
       "Evite repetir a mesma abertura em mensagens seguidas, como 'show', 'com certeza' ou 'bem-vindo'.",
