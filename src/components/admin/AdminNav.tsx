@@ -21,7 +21,7 @@ const mobileDock = [
   { href: "/admin", label: "Painel", icon: LayoutDashboard },
   { href: "/admin/opportunities", label: "Leiloes", icon: Gavel },
   { href: "/admin/investors", label: "Clientes", icon: Users },
-  { href: "/admin/whatsapp", label: "WhatsApp", icon: MessageCircle },
+  { href: "/admin/whatsapp", label: "Atender", icon: MessageCircle },
   { href: "/admin/maintenance", label: "Saude", icon: HeartPulse },
 ];
 

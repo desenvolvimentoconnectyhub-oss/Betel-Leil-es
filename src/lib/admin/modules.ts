@@ -288,12 +288,12 @@ export const adminModules: AdminModule[] = [
   createAdminModule({
     slug: "whatsapp",
     group: "Inteligencia",
-    label: "Agentes WhatsApp",
-    title: "Agentes WhatsApp",
+    label: "Atendimento",
+    title: "Atendimento WhatsApp",
     eyebrow: "Atendimento multicanal",
     description:
-      "Painel dos atendentes de WhatsApp com conexao, voz, prompt, CRM, inbox, follow-up e auditoria operacional.",
-    icon: "MessageCircle",
+      "Central de atendimento WhatsApp com chat ao vivo, assumir conversa, CRM do lead, contexto de leilao, follow-up e auditoria operacional.",
+    icon: "Headphones",
     accent: "green",
     status: "build",
     statusLabel: "Central WhatsApp",
@@ -302,18 +302,18 @@ export const adminModules: AdminModule[] = [
       { label: "Canais", value: "voz/texto", detail: "WhatsApp" },
       { label: "CRM", value: "ativo", detail: "leads e follow-up" },
     ],
-    workflow: ["Conectar numero", "Configurar prompt", "Atender lead", "Agendar follow-up", "Auditar qualidade"],
-    focus: ["Voz", "Texto", "CRM", "Handoff humano", "Aprendizado"],
+    workflow: ["Atender lead", "Assumir conversa", "Atualizar CRM", "Agendar follow-up", "Auditar qualidade"],
+    focus: ["Chat ao vivo", "CRM do lead", "Contexto de leilao", "Handoff humano", "Evelyn"],
     records: [
       {
-        title: "Atendente principal",
+        title: "Configurar Evelyn",
         meta: "Conexao, prompt, voz e comportamento do agente WhatsApp",
         status: "Configuravel",
         owner: "Comercial",
       },
       {
-        title: "CRM WhatsApp",
-        meta: "Leads, SLA, historico, follow-up e auditoria",
+        title: "Central de atendimento",
+        meta: "Fila, chat ao vivo, SLA, historico, follow-up e auditoria",
         status: "Operacional",
         owner: "Atendimento",
       },
@@ -1139,8 +1139,9 @@ export const adminNavGroups: AdminNavGroup[] = [
       {
         href: "/admin/whatsapp",
         label: "Agentes WhatsApp",
-        icon: "MessageCircle",
+        icon: "Bot",
         children: [
+          { href: "/admin/whatsapp", label: "Atendimento", icon: "Headphones" },
           { href: "/admin/mensagens", label: "Mensagens e remetente", icon: "MessageSquareText" },
         ],
       },
