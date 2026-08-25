@@ -42,6 +42,7 @@ async function loadWhatsAppCrmData() {
         leads: [],
         followUps: [],
         reviews: [],
+        appointments: [],
       },
       source: "mock" as const,
       reason: `Falha ao carregar CRM WhatsApp: ${errorMessage(error, "erro inesperado")}`,

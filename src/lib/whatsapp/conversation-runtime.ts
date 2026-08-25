@@ -233,7 +233,19 @@ function detectQualification(input: DecisionInput, normalized: string) {
 
 function detectMeetingScheduleCandidate(input: DecisionInput): WhatsAppMeetingScheduleCandidate | null {
   const normalized = normalizeSearchText(input.inboundText);
-  const exactTime = normalized.match(/\b([01]?\d|2[0-3])(?:[:h]([0-5]\d))?\b/);
+  const explicitTime = normalized.match(/(?<!\d)([01]?\d|2[0-3])\s*(?:h|:)\s*([0-5]\d)?(?!\d)/);
+  const periodTime = normalized.match(/\b([1-9]|1[0-2])\s*(?:h)?\s*(?:da|de)?\s*(manha|tarde|noite)\b/);
+  const wordPeriodTime = normalized.match(
+    /\b(uma|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|onze|doze)\s*(?:h)?\s*(?:da|de)?\s*(manha|tarde|noite)\b/
+  );
+  const exactTime = explicitTime || periodTime || wordPeriodTime;
+  const exactTimeLabel = explicitTime
+    ? `${explicitTime[1]}${explicitTime[2] ? `:${explicitTime[2]}` : "h"}`
+    : periodTime
+      ? `${periodTime[1]} da ${periodTime[2]}`
+      : wordPeriodTime
+        ? `${wordPeriodTime[1]} da ${wordPeriodTime[2]}`
+        : "";
   const inFiveMinutes = matchAny(normalized, [/\b(5 minutos|cinco minutos|minutos para falar|em cinco|minutos para falarmos)\b/]);
   const now = matchAny(normalized, [/\b(agora|ja pode|pode ser agora|nesse momento)\b/]);
   const todayAfternoon = matchAny(normalized, [/\b(hoje a tarde|hoje de tarde|periodo da tarde|melhor periodo.*tarde|tarde)\b/]);
@@ -241,16 +253,11 @@ function detectMeetingScheduleCandidate(input: DecisionInput): WhatsAppMeetingSc
   const tomorrow = matchAny(normalized, [/\b(amanha|proximo dia|outro dia)\b/]);
   const scheduleWindowMentioned = Boolean(exactTime) || inFiveMinutes || now || todayAfternoon || morning || tomorrow;
   const askedMeetingTime = recentAgentAskedMeetingTime(input.history);
-  const hasMeetingContext = hasMeetingOrCallRequest(normalized) || (scheduleWindowMentioned && askedMeetingTime);
+  const affirmative = matchAny(normalized, [/\b(sim|pode|confirmo|confirmado|combinado|fechado|ok|beleza|blz|claro|vamos)\b/]);
+  const hasMeetingContext = hasMeetingOrCallRequest(normalized) || (scheduleWindowMentioned && askedMeetingTime) || (affirmative && askedMeetingTime);
   if (!hasMeetingContext) return null;
 
-  const affirmative = matchAny(normalized, [/\b(sim|pode|confirmo|confirmado|combinado|fechado|ok|beleza|blz|claro|vamos)\b/]);
-  const confirmed =
-    affirmative ||
-    inFiveMinutes ||
-    now ||
-    Boolean(exactTime) ||
-    (scheduleWindowMentioned && (askedMeetingTime || normalized.includes("melhor periodo")));
+  const confirmed = inFiveMinutes || now || Boolean(exactTime);
 
   if (inFiveMinutes || now) {
     return {
@@ -262,11 +269,10 @@ function detectMeetingScheduleCandidate(input: DecisionInput): WhatsAppMeetingSc
   }
 
   if (exactTime) {
-    const minute = exactTime[2] ? `:${exactTime[2]}` : "h";
     return {
       requested: true,
       confirmed,
-      label: `${exactTime[1]}${minute}`,
+      label: exactTimeLabel,
       dueMinutes: 15,
     };
   }
@@ -274,9 +280,9 @@ function detectMeetingScheduleCandidate(input: DecisionInput): WhatsAppMeetingSc
   if (todayAfternoon || morning || tomorrow) {
     return {
       requested: true,
-      confirmed,
+      confirmed: false,
       label: todayAfternoon ? "hoje a tarde" : morning ? "pela manha" : "amanha",
-      dueMinutes: todayAfternoon ? 60 : tomorrow ? 24 * 60 : 180,
+      dueMinutes: null,
     };
   }
 
@@ -601,7 +607,7 @@ function hasVisibleHandoffNotice(text: string) {
 
 function naturalFallbackForDecision(decision: WhatsAppRuntimeDecision) {
   if (decision.meetingSchedule?.confirmed) {
-    return `Perfeito. Vou deixar registrado pra ligacao ${decision.meetingSchedule.label}. Enquanto isso, qual ponto vc quer entender melhor sobre a Betel?`;
+    return `Perfeito. Vou conferir esse horario de ${decision.meetingSchedule.label} aqui. Enquanto isso, qual ponto vc quer entender melhor sobre a Betel?`;
   }
   if (decision.meetingSchedule?.requested || decision.stage === "quente") {
     return "Perfeito. Pelo que vc contou, faz sentido uma ligacao rapida com a Betel. Qual horario fica melhor pra vc?";

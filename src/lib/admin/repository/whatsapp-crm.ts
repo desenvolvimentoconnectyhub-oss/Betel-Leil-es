@@ -1,5 +1,6 @@
 import type { ResourceTone } from "../resources";
 import { fetchWhatsAppLeadProfileImage } from "@/lib/communication/connectyhub-client";
+import type { WhatsAppSdrAppointmentSummary } from "@/lib/whatsapp/sdr-appointment-types";
 import {
   asBoolean,
   asNumber,
@@ -115,6 +116,8 @@ export type WhatsAppCrmLeadCard = {
   slaStatus: "ok" | "urgente" | "vencido" | "pausado";
   followUpCount: number;
   nextFollowUpAt: string;
+  sdrAppointments: WhatsAppSdrAppointmentSummary[];
+  nextSdrAppointment: WhatsAppSdrAppointmentSummary | null;
   nextAction: string;
   runtimeDecision: WhatsAppRuntimeDecisionSummary;
   latestReviewScore: number;
@@ -160,6 +163,7 @@ export type WhatsAppCrmData = {
   leads: WhatsAppCrmLeadCard[];
   followUps: WhatsAppFollowUpSummary[];
   reviews: WhatsAppAgentReviewSummary[];
+  appointments: WhatsAppSdrAppointmentSummary[];
 };
 
 const defaultAgentKey = "multichannel-dispatch";
@@ -629,6 +633,67 @@ function recentTimeline(messages: DbRow[]) {
   return messages.filter(isDbRow).slice(0, 40).map(timelineItem).reverse();
 }
 
+const activeSdrAppointmentStatuses = new Set(["pending_confirmation", "scheduled", "notified"]);
+
+function normalizeSdrAppointment(row: DbRow, adminUsersById: Map<string, DbRow>): WhatsAppSdrAppointmentSummary {
+  const assignedAdminUserId = asString(row.assigned_admin_user_id);
+  const adminUser = assignedAdminUserId ? adminUsersById.get(assignedAdminUserId) : undefined;
+  const leadName = asString(row.lead_name, "Lead");
+  const leadPhone = asString(row.lead_phone);
+  const scheduledFor = asString(row.scheduled_for);
+
+  return {
+    id: asString(row.id),
+    leadId: asString(row.lead_id),
+    conversationId: asString(row.conversation_id) || null,
+    instanceId: asString(row.instance_id) || null,
+    agentKey: asString(row.agent_key) || null,
+    assignedAdminUserId: assignedAdminUserId || null,
+    assignedAdminName: asString(adminUser?.display_name, asString(adminUser?.email)) || null,
+    assignedAdminPhone: asString(adminUser?.phone) || null,
+    status: asString(row.status, "scheduled") as WhatsAppSdrAppointmentSummary["status"],
+    scheduledFor,
+    timezone: asString(row.timezone, "America/Sao_Paulo"),
+    hourBucket: asString(row.hour_bucket),
+    slotPosition: Math.round(asNumber(row.slot_position, 1)),
+    leadName,
+    leadPhone,
+    leadEmail: asString(row.lead_email) || null,
+    scheduleLabel: asString(row.schedule_label) || scheduledFor,
+    conversationSummary: asString(row.conversation_summary),
+    sdrBriefing: asString(row.sdr_briefing),
+    qualificationSnapshot: asRecord(row.qualification_snapshot),
+    notificationPayload: asRecord(row.notification_payload),
+    notifiedAt: asString(row.notified_at) || null,
+    completedAt: asString(row.completed_at) || null,
+    cancelledAt: asString(row.cancelled_at) || null,
+    cancellationReason: asString(row.cancellation_reason) || null,
+    createdAt: asString(row.created_at),
+    updatedAt: asString(row.updated_at),
+  };
+}
+
+function mergeAppointmentLists(...lists: WhatsAppSdrAppointmentSummary[][]) {
+  const seen = new Set<string>();
+  return lists
+    .flat()
+    .filter((appointment) => {
+      if (!appointment.id || seen.has(appointment.id)) return false;
+      seen.add(appointment.id);
+      return true;
+    })
+    .sort((left, right) => timestamp(left.scheduledFor) - timestamp(right.scheduledFor));
+}
+
+function nextSdrAppointmentFor(appointments: WhatsAppSdrAppointmentSummary[]) {
+  const threshold = Date.now() - 15 * 60_000;
+  return (
+    appointments.find(
+      (appointment) => activeSdrAppointmentStatuses.has(appointment.status) && timestamp(appointment.scheduledFor) >= threshold
+    ) || null
+  );
+}
+
 function computeSla(input: {
   status: string;
   score: number;
@@ -838,6 +903,8 @@ function fallbackData(): WhatsAppCrmData {
         slaStatus: "urgente",
         followUpCount: 0,
         nextFollowUpAt: "",
+        sdrAppointments: [],
+        nextSdrAppointment: null,
         nextAction: "Confirmar capital disponivel e experiencia com leilao.",
         runtimeDecision: {
           primaryIntent: "buying_intent",
@@ -914,6 +981,7 @@ function fallbackData(): WhatsAppCrmData {
         createdAt: outboundAt,
       },
     ],
+    appointments: [],
   };
 }
 
@@ -933,7 +1001,18 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
     };
   }
 
-  const [leadsResult, conversationsResult, messagesResult, instancesResult, agentsResult, profilesResult, followUpsResult, reviewsResult] =
+  const [
+    leadsResult,
+    conversationsResult,
+    messagesResult,
+    instancesResult,
+    agentsResult,
+    profilesResult,
+    followUpsResult,
+    reviewsResult,
+    appointmentsResult,
+    adminUsersResult,
+  ] =
     await Promise.all([
       supabase.from("whatsapp_leads").select("*").order("updated_at", { ascending: false }).limit(120),
       supabase.from("whatsapp_conversations").select("*").order("updated_at", { ascending: false }).limit(160),
@@ -943,6 +1022,8 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
       supabase.from("whatsapp_lead_profiles").select("*").order("updated_at", { ascending: false }).limit(120),
       supabase.from("whatsapp_follow_ups").select("*").order("scheduled_for", { ascending: true }).limit(80),
       supabase.from("whatsapp_agent_reviews").select("*").order("created_at", { ascending: false }).limit(120),
+      supabase.from("whatsapp_sdr_appointments").select("*").order("scheduled_for", { ascending: false }).limit(240),
+      supabase.from("admin_users").select("id, display_name, email, phone, role, status").limit(120),
     ]);
 
   const criticalErrors = [leadsResult.error, conversationsResult.error, messagesResult.error]
@@ -967,14 +1048,20 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
   const profileRows = profilesResult.error ? [] : ((profilesResult.data || []) as unknown[]).filter(isDbRow);
   const followUpRows = followUpsResult.error ? [] : ((followUpsResult.data || []) as unknown[]).filter(isDbRow);
   const reviewRows = reviewsResult.error ? [] : ((reviewsResult.data || []) as unknown[]).filter(isDbRow);
+  const appointmentRows = appointmentsResult.error ? [] : ((appointmentsResult.data || []) as unknown[]).filter(isDbRow);
+  const adminUserRows = adminUsersResult.error ? [] : ((adminUsersResult.data || []) as unknown[]).filter(isDbRow);
 
   const leadsById = new Map(leadRows.map((row) => [asString(row.id), row]));
   const conversationsById = new Map(conversationRows.map((row) => [asString(row.id), row]));
   const profilesByLead = new Map(profileRows.map((row) => [asString(row.lead_id), row]));
+  const adminUsersById = new Map(adminUserRows.map((row) => [asString(row.id), row]));
+  const appointments = appointmentRows.map((row) => normalizeSdrAppointment(row, adminUsersById));
   const messagesByConversation = new Map<string, DbRow[]>();
   const messagesByLead = new Map<string, DbRow[]>();
   const followUpsByConversation = new Map<string, DbRow[]>();
   const reviewsByConversation = new Map<string, DbRow[]>();
+  const appointmentsByLead = new Map<string, WhatsAppSdrAppointmentSummary[]>();
+  const appointmentsByConversation = new Map<string, WhatsAppSdrAppointmentSummary[]>();
 
   for (const message of messageRows) {
     const conversationId = asString(message.conversation_id);
@@ -991,6 +1078,16 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
   for (const review of reviewRows) {
     const conversationId = asString(review.conversation_id);
     if (conversationId) reviewsByConversation.set(conversationId, [...(reviewsByConversation.get(conversationId) || []), review]);
+  }
+
+  for (const appointment of appointments) {
+    if (appointment.leadId) appointmentsByLead.set(appointment.leadId, [...(appointmentsByLead.get(appointment.leadId) || []), appointment]);
+    if (appointment.conversationId) {
+      appointmentsByConversation.set(appointment.conversationId, [
+        ...(appointmentsByConversation.get(appointment.conversationId) || []),
+        appointment,
+      ]);
+    }
   }
 
   const conversationLeadIds = new Set<string>();
@@ -1027,6 +1124,11 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
       humanInterventionActive,
     });
     const followUps = followUpsByConversation.get(conversationId) || [];
+    const sdrAppointments = mergeAppointmentLists(
+      appointmentsByConversation.get(conversationId) || [],
+      appointmentsByLead.get(leadId) || [],
+    );
+    const nextSdrAppointment = nextSdrAppointmentFor(sdrAppointments);
     const latestReview = (reviewsByConversation.get(conversationId) || []).sort(
       (left, right) => timestamp(right.created_at) - timestamp(left.created_at)
     )[0];
@@ -1095,6 +1197,8 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
       slaStatus: sla.status,
       followUpCount,
       nextFollowUpAt: asString(followUps.find((item) => ["queued", "scheduled"].includes(asString(item.status)))?.scheduled_for),
+      sdrAppointments,
+      nextSdrAppointment,
       nextAction: action,
       runtimeDecision,
       latestReviewScore: Math.round(asNumber(latestReview?.score, 0)),
@@ -1147,6 +1251,8 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
     });
     const context = operatorContext(lead, {}, profile);
     const profileImage = leadProfileImageContext(lead, {}, profile);
+    const sdrAppointments = appointmentsByLead.get(leadId) || [];
+    const nextSdrAppointment = nextSdrAppointmentFor(sdrAppointments);
     const lastMessageDirection = asString(messages[0]?.direction);
     const waitingForReply = timestamp(lastInboundAt) > timestamp(lastOutboundAt) && !optOut;
     const phone = asString(lead.phone);
@@ -1196,6 +1302,8 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
       slaStatus: sla.status,
       followUpCount: 0,
       nextFollowUpAt: "",
+      sdrAppointments,
+      nextSdrAppointment,
       nextAction: asString(profile?.next_action) || nextAction({
         score,
         optOut,
@@ -1340,9 +1448,18 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
     leads: leadCards,
     followUps,
     reviews,
+    appointments,
   };
 
-  const nonCriticalErrors = [profilesResult.error, followUpsResult.error, reviewsResult.error, instancesResult.error, agentsResult.error]
+  const nonCriticalErrors = [
+    profilesResult.error,
+    followUpsResult.error,
+    reviewsResult.error,
+    appointmentsResult.error,
+    adminUsersResult.error,
+    instancesResult.error,
+    agentsResult.error,
+  ]
     .map((error) => error?.message)
     .filter(Boolean);
 

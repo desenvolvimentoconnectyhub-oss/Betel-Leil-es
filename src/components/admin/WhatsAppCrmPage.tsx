@@ -149,6 +149,24 @@ function formatRelative(value: string) {
   return `${Math.floor(ms / (24 * 60 * 60_000))} d`;
 }
 
+function sdrAppointmentStatusLabel(status: string) {
+  if (status === "notified") return "Avisado";
+  if (status === "scheduled") return "Agendado";
+  if (status === "pending_confirmation") return "A confirmar";
+  if (status === "completed") return "Concluido";
+  if (status === "cancelled") return "Cancelado";
+  if (status === "missed") return "Perdido";
+  if (status === "rescheduled") return "Remarcado";
+  return status || "Agenda";
+}
+
+function sdrAppointmentTone(status: string): ResourceTone {
+  if (status === "completed") return "green";
+  if (status === "cancelled" || status === "missed") return "red";
+  if (status === "notified") return "cyan";
+  return "yellow";
+}
+
 function dateMs(value: string) {
   const time = new Date(value).getTime();
   return Number.isFinite(time) ? time : 0;
@@ -574,6 +592,42 @@ function InfoCell({ label, value }: { label: string; value: string }) {
   );
 }
 
+function SdrAppointmentBlock({
+  appointment,
+  compact = false,
+}: {
+  appointment: WhatsAppCrmLeadCard["nextSdrAppointment"];
+  compact?: boolean;
+}) {
+  if (!appointment) return null;
+  const tone = sdrAppointmentTone(appointment.status);
+
+  return (
+    <div className={cn("rounded-xl border px-3 py-2.5", toneBg[tone])}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="inline-flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">
+            <CalendarClock size={12} className={toneText[tone]} />
+            Ligacao SDR
+          </p>
+          <p className="mt-1 text-[13px] font-semibold leading-5 text-[var(--admin-foreground)]">
+            {appointment.scheduleLabel || formatDateTime(appointment.scheduledFor)}
+          </p>
+        </div>
+        <StatusBadge tone={tone} className="h-5 shrink-0 px-1.5 text-[9px]">
+          {sdrAppointmentStatusLabel(appointment.status)}
+        </StatusBadge>
+      </div>
+      {!compact && (
+        <div className="mt-2 grid gap-1.5 text-[12px] leading-5 text-[var(--admin-soft)]">
+          <p>Responsavel: {appointment.assignedAdminName || "usuario nao definido"}</p>
+          <p className="line-clamp-2">{appointment.sdrBriefing || appointment.conversationSummary || "Resumo ainda nao gerado."}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ActionButton({
   icon: Icon,
   children,
@@ -973,6 +1027,7 @@ function LeadDetail({
       </div>
 
       <HandoffCountdown lead={lead} nowMs={nowMs} />
+      <SdrAppointmentBlock appointment={lead.nextSdrAppointment} />
 
       <div className={cn("mt-2 rounded-lg border px-3 py-2.5", toneBg[lead.humanInterventionActive ? "yellow" : "cyan"])}>
         <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Resumo inteligente</p>
@@ -1286,6 +1341,7 @@ function LeadSidePanel({ lead, nowMs }: { lead?: WhatsAppCrmLeadCard; nowMs: num
           </div>
 
           <HandoffCountdown lead={lead} nowMs={nowMs} />
+          <SdrAppointmentBlock appointment={lead.nextSdrAppointment} compact />
 
           <div className="grid gap-2">
             {qualificationItems.slice(0, 4).map(([label, value]) => (

@@ -1143,6 +1143,7 @@ export const adminNavGroups: AdminNavGroup[] = [
         children: [
           { href: "/admin/whatsapp", label: "Atendimento", icon: "Headphones" },
           { href: "/admin/whatsapp/agente", label: "Agente Evelyn", icon: "Bot" },
+          { href: "/admin/whatsapp/agenda", label: "Agenda SDR", icon: "CalendarClock" },
           { href: "/admin/mensagens", label: "Mensagens e remetente", icon: "MessageSquareText" },
         ],
       },
@@ -1197,6 +1198,7 @@ export function getAdminStaticSlugs() {
 export function getCanonicalAdminHref(pathname: string) {
   if (pathname === "/admin") return "/admin";
   if (pathname === "/admin/whatsapp/agente") return "/admin/whatsapp/agente";
+  if (pathname === "/admin/whatsapp/agenda") return "/admin/whatsapp/agenda";
   if (pathname === "/admin/whatsapp/remetente") return "/admin/mensagens";
   const slug = pathname.split("/").filter(Boolean)[1];
   if (!slug) return "/admin";
