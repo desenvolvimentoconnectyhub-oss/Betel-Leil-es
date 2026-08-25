@@ -4800,7 +4800,7 @@ async function processWhatsappAgentRuntime(
         agentKey,
         eventType: "whatsapp_agent_runtime_skipped",
         status: "human_intervention",
-        message: "Conversa esta em intervencao humana; IA aguardara 4 minutos antes de retomar se o lead ficar sem resposta.",
+        message: "Conversa esta em intervencao humana; IA aguardara 5 minutos antes de retomar se o lead ficar sem resposta.",
         payload: { eventId, leadId, conversationId, handoffDecision },
       });
       return { ok: true, skipped: true, reason: "human_intervention", handoffDecision };

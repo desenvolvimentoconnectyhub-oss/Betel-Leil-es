@@ -7,7 +7,7 @@ type SupabaseAdminClient = NonNullable<ReturnType<typeof getSupabaseAdminClient>
 type DbRow = Record<string, unknown>;
 
 export const MANUAL_HANDOFF_LEASE_MINUTES = 60;
-export const MANUAL_HANDOFF_AUTO_RESUME_MINUTES = 4;
+export const MANUAL_HANDOFF_AUTO_RESUME_MINUTES = 5;
 export const MANUAL_HANDOFF_AUTO_RESUME_REASON = "manual_handoff_auto_resume";
 export const MANUAL_HANDOFF_AUTO_RESUME_EVENT = "whatsapp/manual-handoff.auto-resume";
 

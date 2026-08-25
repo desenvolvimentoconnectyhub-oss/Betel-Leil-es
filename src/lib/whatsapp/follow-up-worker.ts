@@ -235,7 +235,7 @@ async function generateFollowUpText(input: {
     const manualAutoResumePrompt =
       input.reason === MANUAL_HANDOFF_AUTO_RESUME_REASON
         ? [
-            "Contexto operacional: a conversa estava em atendimento humano, mas o lead ficou 4 minutos sem resposta humana.",
+            "Contexto operacional: a conversa estava em atendimento humano, mas o lead ficou 5 minutos sem resposta humana.",
             "Responda diretamente as mensagens recentes do lead que ainda nao tiveram resposta.",
             "Nao diga que vai chamar humano, nao diga que a IA voltou e nao exponha esse controle interno.",
             "Continue a qualificacao de leilao com naturalidade, uma pergunta objetiva por vez.",
