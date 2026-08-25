@@ -14,7 +14,6 @@ import {
   MessageCircle,
   Paperclip,
   Phone,
-  RefreshCw,
   Save,
   Search,
   Send,
@@ -485,7 +484,7 @@ function LiveChatPanel({
 }) {
   if (!lead) {
     return (
-      <section className="grid min-h-[560px] place-items-center rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-5 text-center text-[13px] text-[var(--admin-muted)] shadow-sm shadow-[rgba(81,60,36,0.06)]">
+      <section className="grid min-h-[360px] place-items-center rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-5 text-center text-[13px] text-[var(--admin-muted)] shadow-sm shadow-[rgba(81,60,36,0.06)] xl:h-full xl:min-h-0">
         Nenhum atendimento na fila atual.
       </section>
     );
@@ -498,7 +497,7 @@ function LiveChatPanel({
   const toggleBusy = busyAction === `${lead.id}:${toggleAction}`;
 
   return (
-    <section className="grid min-h-[560px] min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-[18px] border border-[rgba(15,124,144,0.16)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(81,60,36,0.08)] xl:h-[calc(100vh-156px)] xl:max-h-[840px]">
+    <section className="grid min-h-[560px] min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-[18px] border border-[rgba(15,124,144,0.16)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(81,60,36,0.08)] xl:h-full xl:min-h-0">
       <div className="flex min-h-14 flex-wrap items-center justify-between gap-2 border-b border-[var(--admin-border)] bg-white px-3.5 py-2.5">
         <div className="flex min-w-0 items-center gap-2.5">
           <LeadAvatar lead={lead} />
@@ -954,7 +953,7 @@ function LeadSidePanel({ lead }: { lead?: WhatsAppCrmLeadCard }) {
     .at(-1);
 
   return (
-    <aside className="grid min-w-0 gap-3 2xl:sticky 2xl:top-20 2xl:h-[calc(100vh-156px)] 2xl:max-h-[840px] 2xl:overflow-auto">
+    <aside className="grid min-w-0 gap-3 2xl:h-full 2xl:min-h-0 2xl:overflow-auto">
       <section className="overflow-hidden rounded-[18px] border border-[rgba(15,124,144,0.14)] bg-white shadow-sm shadow-[rgba(81,60,36,0.06)]">
         <div className="border-b border-[var(--admin-border)] bg-[#fbfdff] px-3.5 py-3">
           <p className="font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-[var(--admin-muted)]">
@@ -1303,34 +1302,6 @@ export function WhatsAppCrmPage({ crmData }: { crmData: DataResult<WhatsAppCrmDa
     }
   }
 
-  async function runReviewCommand() {
-    setBusyAction("reviews:audit");
-    setFeedback(null);
-    try {
-      const result = await postJson("/api/admin/whatsapp/reviews", {
-        dryRun: false,
-        limit: 12,
-        autoHandoff: false,
-      });
-      const reviewed = typeof result.reviewedCount === "number" ? result.reviewedCount : 0;
-      const handoff = typeof result.handoffCount === "number" ? result.handoffCount : 0;
-      const learned = typeof result.learnedCount === "number" ? result.learnedCount : 0;
-      const skipped = typeof result.skippedCount === "number" ? result.skippedCount : 0;
-      setFeedback({
-        type: "ok",
-        msg: `Auditoria IA concluida. Revisadas: ${reviewed}. Aprendizados: ${learned}. Handoff: ${handoff}. Ignoradas: ${skipped}.`,
-      });
-      refreshSoon();
-    } catch (error) {
-      setFeedback({
-        type: "err",
-        msg: error instanceof Error ? error.message : "Falha ao auditar conversas.",
-      });
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
   async function sendManualReply(lead: WhatsAppCrmLeadCard) {
     const text = manualReply.trim();
     if (!text) return;
@@ -1364,39 +1335,7 @@ export function WhatsAppCrmPage({ crmData }: { crmData: DataResult<WhatsAppCrmDa
   }
 
   return (
-    <div className="mx-auto grid min-h-screen max-w-[1780px] gap-3 px-3 py-3 lg:px-4">
-      <header className="flex justify-end">
-        <div className="flex flex-col gap-1.5 lg:items-end">
-          <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-            <StatusBadge tone={crmData.source === "supabase" ? "green" : "yellow"}>
-              {crmData.source === "supabase" ? "dados reais" : "modo exemplo"}
-            </StatusBadge>
-            <ActionButton
-              icon={RefreshCw}
-              tone="muted"
-              busy={busyAction === "page:refresh"}
-              onClick={() => {
-                setBusyAction("page:refresh");
-                router.refresh();
-                window.setTimeout(() => setBusyAction(null), 500);
-              }}
-            >
-              Atualizar
-            </ActionButton>
-            <ActionButton
-              icon={ClipboardCheck}
-              tone="cyan"
-              busy={busyAction === "reviews:audit"}
-              onClick={() => void runReviewCommand()}
-              title="Auditar conversas recentes com IA"
-            >
-              Auditar IA
-            </ActionButton>
-          </div>
-          <p className="text-[11px] text-[var(--admin-muted)]">Ultima atualizacao: {formatDateTime(data.generatedAt)}</p>
-        </div>
-      </header>
-
+    <div className="mx-auto flex min-h-[calc(100vh-64px)] max-w-[1780px] flex-col gap-2 px-3 py-2 lg:px-4 xl:h-[calc(100vh-64px)] xl:overflow-hidden">
       {crmData.reason && (
         <div className="rounded-xl border border-[rgba(234,179,8,0.28)] bg-[rgba(234,179,8,0.08)] px-3 py-2.5 text-[11px] text-[var(--admin-yellow)]">
           {crmData.reason}
@@ -1415,8 +1354,8 @@ export function WhatsAppCrmPage({ crmData }: { crmData: DataResult<WhatsAppCrmDa
         </div>
       )}
 
-      <section className="grid gap-3 xl:grid-cols-[300px_minmax(0,1fr)] 2xl:grid-cols-[300px_minmax(640px,1fr)_300px] 2xl:items-start">
-        <aside className="grid min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-[18px] border border-[rgba(15,124,144,0.14)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(81,60,36,0.08)] xl:h-[calc(100vh-156px)] xl:max-h-[840px] xl:min-h-[560px]">
+      <section className="grid min-h-0 flex-1 gap-3 xl:grid-cols-[300px_minmax(0,1fr)] 2xl:grid-cols-[300px_minmax(640px,1fr)_300px]">
+        <aside className="grid min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-[18px] border border-[rgba(15,124,144,0.14)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(81,60,36,0.08)] xl:h-full xl:min-h-0">
           <div className="border-b border-[var(--admin-border)] bg-[#fbfdff] p-3">
             <div className="flex items-start justify-between gap-2.5">
               <div className="min-w-0">
