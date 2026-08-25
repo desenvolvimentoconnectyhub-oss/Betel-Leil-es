@@ -2,6 +2,7 @@ import "server-only";
 
 import { sendWhatsAppAgentReply } from "@/lib/communication/connectyhub-client";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
+import { markManualReplyHandoff } from "@/lib/whatsapp/manual-handoff";
 
 type DbRow = Record<string, unknown>;
 
@@ -157,42 +158,28 @@ export async function sendWhatsAppManualReply(input: {
     },
   });
 
-  await Promise.all([
-    supabase
-      .from("whatsapp_conversations")
-      .update({
-        human_intervention_active: true,
-        assigned_to_label: operatorLabel,
-        last_human_message_at: now,
-        last_message_at: now,
-        last_message_preview: text.slice(0, 180),
-        updated_at: now,
-      })
-      .eq("id", conversationId),
-    supabase
-      .from("whatsapp_leads")
-      .update({
-        human_intervention_active: true,
-        last_message_at: now,
-        status: "human_handoff",
-        updated_at: now,
-      })
-      .eq("id", leadId),
-  ]);
+  const handoff = await markManualReplyHandoff(supabase, {
+    conversationId,
+    leadId,
+    agentKey,
+    operatorLabel,
+    now,
+    lastMessagePreview: text,
+  });
 
   await insertRuntimeEvent({
     agentKey,
     status: delivery.providerStatus,
     message: delivery.ok ? "Mensagem humana enviada pelo painel WhatsApp." : "Tentativa de mensagem humana registrada.",
-    payload: { conversationId, leadId, trackId, delivery },
+    payload: { conversationId, leadId, trackId, delivery, handoff },
   });
 
   return {
-    ok: delivery.ok,
+    ok: delivery.ok && handoff.ok,
     conversationId,
     leadId,
     agentKey,
     providerStatus: delivery.providerStatus,
-    error: delivery.errorMessage,
+    error: delivery.errorMessage || handoff.errors.join(" | ") || undefined,
   };
 }

@@ -32,6 +32,14 @@ import {
   isInsideFollowUpWindow,
   nextFollowUpWindowDate,
 } from "@/lib/whatsapp/follow-up-window";
+import {
+  evaluateManualHandoffAutoResume,
+  isManualHandoffAutoResumeFollowUp,
+  MANUAL_HANDOFF_AUTO_RESUME_REASON,
+  requestManualHandoffAutoResumeEvent,
+  releaseManualHandoffForAi,
+  type ManualHandoffAutoResumeDecision,
+} from "@/lib/whatsapp/manual-handoff";
 
 type DbRow = Record<string, unknown>;
 
@@ -171,6 +179,10 @@ function fallbackFollowUpText(input: {
   const prefix = name ? `${name}, ` : "";
   const profileSummary = extractProfileSummary(input.profile).toLowerCase();
 
+  if (input.reason === MANUAL_HANDOFF_AUTO_RESUME_REASON) {
+    return `${prefix}vou seguir contigo por aqui. Pra eu te orientar melhor, seu foco hoje e investir, morar ou revender?`;
+  }
+
   if (input.reason.includes("vip") || input.score >= 85) {
     return `${prefix}passando rapidinho pra retomar seu atendimento. Pelo que vc comentou, parece um perfil bem aderente pra olhar com cuidado.\n\nQuer que eu siga pela faixa de investimento ou pela regiao primeiro?`;
   }
@@ -220,13 +232,24 @@ async function generateFollowUpText(input: {
       : "Supabase admin nao configurado; nao carregue oportunidades especificas.";
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ model: modelName });
+    const manualAutoResumePrompt =
+      input.reason === MANUAL_HANDOFF_AUTO_RESUME_REASON
+        ? [
+            "Contexto operacional: a conversa estava em atendimento humano, mas o lead ficou 4 minutos sem resposta humana.",
+            "Responda diretamente as mensagens recentes do lead que ainda nao tiveram resposta.",
+            "Nao diga que vai chamar humano, nao diga que a IA voltou e nao exponha esse controle interno.",
+            "Continue a qualificacao de leilao com naturalidade, uma pergunta objetiva por vez.",
+          ]
+        : [
+            "Voce escreve follow-up curto para WhatsApp da Betel Leiloes.",
+            "O lead sabe que pode estar falando com uma maquina; mesmo assim, a resposta precisa ser util, natural e objetiva.",
+            "Nao use markdown, bullets, promessa de lucro, parecer juridico ou texto formal.",
+            "Uma ou duas mensagens curtas, uma pergunta por vez.",
+          ];
     const prompt = [
       globalBehaviorPrompt,
       "",
-      "Voce escreve follow-up curto para WhatsApp da Betel Leiloes.",
-      "O lead sabe que pode estar falando com uma maquina; mesmo assim, a resposta precisa ser util, natural e objetiva.",
-      "Nao use markdown, bullets, promessa de lucro, parecer juridico ou texto formal.",
-      "Uma ou duas mensagens curtas, uma pergunta por vez.",
+      ...manualAutoResumePrompt,
       "",
       `Nome do agente: ${config.agentName}`,
       `Tom: ${config.cloneProfile.tone}`,
@@ -357,10 +380,13 @@ function skippedItem(followUp: DbRow, reason: string): WhatsAppFollowUpWorkerIte
   };
 }
 
-function followUpDisabledReason(config: Awaited<ReturnType<typeof getWhatsAppAgentConfig>>) {
+function followUpDisabledReason(
+  config: Awaited<ReturnType<typeof getWhatsAppAgentConfig>>,
+  options: { allowManualHandoffAutoResume?: boolean } = {}
+) {
   if (!config.behavior.active) return "agent_inactive";
   if (!config.behavior.aiWindowActive) return "ai_window_inactive";
-  if (!config.behavior.followUpEnabled) return "followups_disabled";
+  if (!options.allowManualHandoffAutoResume && !config.behavior.followUpEnabled) return "followups_disabled";
   return "";
 }
 
@@ -368,6 +394,7 @@ export async function processWhatsAppFollowUps(input: {
   dryRun?: boolean;
   limit?: number;
   allowQuietHours?: boolean;
+  followUpId?: string;
 } = {}): Promise<WhatsAppFollowUpWorkerResult> {
   const supabase = getSupabaseAdminClient();
   const dryRun = input.dryRun === true;
@@ -386,13 +413,18 @@ export async function processWhatsAppFollowUps(input: {
   }
 
   const now = new Date().toISOString();
-  const { data, error } = await supabase
+  const followUpIdFilter = cleanString(input.followUpId);
+  let followUpsQuery = supabase
     .from("whatsapp_follow_ups")
     .select("*")
     .in("status", ["queued", "scheduled"])
-    .lte("scheduled_for", now)
+    .lte("scheduled_for", now);
+
+  if (followUpIdFilter) followUpsQuery = followUpsQuery.eq("id", followUpIdFilter);
+
+  const { data, error } = await followUpsQuery
     .order("scheduled_for", { ascending: true })
-    .limit(limit);
+    .limit(followUpIdFilter ? 1 : limit);
 
   if (error) {
     return {
@@ -418,6 +450,8 @@ export async function processWhatsAppFollowUps(input: {
     const agentKey = cleanString(followUp.agent_key, "multichannel-dispatch");
     const attemptCount = asNumber(followUp.attempt_count, 0) + 1;
     const maxAttempts = asNumber(followUp.max_attempts, 3);
+    const manualAutoResume = isManualHandoffAutoResumeFollowUp(followUp);
+    let manualAutoResumeDecision: ManualHandoffAutoResumeDecision | null = null;
 
     const [leadResult, conversationResult, messagesResult, profileResult] = await Promise.all([
       supabase.from("whatsapp_leads").select("*").eq("id", leadId).maybeSingle(),
@@ -467,14 +501,63 @@ export async function processWhatsAppFollowUps(input: {
       continue;
     }
 
-    if (asBoolean(lead.opt_out) || asBoolean(lead.human_intervention_active) || asBoolean(conversation.human_intervention_active)) {
+    if (asBoolean(lead.opt_out)) {
+      await supabase.from("whatsapp_follow_ups").update({ status: "skipped", error_message: "lead_opt_out" }).eq("id", followUpId);
+      skipped.push(skippedItem(followUp, "lead_opt_out"));
+      continue;
+    }
+
+    if (manualAutoResume) {
+      manualAutoResumeDecision = await evaluateManualHandoffAutoResume({
+        followUp,
+        lead,
+        conversation,
+        messages,
+        now,
+      });
+
+      if (manualAutoResumeDecision.action === "skip") {
+        await supabase
+          .from("whatsapp_follow_ups")
+          .update({ status: "skipped", error_message: manualAutoResumeDecision.reason })
+          .eq("id", followUpId);
+        skipped.push(skippedItem(followUp, manualAutoResumeDecision.reason));
+        continue;
+      }
+
+      if (manualAutoResumeDecision.action === "reschedule") {
+        await supabase
+          .from("whatsapp_follow_ups")
+          .update({
+            status: "scheduled",
+            scheduled_for: manualAutoResumeDecision.scheduledFor,
+            error_message: null,
+            payload: {
+              ...asRecord(followUp.payload),
+              source: MANUAL_HANDOFF_AUTO_RESUME_REASON,
+              latestInboundAt: manualAutoResumeDecision.latestInboundAt,
+              rescheduledReason: manualAutoResumeDecision.reason,
+              eventQueued: manualAutoResumeDecision.eventQueued,
+              updatedAt: now,
+            },
+          })
+          .eq("id", followUpId);
+        skipped.push({
+          ...skippedItem(followUp, manualAutoResumeDecision.reason),
+          error: `Reagendado para ${manualAutoResumeDecision.scheduledFor}.`,
+        });
+        continue;
+      }
+    } else if (asBoolean(lead.human_intervention_active) || asBoolean(conversation.human_intervention_active)) {
       await supabase.from("whatsapp_follow_ups").update({ status: "skipped", error_message: "lead_paused_or_handoff" }).eq("id", followUpId);
       skipped.push(skippedItem(followUp, "lead_paused_or_handoff"));
       continue;
     }
 
     const config = await getWhatsAppAgentConfig(agentKey);
-    const disabledReason = followUpDisabledReason(config);
+    const disabledReason = followUpDisabledReason(config, {
+      allowManualHandoffAutoResume: manualAutoResume,
+    });
     if (disabledReason) {
       await supabase.from("whatsapp_follow_ups").update({ status: "skipped", error_message: disabledReason }).eq("id", followUpId);
       skipped.push(skippedItem(followUp, disabledReason));
@@ -488,8 +571,21 @@ export async function processWhatsAppFollowUps(input: {
       continue;
     }
 
+    if (manualAutoResume && manualAutoResumeDecision?.action === "proceed") {
+      await releaseManualHandoffForAi(supabase, {
+        conversationId,
+        leadId,
+        agentKey,
+        followUpId,
+        eventId: cleanString(asRecord(followUp.payload).eventId),
+        reason: MANUAL_HANDOFF_AUTO_RESUME_REASON,
+        source: "whatsapp_follow_up_worker",
+        now,
+      });
+    }
+
     const lastMessage = orderedRecentMessages(messages).at(-1);
-    if (lastMessage && cleanString(lastMessage.direction) === "inbound") {
+    if (!manualAutoResume && lastMessage && cleanString(lastMessage.direction) === "inbound") {
       await supabase.from("whatsapp_follow_ups").update({ status: "skipped", error_message: "lead_already_replied" }).eq("id", followUpId);
       skipped.push(skippedItem(followUp, "lead_already_replied"));
       continue;
@@ -501,7 +597,7 @@ export async function processWhatsAppFollowUps(input: {
       timezone: config.behavior.timezone,
     });
 
-    if (!input.allowQuietHours && !isInsideFollowUpWindow(new Date(), followUpWindow)) {
+    if (!manualAutoResume && !input.allowQuietHours && !isInsideFollowUpWindow(new Date(), followUpWindow)) {
       const nextScheduledFor = nextFollowUpWindowDate(new Date(Date.now() + 10 * 60_000), followUpWindow).toISOString();
       await supabase
         .from("whatsapp_follow_ups")
@@ -662,6 +758,7 @@ export async function processWhatsAppFollowUps(input: {
           enabled: humanizationPlan.enabled,
           fallbackToText: voiceDecision.mode === "audio" && !audioDelivery?.ok && !audioDeliveryUnconfirmed,
         },
+        manualHandoffAutoResume: manualAutoResumeDecision,
       },
     });
 
@@ -726,16 +823,26 @@ export async function processWhatsAppFollowUps(input: {
       });
     } else {
       const failedFinal = attemptCount >= maxAttempts;
+      const retryScheduledFor = manualAutoResume
+        ? new Date(Date.now() + 2 * 60_000).toISOString()
+        : nextFollowUpWindowDate(new Date(Date.now() + 45 * 60_000), followUpWindow).toISOString();
       await supabase
         .from("whatsapp_follow_ups")
         .update({
           status: failedFinal ? "failed" : "queued",
           error_message: delivery.errorMessage || delivery.providerStatus,
-          scheduled_for: failedFinal
-            ? cleanString(followUp.scheduled_for, now)
-            : nextFollowUpWindowDate(new Date(Date.now() + 45 * 60_000), followUpWindow).toISOString(),
+          scheduled_for: failedFinal ? cleanString(followUp.scheduled_for, now) : retryScheduledFor,
         })
         .eq("id", followUpId);
+      if (manualAutoResume && !failedFinal) {
+        await requestManualHandoffAutoResumeEvent({
+          followUpId,
+          conversationId,
+          leadId,
+          agentKey,
+          scheduledFor: retryScheduledFor,
+        });
+      }
 
       await insertRuntimeEvent({
         agentKey,
@@ -743,7 +850,7 @@ export async function processWhatsAppFollowUps(input: {
         status: delivery.providerStatus,
         message: "Falha ao enviar follow-up pelo WhatsApp.",
         model: generated.model,
-        payload: { followUpId, conversationId, leadId, delivery, audioDelivery, voiceDecision },
+        payload: { followUpId, conversationId, leadId, delivery, audioDelivery, voiceDecision, manualHandoffAutoResume: manualAutoResumeDecision },
       });
 
       failed.push({

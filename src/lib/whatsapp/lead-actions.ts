@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
+import { markManualReplyHandoff } from "@/lib/whatsapp/manual-handoff";
 
 type DbRow = Record<string, unknown>;
 
@@ -401,46 +402,21 @@ export async function runWhatsAppLeadAction(input: {
   }
 
   if (input.action === "pause_ai" || input.action === "review_bad") {
-    if (conversationId) {
-      const { error } = await supabase
-        .from("whatsapp_conversations")
-        .update({
-          human_intervention_active: true,
-          assigned_to_label: "humano",
-          last_human_message_at: now,
-          metadata: {
-            ...conversationMetadata,
-            human_intervention: {
-              active: true,
-              reason: input.action === "review_bad" ? "review_bad" : "operator_pause",
-              note: note || null,
-              source: "admin_whatsapp_panel",
-              started_at: now,
-            },
-          },
-          updated_at: now,
-        })
-        .eq("id", conversationId);
-      if (error) return { ok: false, action: input.action, message, error: error.message };
+    if (conversationId || leadId) {
+      const handoff = await markManualReplyHandoff(supabase, {
+        conversationId,
+        leadId,
+        agentKey,
+        operatorLabel: cleanString(input.reviewedByLabel, "humano"),
+        reason: input.action === "review_bad" ? "review_bad" : "operator_pause",
+        source: "admin_whatsapp_panel",
+        note,
+        now,
+      });
+      if (!handoff.ok) return { ok: false, action: input.action, message, error: handoff.errors.join(" | ") };
     }
 
     if (leadId) {
-      const { error } = await supabase
-        .from("whatsapp_leads")
-        .update({
-          human_intervention_active: true,
-          status: "human_handoff",
-          metadata: {
-            ...leadMetadata,
-            human_handoff_reason: input.action === "review_bad" ? "review_bad" : "operator_pause",
-            human_handoff_note: note || null,
-            human_handoff_at: now,
-          },
-          updated_at: now,
-        })
-        .eq("id", leadId);
-      if (error) return { ok: false, action: input.action, message, error: error.message };
-
       await updateLeadProfile({
         leadId,
         agentKey,

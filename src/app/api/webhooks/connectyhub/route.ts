@@ -27,6 +27,7 @@ import {
   buildWhatsAppHumanizationPlan,
   type WhatsAppHumanizationPlan,
 } from "@/lib/whatsapp/humanization-runtime";
+import { handleInboundDuringManualHandoff } from "@/lib/whatsapp/manual-handoff";
 import {
   isWhatsAppAudioMessage,
   leadRequestedWhatsAppAudioReply,
@@ -4777,14 +4778,33 @@ async function processWhatsappAgentRuntime(
     .eq("id", conversationId)
     .maybeSingle();
   if (conversation?.human_intervention_active && config.behavior.humanIntervention) {
-    await insertRuntimeEvent(supabase, {
+    const handoffDecision = await handleInboundDuringManualHandoff(supabase, {
+      conversationId,
+      leadId,
+      instanceId,
       agentKey,
-      eventType: "whatsapp_agent_runtime_skipped",
-      status: "human_intervention",
-      message: "Conversa esta em intervencao humana; IA nao respondeu.",
-      payload: { eventId, leadId, conversationId },
+      eventId,
+      inboundText: text,
     });
-    return { ok: true, skipped: true, reason: "human_intervention" };
+
+    if (handoffDecision.action === "resume") {
+      await insertRuntimeEvent(supabase, {
+        agentKey,
+        eventType: "whatsapp_agent_runtime_handoff_released",
+        status: handoffDecision.reason,
+        message: "Intervencao humana vencida; IA retomou o atendimento para responder o lead.",
+        payload: { eventId, leadId, conversationId, handoffDecision },
+      });
+    } else {
+      await insertRuntimeEvent(supabase, {
+        agentKey,
+        eventType: "whatsapp_agent_runtime_skipped",
+        status: "human_intervention",
+        message: "Conversa esta em intervencao humana; IA aguardara 4 minutos antes de retomar se o lead ficar sem resposta.",
+        payload: { eventId, leadId, conversationId, handoffDecision },
+      });
+      return { ok: true, skipped: true, reason: "human_intervention", handoffDecision };
+    }
   }
 
   if (!isInsideAgentWindow(config, phone)) {
