@@ -682,9 +682,11 @@ const NON_PERSONAL_NAME_TERMS = [
 
 function looksLikeBusinessName(value: string) {
   const clean = cleanString(value);
-  if (!clean || isProviderContactLabel(clean)) return false;
+  if (!clean) return false;
 
   const normalized = normalizeSearchText(clean);
+  if (normalized === "connectyhub" || normalized === "connecty hub") return true;
+  if (isProviderContactLabel(clean)) return false;
   const compact = normalized.replace(/[^a-z0-9./&@+-]+/g, " ");
   const words = compact.split(/\s+/).filter(Boolean);
 
@@ -5181,6 +5183,27 @@ async function processWhatsappAgentRuntime(
     source: "runtime",
     allowSplitAudio: config.behavior.splitReplies,
     maxAudioParts: MAX_AUDIO_REPLY_PARTS,
+  });
+  await insertRuntimeEvent(supabase, {
+    agentKey,
+    eventType: "whatsapp_agent_runtime_voice_decision",
+    status: voiceDecision.reason,
+    message: "Runtime decidiu formato da resposta WhatsApp antes do envio.",
+    model: "webhook-runtime",
+    payload: {
+      eventId,
+      leadId,
+      conversationId,
+      inboundMessageType,
+      inboundMimeType,
+      audioReplyRequested,
+      audioReplyPossible,
+      voiceDecision,
+      replyLength: responseText.length,
+      splitReplies: config.behavior.splitReplies,
+      audioChancePct: config.behavior.audioChancePct,
+      audioToTextChancePct: config.behavior.audioToTextChancePct,
+    },
   });
   const wantsAudio = voiceDecision.mode === "audio";
   const plannedReplyParts = splitWhatsAppReply(responseText, {
