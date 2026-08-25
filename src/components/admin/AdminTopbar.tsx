@@ -16,9 +16,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { AdminSidebarContent } from "./AdminSidebar";
-import { CommandSearch } from "./CommandSearch";
 import { NotificationButton } from "./NotificationButton";
-import { ThemeSwitcher } from "./ThemeSwitcher";
 import { UserMenu } from "./UserMenu";
 import type { AdminSessionUser } from "@/lib/auth/types";
 
@@ -77,9 +75,7 @@ export function AdminTopbar({ admin }: { admin: AdminSessionUser }) {
         </div>
 
         <div className="ml-auto flex min-w-0 items-center gap-2">
-          <CommandSearch admin={admin} />
           <NotificationButton />
-          <ThemeSwitcher />
           <UserMenu admin={admin} />
         </div>
       </div>
