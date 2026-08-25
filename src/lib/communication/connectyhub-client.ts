@@ -1,5 +1,6 @@
 import "server-only";
 
+import { createHash } from "node:crypto";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { resolveSystemWhatsAppSender } from "./system-whatsapp-sender";
 import type { WhatsAppAgentInstanceSummary, WillianConnectionInfo, WillianInstanceState } from "./willian-types";
@@ -29,6 +30,7 @@ export const CONNECTYHUB_WEBHOOK_EVENTS = [
   "blocks",
   "sender",
 ] as const;
+const CONNECTYHUB_WEBHOOK_EXCLUDES = ["wasSentByApi"] as const;
 const PASSKEY_BLOCKED_STATUS = "passkey_blocked";
 const PASSKEY_PAIRING_UNSUPPORTED_REASON = "Passkey pairing not supported";
 
@@ -970,6 +972,18 @@ function isConnectyHubIdempotencyStoreError(error: unknown) {
     normalized.includes("idempotency_lookup_failed") ||
     normalized.includes("connectyhub_api_idempotency_keys") ||
     (normalized.includes("schema cache") && normalized.includes("idempotency"))
+  );
+}
+
+function isUnconfirmedConnectyHubDeliveryError(error: unknown) {
+  const normalized = (error instanceof Error ? `${error.name} ${error.message}` : String(error || "")).toLowerCase();
+  return (
+    normalized.includes("abort") ||
+    normalized.includes("timeout") ||
+    normalized.includes("timed out") ||
+    normalized.includes("fetch failed") ||
+    normalized.includes("socket") ||
+    normalized.includes("network")
   );
 }
 
@@ -2530,6 +2544,7 @@ export async function createWillianConnectyHubInstance(input: { instanceName?: s
       webhookUrl: config.webhookUrl,
       statusPayload: existing,
     });
+    await configureConnectyHubProviderWebhook({ config, instanceId: existingId });
     await setPrimaryWhatsappAgentArchived(false);
     await setPrimaryWhatsappAgentPaused(false);
 
@@ -2562,6 +2577,7 @@ export async function createWillianConnectyHubInstance(input: { instanceName?: s
       webhookUrl: config.webhookUrl,
       statusPayload: payload,
     });
+    await configureConnectyHubProviderWebhook({ config, instanceId });
     await setPrimaryWhatsappAgentArchived(false);
     await setPrimaryWhatsappAgentPaused(false);
   }
@@ -2686,6 +2702,7 @@ export async function createConnectyHubWhatsappAgentQrCode(input: {
     webhookUrl: config.webhookUrl,
     statusPayload: instancePayload,
   });
+  await configureConnectyHubProviderWebhook({ config, instanceId });
 
   const connectPayload = await connectyhubRequest(`/instances/${encodeURIComponent(instanceId)}/connect`, {
     body: buildConnectBody({ browser: input.browser, phone: input.phone }),
@@ -2934,6 +2951,7 @@ export async function connectWillianConnectyHubInstance(input: { phone?: string;
     webhookUrl: config.webhookUrl,
     statusPayload: payload,
   });
+  await configureConnectyHubProviderWebhook({ config, instanceId });
 
   return {
     payload: sanitizePayload(payload),
@@ -2947,14 +2965,69 @@ function webhookMatchesUrl(webhook: unknown, url: string) {
   return cleanString(record.url).replace(/\/+$/, "") === url.replace(/\/+$/, "");
 }
 
+function connectyHubProviderWebhookUrl(config: Awaited<ReturnType<typeof getWillianConfig>>) {
+  const url = cleanString(config.webhookUrl);
+  const secret = cleanString(config.webhookSecret);
+  if (!url || !secret) return url;
+
+  const token = createHash("sha256").update(secret).digest("hex");
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set("connectyhub_provider_token", token);
+    return parsed.toString();
+  } catch {
+    const separator = url.includes("?") ? "&" : "?";
+    return `${url}${separator}connectyhub_provider_token=${encodeURIComponent(token)}`;
+  }
+}
+
+function buildConnectyHubProviderWebhookPayload(config: Awaited<ReturnType<typeof getWillianConfig>>) {
+  return {
+    url: connectyHubProviderWebhookUrl(config),
+    enabled: true,
+    events: [...CONNECTYHUB_WEBHOOK_EVENTS],
+    excludeMessages: [...CONNECTYHUB_WEBHOOK_EXCLUDES],
+    addUrlEvents: false,
+    addUrlTypesMessages: false,
+  };
+}
+
+function buildConnectyHubGlobalWebhookPayload(config: Awaited<ReturnType<typeof getWillianConfig>>) {
+  return {
+    ...buildConnectyHubProviderWebhookPayload(config),
+    url: config.webhookUrl,
+    description: "Webhook principal Betel AI",
+  };
+}
+
+async function configureConnectyHubProviderWebhook(input: {
+  config: Awaited<ReturnType<typeof getWillianConfig>>;
+  instanceId: string;
+}) {
+  const instanceId = cleanString(input.instanceId);
+  if (!instanceId) return null;
+  const config = input.config.webhookSecret ? input.config : await getWillianConfig();
+
+  const payload = await connectyhubRequest("/provider/webhook", {
+    body: {
+      instanceId,
+      payload: buildConnectyHubProviderWebhookPayload(config),
+    },
+    timeoutMs: 15000,
+  });
+
+  return sanitizePayload(payload);
+}
+
 export async function configureWillianWebhook() {
   const config = await getWillianConfig();
   if (!config.webhookUrl) throw new Error("Configure CONNECTYHUB_WEBHOOK_URL antes do webhook.");
 
-  const events = [...CONNECTYHUB_WEBHOOK_EVENTS];
+  const webhookPayload = buildConnectyHubGlobalWebhookPayload(config);
   const existingPayload = await connectyhubRequest("/webhooks", { method: "GET", timeoutMs: 10000 }).catch(() => []);
   const existing = asArrayPayload(existingPayload).find((webhook) => webhookMatchesUrl(webhook, config.webhookUrl));
   const existingId = extractWebhookId(existing);
+
   if (existingId) {
     if (!config.webhookSecret) {
       throw new Error("Webhook ConnectyHub ja existe, mas CONNECTYHUB_WEBHOOK_SECRET esta ausente para validar entregas.");
@@ -2963,21 +3036,27 @@ export async function configureWillianWebhook() {
     const payload = await connectyhubRequest(`/webhooks/${encodeURIComponent(existingId)}`, {
       method: "PATCH",
       body: {
-        url: config.webhookUrl,
-        description: "Webhook principal Betel AI",
-        events,
+        ...webhookPayload,
         status: "active",
       },
     });
+    const providerInstanceId = await resolveConnectyHubInstanceId(config).catch(() => "");
+    const providerWebhook = providerInstanceId
+      ? await configureConnectyHubProviderWebhook({ config, instanceId: providerInstanceId })
+      : null;
 
-    return { payload: sanitizePayload(payload), existingWebhookUpdated: true };
+    return {
+      payload: sanitizePayload(payload),
+      existingWebhookUpdated: true,
+      providerWebhookConfigured: Boolean(providerWebhook),
+      providerWebhook,
+    };
   }
 
   const payload = await connectyhubRequest("/webhooks", {
     body: {
-      url: config.webhookUrl,
-      description: "Webhook principal Betel AI",
-      events,
+      ...webhookPayload,
+      status: "active",
     },
   });
   const returnedSecret = extractWebhookSecret(payload);
@@ -2994,8 +3073,19 @@ export async function configureWillianWebhook() {
   if (!config.webhookSecret && !returnedSecret) {
     throw new Error("Webhook criado, mas a ConnectyHub nao retornou secret. Configure CONNECTYHUB_WEBHOOK_SECRET manualmente.");
   }
+  const providerConfig = { ...config, webhookSecret: config.webhookSecret || returnedSecret };
+  const providerInstanceId = await resolveConnectyHubInstanceId(providerConfig).catch(() => "");
+  const providerWebhook = providerInstanceId
+    ? await configureConnectyHubProviderWebhook({ config: providerConfig, instanceId: providerInstanceId })
+    : null;
 
-  return { payload: sanitizePayload(payload), webhookCreated: true, secretPersisted: Boolean(returnedSecret && !process.env.CONNECTYHUB_WEBHOOK_SECRET) };
+  return {
+    payload: sanitizePayload(payload),
+    webhookCreated: true,
+    secretPersisted: Boolean(returnedSecret && !process.env.CONNECTYHUB_WEBHOOK_SECRET),
+    providerWebhookConfigured: Boolean(providerWebhook),
+    providerWebhook,
+  };
 }
 
 export async function fetchWillianRemoteStatus() {
@@ -3339,12 +3429,14 @@ export async function sendGlobalWhatsAppText(input: GlobalWhatsAppTextInput): Pr
       responsePreview: preview(JSON.stringify(sanitizePayload(delivery.payload))),
     };
   } catch (error) {
+    const deliveryUnconfirmed = isUnconfirmedConnectyHubDeliveryError(error);
     return {
       ok: false,
-      providerStatus: "connectyhub_error",
+      providerStatus: deliveryUnconfirmed ? "connectyhub_delivery_unconfirmed" : "connectyhub_error",
       endpointConfigured: true,
       latencyMs: Math.max(Date.now() - startedMs, 1),
       processedAt,
+      deliveryUnconfirmed,
       errorMessage: error instanceof Error ? error.message : "Erro desconhecido na ConnectyHub.",
     };
   }
@@ -3412,12 +3504,14 @@ export async function sendWillianWhatsAppReply(input: {
       responsePreview: preview(JSON.stringify(sanitizePayload(delivery.payload))),
     };
   } catch (error) {
+    const deliveryUnconfirmed = isUnconfirmedConnectyHubDeliveryError(error);
     return {
       ok: false,
-      providerStatus: "connectyhub_error",
+      providerStatus: deliveryUnconfirmed ? "connectyhub_delivery_unconfirmed" : "connectyhub_error",
       endpointConfigured: true,
       latencyMs: Math.max(Date.now() - startedMs, 1),
       processedAt,
+      deliveryUnconfirmed,
       errorMessage: error instanceof Error ? error.message : "Erro desconhecido na ConnectyHub.",
     };
   }
@@ -3488,12 +3582,14 @@ export async function sendWhatsAppAgentReply(input: {
       responsePreview: preview(JSON.stringify(sanitizePayload(delivery.payload))),
     };
   } catch (error) {
+    const deliveryUnconfirmed = isUnconfirmedConnectyHubDeliveryError(error);
     return {
       ok: false,
-      providerStatus: "connectyhub_error",
+      providerStatus: deliveryUnconfirmed ? "connectyhub_delivery_unconfirmed" : "connectyhub_error",
       endpointConfigured: true,
       latencyMs: Math.max(Date.now() - startedMs, 1),
       processedAt,
+      deliveryUnconfirmed,
       errorMessage: error instanceof Error ? error.message : "Erro desconhecido na ConnectyHub.",
     };
   }

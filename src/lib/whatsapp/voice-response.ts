@@ -121,6 +121,7 @@ export async function resolveWhatsAppVoiceResponse(input: {
   const maxAudioParts = Math.max(1, Math.min(input.maxAudioParts || 1, 4));
   const modelId = cleanString(behavior.audioModelId, "eleven_multilingual_v2");
   const leadAudioRequested = leadRequestedWhatsAppAudioReply(input.inboundText || "");
+  const inboundIsAudio = isWhatsAppAudioMessage(input.inboundMessageType || "", input.inboundMimeType || "");
 
   const textDecision = (reason: string, fallbackReason?: string): WhatsAppVoiceDecision => ({
     mode: "text",
@@ -153,10 +154,13 @@ export async function resolveWhatsAppVoiceResponse(input: {
   if (input.forceAudio) return audioDecision("forced_audio");
   if (behavior.conversationMode === "always_audio") return audioDecision("conversation_mode_audio");
   if (leadAudioRequested) return audioDecision("lead_requested_audio");
-  if (
-    behavior.conversationMode === "mirror" &&
-    isWhatsAppAudioMessage(input.inboundMessageType || "", input.inboundMimeType || "")
-  ) {
+  if (behavior.conversationMode === "mirror" && inboundIsAudio) {
+    const audioToTextPct = clampPercent(behavior.audioToTextChancePct);
+    if (!leadAudioRequested && audioToTextPct > 0) {
+      const ratio = deterministicRatio(`${input.source || "runtime"}:${input.seed || generatedText}:${voiceId}:audio-to-text`);
+      if (ratio * 100 < audioToTextPct) return textDecision(`mirror_audio_to_text_${audioToTextPct}pct`);
+    }
+
     return audioDecision("mirror_inbound_audio");
   }
 

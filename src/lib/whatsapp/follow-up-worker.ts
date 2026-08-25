@@ -90,6 +90,32 @@ function clampText(value: string, maxLength = 1000) {
   return `${trimmed.slice(0, maxLength - 3)}...`;
 }
 
+function normalizeGuardText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function isGeneratedNonSendNotice(value: string) {
+  const text = normalizeGuardText(value);
+  const hasNonSendSignal =
+    text.includes("opt-out") ||
+    text.includes("opt out") ||
+    text.includes("nao enviar") ||
+    text.includes("nenhuma mensagem sera enviada") ||
+    text.includes("nao realizara nenhum novo envio") ||
+    text.includes("bloqueado para envios");
+  const looksLikeInternalNotice =
+    text.includes("sistema") ||
+    text.includes("status") ||
+    text.includes("contato") ||
+    text.includes("lead") ||
+    text.includes("governanca");
+
+  return hasNonSendSignal && looksLikeInternalNotice;
+}
+
 function firstName(value: string) {
   return cleanString(value).split(/\s+/)[0] || "";
 }
@@ -501,6 +527,31 @@ export async function processWhatsAppFollowUps(input: {
       reason: cleanString(followUp.reason, "lead_no_reply"),
       score,
     });
+
+    if (isGeneratedNonSendNotice(generated.text)) {
+      await supabase
+        .from("whatsapp_follow_ups")
+        .update({ status: "skipped", error_message: "generated_non_send_notice" })
+        .eq("id", followUpId);
+      await insertRuntimeEvent({
+        agentKey,
+        eventType: "whatsapp_follow_up_skipped",
+        status: "generated_non_send_notice",
+        message: "Follow-up gerou aviso interno de nao envio e foi bloqueado antes da ConnectyHub.",
+        model: generated.model,
+        payload: {
+          followUpId,
+          conversationId,
+          leadId,
+          textPreview: clampText(generated.text, 180),
+        },
+      });
+      skipped.push({
+        ...skippedItem(followUp, "generated_non_send_notice"),
+        textPreview: clampText(generated.text, 180),
+      });
+      continue;
+    }
 
     if (dryRun) {
       processed.push({

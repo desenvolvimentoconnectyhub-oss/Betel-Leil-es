@@ -154,6 +154,7 @@ export type WillianBehaviorConfig = {
   minReadSeconds: number;
   maxReadSeconds: number;
   audioChancePct: number;
+  audioToTextChancePct: number;
   stickerChancePct: number;
   rhythmWpm: number;
   correctionChancePct: number;
@@ -257,7 +258,7 @@ export const WILLIAN_SYSTEM_BEHAVIOR_DEFAULTS: Partial<WillianBehaviorConfig> = 
   typingVariation: true,
   composingPause: true,
   statusLookup: false,
-  spontaneousAudio: false,
+  spontaneousAudio: true,
   intentionalTypos: false,
   circadianRhythm: true,
   vocalFillers: true,
@@ -277,6 +278,7 @@ export const WILLIAN_SYSTEM_BEHAVIOR_DEFAULTS: Partial<WillianBehaviorConfig> = 
   minReadSeconds: 3,
   maxReadSeconds: 12,
   audioChancePct: 15,
+  audioToTextChancePct: 15,
   stickerChancePct: 2,
   rhythmWpm: 45,
   correctionChancePct: 15,
@@ -572,7 +574,7 @@ export const DEFAULT_WILLIAN_AGENT_CONFIG: WillianAgentConfig = {
     composingPause: true,
     statusLookup: false,
     viewDelay: true,
-    spontaneousAudio: false,
+    spontaneousAudio: true,
     intentionalTypos: false,
     circadianRhythm: true,
     vocalFillers: true,
@@ -592,6 +594,7 @@ export const DEFAULT_WILLIAN_AGENT_CONFIG: WillianAgentConfig = {
     minReadSeconds: 3,
     maxReadSeconds: 12,
     audioChancePct: 15,
+    audioToTextChancePct: 15,
     stickerChancePct: 2,
     rhythmWpm: 45,
     correctionChancePct: 15,

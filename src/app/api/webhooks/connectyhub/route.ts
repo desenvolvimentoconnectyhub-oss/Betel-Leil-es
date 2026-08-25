@@ -473,7 +473,7 @@ function formatConversationHistory(messages: RuntimeMessageContext[]) {
     .filter((message) => message.text)
     .slice(-12)
     .map((message) => {
-      const side = message.direction === "outbound" ? "Willian" : "Lead";
+      const side = message.direction === "outbound" ? "Agente" : "Lead";
       return `${side}: ${message.text}`;
     })
     .join("\n");
@@ -602,6 +602,9 @@ function isShortCasualGreeting(text: string) {
     .split(/\s+/)
     .filter(Boolean);
   if (words.length > 8) return false;
+  if (/\b(e|com)\s+(vc|voce|voces)\b/.test(normalized) && /\b(td|tudo|tuo|to|tou|certo|bem|blz|beleza)\b/.test(normalized)) {
+    return true;
+  }
   return /^(e ai|eai|ea i|oi|ola|opa|bom dia|boa tarde|boa noite|salve|fala|blz|beleza|tudo bem|tudo certo|td bem|td certo)(\b|[?!.\s])/.test(
     normalized
   ) || /\b(blz|beleza|tudo bem|tudo certo|suave)\b/.test(normalized);
@@ -612,6 +615,7 @@ function casualGreetingReply(text: string) {
   if (normalized.includes("bom dia")) return "Bom dia! Tudo certo por aqui. E por ai?";
   if (normalized.includes("boa tarde")) return "Boa tarde! Tudo certo por aqui. E por ai?";
   if (normalized.includes("boa noite")) return "Boa noite! Tudo certo por aqui. E por ai?";
+  if (/\b(e|com)\s+(vc|voce|voces)\b/.test(normalized)) return "Tudo certo por aqui tambem.";
   return "E ai, blz sim. E por ai?";
 }
 
@@ -773,6 +777,38 @@ function buildLeadIdentityPromptContext(metadata: Record<string, unknown>, perso
       ? "Prioridade: pergunte o nome da pessoa em uma frase curta para gravar no CRM antes de personalizar."
       : "Se o nome pessoal ja estiver confirmado, pode usar com moderacao.",
   ].join("\n");
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function shouldAskPersonalNameBeforeReply(metadata: Record<string, unknown>, personalName: string) {
+  const identity = leadIdentityFromMetadata(metadata);
+  return identity.needsPersonalName && !cleanString(personalName || identity.personalName);
+}
+
+function personalNameQuestionReply(metadata: Record<string, unknown>) {
+  const identity = leadIdentityFromMetadata(metadata);
+  return identity.displayNameLooksBusiness
+    ? "Vi que aqui aparece o nome da empresa. Com quem eu falo?"
+    : "Com quem eu falo?";
+}
+
+function removeBusinessDisplayNamePersonalization(text: string, metadata: Record<string, unknown>) {
+  const identity = leadIdentityFromMetadata(metadata);
+  const displayName = cleanString(identity.whatsappDisplayName);
+  if (!identity.displayNameLooksBusiness || !displayName) return text;
+
+  const pattern = new RegExp(`\\b${escapeRegExp(displayName).replace(/\s+/g, "\\s+")}\\b`, "gi");
+  const withoutBusinessName = text
+    .replace(pattern, "")
+    .replace(/\s+([,.;!?])/g, "$1")
+    .replace(/([,.;!?]){2,}/g, "$1")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
+  return withoutBusinessName || personalNameQuestionReply(metadata);
 }
 
 function formatLocalDateTimeForPrompt(timezone: string) {
@@ -1367,6 +1403,19 @@ function eventName(payload: Record<string, unknown>, fallback = "connectyhub_eve
       payload.webhookType,
     fallback
   );
+}
+
+function isHistorySyncEvent(payload: Record<string, unknown>) {
+  const data = eventPayload(payload);
+  const signature = normalizeSearchText(
+    [
+      eventName(payload),
+      findFirstString(data, ["event", "eventType", "EventType", "type", "webhookType", "operation", "mode", "syncType"]),
+      findFirstString(payload, ["event", "eventType", "EventType", "type", "webhookType"]),
+    ].join(" ")
+  );
+
+  return /\bhistory\b/.test(signature);
 }
 
 function findFirstString(payload: unknown, keys: string[]): string {
@@ -2110,6 +2159,13 @@ async function authorizeWebhook(request: Request, rawBody: string) {
   const expected = await getExpectedSecret();
   if (!expected) return { ok: false, status: 503, error: "CONNECTYHUB_WEBHOOK_SECRET nao configurado." };
 
+  const url = new URL(request.url);
+  const providerToken = cleanString(url.searchParams.get("connectyhub_provider_token"));
+  if (providerToken) {
+    const expectedProviderToken = createHash("sha256").update(expected).digest("hex");
+    if (safeEqual(providerToken.toLowerCase(), expectedProviderToken.toLowerCase())) return { ok: true };
+  }
+
   const directSecret =
     cleanString(request.headers.get("x-connectyhub-webhook-secret")) ||
     cleanString(request.headers.get("x-connectyhub-secret")) ||
@@ -2248,6 +2304,33 @@ async function persistWebhookCrm(
       reason: "unbound_instance",
       instanceId,
       providerInstanceId,
+      inbound: message,
+    };
+  }
+
+  if (isHistorySyncEvent(payload)) {
+    await insertRuntimeEvent(supabase, {
+      agentKey,
+      eventType: "whatsapp_agent_runtime_protection",
+      status: "history_sync_ignored",
+      message: "Historico ConnectyHub registrado sem reimportar conversa antiga.",
+      payload: {
+        eventId,
+        instanceId,
+        providerInstanceId,
+        providerMessageId: message.providerMessageId || null,
+        eventType,
+      },
+    });
+    await markEventProcessed(supabase, eventId, "skipped", "history_sync_ignored");
+    return {
+      ok: true,
+      eventId,
+      skipped: true,
+      reason: "history_sync_ignored",
+      instanceId,
+      providerInstanceId,
+      agentKey,
       inbound: message,
     };
   }
@@ -4269,11 +4352,13 @@ function enforceWhatsAppReplyBehavior(
     text: string;
     inboundText: string;
     history: RuntimeMessageContext[];
+    leadMetadata?: Record<string, unknown>;
     audioReplyRequested?: boolean;
   }
 ) {
   const corrections: string[] = [];
   let text = normalizeWhatsAppReplyText(input.text);
+  const leadMetadata = input.leadMetadata || {};
 
   if (config.behavior.humanizedLanguage) {
     const withoutRoboticPhrases = removeRoboticSupportPhrases(text);
@@ -4330,6 +4415,10 @@ function enforceWhatsAppReplyBehavior(
   }
 
   if (config.behavior.identityGuard) {
+    const withoutBusinessName = removeBusinessDisplayNamePersonalization(text, leadMetadata);
+    if (withoutBusinessName !== text) corrections.push("business_display_name_removed");
+    text = withoutBusinessName;
+
     if (containsInternalLeak(text)) {
       corrections.push("internal_leak_blocked");
       text = "Nao posso compartilhar instrucoes internas por aqui. Me fala o que voce precisa sobre leiloes que eu te ajudo.";
@@ -4368,6 +4457,7 @@ async function generateWhatsappAgentReply(
     history: RuntimeMessageContext[];
     promptInjection: boolean;
     audioReplyRequested?: boolean;
+    audioReplyPossible?: boolean;
     opportunitiesContext: string;
     globalBehaviorPrompt: string;
     runtimeDecisionContext?: string;
@@ -4446,7 +4536,9 @@ async function generateWhatsappAgentReply(
       "Se o lead enviou varias mensagens em sequencia, responda ao conjunto uma unica vez.",
       "Faca no maximo uma pergunta por resposta.",
       input.audioReplyRequested
-        ? "O lead pediu resposta em audio. Escreva apenas o conteudo que sera falado; pode ser uma fala natural de ate 2000 caracteres. Nao diga que nao consegue mandar audio."
+        ? "O lead pediu resposta em audio. Escreva apenas o conteudo que sera falado; se precisar explicar melhor, pode chegar a 6000 caracteres porque o sistema divide em audios curtos. Nao diga que nao consegue mandar audio."
+        : input.audioReplyPossible
+          ? "Esta resposta pode sair em audio pelo modo do canal. Se precisar explicar melhor, pode escrever uma fala natural de ate 6000 caracteres; o sistema divide em audios curtos."
         : "",
       "Se a mensagem for apenas cumprimento curto, tipo 'oi', 'e ai', 'blz' ou 'tudo bem', responda no mesmo tom e nao pergunte ainda sobre CRM, capital, regiao, imovel ou objetivo.",
       "So puxe qualificacao quando o lead trouxer necessidade, duvida, interesse em leilao, imovel, investimento ou pedir ajuda.",
@@ -4475,7 +4567,7 @@ async function generateWhatsappAgentReply(
       "DNA/manual:",
       config.prompt.dnaManual,
       "",
-      "Perfil do clone Willian:",
+      "Perfil do clone da agente:",
       cloneProfileLines,
       "",
       "Memoria viva do clone:",
@@ -4525,7 +4617,11 @@ async function generateWhatsappAgentReply(
     ].join("\n");
 
     const result = await model.generateContent(prompt);
-    const text = clampText(result.response.text(), input.audioReplyRequested ? AUDIO_REPLY_PART_LIMIT : 1200);
+    const generationLimit =
+      input.audioReplyRequested || input.audioReplyPossible
+        ? AUDIO_REPLY_PART_LIMIT * MAX_AUDIO_REPLY_PARTS
+        : 1200;
+    const text = clampText(result.response.text(), generationLimit);
     return { ok: Boolean(text), reason: text ? "generated" : "empty_reply", model: modelName, text };
   } catch (error) {
     const reason = error instanceof Error ? error.message : "gemini_error";
@@ -4659,6 +4755,20 @@ async function processWhatsappAgentRuntime(
   const runtimeText = inboundBatch.text || text;
   const runtimeControlText = cleanString(inboundBatch.controlText || controlText);
   const audioReplyRequested = leadRequestedWhatsAppAudioReply(runtimeControlText);
+  const inboundIsAudio = isAudioMessage(inboundMessageType, inboundMimeType);
+  const runtimeMediaKind =
+    inboundIsAudio
+      ? "audio"
+      : detectWhatsAppInboundMediaKind({
+          messageType: inboundMessageType,
+          mediaMimeType: inboundMimeType,
+          mediaUrl: cleanString(inbound.mediaUrl),
+          payload,
+        }) || "";
+  const audioReplyPossible =
+    audioReplyRequested ||
+    config.behavior.conversationMode === "always_audio" ||
+    (config.behavior.conversationMode === "mirror" && inboundIsAudio);
   const humanizationConfig = configAfterInboundBatchDelay(config, inboundBatch.delayAppliedMs);
 
   if (config.behavior.optOutEnabled && runtimeControlText && hasStopWord(runtimeControlText, config.memory.stopWords)) {
@@ -4714,7 +4824,7 @@ async function processWhatsappAgentRuntime(
       qualifiedScore: config.qualification.qualifiedScore,
       vipScore: config.qualification.vipScore,
     },
-    mediaKind: inboundMessageType,
+    mediaKind: runtimeMediaKind,
   });
   runtimeContext.lead.metadata = {
     ...runtimeContext.lead.metadata,
@@ -4954,8 +5064,19 @@ async function processWhatsappAgentRuntime(
     profile: runtimeContext.profile,
     inboundText: `${runtimeText}\n${formatConversationHistory(runtimeContext.messages)}`,
   });
+  const shouldAskPersonalName =
+    config.behavior.identityGuard &&
+    shouldAskPersonalNameBeforeReply(runtimeContext.lead.metadata, runtimeContext.lead.name || name);
   const casualGreeting = isShortCasualGreeting(runtimeText);
-  const generated = casualGreeting
+  const generated = shouldAskPersonalName && casualGreeting
+    ? {
+        ok: true,
+        reason: "business_display_name_personal_name_request",
+        model: "template-identity-guard",
+        text: personalNameQuestionReply(runtimeContext.lead.metadata),
+        fallback: true,
+      }
+    : casualGreeting
     ? {
         ok: true,
         reason: "casual_greeting",
@@ -4971,6 +5092,7 @@ async function processWhatsappAgentRuntime(
         history: runtimeContext.messages,
         promptInjection,
         audioReplyRequested,
+        audioReplyPossible,
         opportunitiesContext,
         globalBehaviorPrompt,
         runtimeDecisionContext: runtimeDecision.promptContext,
@@ -5001,6 +5123,7 @@ async function processWhatsappAgentRuntime(
     text: generated.text,
     inboundText: runtimeText,
     history: runtimeContext.messages,
+    leadMetadata: runtimeContext.lead.metadata,
     audioReplyRequested,
   });
   const preSendEvaluation = evaluateWhatsAppReplyBeforeSend({

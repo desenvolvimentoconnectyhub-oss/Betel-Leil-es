@@ -193,6 +193,12 @@ export function normalizeWillianAgentConfig(input: unknown): WillianAgentConfig 
       minReadSeconds: clampNumber(behavior.minReadSeconds, defaults.behavior.minReadSeconds, 0, 120),
       maxReadSeconds: clampNumber(behavior.maxReadSeconds, defaults.behavior.maxReadSeconds, 0, 240),
       audioChancePct: clampNumber(behavior.audioChancePct, defaults.behavior.audioChancePct, 0, 100),
+      audioToTextChancePct: clampNumber(
+        behavior.audioToTextChancePct,
+        defaults.behavior.audioToTextChancePct,
+        0,
+        100
+      ),
       stickerChancePct: clampNumber(behavior.stickerChancePct, defaults.behavior.stickerChancePct, 0, 100),
       rhythmWpm: clampNumber(behavior.rhythmWpm, defaults.behavior.rhythmWpm, 10, 180),
       correctionChancePct: clampNumber(behavior.correctionChancePct, defaults.behavior.correctionChancePct, 0, 100),
