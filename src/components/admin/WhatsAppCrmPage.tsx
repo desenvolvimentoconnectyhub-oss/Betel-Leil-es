@@ -1365,14 +1365,7 @@ export function WhatsAppCrmPage({ crmData }: { crmData: DataResult<WhatsAppCrmDa
 
   return (
     <div className="mx-auto grid min-h-screen max-w-[1780px] gap-3 px-3 py-3 lg:px-4">
-      <header className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
-        <div className="min-w-0">
-          <p className="text-[11px] font-medium text-[var(--admin-muted)]">Betel AI / Agentes WhatsApp / Atendimento</p>
-          <h1 className="mt-0.5 text-xl font-semibold tracking-tight text-[var(--admin-foreground)]">Atendimento WhatsApp</h1>
-          <p className="mt-0.5 text-[13px] text-[var(--admin-muted)]">
-            Acompanhe conversas ao vivo, assuma atendimentos e abra o arquivo completo do lead quando precisar.
-          </p>
-        </div>
+      <header className="flex justify-end">
         <div className="flex flex-col gap-1.5 lg:items-end">
           <div className="flex flex-wrap items-center gap-2 lg:justify-end">
             <StatusBadge tone={crmData.source === "supabase" ? "green" : "yellow"}>
