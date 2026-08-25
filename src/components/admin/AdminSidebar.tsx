@@ -3,6 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useState } from "react";
 import { Activity, ChevronDown, HeartPulse } from "lucide-react";
 import { filterAdminNavGroupsForUser } from "@/lib/admin/access";
 import { adminNavGroups, getCanonicalAdminHref } from "@/lib/admin/modules";
@@ -92,15 +93,24 @@ export function AdminSidebarContent({
   );
 }
 
-export function AdminSidebar({ admin, collapsed = false }: { admin?: AdminSessionUser; collapsed?: boolean }) {
+export function AdminSidebar({ admin }: { admin?: AdminSessionUser }) {
   const pathname = usePathname();
   const activeHref = getCanonicalAdminHref(pathname);
+  const [expanded, setExpanded] = useState(false);
+  const collapsed = !expanded;
 
   return (
     <aside
+      onMouseEnter={() => setExpanded(true)}
+      onMouseLeave={() => setExpanded(false)}
+      onFocusCapture={() => setExpanded(true)}
+      onBlurCapture={(event) => {
+        const nextTarget = event.relatedTarget instanceof Node ? event.relatedTarget : null;
+        if (!event.currentTarget.contains(nextTarget)) setExpanded(false);
+      }}
       className={cn(
-        "fixed inset-y-0 left-0 z-30 hidden border-r border-[var(--admin-border)] transition-[width] duration-200 ease-out lg:block",
-        collapsed ? "w-[76px]" : "w-[272px]"
+        "fixed inset-y-0 left-0 z-30 hidden overflow-hidden border-r border-[var(--admin-border)] bg-[var(--admin-sidebar)] transition-[width,box-shadow] duration-200 ease-out lg:block",
+        expanded ? "w-[272px] shadow-2xl shadow-[rgba(15,23,42,0.14)]" : "w-[76px]"
       )}
     >
       <AdminSidebarContent activeHref={activeHref} admin={admin} collapsed={collapsed} />
