@@ -21,6 +21,7 @@ import { NotificationButton } from "./NotificationButton";
 import { ThemeSwitcher } from "./ThemeSwitcher";
 import { UserMenu } from "./UserMenu";
 import type { AdminSessionUser } from "@/lib/auth/types";
+import { cn } from "@/lib/utils";
 
 function getTitle(pathname: string) {
   if (pathname === "/admin") return "Dashboard";
@@ -29,7 +30,15 @@ function getTitle(pathname: string) {
   return (slug && getAdminModule(slug)?.title) || "Admin";
 }
 
-export function AdminTopbar({ admin }: { admin: AdminSessionUser }) {
+export function AdminTopbar({
+  admin,
+  sidebarCollapsed,
+  onToggleSidebar,
+}: {
+  admin: AdminSessionUser;
+  sidebarCollapsed: boolean;
+  onToggleSidebar: () => void;
+}) {
   const pathname = usePathname();
   const activeHref = getCanonicalAdminHref(pathname);
   const title = getTitle(pathname);
@@ -61,7 +70,17 @@ export function AdminTopbar({ admin }: { admin: AdminSessionUser }) {
         </Sheet>
 
         <div className="hidden items-center gap-3 lg:flex">
-          <PanelLeft size={17} className="text-[var(--admin-muted)]" />
+          <Button
+            type="button"
+            variant="outline"
+            size="icon-lg"
+            onClick={onToggleSidebar}
+            className="border-[var(--admin-border)] bg-white text-[var(--admin-muted)] hover:text-[var(--admin-foreground)]"
+            title={sidebarCollapsed ? "Expandir menu lateral" : "Recolher menu lateral"}
+            aria-label={sidebarCollapsed ? "Expandir menu lateral" : "Recolher menu lateral"}
+          >
+            <PanelLeft size={17} className={cn("transition-transform duration-200", sidebarCollapsed && "rotate-180")} />
+          </Button>
           <div className="h-5 w-px bg-[var(--admin-border)]" />
         </div>
 
