@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  BellRing,
   Bot,
   CalendarClock,
   ChevronDown,
@@ -25,6 +26,9 @@ import {
   UserMinus,
   UserRound,
   UserX,
+  Volume2,
+  Wifi,
+  WifiOff,
   X,
   XCircle,
 } from "lucide-react";
@@ -53,6 +57,14 @@ type LeadActionKey =
   | "update_internal_context";
 type FeedbackState = { type: "ok" | "err"; msg: string } | null;
 type ActionIcon = ComponentType<{ size?: number; className?: string }>;
+type LiveSyncState = { status: "live" | "syncing" | "error"; lastSyncedAt: string; message: string };
+type IncomingLeadNotice = { leadId: string; leadName: string; preview: string; createdAt: string };
+type LeadActivitySnapshot = {
+  messageCount: number;
+  lastMessageAt: string;
+  lastMessageDirection: string;
+  lastMessagePreview: string;
+};
 type ContextDraft = {
   leadId: string;
   internalNotes: string;
@@ -110,6 +122,8 @@ const whatsappChatBackgroundStyle: CSSProperties = {
   backgroundRepeat: "repeat",
   backgroundSize: "420px auto",
 };
+const LIVE_CRM_REFRESH_MS = 3_000;
+const LIVE_NOTICE_TTL_MS = 12_000;
 
 function formatDateTime(value: string) {
   if (!value) return "Sem data";
@@ -137,6 +151,41 @@ function formatRelative(value: string) {
 function dateMs(value: string) {
   const time = new Date(value).getTime();
   return Number.isFinite(time) ? time : 0;
+}
+
+function leadActivityKey(lead: WhatsAppCrmLeadCard) {
+  return lead.id || lead.conversationId || lead.leadId || lead.phone;
+}
+
+function leadActivitySnapshot(lead: WhatsAppCrmLeadCard): LeadActivitySnapshot {
+  return {
+    messageCount: lead.messageCount,
+    lastMessageAt: lead.lastMessageAt,
+    lastMessageDirection: lead.lastMessageDirection,
+    lastMessagePreview: lead.lastMessagePreview,
+  };
+}
+
+function buildLeadActivityMap(leads: WhatsAppCrmLeadCard[]) {
+  return new Map(leads.map((lead) => [leadActivityKey(lead), leadActivitySnapshot(lead)]));
+}
+
+function leadHasNewActivity(previous: LeadActivitySnapshot | undefined, lead: WhatsAppCrmLeadCard) {
+  if (!previous) return lead.messageCount > 0;
+  const previousTime = dateMs(previous.lastMessageAt);
+  const nextTime = dateMs(lead.lastMessageAt);
+  return nextTime > previousTime || lead.messageCount > previous.messageCount;
+}
+
+function incomingLeadsSince(previous: Map<string, LeadActivitySnapshot>, leads: WhatsAppCrmLeadCard[]) {
+  return leads
+    .filter((lead) => lead.lastMessageDirection === "inbound" && leadHasNewActivity(previous.get(leadActivityKey(lead)), lead))
+    .sort((left, right) => dateMs(right.lastMessageAt) - dateMs(left.lastMessageAt));
+}
+
+function notificationPreview(lead: WhatsAppCrmLeadCard) {
+  const preview = (lead.lastMessagePreview || "Nova mensagem recebida.").replace(/\s+/g, " ").trim();
+  return preview.length > 160 ? `${preview.slice(0, 157)}...` : preview;
 }
 
 function formatCountdown(ms: number) {
@@ -230,6 +279,72 @@ function HandoffCountdown({
       <span className="truncate text-[var(--admin-muted)]">{state.label}</span>
       <span className={cn("shrink-0 font-mono font-bold tabular-nums", toneText[state.tone])}>{state.value}</span>
       {!compact && <span className="truncate text-[var(--admin-muted)]">{state.detail}</span>}
+    </div>
+  );
+}
+
+function LiveSyncBadge({ sync }: { sync: LiveSyncState }) {
+  const isError = sync.status === "error";
+  const isSyncing = sync.status === "syncing";
+  const Icon = isError ? WifiOff : isSyncing ? Loader2 : Wifi;
+
+  return (
+    <span
+      className={cn(
+        "inline-flex h-6 shrink-0 items-center gap-1.5 rounded-full border px-2 text-[9px] font-bold uppercase tracking-[0.12em]",
+        isError ? toneBg.red : isSyncing ? toneBg.yellow : toneBg.green
+      )}
+      title={sync.message}
+    >
+      <Icon size={12} className={cn(isSyncing ? "animate-spin" : "", isError ? toneText.red : isSyncing ? toneText.yellow : toneText.green)} />
+      {isError ? "offline" : isSyncing ? "sincronizando" : "ao vivo"}
+    </span>
+  );
+}
+
+function IncomingMessageNotice({
+  notice,
+  onOpen,
+  onClose,
+}: {
+  notice: IncomingLeadNotice;
+  onOpen: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-xl border border-[rgba(15,124,144,0.22)] bg-[rgba(15,124,144,0.08)] px-3 py-2 text-[12px] text-[var(--admin-foreground)] shadow-sm shadow-[rgba(81,60,36,0.06)]">
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[rgba(15,124,144,0.12)] text-[var(--admin-cyan)]">
+          <BellRing size={15} />
+        </span>
+        <div className="min-w-0">
+          <p className="truncate font-semibold">Nova mensagem de {notice.leadName}</p>
+          <p className="truncate text-[11px] text-[var(--admin-muted)]">{notice.preview}</p>
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-1.5">
+        <span
+          title="Alerta sonoro ativo apos a primeira interacao com a pagina"
+          className="grid h-7 w-7 place-items-center rounded-full border border-[rgba(15,124,144,0.18)] bg-white text-[var(--admin-cyan)]"
+        >
+          <Volume2 size={13} />
+        </span>
+        <button
+          type="button"
+          onClick={onOpen}
+          className="inline-flex h-7 items-center rounded-full border border-[rgba(15,124,144,0.26)] bg-white px-2.5 text-[11px] font-semibold text-[var(--admin-cyan)] transition hover:border-[var(--admin-cyan)]"
+        >
+          Abrir
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Fechar aviso"
+          className="grid h-7 w-7 place-items-center rounded-full border border-[var(--admin-border)] bg-white text-[var(--admin-muted)] transition hover:text-[var(--admin-foreground)]"
+        >
+          <X size={13} />
+        </button>
+      </div>
     </div>
   );
 }
@@ -592,6 +707,24 @@ function LiveChatPanel({
   onOpenLeadFile: () => void;
   nowMs: number;
 }) {
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const timeline = useMemo(() => (lead ? sortedTimeline(lead.timeline) : []), [lead]);
+  const latestTimelineItem = timeline[timeline.length - 1];
+
+  useEffect(() => {
+    if (!lead) return;
+    const container = chatScrollRef.current;
+    if (!container) return;
+
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    const shouldFollowConversation = distanceFromBottom < 180 || latestTimelineItem?.direction === "inbound";
+    if (!shouldFollowConversation) return;
+
+    window.requestAnimationFrame(() => {
+      container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+    });
+  }, [lead, latestTimelineItem?.createdAt, latestTimelineItem?.direction, timeline.length]);
+
   if (!lead) {
     return (
       <section className="grid min-h-[360px] place-items-center rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-5 text-center text-[13px] text-[var(--admin-muted)] shadow-sm shadow-[rgba(81,60,36,0.06)] xl:h-full xl:min-h-0">
@@ -600,7 +733,6 @@ function LiveChatPanel({
     );
   }
 
-  const timeline = sortedTimeline(lead.timeline);
   const statusTone = conversationStatusTone(lead);
   const toggleAction: LeadActionKey = lead.humanInterventionActive ? "resume_ai" : "pause_ai";
   const toggleLabel = lead.humanInterventionActive ? "Retomar IA" : "Assumir";
@@ -662,6 +794,7 @@ function LiveChatPanel({
       </div>
 
       <div
+        ref={chatScrollRef}
         className="min-h-0 overflow-auto px-3 py-3.5 sm:px-4"
         style={whatsappChatBackgroundStyle}
       >
@@ -1231,17 +1364,209 @@ function LeadFileModal({
 
 export function WhatsAppCrmPage({ crmData }: { crmData: DataResult<WhatsAppCrmData> }) {
   const router = useRouter();
-  const data = crmData.data;
+  const [liveCrmData, setLiveCrmData] = useState<DataResult<WhatsAppCrmData>>(crmData);
+  const data = liveCrmData.data;
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<FilterKey>("todos");
-  const [selectedId, setSelectedId] = useState<string | null>(data.leads[0]?.id || null);
+  const [selectedId, setSelectedId] = useState<string | null>(crmData.data.leads[0]?.id || null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<FeedbackState>(null);
+  const [incomingNotice, setIncomingNotice] = useState<IncomingLeadNotice | null>(null);
+  const [liveSync, setLiveSync] = useState<LiveSyncState>(() => ({
+    status: "live",
+    lastSyncedAt: crmData.data.generatedAt,
+    message: "Atendimento ao vivo ativo.",
+  }));
   const [manualReply, setManualReply] = useState("");
   const [leadFileOpen, setLeadFileOpen] = useState(false);
   const [contextDraft, setContextDraft] = useState<ContextDraft>(() => contextDraftFromLead(data.leads[0]));
   const [stageDraft, setStageDraft] = useState<StageDraft>(() => stageDraftFromLead(data.leads[0]));
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const knownLeadActivityRef = useRef(buildLeadActivityMap(crmData.data.leads));
+  const selectedIdRef = useRef(selectedId);
+  const pollingInFlightRef = useRef(false);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const soundUnlockedRef = useRef(false);
+  const notificationPermissionRequestedRef = useRef(false);
+
+  const playIncomingSound = useCallback(() => {
+    if (!soundUnlockedRef.current) return;
+
+    try {
+      const AudioContextClass =
+        window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioContextClass) return;
+
+      const context = audioContextRef.current || new AudioContextClass();
+      audioContextRef.current = context;
+
+      void context
+        .resume()
+        .then(() => {
+          const startedAt = context.currentTime;
+          const oscillator = context.createOscillator();
+          const gain = context.createGain();
+
+          oscillator.type = "sine";
+          oscillator.frequency.setValueAtTime(880, startedAt);
+          oscillator.frequency.exponentialRampToValueAtTime(640, startedAt + 0.18);
+          gain.gain.setValueAtTime(0.0001, startedAt);
+          gain.gain.exponentialRampToValueAtTime(0.08, startedAt + 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.0001, startedAt + 0.28);
+          oscillator.connect(gain);
+          gain.connect(context.destination);
+          oscillator.start(startedAt);
+          oscillator.stop(startedAt + 0.3);
+        })
+        .catch(() => undefined);
+    } catch {
+      // Browsers can block audio before the first user interaction.
+    }
+  }, []);
+
+  const announceIncomingLeads = useCallback(
+    (leads: WhatsAppCrmLeadCard[]) => {
+      const lead = leads[0];
+      if (!lead) return;
+
+      const preview = notificationPreview(lead);
+      setIncomingNotice({
+        leadId: lead.id,
+        leadName: lead.name || formatPhone(lead.phone),
+        preview,
+        createdAt: lead.lastMessageAt,
+      });
+      playIncomingSound();
+
+      if (!("Notification" in window) || Notification.permission !== "granted") return;
+      if (!document.hidden && selectedIdRef.current === lead.id) return;
+
+      try {
+        const notification = new Notification(`Nova mensagem de ${lead.name || "Lead WhatsApp"}`, {
+          body: preview,
+          tag: `betel-whatsapp-${lead.id}`,
+          silent: true,
+        });
+        notification.onclick = () => {
+          window.focus();
+          setSelectedId(lead.id);
+          setLeadFileOpen(false);
+          setIncomingNotice(null);
+        };
+      } catch {
+        // Desktop notifications may be unavailable depending on browser permissions.
+      }
+    },
+    [playIncomingSound]
+  );
+
+  const refreshLiveCrm = useCallback(
+    async ({ notify = false }: { notify?: boolean } = {}) => {
+      if (pollingInFlightRef.current) return;
+      pollingInFlightRef.current = true;
+      setLiveSync((current) =>
+        current.status === "error"
+          ? { status: "syncing", lastSyncedAt: current.lastSyncedAt, message: "Reconectando atendimento ao vivo." }
+          : current
+      );
+
+      try {
+        const response = await fetch("/api/admin/whatsapp/crm", {
+          cache: "no-store",
+          headers: { accept: "application/json" },
+        });
+        const result = (await response.json().catch(() => null)) as DataResult<WhatsAppCrmData> | null;
+        if (!response.ok || !result?.data || !Array.isArray(result.data.leads)) {
+          throw new Error("Nao foi possivel sincronizar o atendimento ao vivo.");
+        }
+
+        const incoming = notify ? incomingLeadsSince(knownLeadActivityRef.current, result.data.leads) : [];
+        knownLeadActivityRef.current = buildLeadActivityMap(result.data.leads);
+        setLiveCrmData(result);
+        setLiveSync({
+          status: "live",
+          lastSyncedAt: result.data.generatedAt || new Date().toISOString(),
+          message: "Atendimento ao vivo sincronizado.",
+        });
+        if (incoming.length) announceIncomingLeads(incoming);
+      } catch (error) {
+        setLiveSync({
+          status: "error",
+          lastSyncedAt: new Date().toISOString(),
+          message: error instanceof Error ? error.message : "Falha ao sincronizar atendimento ao vivo.",
+        });
+      } finally {
+        pollingInFlightRef.current = false;
+      }
+    },
+    [announceIncomingLeads]
+  );
+
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
+
+  useEffect(() => {
+    const enableNotifications = () => {
+      soundUnlockedRef.current = true;
+
+      try {
+        const AudioContextClass =
+          window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (AudioContextClass && !audioContextRef.current) {
+          audioContextRef.current = new AudioContextClass();
+        }
+        void audioContextRef.current?.resume().catch(() => undefined);
+      } catch {
+        // Audio unlock is best-effort.
+      }
+
+      if ("Notification" in window && Notification.permission === "default" && !notificationPermissionRequestedRef.current) {
+        notificationPermissionRequestedRef.current = true;
+        void Notification.requestPermission().catch(() => undefined);
+      }
+
+      window.removeEventListener("pointerdown", enableNotifications);
+      window.removeEventListener("keydown", enableNotifications);
+    };
+
+    window.addEventListener("pointerdown", enableNotifications);
+    window.addEventListener("keydown", enableNotifications);
+    return () => {
+      window.removeEventListener("pointerdown", enableNotifications);
+      window.removeEventListener("keydown", enableNotifications);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!incomingNotice) return undefined;
+    const timeout = window.setTimeout(() => setIncomingNotice(null), LIVE_NOTICE_TTL_MS);
+    return () => window.clearTimeout(timeout);
+  }, [incomingNotice]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const poll = () => {
+      if (cancelled) return;
+      void refreshLiveCrm({ notify: true });
+    };
+    const firstPoll = window.setTimeout(poll, 900);
+    const interval = window.setInterval(poll, LIVE_CRM_REFRESH_MS);
+    const syncOnFocus = () => void refreshLiveCrm({ notify: true });
+    const syncOnVisibility = () => {
+      if (!document.hidden) void refreshLiveCrm({ notify: true });
+    };
+
+    window.addEventListener("focus", syncOnFocus);
+    document.addEventListener("visibilitychange", syncOnVisibility);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(firstPoll);
+      window.clearInterval(interval);
+      window.removeEventListener("focus", syncOnFocus);
+      document.removeEventListener("visibilitychange", syncOnVisibility);
+    };
+  }, [refreshLiveCrm]);
 
   const activeCountdownDeadlines = useMemo(
     () =>
@@ -1333,7 +1658,10 @@ export function WhatsAppCrmPage({ crmData }: { crmData: DataResult<WhatsAppCrmDa
   }
 
   function refreshSoon() {
-    window.setTimeout(() => router.refresh(), 350);
+    window.setTimeout(() => {
+      void refreshLiveCrm();
+      router.refresh();
+    }, 350);
   }
 
   function updateLeadContextDraft(lead: WhatsAppCrmLeadCard, patch: Partial<ContextDraft>) {
@@ -1479,9 +1807,9 @@ export function WhatsAppCrmPage({ crmData }: { crmData: DataResult<WhatsAppCrmDa
 
   return (
     <div className="mx-auto flex min-h-[calc(100vh-64px)] max-w-[1780px] flex-col gap-2 px-3 py-2 lg:px-4 xl:h-[calc(100vh-64px)] xl:overflow-hidden">
-      {crmData.reason && (
+      {liveCrmData.reason && (
         <div className="rounded-xl border border-[rgba(234,179,8,0.28)] bg-[rgba(234,179,8,0.08)] px-3 py-2.5 text-[11px] text-[var(--admin-yellow)]">
-          {crmData.reason}
+          {liveCrmData.reason}
         </div>
       )}
       {feedback && (
@@ -1496,6 +1824,17 @@ export function WhatsAppCrmPage({ crmData }: { crmData: DataResult<WhatsAppCrmDa
           {feedback.msg}
         </div>
       )}
+      {incomingNotice && (
+        <IncomingMessageNotice
+          notice={incomingNotice}
+          onOpen={() => {
+            setSelectedId(incomingNotice.leadId);
+            setLeadFileOpen(false);
+            setIncomingNotice(null);
+          }}
+          onClose={() => setIncomingNotice(null)}
+        />
+      )}
 
       <section className="grid min-h-0 flex-1 gap-3 xl:grid-cols-[300px_minmax(0,1fr)] 2xl:grid-cols-[300px_minmax(640px,1fr)_300px]">
         <aside className="grid min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-[18px] border border-[rgba(15,124,144,0.14)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(81,60,36,0.08)] xl:h-full xl:min-h-0">
@@ -1507,7 +1846,10 @@ export function WhatsAppCrmPage({ crmData }: { crmData: DataResult<WhatsAppCrmDa
                 </p>
                 <h2 className="mt-0.5 truncate text-lg font-semibold text-[var(--admin-foreground)]">Atendimento</h2>
               </div>
-              <StatusBadge tone="cyan" className="h-5 px-1.5 text-[9px]">{filteredLeads.length} na visao</StatusBadge>
+              <div className="flex shrink-0 flex-col items-end gap-1">
+                <LiveSyncBadge sync={liveSync} />
+                <StatusBadge tone="cyan" className="h-5 px-1.5 text-[9px]">{filteredLeads.length} na visao</StatusBadge>
+              </div>
             </div>
 
             <div className="relative mt-3 min-w-0">

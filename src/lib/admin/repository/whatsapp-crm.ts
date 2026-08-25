@@ -646,13 +646,13 @@ function operationalTieBreaker(card: WhatsAppCrmLeadCard) {
 }
 
 function compareLeadQueuePriority(left: WhatsAppCrmLeadCard, right: WhatsAppCrmLeadCard) {
-  const scoreDiff = normalizedLeadScore(right) - normalizedLeadScore(left);
-  if (scoreDiff) return scoreDiff;
+  const activityDiff = timestamp(right.lastMessageAt) - timestamp(left.lastMessageAt);
+  if (activityDiff) return activityDiff;
 
   const operationalDiff = operationalTieBreaker(right) - operationalTieBreaker(left);
   if (operationalDiff) return operationalDiff;
 
-  return timestamp(right.lastMessageAt) - timestamp(left.lastMessageAt);
+  return normalizedLeadScore(right) - normalizedLeadScore(left);
 }
 
 function normalizeCrmStage(input: {
