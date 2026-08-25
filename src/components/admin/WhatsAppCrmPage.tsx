@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Bot,
@@ -132,6 +132,106 @@ function formatRelative(value: string) {
   if (ms < 60 * 60_000) return `${Math.floor(ms / 60_000)} min`;
   if (ms < 24 * 60 * 60_000) return `${Math.floor(ms / (60 * 60_000))} h`;
   return `${Math.floor(ms / (24 * 60 * 60_000))} d`;
+}
+
+function dateMs(value: string) {
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function formatCountdown(ms: number) {
+  const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return hours > 0 ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${pad(minutes)}:${pad(seconds)}`;
+}
+
+function handoffCountdownState(lead: WhatsAppCrmLeadCard, nowMs: number) {
+  if (!lead.humanInterventionActive || lead.optOut) return null;
+
+  const autoResumeAt = dateMs(lead.manualHandoff.autoResumeAfter);
+  const pendingInboundAt = dateMs(lead.manualHandoff.pendingInboundAt);
+  const hasPendingLeadReply = lead.waitingForReply && autoResumeAt > 0 && pendingInboundAt > 0;
+
+  if (hasPendingLeadReply) {
+    const remainingMs = autoResumeAt - nowMs;
+    return {
+      label: remainingMs > 0 ? "IA retoma em" : "IA retomando",
+      value: formatCountdown(remainingMs),
+      detail: remainingMs > 0 ? "lead aguardando humano" : "aguardando worker",
+      tone: remainingMs <= 60_000 ? "red" : "yellow",
+      deadlineMs: autoResumeAt,
+    } satisfies {
+      label: string;
+      value: string;
+      detail: string;
+      tone: ResourceTone;
+      deadlineMs: number;
+    };
+  }
+
+  const activeUntil = dateMs(lead.manualHandoff.activeUntil);
+  if (activeUntil > 0) {
+    const remainingMs = activeUntil - nowMs;
+    return {
+      label: remainingMs > 0 ? "Pausa IA" : "Pausa vencida",
+      value: formatCountdown(remainingMs),
+      detail: remainingMs > 0 ? "controle humano" : "IA responde no proximo contato",
+      tone: remainingMs <= 5 * 60_000 ? "yellow" : "cyan",
+      deadlineMs: activeUntil,
+    } satisfies {
+      label: string;
+      value: string;
+      detail: string;
+      tone: ResourceTone;
+      deadlineMs: number;
+    };
+  }
+
+  return {
+    label: "Pausa IA",
+    value: "60:00",
+    detail: "renova a cada resposta",
+    tone: "yellow",
+    deadlineMs: 0,
+  } satisfies {
+    label: string;
+    value: string;
+    detail: string;
+    tone: ResourceTone;
+    deadlineMs: number;
+  };
+}
+
+function HandoffCountdown({
+  lead,
+  nowMs,
+  compact = false,
+}: {
+  lead: WhatsAppCrmLeadCard;
+  nowMs: number;
+  compact?: boolean;
+}) {
+  const state = handoffCountdownState(lead, nowMs);
+  if (!state) return null;
+
+  return (
+    <div
+      className={cn(
+        "inline-flex min-w-0 items-center gap-1.5 rounded-full border font-semibold",
+        compact ? "h-6 px-2 text-[9px]" : "min-h-8 px-2.5 py-1 text-[10px]",
+        toneBg[state.tone]
+      )}
+      title={`${state.label} ${state.value} - ${state.detail}`}
+    >
+      <CalendarClock size={compact ? 12 : 14} className={cn("shrink-0", toneText[state.tone])} />
+      <span className="truncate text-[var(--admin-muted)]">{state.label}</span>
+      <span className={cn("shrink-0 font-mono font-bold tabular-nums", toneText[state.tone])}>{state.value}</span>
+      {!compact && <span className="truncate text-[var(--admin-muted)]">{state.detail}</span>}
+    </div>
+  );
 }
 
 function formatPhone(phone: string) {
@@ -369,12 +469,15 @@ function LeadQueueItem({
   lead,
   selected,
   onSelect,
+  nowMs,
 }: {
   lead: WhatsAppCrmLeadCard;
   selected: boolean;
   onSelect: () => void;
+  nowMs: number;
 }) {
   const heat = leadHeatBadge(lead);
+  const countdown = handoffCountdownState(lead, nowMs);
 
   return (
     <button
@@ -399,6 +502,11 @@ function LeadQueueItem({
               {heat.label}
             </StatusBadge>
           </div>
+          {countdown && (
+            <div className="mt-1.5">
+              <HandoffCountdown lead={lead} nowMs={nowMs} compact />
+            </div>
+          )}
         </div>
       </div>
     </button>
@@ -473,6 +581,7 @@ function LiveChatPanel({
   onSendManualReply,
   onLeadAction,
   onOpenLeadFile,
+  nowMs,
 }: {
   lead?: WhatsAppCrmLeadCard;
   busyAction: string | null;
@@ -481,6 +590,7 @@ function LiveChatPanel({
   onSendManualReply: (lead: WhatsAppCrmLeadCard) => void;
   onLeadAction: (action: LeadActionKey, lead: WhatsAppCrmLeadCard) => void;
   onOpenLeadFile: () => void;
+  nowMs: number;
 }) {
   if (!lead) {
     return (
@@ -518,6 +628,7 @@ function LiveChatPanel({
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <HandoffCountdown lead={lead} nowMs={nowMs} />
           <button
             type="button"
             disabled={lead.optOut}
@@ -569,9 +680,7 @@ function LiveChatPanel({
             <Send size={14} className="text-[var(--admin-cyan)]" />
             Resposta humana
           </span>
-          <StatusBadge tone={lead.humanInterventionActive ? "yellow" : "muted"} className="h-5 px-1.5 text-[9px]">
-            {lead.humanInterventionActive ? "humano ativo" : "opcional"}
-          </StatusBadge>
+          <HandoffCountdown lead={lead} nowMs={nowMs} compact />
         </div>
         <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_118px] lg:items-end">
           <textarea
@@ -603,6 +712,7 @@ function LiveChatPanel({
 function LeadDetail({
   lead,
   busyAction,
+  nowMs,
   onLeadAction,
   contextDraft,
   onContextDraftChange,
@@ -613,6 +723,7 @@ function LeadDetail({
 }: {
   lead?: WhatsAppCrmLeadCard;
   busyAction: string | null;
+  nowMs: number;
   onLeadAction: (action: LeadActionKey, lead: WhatsAppCrmLeadCard) => void;
   contextDraft: ContextDraft;
   onContextDraftChange: (patch: Partial<ContextDraft>) => void;
@@ -665,6 +776,8 @@ function LeadDetail({
         </div>
         <LeadScore score={lead.score} />
       </div>
+
+      <HandoffCountdown lead={lead} nowMs={nowMs} />
 
       <div className={cn("mt-2 rounded-lg border px-3 py-2.5", toneBg[lead.humanInterventionActive ? "yellow" : "cyan"])}>
         <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Resumo inteligente</p>
@@ -930,7 +1043,7 @@ function LeadDetail({
   );
 }
 
-function LeadSidePanel({ lead }: { lead?: WhatsAppCrmLeadCard }) {
+function LeadSidePanel({ lead, nowMs }: { lead?: WhatsAppCrmLeadCard; nowMs: number }) {
   if (!lead) {
     return (
       <aside className="rounded-[18px] border border-[rgba(15,124,144,0.14)] bg-white p-4 text-[13px] text-[var(--admin-muted)] shadow-sm shadow-[rgba(81,60,36,0.06)]">
@@ -977,6 +1090,8 @@ function LeadSidePanel({ lead }: { lead?: WhatsAppCrmLeadCard }) {
             <p className="mt-2 line-clamp-3 text-[13px] leading-5 text-[var(--admin-foreground)]">{lead.nextAction}</p>
           </div>
 
+          <HandoffCountdown lead={lead} nowMs={nowMs} />
+
           <div className="grid gap-2">
             {qualificationItems.slice(0, 4).map(([label, value]) => (
               <InfoCell key={label} label={label} value={value} />
@@ -1001,6 +1116,7 @@ function LeadFileModal({
   open,
   lead,
   busyAction,
+  nowMs,
   contextDraft,
   stageDraft,
   onClose,
@@ -1013,6 +1129,7 @@ function LeadFileModal({
   open: boolean;
   lead?: WhatsAppCrmLeadCard;
   busyAction: string | null;
+  nowMs: number;
   contextDraft: ContextDraft;
   stageDraft: StageDraft;
   onClose: () => void;
@@ -1040,6 +1157,7 @@ function LeadFileModal({
               <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[12px] text-[var(--admin-muted)]">
                 <span className="font-semibold text-[var(--admin-foreground)]">{lead.name}</span>
                 <span>{formatPhone(lead.phone)}</span>
+                <HandoffCountdown lead={lead} nowMs={nowMs} compact />
               </div>
             </div>
           </div>
@@ -1058,6 +1176,7 @@ function LeadFileModal({
             <LeadDetail
               lead={lead}
               busyAction={busyAction}
+              nowMs={nowMs}
               contextDraft={contextDraft}
               stageDraft={stageDraft}
               onLeadAction={onLeadAction}
@@ -1078,6 +1197,7 @@ function LeadFileModal({
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-2">
+                <HandoffCountdown lead={lead} nowMs={nowMs} compact />
                 <StatusBadge tone={conversationStatusTone(lead)} className="h-5 px-1.5 text-[9px]">{conversationStatusLabel(lead)}</StatusBadge>
                 <StatusBadge tone="cyan" className="h-5 px-1.5 text-[9px]">{lead.messageCount} mensagens</StatusBadge>
               </div>
@@ -1121,6 +1241,29 @@ export function WhatsAppCrmPage({ crmData }: { crmData: DataResult<WhatsAppCrmDa
   const [leadFileOpen, setLeadFileOpen] = useState(false);
   const [contextDraft, setContextDraft] = useState<ContextDraft>(() => contextDraftFromLead(data.leads[0]));
   const [stageDraft, setStageDraft] = useState<StageDraft>(() => stageDraftFromLead(data.leads[0]));
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  const activeCountdownDeadlines = useMemo(
+    () =>
+      data.leads
+        .map((lead) => handoffCountdownState(lead, nowMs)?.deadlineMs || 0)
+        .filter((deadline) => deadline > nowMs),
+    [data.leads, nowMs]
+  );
+  const hasActiveCountdown = activeCountdownDeadlines.length > 0;
+  const nextCountdownDeadline = hasActiveCountdown ? Math.min(...activeCountdownDeadlines) : 0;
+
+  useEffect(() => {
+    if (!hasActiveCountdown) return undefined;
+    const interval = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, [hasActiveCountdown]);
+
+  useEffect(() => {
+    if (!nextCountdownDeadline) return undefined;
+    const timeout = window.setTimeout(() => router.refresh(), Math.max(1200, nextCountdownDeadline - Date.now() + 1500));
+    return () => window.clearTimeout(timeout);
+  }, [nextCountdownDeadline, router]);
 
   const counts = useMemo<Record<FilterKey, number>>(
     () => ({
@@ -1403,6 +1546,7 @@ export function WhatsAppCrmPage({ crmData }: { crmData: DataResult<WhatsAppCrmDa
                   key={lead.id}
                   lead={lead}
                   selected={selectedLead?.id === lead.id}
+                  nowMs={nowMs}
                   onSelect={() => {
                     setSelectedId(lead.id);
                     setManualReply("");
@@ -1428,15 +1572,17 @@ export function WhatsAppCrmPage({ crmData }: { crmData: DataResult<WhatsAppCrmDa
           onSendManualReply={(lead) => void sendManualReply(lead)}
           onLeadAction={(action, lead) => void runLeadAction(action, lead)}
           onOpenLeadFile={() => setLeadFileOpen(true)}
+          nowMs={nowMs}
         />
 
-        <LeadSidePanel lead={selectedLead} />
+        <LeadSidePanel lead={selectedLead} nowMs={nowMs} />
       </section>
 
       <LeadFileModal
         open={leadFileOpen}
         lead={selectedLead}
         busyAction={busyAction}
+        nowMs={nowMs}
         contextDraft={selectedContextDraft}
         stageDraft={selectedStageDraft}
         onClose={() => setLeadFileOpen(false)}

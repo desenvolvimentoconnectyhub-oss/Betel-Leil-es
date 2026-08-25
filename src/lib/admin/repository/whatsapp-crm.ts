@@ -53,6 +53,17 @@ export type WhatsAppRuntimeDecisionSummary = {
   updatedAt: string;
 };
 
+export type WhatsAppManualHandoffSummary = {
+  reason: string;
+  operatorLabel: string;
+  startedAt: string;
+  lastManualAt: string;
+  activeUntil: string;
+  pendingInboundAt: string;
+  autoResumeAfter: string;
+  autoResumeFollowUpId: string;
+};
+
 export type WhatsAppCrmTimelineItem = {
   id: string;
   direction: string;
@@ -87,6 +98,7 @@ export type WhatsAppCrmLeadCard = {
   agentName: string;
   conversationStatus: string;
   humanInterventionActive: boolean;
+  manualHandoff: WhatsAppManualHandoffSummary;
   assignedToLabel: string;
   optOut: boolean;
   waitingForReply: boolean;
@@ -243,6 +255,39 @@ function nestedRecords(...values: unknown[]) {
   }
 
   return records;
+}
+
+function manualHandoffRecords(...values: unknown[]) {
+  const baseRecords = nestedRecords(...values);
+  const nested: Record<string, unknown>[] = [];
+
+  for (const record of baseRecords) {
+    for (const key of ["human_intervention", "humanIntervention", "manual_handoff", "manualHandoff"]) {
+      const value = asRecord(record[key]);
+      if (Object.keys(value).length) nested.push(value);
+    }
+  }
+
+  return [...nested, ...baseRecords];
+}
+
+function manualHandoffSummary(lead: DbRow, conversation: DbRow = {}, profile?: DbRow): WhatsAppManualHandoffSummary {
+  const records = manualHandoffRecords(conversation.metadata, lead.metadata, profile?.metadata, conversation, lead, profile);
+
+  return {
+    reason: firstString(records, ["reason", "human_handoff_reason", "handoffReason"]),
+    operatorLabel: firstString(records, ["operator_label", "operatorLabel", "human_handoff_operator_label", "assigned_to_label"]),
+    startedAt: firstString(records, ["started_at", "startedAt", "human_handoff_started_at", "human_handoff_at"]),
+    lastManualAt: firstString(records, ["last_manual_at", "lastManualAt", "human_handoff_last_manual_at", "last_human_message_at"]),
+    activeUntil: firstString(records, ["active_until", "activeUntil", "human_handoff_until"]),
+    pendingInboundAt: firstString(records, ["pending_inbound_at", "pendingInboundAt", "human_handoff_pending_inbound_at"]),
+    autoResumeAfter: firstString(records, ["auto_resume_after", "autoResumeAfter", "human_handoff_auto_resume_after"]),
+    autoResumeFollowUpId: firstString(records, [
+      "auto_resume_follow_up_id",
+      "autoResumeFollowUpId",
+      "human_handoff_auto_resume_follow_up_id",
+    ]),
+  };
 }
 
 function normalizeLeadProfileImageUrl(value: unknown) {
@@ -733,6 +778,16 @@ function fallbackData(): WhatsAppCrmData {
         agentName: "Agente de WhatsApp",
         conversationStatus: "open",
         humanInterventionActive: false,
+        manualHandoff: {
+          reason: "",
+          operatorLabel: "",
+          startedAt: "",
+          lastManualAt: "",
+          activeUntil: "",
+          pendingInboundAt: "",
+          autoResumeAfter: "",
+          autoResumeFollowUpId: "",
+        },
         assignedToLabel: "",
         optOut: false,
         waitingForReply: true,
@@ -927,6 +982,7 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
     const status = asString(profile?.classification, asString(lead.status, "new"));
     const humanInterventionActive =
       asBoolean(conversation.human_intervention_active) || asBoolean(lead.human_intervention_active);
+    const manualHandoff = manualHandoffSummary(lead, conversation, profile);
     const optOut = asBoolean(lead.opt_out);
     const crmStage = normalizeCrmStage({
       profileStage: asString(profile?.crm_stage),
@@ -988,6 +1044,7 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
       agentName: normalizeAgentName(agentRows, asString(conversation.agent_key, asString(lead.owner_agent_key, defaultAgentKey))),
       conversationStatus: asString(conversation.status, "open"),
       humanInterventionActive,
+      manualHandoff,
       assignedToLabel: context.assignedToLabel,
       optOut,
       waitingForReply,
@@ -1043,6 +1100,7 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
     const lastOutboundAt = messageCreatedAt(outbound[0]);
     const lastMessageAt = asString(lead.last_message_at, messageCreatedAt(messages[0]));
     const humanInterventionActive = asBoolean(lead.human_intervention_active);
+    const manualHandoff = manualHandoffSummary(lead, {}, profile);
     const optOut = asBoolean(lead.opt_out);
     const status = asString(profile?.classification, asString(lead.status, "new"));
     const crmStage = normalizeCrmStage({
@@ -1087,6 +1145,7 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
       agentName: normalizeAgentName(agentRows, asString(lead.owner_agent_key, defaultAgentKey)),
       conversationStatus: "lead_only",
       humanInterventionActive,
+      manualHandoff,
       assignedToLabel: context.assignedToLabel,
       optOut,
       waitingForReply,
