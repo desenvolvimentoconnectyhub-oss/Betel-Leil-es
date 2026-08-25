@@ -165,7 +165,7 @@ function LeadAvatar({
   size?: "sm" | "md" | "lg";
 }) {
   const safeImageUrl = (lead.profileImageUrl || "").replace(/"/g, "%22");
-  const sizeClass = size === "lg" ? "h-14 w-14 text-sm" : size === "sm" ? "h-8 w-8 text-[10px]" : "h-11 w-11 text-xs";
+  const sizeClass = size === "lg" ? "h-12 w-12 text-sm" : size === "sm" ? "h-8 w-8 text-[10px]" : "h-10 w-10 text-xs";
 
   return (
     <div
@@ -293,10 +293,10 @@ function hasQualificationValue(value: string) {
 function LeadScore({ score }: { score: number }) {
   const tone = scoreTone(score);
   return (
-    <div className="min-w-[92px]">
+    <div className="min-w-[76px]">
       <div className="mb-1 flex items-center justify-between gap-2">
-        <span className={cn("font-mono text-xs font-bold", toneText[tone])}>{score}</span>
-        <span className="text-[10px] uppercase tracking-[0.12em] text-[var(--admin-muted)]">score</span>
+        <span className={cn("font-mono text-[11px] font-bold", toneText[tone])}>{score}</span>
+        <span className="text-[9px] uppercase tracking-[0.12em] text-[var(--admin-muted)]">score</span>
       </div>
       <div className="h-1.5 overflow-hidden rounded-full bg-[rgba(113,128,140,0.18)]">
         <div className={cn("h-full rounded-full", tone === "cyan" ? "bg-[var(--admin-cyan)]" : tone === "green" ? "bg-[var(--admin-green)]" : tone === "yellow" ? "bg-[var(--admin-yellow)]" : "bg-white/25")} style={{ width: `${Math.max(4, Math.min(score, 100))}%` }} />
@@ -307,9 +307,9 @@ function LeadScore({ score }: { score: number }) {
 
 function InfoCell({ label, value }: { label: string; value: string }) {
   return (
-    <div className="min-w-0 rounded-xl border border-[var(--admin-border)] bg-[#fbfdff] px-3 py-2">
-      <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-[var(--admin-muted)]">{label}</p>
-      <p className="mt-1 truncate text-sm text-[var(--admin-foreground)]">{value || "Nao informado"}</p>
+    <div className="min-w-0 rounded-lg border border-[var(--admin-border)] bg-[#fbfdff] px-2.5 py-2">
+      <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--admin-muted)]">{label}</p>
+      <p className="mt-0.5 truncate text-[13px] leading-5 text-[var(--admin-foreground)]">{value || "Nao informado"}</p>
     </div>
   );
 }
@@ -338,12 +338,12 @@ function ActionButton({
       disabled={disabled || busy}
       title={title || children}
       className={cn(
-        "inline-flex h-9 items-center justify-center gap-2 rounded-full border px-3 text-xs font-semibold text-[var(--admin-foreground)] transition disabled:cursor-not-allowed disabled:opacity-55",
+        "inline-flex h-8 min-w-0 items-center justify-center gap-1.5 rounded-full border px-2.5 text-[11px] font-semibold text-[var(--admin-foreground)] transition disabled:cursor-not-allowed disabled:opacity-55",
         toneBg[tone],
         !disabled && !busy ? "hover:border-white/50 hover:bg-white/[0.06]" : ""
       )}
     >
-      {busy ? <Loader2 size={14} className="animate-spin" /> : <Icon size={14} />}
+      {busy ? <Loader2 size={13} className="animate-spin" /> : <Icon size={13} />}
       <span className="truncate">{children}</span>
     </button>
   );
@@ -370,33 +370,33 @@ function LeadQueueItem({
       type="button"
       onClick={onSelect}
       className={cn(
-        "grid w-full gap-3 border-b border-[var(--admin-border)] px-3 py-3 text-left transition last:border-b-0",
+        "grid w-full overflow-hidden border-b border-[var(--admin-border)] px-3 py-2.5 text-left transition last:border-b-0",
         selected
           ? "bg-[rgba(15,124,144,0.08)] shadow-[inset_3px_0_0_var(--admin-cyan)]"
           : "hover:bg-[rgba(15,124,144,0.04)]"
       )}
     >
-      <div className="grid min-w-0 grid-cols-[36px_minmax(0,1fr)] gap-3">
+      <div className="grid min-w-0 grid-cols-[32px_minmax(0,1fr)] gap-2.5">
         <LeadAvatar lead={lead} size="sm" />
         <div className="min-w-0">
           <div className="flex min-w-0 items-start justify-between gap-2">
             <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-[var(--admin-foreground)]">{lead.name}</p>
+              <p className="truncate text-[13px] font-semibold text-[var(--admin-foreground)]">{lead.name}</p>
               <p className="mt-0.5 truncate text-[11px] text-[var(--admin-muted)]">{formatPhone(lead.phone)}</p>
             </div>
-            <span className="shrink-0 text-[11px] text-[var(--admin-muted)]">{formatRelative(lead.lastMessageAt)}</span>
+            <span className="shrink-0 text-[10px] text-[var(--admin-muted)]">{formatRelative(lead.lastMessageAt)}</span>
           </div>
 
-          <p className="mt-2 line-clamp-2 text-xs leading-5 text-[var(--admin-soft)]">
+          <p className="mt-1.5 line-clamp-2 text-[11px] leading-4 text-[var(--admin-soft)]">
             {lead.lastMessagePreview || lead.nextAction}
           </p>
 
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            <StatusBadge tone={priorityTone}>{leadPriorityLabel(lead)}</StatusBadge>
-            <StatusBadge tone={crmStageTone[lead.crmStage]}>{crmStageLabels[lead.crmStage]}</StatusBadge>
-            {lead.humanInterventionActive && <StatusBadge tone="yellow">em atendimento</StatusBadge>}
+          <div className="mt-1.5 flex min-w-0 flex-wrap gap-1">
+            <StatusBadge tone={priorityTone} className="h-5 px-1.5 text-[9px]">{leadPriorityLabel(lead)}</StatusBadge>
+            <StatusBadge tone={crmStageTone[lead.crmStage]} className="h-5 px-1.5 text-[9px]">{crmStageLabels[lead.crmStage]}</StatusBadge>
+            {lead.humanInterventionActive && <StatusBadge tone="yellow" className="h-5 px-1.5 text-[9px]">em atendimento</StatusBadge>}
             {visibleTags.map((tag) => (
-              <span key={tag} className="rounded border border-[var(--admin-border)] bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--admin-muted)]">
+              <span key={tag} className="max-w-[112px] truncate rounded border border-[var(--admin-border)] bg-white px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.06em] text-[var(--admin-muted)]">
                 {tag}
               </span>
             ))}
@@ -416,8 +416,8 @@ function ChatBubble({ item }: { item: WhatsAppCrmTimelineItem }) {
 
   if (isSystem) {
     return (
-      <div className="my-3 flex justify-center">
-        <span className="max-w-[88%] rounded-md border border-[var(--admin-border)] bg-white/85 px-3 py-1.5 text-center text-[11px] font-medium text-[var(--admin-muted)] shadow-sm">
+      <div className="my-2 flex justify-center">
+        <span className="max-w-[88%] rounded-md border border-[var(--admin-border)] bg-white/85 px-2.5 py-1 text-center text-[10px] font-medium text-[var(--admin-muted)] shadow-sm">
           {body}
         </span>
       </div>
@@ -425,10 +425,10 @@ function ChatBubble({ item }: { item: WhatsAppCrmTimelineItem }) {
   }
 
   return (
-    <div className={cn("mb-3 flex last:mb-0", isOutbound ? "justify-end" : "justify-start")}>
+    <div className={cn("mb-2.5 flex last:mb-0", isOutbound ? "justify-end" : "justify-start")}>
       <div
         className={cn(
-          "max-w-[92%] rounded-lg border px-3.5 py-2.5 shadow-sm sm:max-w-[78%]",
+          "max-w-[92%] rounded-lg border px-3 py-2 shadow-sm sm:max-w-[72%]",
           isOutbound
             ? item.authorType === "human"
               ? "rounded-br-sm border-[rgba(234,179,8,0.28)] bg-[#fff6d8]"
@@ -436,16 +436,16 @@ function ChatBubble({ item }: { item: WhatsAppCrmTimelineItem }) {
             : "rounded-bl-sm border-[#f5efe6] bg-white"
         )}
       >
-        <div className="mb-1.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-          <span className={cn("inline-flex min-w-0 items-center gap-1.5 text-[11px] font-semibold", toneText[itemTone])}>
+        <div className="mb-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          <span className={cn("inline-flex min-w-0 items-center gap-1.5 text-[10px] font-semibold", toneText[itemTone])}>
             <TimelineMessageIcon item={item} />
             <span className="truncate">{timelineActorLabel(item)}</span>
           </span>
           <span className="shrink-0 font-mono text-[10px] text-[var(--admin-muted)]">{formatRelative(item.createdAt)}</span>
         </div>
-        <p className="whitespace-pre-wrap break-words text-sm leading-6 text-[var(--admin-foreground)]">{body}</p>
+        <p className="whitespace-pre-wrap break-words text-[13px] leading-5 text-[var(--admin-foreground)]">{body}</p>
         {item.transcript && item.transcript !== item.text && (
-          <div className="mt-2 rounded-md border border-[var(--admin-border)] bg-white/70 px-2 py-1.5 text-xs leading-5 text-[var(--admin-muted)]">
+          <div className="mt-2 rounded-md border border-[var(--admin-border)] bg-white/70 px-2 py-1.5 text-[11px] leading-4 text-[var(--admin-muted)]">
             <span className="font-semibold text-[var(--admin-foreground)]">Transcricao: </span>
             {item.transcript}
           </div>
@@ -455,7 +455,7 @@ function ChatBubble({ item }: { item: WhatsAppCrmTimelineItem }) {
             href={item.mediaUrl}
             target="_blank"
             rel="noreferrer"
-            className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-[var(--admin-border)] bg-white/70 px-2 py-1 text-xs font-semibold text-[var(--admin-cyan)] transition hover:border-[var(--admin-cyan)] hover:text-[var(--admin-foreground)]"
+            className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-[var(--admin-border)] bg-white/70 px-2 py-1 text-[11px] font-semibold text-[var(--admin-cyan)] transition hover:border-[var(--admin-cyan)] hover:text-[var(--admin-foreground)]"
           >
             <Paperclip size={13} />
             Abrir midia
@@ -486,7 +486,7 @@ function LiveChatPanel({
 }) {
   if (!lead) {
     return (
-      <section className="grid min-h-[620px] place-items-center rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-6 text-center text-sm text-[var(--admin-muted)] shadow-sm shadow-[rgba(81,60,36,0.06)]">
+      <section className="grid min-h-[560px] place-items-center rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-5 text-center text-[13px] text-[var(--admin-muted)] shadow-sm shadow-[rgba(81,60,36,0.06)]">
         Nenhum atendimento na fila atual.
       </section>
     );
@@ -499,17 +499,17 @@ function LiveChatPanel({
   const toggleBusy = busyAction === `${lead.id}:${toggleAction}`;
 
   return (
-    <section className="grid min-h-[640px] min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-[22px] border border-[rgba(15,124,144,0.16)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(81,60,36,0.08)] xl:h-[calc(100vh-188px)] xl:max-h-[820px]">
-      <div className="flex min-h-16 flex-wrap items-center justify-between gap-3 border-b border-[var(--admin-border)] bg-white px-4 py-3">
-        <div className="flex min-w-0 items-center gap-3">
+    <section className="grid min-h-[560px] min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-[18px] border border-[rgba(15,124,144,0.16)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(81,60,36,0.08)] xl:h-[calc(100vh-156px)] xl:max-h-[840px]">
+      <div className="flex min-h-14 flex-wrap items-center justify-between gap-2 border-b border-[var(--admin-border)] bg-white px-3.5 py-2.5">
+        <div className="flex min-w-0 items-center gap-2.5">
           <LeadAvatar lead={lead} />
           <div className="min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <h2 className="truncate text-base font-semibold text-[var(--admin-foreground)]">{lead.name}</h2>
-              <StatusBadge tone={statusTone}>{conversationStatusLabel(lead)}</StatusBadge>
-              <StatusBadge tone={crmStageTone[lead.crmStage]}>{crmStageLabels[lead.crmStage]}</StatusBadge>
+              <h2 className="truncate text-[15px] font-semibold text-[var(--admin-foreground)]">{lead.name}</h2>
+              <StatusBadge tone={statusTone} className="h-5 px-1.5 text-[9px]">{conversationStatusLabel(lead)}</StatusBadge>
+              <StatusBadge tone={crmStageTone[lead.crmStage]} className="h-5 px-1.5 text-[9px]">{crmStageLabels[lead.crmStage]}</StatusBadge>
             </div>
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--admin-muted)]">
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-[var(--admin-muted)]">
               <span className="inline-flex items-center gap-1">
                 <Phone size={12} />
                 {formatPhone(lead.phone)}
@@ -526,7 +526,7 @@ function LiveChatPanel({
             onClick={() => onLeadAction(toggleAction, lead)}
             title={lead.humanInterventionActive ? "Retomar atendimento automatico" : "Pausar a IA e assumir atendimento humano"}
             className={cn(
-              "inline-flex h-9 items-center justify-center gap-2 rounded-full border px-4 text-xs font-semibold text-[#fffaf0] shadow-sm transition disabled:cursor-not-allowed disabled:opacity-55",
+              "inline-flex h-8 items-center justify-center gap-1.5 rounded-full border px-3 text-[11px] font-semibold text-[#fffaf0] shadow-sm transition disabled:cursor-not-allowed disabled:opacity-55",
               lead.humanInterventionActive
                 ? "border-[var(--admin-green)] bg-[var(--admin-green)] hover:bg-[#0f6d4f]"
                 : "border-[var(--admin-cyan)] bg-[var(--admin-cyan)] hover:bg-[#0b6676]"
@@ -544,44 +544,44 @@ function LiveChatPanel({
           <button
             type="button"
             onClick={onOpenLeadFile}
-            className="inline-flex h-9 items-center justify-center gap-2 rounded-full border border-[rgba(18,128,92,0.24)] bg-[rgba(18,128,92,0.08)] px-4 text-xs font-semibold text-[var(--admin-green)] transition hover:border-[var(--admin-green)] hover:bg-[rgba(18,128,92,0.12)]"
+            className="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-[rgba(18,128,92,0.24)] bg-[rgba(18,128,92,0.08)] px-3 text-[11px] font-semibold text-[var(--admin-green)] transition hover:border-[var(--admin-green)] hover:bg-[rgba(18,128,92,0.12)]"
           >
-            <ClipboardCheck size={14} />
+            <ClipboardCheck size={13} />
             CRM do lead
           </button>
         </div>
       </div>
 
       <div
-        className="min-h-0 overflow-auto px-3 py-4 sm:px-5"
+        className="min-h-0 overflow-auto px-3 py-3.5 sm:px-4"
         style={whatsappChatBackgroundStyle}
       >
         {timeline.length ? (
           timeline.map((item) => <ChatBubble key={item.id} item={item} />)
         ) : (
-          <div className="grid min-h-[360px] place-items-center rounded-lg border border-dashed border-[var(--admin-border)] bg-white/70 px-4 text-center text-sm text-[var(--admin-muted)]">
+          <div className="grid min-h-[300px] place-items-center rounded-lg border border-dashed border-[var(--admin-border)] bg-white/70 px-4 text-center text-[13px] text-[var(--admin-muted)]">
             Sem mensagens salvas para este lead.
           </div>
         )}
       </div>
 
-      <div className="border-t border-[var(--admin-border)] bg-[#f9fafb] p-3">
-        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <span className="inline-flex items-center gap-2 text-xs font-semibold text-[var(--admin-foreground)]">
+      <div className="border-t border-[var(--admin-border)] bg-[#f9fafb] p-2.5">
+        <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+          <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[var(--admin-foreground)]">
             <Send size={14} className="text-[var(--admin-cyan)]" />
             Resposta humana
           </span>
-          <StatusBadge tone={lead.humanInterventionActive ? "yellow" : "muted"}>
+          <StatusBadge tone={lead.humanInterventionActive ? "yellow" : "muted"} className="h-5 px-1.5 text-[9px]">
             {lead.humanInterventionActive ? "humano ativo" : "opcional"}
           </StatusBadge>
         </div>
-        <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_132px] lg:items-end">
+        <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_118px] lg:items-end">
           <textarea
             value={manualReply}
             onChange={(event) => onManualReplyChange(event.target.value)}
             placeholder="Digite uma resposta aqui no painel"
-            rows={3}
-            className="min-h-[66px] w-full resize-none rounded-lg border border-[var(--admin-border)] bg-white px-4 py-3 text-sm leading-6 text-[var(--admin-foreground)] outline-none placeholder:text-[var(--admin-muted)] focus:border-[var(--admin-cyan)] focus:ring-3 focus:ring-[rgba(15,124,144,0.12)]"
+            rows={2}
+            className="min-h-[58px] w-full resize-none rounded-lg border border-[var(--admin-border)] bg-white px-3 py-2.5 text-[13px] leading-5 text-[var(--admin-foreground)] outline-none placeholder:text-[var(--admin-muted)] focus:border-[var(--admin-cyan)] focus:ring-3 focus:ring-[rgba(15,124,144,0.12)]"
           />
           <div className="flex items-center justify-between gap-3 lg:grid lg:justify-items-end">
             <span className="text-[10px] text-[var(--admin-muted)]">{manualReply.trim().length}/2200</span>
@@ -625,8 +625,8 @@ function LeadDetail({
 }) {
   if (!lead) {
     return (
-      <div className="rounded-2xl border border-[var(--admin-border)] bg-white p-6">
-        <div className="py-10 text-center text-sm text-[var(--admin-muted)]">Nenhum lead na fila atual.</div>
+      <div className="rounded-xl border border-[var(--admin-border)] bg-white p-4">
+        <div className="py-8 text-center text-[13px] text-[var(--admin-muted)]">Nenhum lead na fila atual.</div>
       </div>
     );
   }
@@ -643,20 +643,20 @@ function LeadDetail({
   const selectedCrmStage = stageDraft.crmStage || lead.crmStage;
 
   return (
-    <div className="grid gap-3">
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex min-w-0 items-start gap-3">
-          <LeadAvatar lead={lead} size="lg" />
+    <div className="grid gap-2.5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-2.5">
+          <LeadAvatar lead={lead} />
           <div className="min-w-0">
-            <h2 className="truncate text-lg font-semibold text-[var(--admin-foreground)]">{lead.name}</h2>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-[var(--admin-muted)]">
+            <h2 className="truncate text-[15px] font-semibold text-[var(--admin-foreground)]">{lead.name}</h2>
+            <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[12px] text-[var(--admin-muted)]">
               <span>{formatPhone(lead.phone)}</span>
               {lead.whatsappUrl && (
                 <a
                   href={lead.whatsappUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-1 text-xs font-semibold text-[var(--admin-cyan)] transition hover:text-[var(--admin-foreground)]"
+                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--admin-cyan)] transition hover:text-[var(--admin-foreground)]"
                 >
                   Abrir WhatsApp
                   <ExternalLink size={12} />
@@ -668,14 +668,14 @@ function LeadDetail({
         <LeadScore score={lead.score} />
       </div>
 
-      <div className={cn("mt-5 rounded-lg border px-4 py-3", toneBg[lead.humanInterventionActive ? "yellow" : "cyan"])}>
-        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--admin-muted)]">Resumo inteligente</p>
-        <p className="mt-2 text-sm leading-6 text-[var(--admin-foreground)]">{lead.nextAction}</p>
+      <div className={cn("mt-2 rounded-lg border px-3 py-2.5", toneBg[lead.humanInterventionActive ? "yellow" : "cyan"])}>
+        <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Resumo inteligente</p>
+        <p className="mt-1.5 text-[13px] leading-5 text-[var(--admin-foreground)]">{lead.nextAction}</p>
       </div>
 
-      <div className="mt-5">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <p className="text-xs font-semibold text-[var(--admin-foreground)]">Panorama de qualificacao</p>
+      <div className="mt-2">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <p className="text-[11px] font-semibold text-[var(--admin-foreground)]">Panorama de qualificacao</p>
           <span className="font-mono text-[10px] text-[var(--admin-muted)]">{filled}/6 campos</span>
         </div>
         <div className="grid gap-2 sm:grid-cols-2">
@@ -685,13 +685,13 @@ function LeadDetail({
         </div>
       </div>
 
-      <details className="group mt-4 rounded-lg border border-[var(--admin-border)] bg-white">
-        <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3">
-          <span className="text-xs font-semibold text-[var(--admin-foreground)]">Ficha tecnica</span>
+      <details className="group mt-2 rounded-lg border border-[var(--admin-border)] bg-white">
+        <summary className="flex min-h-9 cursor-pointer list-none items-center justify-between gap-3 px-3">
+          <span className="text-[11px] font-semibold text-[var(--admin-foreground)]">Ficha tecnica</span>
           <span className="font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)] group-open:hidden">Abrir</span>
           <span className="hidden font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--admin-cyan)] group-open:inline">Fechar</span>
         </summary>
-        <div className="grid gap-2 border-t border-[var(--admin-border)] p-3 sm:grid-cols-2">
+        <div className="grid gap-2 border-t border-[var(--admin-border)] p-2.5 sm:grid-cols-2">
           <InfoCell label="Agente" value={lead.agentName} />
           <InfoCell label="Origem" value={lead.source} />
           <InfoCell label="Etapa CRM" value={crmStageLabels[lead.crmStage]} />
@@ -703,20 +703,20 @@ function LeadDetail({
       </details>
 
       {lead.runtimeDecision.primaryIntent && (
-        <details className="group mt-3 rounded-lg border border-[var(--admin-border)] bg-white">
-          <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3">
-            <span className="inline-flex min-w-0 items-center gap-2 text-xs font-semibold text-[var(--admin-foreground)]">
-              <Bot size={14} className="text-[var(--admin-cyan)]" />
+        <details className="group mt-2 rounded-lg border border-[var(--admin-border)] bg-white">
+          <summary className="flex min-h-9 cursor-pointer list-none items-center justify-between gap-2 px-3">
+            <span className="inline-flex min-w-0 items-center gap-1.5 text-[11px] font-semibold text-[var(--admin-foreground)]">
+              <Bot size={13} className="text-[var(--admin-cyan)]" />
               Motor de atendimento
             </span>
             <span className="flex shrink-0 items-center gap-2">
-              <StatusBadge tone={lead.runtimeDecision.riskFlags.length ? "yellow" : "cyan"}>
+              <StatusBadge tone={lead.runtimeDecision.riskFlags.length ? "yellow" : "cyan"} className="h-5 px-1.5 text-[9px]">
                 {lead.runtimeDecision.stage ? crmStageLabels[lead.runtimeDecision.stage] : lead.runtimeDecision.primaryIntent}
               </StatusBadge>
               <ChevronDown size={14} className="text-[var(--admin-muted)] transition-transform group-open:rotate-180" />
             </span>
           </summary>
-          <div className="border-t border-[var(--admin-border)] p-3">
+          <div className="border-t border-[var(--admin-border)] p-2.5">
             <div className="grid gap-2 sm:grid-cols-3">
               <InfoCell label="Intencao" value={lead.runtimeDecision.primaryIntent} />
               <InfoCell label="Confianca" value={formatHealthPercent(lead.runtimeDecision.confidence)} />
@@ -724,12 +724,12 @@ function LeadDetail({
             </div>
             <div className="mt-3 grid gap-2">
               {lead.runtimeDecision.qualificationMissing.length > 0 && (
-                <p className="rounded border border-[rgba(234,179,8,0.28)] bg-[rgba(234,179,8,0.08)] px-2 py-1.5 text-xs leading-5 text-[var(--admin-yellow)]">
+                <p className="rounded border border-[rgba(234,179,8,0.28)] bg-[rgba(234,179,8,0.08)] px-2 py-1.5 text-[11px] leading-4 text-[var(--admin-yellow)]">
                   Falta coletar: {lead.runtimeDecision.qualificationMissing.slice(0, 3).join(", ")}
                 </p>
               )}
               {lead.runtimeDecision.riskFlags.length > 0 && (
-                <p className="rounded border border-[rgba(239,68,68,0.28)] bg-[rgba(239,68,68,0.08)] px-2 py-1.5 text-xs leading-5 text-[var(--admin-red)]">
+                <p className="rounded border border-[rgba(239,68,68,0.28)] bg-[rgba(239,68,68,0.08)] px-2 py-1.5 text-[11px] leading-4 text-[var(--admin-red)]">
                   Risco: {lead.runtimeDecision.riskFlags.slice(0, 3).join(", ")}
                 </p>
               )}
@@ -738,18 +738,18 @@ function LeadDetail({
         </details>
       )}
 
-      <div className="mt-3 rounded-lg border border-[var(--admin-border)] bg-white/[0.02] p-3">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <p className="text-xs font-semibold text-[var(--admin-foreground)]">Etapa do funil</p>
-          <StatusBadge tone={crmStageTone[lead.crmStage]}>{crmStageLabels[lead.crmStage]}</StatusBadge>
+      <div className="mt-2 rounded-lg border border-[var(--admin-border)] bg-white/[0.02] p-2.5">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <p className="text-[11px] font-semibold text-[var(--admin-foreground)]">Etapa do funil</p>
+          <StatusBadge tone={crmStageTone[lead.crmStage]} className="h-5 px-1.5 text-[9px]">{crmStageLabels[lead.crmStage]}</StatusBadge>
         </div>
-        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+        <div className="grid gap-2">
           <label className="grid gap-1.5">
-            <span className="text-[10px] font-bold uppercase tracking-[0.13em] text-[var(--admin-muted)]">CRM WhatsApp</span>
+            <span className="text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--admin-muted)]">CRM WhatsApp</span>
             <select
               value={selectedCrmStage}
               onChange={(event) => onStageDraftChange({ crmStage: event.target.value as WhatsAppCrmStage })}
-              className="h-9 rounded-md border border-[var(--admin-border)] bg-white px-3 text-sm text-[var(--admin-foreground)] outline-none focus:border-[var(--admin-cyan)]"
+              className="h-8 rounded-md border border-[var(--admin-border)] bg-white px-2.5 text-[13px] text-[var(--admin-foreground)] outline-none focus:border-[var(--admin-cyan)]"
             >
               {crmStages.map((stage) => (
                 <option key={stage.key} value={stage.key}>
@@ -771,36 +771,36 @@ function LeadDetail({
         </div>
       </div>
 
-      <div className="mt-5 rounded-lg border border-[var(--admin-border)] bg-white/[0.02] p-3">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <p className="inline-flex items-center gap-2 text-xs font-semibold text-[var(--admin-foreground)]">
-            <StickyNote size={14} className="text-[var(--admin-cyan)]" />
+      <div className="mt-2 rounded-lg border border-[var(--admin-border)] bg-white/[0.02] p-2.5">
+        <div className="mb-2 flex min-w-0 items-center justify-between gap-2">
+          <p className="inline-flex min-w-0 items-center gap-1.5 text-[11px] font-semibold text-[var(--admin-foreground)]">
+            <StickyNote size={13} className="text-[var(--admin-cyan)]" />
             Contexto interno
           </p>
-          <StatusBadge tone={lead.assignedToLabel ? "purple" : "muted"}>
+          <StatusBadge tone={lead.assignedToLabel ? "purple" : "muted"} className="h-5 max-w-[120px] px-1.5 text-[9px]">
             {lead.assignedToLabel ? `resp. ${lead.assignedToLabel}` : "fila"}
           </StatusBadge>
         </div>
-        <div className="grid gap-2 sm:grid-cols-2">
+        <div className="grid gap-2">
           <label className="grid gap-1.5">
-            <span className="text-[10px] font-bold uppercase tracking-[0.13em] text-[var(--admin-muted)]">Responsavel</span>
+            <span className="text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--admin-muted)]">Responsavel</span>
             <input
               value={contextDraft.assignedToLabel}
               onChange={(event) => onContextDraftChange({ assignedToLabel: event.target.value })}
               placeholder="Nome do atendente"
-              className="h-9 rounded-md border border-[var(--admin-border)] bg-white px-3 text-sm text-[var(--admin-foreground)] outline-none placeholder:text-[var(--admin-muted)] focus:border-[var(--admin-cyan)]"
+              className="h-8 min-w-0 rounded-md border border-[var(--admin-border)] bg-white px-2.5 text-[13px] text-[var(--admin-foreground)] outline-none placeholder:text-[var(--admin-muted)] focus:border-[var(--admin-cyan)]"
             />
           </label>
           <label className="grid gap-1.5">
-            <span className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.13em] text-[var(--admin-muted)]">
+            <span className="inline-flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--admin-muted)]">
               <Tags size={12} />
               Tags
             </span>
             <input
               value={contextDraft.internalTags}
               onChange={(event) => onContextDraftChange({ internalTags: event.target.value })}
-              placeholder="ex: visita, edital, documentacao"
-              className="h-9 rounded-md border border-[var(--admin-border)] bg-white px-3 text-sm text-[var(--admin-foreground)] outline-none placeholder:text-[var(--admin-muted)] focus:border-[var(--admin-cyan)]"
+              placeholder="ex: visita, edital"
+              className="h-8 min-w-0 rounded-md border border-[var(--admin-border)] bg-white px-2.5 text-[13px] text-[var(--admin-foreground)] outline-none placeholder:text-[var(--admin-muted)] focus:border-[var(--admin-cyan)]"
             />
           </label>
         </div>
@@ -808,8 +808,8 @@ function LeadDetail({
           value={contextDraft.internalNotes}
           onChange={(event) => onContextDraftChange({ internalNotes: event.target.value })}
           placeholder="Notas internas do atendimento"
-          rows={3}
-          className="mt-2 min-h-[84px] w-full resize-none rounded-md border border-[var(--admin-border)] bg-white px-3 py-2 text-sm leading-6 text-[var(--admin-foreground)] outline-none placeholder:text-[var(--admin-muted)] focus:border-[var(--admin-cyan)]"
+          rows={2}
+          className="mt-2 min-h-[64px] w-full resize-none rounded-md border border-[var(--admin-border)] bg-white px-2.5 py-2 text-[13px] leading-5 text-[var(--admin-foreground)] outline-none placeholder:text-[var(--admin-muted)] focus:border-[var(--admin-cyan)]"
         />
         <div className="mt-2 flex items-center justify-between gap-3">
           <span className="text-[10px] text-[var(--admin-muted)]">{contextDraft.internalNotes.trim().length}/1800</span>
@@ -827,24 +827,24 @@ function LeadDetail({
       </div>
 
       {lead.latestReviewScore > 0 && (
-        <div className={cn("mt-3 flex items-center justify-between gap-3 rounded-lg border px-4 py-3", toneBg[reviewTone(lead.latestReviewScore, lead.latestReviewVerdict)])}>
+        <div className={cn("mt-2 flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5", toneBg[reviewTone(lead.latestReviewScore, lead.latestReviewVerdict)])}>
           <div className="min-w-0">
-            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--admin-muted)]">Auditoria IA</p>
-            <p className="mt-1 truncate text-sm text-[var(--admin-foreground)]">{lead.latestReviewVerdict || "monitorar"}</p>
+            <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Auditoria IA</p>
+            <p className="mt-0.5 truncate text-[13px] text-[var(--admin-foreground)]">{lead.latestReviewVerdict || "monitorar"}</p>
           </div>
-          <div className={cn("font-mono text-2xl font-bold", toneText[reviewTone(lead.latestReviewScore, lead.latestReviewVerdict)])}>
+          <div className={cn("font-mono text-xl font-bold", toneText[reviewTone(lead.latestReviewScore, lead.latestReviewVerdict)])}>
             {lead.latestReviewScore}
           </div>
         </div>
       )}
 
-      <details className="group mt-4 rounded-lg border border-[var(--admin-border)] bg-white">
-        <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3">
-          <span className="text-xs font-semibold text-[var(--admin-foreground)]">Acoes administrativas</span>
+      <details className="group mt-2 rounded-lg border border-[var(--admin-border)] bg-white">
+        <summary className="flex min-h-9 cursor-pointer list-none items-center justify-between gap-3 px-3">
+          <span className="text-[11px] font-semibold text-[var(--admin-foreground)]">Acoes administrativas</span>
           <span className="font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)] group-open:hidden">Abrir</span>
           <span className="hidden font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--admin-cyan)] group-open:inline">Fechar</span>
         </summary>
-        <div className="grid gap-2 border-t border-[var(--admin-border)] p-3 sm:grid-cols-2">
+        <div className="grid gap-2 border-t border-[var(--admin-border)] p-2.5 sm:grid-cols-2">
           <ActionButton
             icon={UserCheck}
             tone="yellow"
@@ -935,7 +935,7 @@ function LeadDetail({
 function LeadSidePanel({ lead }: { lead?: WhatsAppCrmLeadCard }) {
   if (!lead) {
     return (
-      <aside className="rounded-[22px] border border-[rgba(15,124,144,0.14)] bg-white p-5 text-sm text-[var(--admin-muted)] shadow-sm shadow-[rgba(81,60,36,0.06)]">
+      <aside className="rounded-[18px] border border-[rgba(15,124,144,0.14)] bg-white p-4 text-[13px] text-[var(--admin-muted)] shadow-sm shadow-[rgba(81,60,36,0.06)]">
         Nenhum lead selecionado.
       </aside>
     );
@@ -955,28 +955,28 @@ function LeadSidePanel({ lead }: { lead?: WhatsAppCrmLeadCard }) {
     .at(-1);
 
   return (
-    <aside className="grid min-w-0 gap-3 2xl:sticky 2xl:top-24 2xl:h-[calc(100vh-188px)] 2xl:max-h-[820px] 2xl:overflow-auto">
-      <section className="overflow-hidden rounded-[22px] border border-[rgba(15,124,144,0.14)] bg-white shadow-sm shadow-[rgba(81,60,36,0.06)]">
-        <div className="border-b border-[var(--admin-border)] bg-[#fbfdff] px-4 py-4">
-          <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--admin-muted)]">
+    <aside className="grid min-w-0 gap-3 2xl:sticky 2xl:top-20 2xl:h-[calc(100vh-156px)] 2xl:max-h-[840px] 2xl:overflow-auto">
+      <section className="overflow-hidden rounded-[18px] border border-[rgba(15,124,144,0.14)] bg-white shadow-sm shadow-[rgba(81,60,36,0.06)]">
+        <div className="border-b border-[var(--admin-border)] bg-[#fbfdff] px-3.5 py-3">
+          <p className="font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-[var(--admin-muted)]">
             arquivo do lead
           </p>
-          <div className="mt-2 flex items-start justify-between gap-3">
+          <div className="mt-1.5 flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <h3 className="truncate text-xl font-semibold text-[var(--admin-foreground)]">Perfil rapido</h3>
-              <p className="mt-1 text-sm text-[var(--admin-muted)]">{filled}/6 campos de qualificacao</p>
+              <h3 className="truncate text-lg font-semibold text-[var(--admin-foreground)]">Perfil rapido</h3>
+              <p className="mt-0.5 text-[12px] text-[var(--admin-muted)]">{filled}/6 campos de qualificacao</p>
             </div>
-            <StatusBadge tone={crmStageTone[lead.crmStage]}>{crmStageLabels[lead.crmStage]}</StatusBadge>
+            <StatusBadge tone={crmStageTone[lead.crmStage]} className="h-5 px-1.5 text-[9px]">{crmStageLabels[lead.crmStage]}</StatusBadge>
           </div>
         </div>
 
-        <div className="grid gap-4 p-4">
-          <div className={cn("rounded-2xl border px-4 py-3", toneBg[leadPriorityTone(lead)])}>
+        <div className="grid gap-2.5 p-3">
+          <div className={cn("rounded-xl border px-3 py-2.5", toneBg[leadPriorityTone(lead)])}>
             <div className="flex items-center justify-between gap-3">
-              <span className="text-xs font-semibold text-[var(--admin-foreground)]">{leadPriorityLabel(lead)}</span>
+              <span className="text-[12px] font-semibold text-[var(--admin-foreground)]">{leadPriorityLabel(lead)}</span>
               <LeadScore score={lead.score} />
             </div>
-            <p className="mt-3 text-sm leading-6 text-[var(--admin-foreground)]">{lead.nextAction}</p>
+            <p className="mt-2 line-clamp-3 text-[13px] leading-5 text-[var(--admin-foreground)]">{lead.nextAction}</p>
           </div>
 
           <div className="grid gap-2">
@@ -985,11 +985,11 @@ function LeadSidePanel({ lead }: { lead?: WhatsAppCrmLeadCard }) {
             ))}
           </div>
 
-          <div className="rounded-2xl border border-[var(--admin-border)] bg-[#fbfdff] px-4 py-3">
-            <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--admin-muted)]">
+          <div className="rounded-xl border border-[var(--admin-border)] bg-[#fbfdff] px-3 py-2.5">
+            <p className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-[var(--admin-muted)]">
               ultima entrada
             </p>
-            <p className="mt-2 line-clamp-4 text-sm leading-6 text-[var(--admin-foreground)]">
+            <p className="mt-1.5 line-clamp-3 text-[13px] leading-5 text-[var(--admin-foreground)]">
               {lastInbound?.text || lastInbound?.transcript || lead.lastMessagePreview || "Sem mensagem recente do lead."}
             </p>
           </div>
@@ -1029,17 +1029,17 @@ function LeadFileModal({
   const timeline = sortedTimeline(lead.timeline);
 
   return (
-    <div className="fixed inset-0 z-50 bg-[rgba(15,23,42,0.22)] p-3 backdrop-blur-sm sm:p-6">
-      <section className="mx-auto grid h-[calc(100vh-24px)] max-w-[1380px] grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-[24px] border border-[rgba(15,124,144,0.18)] bg-white shadow-2xl shadow-[rgba(15,23,42,0.18)] sm:h-[calc(100vh-48px)]">
-        <header className="flex min-h-20 flex-wrap items-center justify-between gap-4 border-b border-[var(--admin-border)] bg-white px-5 py-4">
-          <div className="flex min-w-0 items-center gap-3">
-            <LeadAvatar lead={lead} size="lg" />
+    <div className="fixed inset-0 z-50 grid place-items-center bg-[rgba(15,23,42,0.24)] p-3 backdrop-blur-sm sm:p-5">
+      <section className="grid h-[min(840px,calc(100vh-32px))] w-full max-w-[1240px] grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-[20px] border border-[rgba(15,124,144,0.18)] bg-white shadow-2xl shadow-[rgba(15,23,42,0.18)]">
+        <header className="flex min-h-16 flex-wrap items-center justify-between gap-3 border-b border-[var(--admin-border)] bg-white px-4 py-3">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <LeadAvatar lead={lead} />
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <h2 className="truncate text-xl font-semibold text-[var(--admin-foreground)]">Arquivo inteligente do lead</h2>
-                <StatusBadge tone={crmStageTone[lead.crmStage]}>{crmStageLabels[lead.crmStage]}</StatusBadge>
+                <h2 className="truncate text-base font-semibold text-[var(--admin-foreground)]">Arquivo inteligente do lead</h2>
+                <StatusBadge tone={crmStageTone[lead.crmStage]} className="h-5 px-1.5 text-[9px]">{crmStageLabels[lead.crmStage]}</StatusBadge>
               </div>
-              <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-[var(--admin-muted)]">
+              <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[12px] text-[var(--admin-muted)]">
                 <span className="font-semibold text-[var(--admin-foreground)]">{lead.name}</span>
                 <span>{formatPhone(lead.phone)}</span>
               </div>
@@ -1048,15 +1048,15 @@ function LeadFileModal({
           <button
             type="button"
             onClick={onClose}
-            className="grid size-10 place-items-center rounded-full border border-[var(--admin-border)] bg-white text-[var(--admin-muted)] transition hover:border-[var(--admin-cyan)] hover:text-[var(--admin-foreground)]"
+            className="grid size-9 place-items-center rounded-full border border-[var(--admin-border)] bg-white text-[var(--admin-muted)] transition hover:border-[var(--admin-cyan)] hover:text-[var(--admin-foreground)]"
             title="Fechar arquivo do lead"
           >
-            <X size={18} />
+            <X size={16} />
           </button>
         </header>
 
-        <div className="grid min-h-0 lg:grid-cols-[380px_minmax(0,1fr)]">
-          <div className="min-h-0 overflow-auto border-r border-[var(--admin-border)] bg-[#f8fbff] p-4">
+        <div className="grid min-h-0 lg:grid-cols-[328px_minmax(0,1fr)]">
+          <div className="min-h-0 overflow-auto border-r border-[var(--admin-border)] bg-[#f8fbff] p-3">
             <LeadDetail
               lead={lead}
               busyAction={busyAction}
@@ -1071,36 +1071,36 @@ function LeadFileModal({
           </div>
 
           <section className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] bg-white">
-            <div className="flex min-h-20 items-center justify-between gap-4 border-b border-[var(--admin-border)] px-5 py-4">
-              <div className="flex min-w-0 items-center gap-3">
+            <div className="flex min-h-16 items-center justify-between gap-3 border-b border-[var(--admin-border)] px-4 py-3">
+              <div className="flex min-w-0 items-center gap-2.5">
                 <LeadAvatar lead={lead} />
                 <div className="min-w-0">
-                  <p className="truncate text-base font-semibold text-[var(--admin-foreground)]">{lead.name}</p>
-                  <p className="mt-1 text-sm text-[var(--admin-muted)]">{formatPhone(lead.phone)}</p>
+                  <p className="truncate text-[15px] font-semibold text-[var(--admin-foreground)]">{lead.name}</p>
+                  <p className="mt-0.5 text-[12px] text-[var(--admin-muted)]">{formatPhone(lead.phone)}</p>
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                <StatusBadge tone={conversationStatusTone(lead)}>{conversationStatusLabel(lead)}</StatusBadge>
-                <StatusBadge tone="cyan">{lead.messageCount} mensagens</StatusBadge>
+                <StatusBadge tone={conversationStatusTone(lead)} className="h-5 px-1.5 text-[9px]">{conversationStatusLabel(lead)}</StatusBadge>
+                <StatusBadge tone="cyan" className="h-5 px-1.5 text-[9px]">{lead.messageCount} mensagens</StatusBadge>
               </div>
             </div>
 
             <div
-              className="min-h-0 overflow-auto px-4 py-5 sm:px-6"
+              className="min-h-0 overflow-auto px-3 py-3.5 sm:px-4"
               style={whatsappChatBackgroundStyle}
             >
               {timeline.length ? (
                 timeline.map((item) => <ChatBubble key={item.id} item={item} />)
               ) : (
-                <div className="grid min-h-[320px] place-items-center rounded-2xl border border-dashed border-[var(--admin-border)] bg-white/70 px-4 text-center text-sm text-[var(--admin-muted)]">
+                <div className="grid min-h-[280px] place-items-center rounded-xl border border-dashed border-[var(--admin-border)] bg-white/70 px-4 text-center text-[13px] text-[var(--admin-muted)]">
                   Sem historico salvo para este lead.
                 </div>
               )}
             </div>
 
-            <div className="border-t border-[rgba(18,128,92,0.18)] bg-[rgba(18,128,92,0.08)] px-5 py-3 text-sm text-[var(--admin-foreground)]">
-              <span className="inline-flex items-center gap-2">
-                <MessageCircle size={16} className="text-[var(--admin-green)]" />
+            <div className="border-t border-[rgba(18,128,92,0.18)] bg-[rgba(18,128,92,0.08)] px-4 py-2.5 text-[12px] text-[var(--admin-foreground)]">
+              <span className="inline-flex min-w-0 items-center gap-1.5">
+                <MessageCircle size={14} className="shrink-0 text-[var(--admin-green)]" />
                 WhatsApp - status {lead.conversationStatus || "open"} - {formatDateTime(lead.lastMessageAt)}
               </span>
             </div>
@@ -1365,12 +1365,12 @@ export function WhatsAppCrmPage({ crmData }: { crmData: DataResult<WhatsAppCrmDa
   }
 
   return (
-    <div className="mx-auto grid min-h-screen max-w-[1760px] gap-4 px-4 py-4 lg:px-6">
-      <header className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+    <div className="mx-auto grid min-h-screen max-w-[1780px] gap-3 px-3 py-3 lg:px-4">
+      <header className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
         <div className="min-w-0">
-          <p className="text-xs font-medium text-[var(--admin-muted)]">Betel AI / Agentes WhatsApp / Atendimento</p>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-[var(--admin-foreground)]">Atendimento WhatsApp</h1>
-          <p className="mt-1 text-sm text-[var(--admin-muted)]">
+          <p className="text-[11px] font-medium text-[var(--admin-muted)]">Betel AI / Agentes WhatsApp / Atendimento</p>
+          <h1 className="mt-0.5 text-xl font-semibold tracking-tight text-[var(--admin-foreground)]">Atendimento WhatsApp</h1>
+          <p className="mt-0.5 text-[13px] text-[var(--admin-muted)]">
             Acompanhe conversas ao vivo, assuma atendimentos e abra o arquivo completo do lead quando precisar.
           </p>
         </div>
@@ -1401,19 +1401,19 @@ export function WhatsAppCrmPage({ crmData }: { crmData: DataResult<WhatsAppCrmDa
               Auditar IA
             </ActionButton>
           </div>
-          <p className="text-xs text-[var(--admin-muted)]">Ultima atualizacao: {formatDateTime(data.generatedAt)}</p>
+          <p className="text-[11px] text-[var(--admin-muted)]">Ultima atualizacao: {formatDateTime(data.generatedAt)}</p>
         </div>
       </header>
 
       {crmData.reason && (
-        <div className="rounded-[18px] border border-[rgba(234,179,8,0.28)] bg-[rgba(234,179,8,0.08)] px-4 py-3 text-xs text-[var(--admin-yellow)]">
+        <div className="rounded-xl border border-[rgba(234,179,8,0.28)] bg-[rgba(234,179,8,0.08)] px-3 py-2.5 text-[11px] text-[var(--admin-yellow)]">
           {crmData.reason}
         </div>
       )}
       {feedback && (
         <div
           className={cn(
-            "rounded-[18px] border px-4 py-3 text-xs",
+            "rounded-xl border px-3 py-2.5 text-[11px]",
             feedback.type === "ok"
               ? "border-[rgba(34,197,94,0.28)] bg-[rgba(34,197,94,0.08)] text-[var(--admin-green)]"
               : "border-[rgba(239,68,68,0.32)] bg-[rgba(239,68,68,0.08)] text-[var(--admin-red)]"
@@ -1423,37 +1423,37 @@ export function WhatsAppCrmPage({ crmData }: { crmData: DataResult<WhatsAppCrmDa
         </div>
       )}
 
-      <section className="grid gap-3 xl:grid-cols-[340px_minmax(0,1fr)] 2xl:grid-cols-[340px_minmax(560px,1fr)_360px] 2xl:items-start">
-        <aside className="grid min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-[22px] border border-[rgba(15,124,144,0.14)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(81,60,36,0.08)] xl:h-[calc(100vh-188px)] xl:max-h-[820px] xl:min-h-[640px]">
-          <div className="border-b border-[var(--admin-border)] bg-[#fbfdff] p-4">
-            <div className="flex items-start justify-between gap-3">
+      <section className="grid gap-3 xl:grid-cols-[300px_minmax(0,1fr)] 2xl:grid-cols-[300px_minmax(640px,1fr)_300px] 2xl:items-start">
+        <aside className="grid min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-[18px] border border-[rgba(15,124,144,0.14)] bg-[var(--admin-card)] shadow-sm shadow-[rgba(81,60,36,0.08)] xl:h-[calc(100vh-156px)] xl:max-h-[840px] xl:min-h-[560px]">
+          <div className="border-b border-[var(--admin-border)] bg-[#fbfdff] p-3">
+            <div className="flex items-start justify-between gap-2.5">
               <div className="min-w-0">
-                <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--admin-muted)]">
+                <p className="font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-[var(--admin-muted)]">
                   central whatsapp
                 </p>
-                <h2 className="mt-1 truncate text-xl font-semibold text-[var(--admin-foreground)]">Atendimento</h2>
+                <h2 className="mt-0.5 truncate text-lg font-semibold text-[var(--admin-foreground)]">Atendimento</h2>
               </div>
-              <StatusBadge tone="cyan">{filteredLeads.length} na visao</StatusBadge>
+              <StatusBadge tone="cyan" className="h-5 px-1.5 text-[9px]">{filteredLeads.length} na visao</StatusBadge>
             </div>
 
-            <div className="relative mt-4 min-w-0">
+            <div className="relative mt-3 min-w-0">
               <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--admin-muted)]" />
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder="Buscar lead, telefone ou mensagem"
-                className="h-11 w-full rounded-full border border-[var(--admin-border)] bg-white pl-9 pr-4 text-sm text-[var(--admin-foreground)] outline-none placeholder:text-[var(--admin-muted)] focus:border-[var(--admin-cyan)] focus:ring-3 focus:ring-[rgba(15,124,144,0.12)]"
+                className="h-9 w-full rounded-full border border-[var(--admin-border)] bg-white pl-9 pr-3 text-[13px] text-[var(--admin-foreground)] outline-none placeholder:text-[var(--admin-muted)] focus:border-[var(--admin-cyan)] focus:ring-3 focus:ring-[rgba(15,124,144,0.12)]"
               />
             </div>
 
-            <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+            <div className="mt-2.5 flex gap-1.5 overflow-x-auto pb-1">
               {(Object.keys(filterLabels) as FilterKey[]).map((key) => (
                 <button
                   key={key}
                   type="button"
                   onClick={() => setFilter(key)}
                   className={cn(
-                    "inline-flex h-9 shrink-0 items-center rounded-full border px-3 text-xs font-semibold transition",
+                    "inline-flex h-8 shrink-0 items-center rounded-full border px-2.5 text-[11px] font-semibold transition",
                     filter === key
                       ? "border-[rgba(15,124,144,0.28)] bg-[rgba(15,124,144,0.10)] text-[var(--admin-cyan)]"
                       : "border-[var(--admin-border)] bg-white text-[var(--admin-muted)] hover:border-[rgba(15,124,144,0.24)] hover:text-[var(--admin-foreground)]"
@@ -1482,7 +1482,7 @@ export function WhatsAppCrmPage({ crmData }: { crmData: DataResult<WhatsAppCrmDa
                 />
               ))
             ) : (
-              <div className="px-4 py-10 text-center text-sm text-[var(--admin-muted)]">
+              <div className="px-3 py-8 text-center text-[13px] text-[var(--admin-muted)]">
                 Nenhum atendimento encontrado para este filtro.
               </div>
             )}
