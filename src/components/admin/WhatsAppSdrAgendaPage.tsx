@@ -5,13 +5,9 @@ import {
   CalendarClock,
   CheckCircle2,
   Clock3,
-  MessageSquareText,
   Phone,
   RefreshCw,
-  Save,
-  Settings2,
   ShieldCheck,
-  TimerReset,
   UserRoundCheck,
   Users,
   XCircle,
@@ -19,9 +15,6 @@ import {
 import type {
   SdrAppointmentStatus,
   WhatsAppSdrAppointmentData,
-  WhatsAppSdrAppointmentMessageTemplates,
-  WhatsAppSdrAppointmentRecipient,
-  WhatsAppSdrAppointmentSettings,
   WhatsAppSdrAppointmentSummary,
 } from "@/lib/whatsapp/sdr-appointment-types";
 import { cn } from "@/lib/utils";
@@ -30,64 +23,7 @@ type WhatsAppSdrAgendaPageProps = {
   initialData: WhatsAppSdrAppointmentData;
 };
 
-type SettingsForm = {
-  notificationAdminUserId: string;
-  businessStartHour: string;
-  businessEndHour: string;
-  maxBookingsPerHour: string;
-  leadConfirmationMinutesBefore: string;
-  adminUnconfirmedNoticeMinutesBefore: string;
-  messageTemplates: WhatsAppSdrAppointmentMessageTemplates;
-};
-
 const ACTIVE_STATUSES: SdrAppointmentStatus[] = ["pending_confirmation", "scheduled", "notified"];
-
-const TEMPLATE_FIELDS: Array<{
-  key: keyof WhatsAppSdrAppointmentMessageTemplates;
-  label: string;
-  helper: string;
-}> = [
-  {
-    key: "leadConfirmation",
-    label: "Confirmacao enviada ao lead",
-    helper: "Sai automaticamente antes da ligacao, com botoes Confirmar e Marcar por outro dia.",
-  },
-  {
-    key: "leadConfirmedReply",
-    label: "Resposta ao lead confirmado",
-    helper: "Mensagem enviada quando o lead confirma o horario.",
-  },
-  {
-    key: "leadReschedulePrompt",
-    label: "Pedido de novo horario",
-    helper: "Mensagem enviada quando o lead escolhe marcar por outro dia.",
-  },
-  {
-    key: "adminScheduled",
-    label: "Aviso ao admin no agendamento",
-    helper: "Resumo enviado assim que Evelyn reserva a ligacao.",
-  },
-  {
-    key: "adminLeadConfirmed",
-    label: "Aviso ao admin quando confirmou",
-    helper: "Mensagem enviada quando o lead confirma a ligacao.",
-  },
-  {
-    key: "adminUnconfirmedReminder",
-    label: "Aviso ao admin sem confirmacao",
-    helper: "Mensagem enviada antes da ligacao quando o lead nao confirmou nem remarcou.",
-  },
-  {
-    key: "adminRescheduleRequested",
-    label: "Aviso ao admin ao pedir remarcacao",
-    helper: "Mensagem enviada quando o lead pede outro dia ou horario.",
-  },
-  {
-    key: "adminRescheduled",
-    label: "Aviso ao admin apos remarcar",
-    helper: "Mensagem enviada quando Evelyn conclui o reagendamento.",
-  },
-];
 
 const dateKeyFormatter = new Intl.DateTimeFormat("en-CA", {
   timeZone: "America/Sao_Paulo",
@@ -166,56 +102,6 @@ function leadConfirmationClassName(status: WhatsAppSdrAppointmentSummary["leadCo
 
 function isActiveAppointment(appointment: WhatsAppSdrAppointmentSummary) {
   return ACTIVE_STATUSES.includes(appointment.status);
-}
-
-function settingsToForm(settings: WhatsAppSdrAppointmentSettings): SettingsForm {
-  return {
-    notificationAdminUserId: settings.notificationAdminUserId ?? "",
-    businessStartHour: String(settings.businessStartHour),
-    businessEndHour: String(settings.businessEndHour),
-    maxBookingsPerHour: String(settings.maxBookingsPerHour),
-    leadConfirmationMinutesBefore: String(settings.leadConfirmationMinutesBefore),
-    adminUnconfirmedNoticeMinutesBefore: String(settings.adminUnconfirmedNoticeMinutesBefore),
-    messageTemplates: settings.messageTemplates,
-  };
-}
-
-function firstName(name: string) {
-  return name.split(/\s+/).filter(Boolean)[0] || "Lead";
-}
-
-function hourLabel(hour: string) {
-  const value = Number(hour);
-  if (!Number.isFinite(value)) return "--h";
-  return `${String(value).padStart(2, "0")}h`;
-}
-
-function renderTemplatePreview(
-  template: string,
-  form: SettingsForm,
-  appointment: WhatsAppSdrAppointmentSummary | null,
-) {
-  const summary = appointment?.sdrBriefing || appointment?.conversationSummary || "Resumo da conversa e pontos de abordagem do SDR.";
-  const replacements: Record<string, string> = {
-    lead_nome: appointment?.leadName || "Lead exemplo",
-    lead_primeiro_nome: firstName(appointment?.leadName || "Lead exemplo"),
-    lead_telefone: appointment?.leadPhone || "+55 00 00000-0000",
-    lead_email: appointment?.leadEmail || "nao informado",
-    lead_email_linha: appointment?.leadEmail ? `Email: ${appointment.leadEmail}\n` : "",
-    horario: appointment?.scheduleLabel || "amanha as 15:00",
-    resumo: summary,
-    resumo_sdr: summary,
-    hora_inicio: hourLabel(form.businessStartHour),
-    hora_fim: hourLabel(form.businessEndHour),
-    limite_por_hora: form.maxBookingsPerHour,
-    minutos_confirmacao_lead: form.leadConfirmationMinutesBefore,
-    minutos_aviso_admin: form.adminUnconfirmedNoticeMinutesBefore,
-  };
-
-  return template
-    .replace(/{{\s*([a-zA-Z0-9_]+)\s*}}/g, (_, key: string) => replacements[key] ?? "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
 }
 
 function AppointmentCard({
@@ -297,18 +183,9 @@ function AppointmentCard({
   );
 }
 
-function RecipientOption({ recipient }: { recipient: WhatsAppSdrAppointmentRecipient }) {
-  return (
-    <option value={recipient.id}>
-      {recipient.displayName} - {recipient.phone}
-    </option>
-  );
-}
-
 export function WhatsAppSdrAgendaPage({ initialData }: WhatsAppSdrAgendaPageProps) {
   const [data, setData] = useState(initialData);
   const [selectedDate, setSelectedDate] = useState(() => dateKey(new Date()));
-  const [settingsForm, setSettingsForm] = useState<SettingsForm>(() => settingsToForm(initialData.settings));
   const [feedback, setFeedback] = useState("");
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [isPending, startTransition] = useTransition();
@@ -327,28 +204,12 @@ export function WhatsAppSdrAgendaPage({ initialData }: WhatsAppSdrAgendaPageProp
   const upcomingAppointments = data.appointments
     .filter((appointment) => isActiveAppointment(appointment) && Date.parse(appointment.scheduledFor) >= nowMs - 5 * 60_000)
     .slice(0, 8);
-  const previewAppointment = upcomingAppointments[0] ?? data.appointments[0] ?? null;
-
-  function updateSettingField(key: keyof Omit<SettingsForm, "messageTemplates">, value: string) {
-    setSettingsForm((current) => ({ ...current, [key]: value }));
-  }
-
-  function updateTemplateField(key: keyof WhatsAppSdrAppointmentMessageTemplates, value: string) {
-    setSettingsForm((current) => ({
-      ...current,
-      messageTemplates: {
-        ...current.messageTemplates,
-        [key]: value,
-      },
-    }));
-  }
 
   async function refreshData() {
     const response = await fetch("/api/admin/whatsapp/appointments", { cache: "no-store" });
     const payload = (await response.json().catch(() => null)) as { data?: WhatsAppSdrAppointmentData } | null;
     if (payload?.data) {
       setData(payload.data);
-      setSettingsForm(settingsToForm(payload.data.settings));
       setNowMs(Date.now());
     }
   }
@@ -357,35 +218,6 @@ export function WhatsAppSdrAgendaPage({ initialData }: WhatsAppSdrAgendaPageProp
     startTransition(async () => {
       await refreshData();
       setFeedback("Agenda atualizada.");
-    });
-  }
-
-  function handleSaveSettings() {
-    startTransition(async () => {
-      setFeedback("");
-      const response = await fetch("/api/admin/whatsapp/appointments", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          action: "save_settings",
-          notificationAdminUserId: settingsForm.notificationAdminUserId || null,
-          businessStartHour: settingsForm.businessStartHour,
-          businessEndHour: settingsForm.businessEndHour,
-          maxBookingsPerHour: settingsForm.maxBookingsPerHour,
-          leadConfirmationMinutesBefore: settingsForm.leadConfirmationMinutesBefore,
-          adminUnconfirmedNoticeMinutesBefore: settingsForm.adminUnconfirmedNoticeMinutesBefore,
-          messageTemplates: settingsForm.messageTemplates,
-        }),
-      });
-
-      if (!response.ok) {
-        const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-        setFeedback(payload?.error || "Nao foi possivel salvar o fluxo agora.");
-        return;
-      }
-
-      await refreshData();
-      setFeedback("Fluxo da agenda salvo.");
     });
   }
 
@@ -464,160 +296,6 @@ export function WhatsAppSdrAgendaPage({ initialData }: WhatsAppSdrAgendaPageProp
             </div>
           </div>
         ))}
-      </section>
-
-      <section className="mt-4 rounded-[22px] border border-[var(--admin-border)] bg-white p-4 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--admin-border)] pb-3">
-          <div className="flex items-center gap-2">
-            <div className="grid size-9 place-items-center rounded-full bg-cyan-50 text-cyan-700">
-              <Settings2 size={17} />
-            </div>
-            <div>
-              <h2 className="text-base font-semibold text-[var(--admin-foreground)]">Fluxo automatico da agenda</h2>
-              <p className="text-xs text-[var(--admin-muted)]">Configuracao que a Evelyn usa para confirmar e avisar o time.</p>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {feedback ? <span className="text-xs font-semibold text-[var(--admin-muted)]">{feedback}</span> : null}
-            <button
-              type="button"
-              onClick={handleSaveSettings}
-              disabled={isPending}
-              className="inline-flex h-10 items-center gap-2 rounded-full bg-cyan-700 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-cyan-800 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <Save size={15} />
-              Salvar fluxo
-            </button>
-          </div>
-        </div>
-
-        <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(300px,480px)_minmax(0,1fr)]">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="sm:col-span-2">
-              <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--admin-muted)]">
-                Usuario que recebe avisos
-              </span>
-              <select
-                value={settingsForm.notificationAdminUserId}
-                onChange={(event) => updateSettingField("notificationAdminUserId", event.target.value)}
-                className="mt-2 h-10 w-full rounded-full border border-[var(--admin-border)] bg-white px-4 text-sm font-medium text-[var(--admin-foreground)] outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100"
-              >
-                <option value="">Selecione um usuario com telefone</option>
-                {data.recipients.map((recipient) => (
-                  <RecipientOption key={recipient.id} recipient={recipient} />
-                ))}
-              </select>
-            </label>
-
-            <label>
-              <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--admin-muted)]">Inicio</span>
-              <input
-                type="number"
-                min={0}
-                max={23}
-                value={settingsForm.businessStartHour}
-                onChange={(event) => updateSettingField("businessStartHour", event.target.value)}
-                className="mt-2 h-10 w-full rounded-full border border-[var(--admin-border)] bg-white px-4 text-sm font-semibold outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100"
-              />
-            </label>
-            <label>
-              <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--admin-muted)]">Fim</span>
-              <input
-                type="number"
-                min={1}
-                max={24}
-                value={settingsForm.businessEndHour}
-                onChange={(event) => updateSettingField("businessEndHour", event.target.value)}
-                className="mt-2 h-10 w-full rounded-full border border-[var(--admin-border)] bg-white px-4 text-sm font-semibold outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100"
-              />
-            </label>
-            <label>
-              <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--admin-muted)]">Leads por hora</span>
-              <input
-                type="number"
-                min={1}
-                max={10}
-                value={settingsForm.maxBookingsPerHour}
-                onChange={(event) => updateSettingField("maxBookingsPerHour", event.target.value)}
-                className="mt-2 h-10 w-full rounded-full border border-[var(--admin-border)] bg-white px-4 text-sm font-semibold outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100"
-              />
-            </label>
-            <label>
-              <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--admin-muted)]">Perguntar ao lead</span>
-              <input
-                type="number"
-                min={1}
-                max={1440}
-                value={settingsForm.leadConfirmationMinutesBefore}
-                onChange={(event) => updateSettingField("leadConfirmationMinutesBefore", event.target.value)}
-                className="mt-2 h-10 w-full rounded-full border border-[var(--admin-border)] bg-white px-4 text-sm font-semibold outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100"
-              />
-            </label>
-            <label className="sm:col-span-2">
-              <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--admin-muted)]">Avisar admin sem resposta</span>
-              <input
-                type="number"
-                min={0}
-                max={1440}
-                value={settingsForm.adminUnconfirmedNoticeMinutesBefore}
-                onChange={(event) => updateSettingField("adminUnconfirmedNoticeMinutesBefore", event.target.value)}
-                className="mt-2 h-10 w-full rounded-full border border-[var(--admin-border)] bg-white px-4 text-sm font-semibold outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100"
-              />
-            </label>
-          </div>
-
-          <div className="rounded-[18px] border border-cyan-100 bg-cyan-50/50 p-4">
-            <div className="flex items-center gap-2 text-sm font-semibold text-cyan-900">
-              <TimerReset size={16} />
-              Linha do tempo
-            </div>
-            <div className="mt-3 grid gap-2 md:grid-cols-4">
-              {[
-                { label: "1. Agenda", value: "Admin recebe resumo" },
-                { label: "2. Confirmacao", value: `${settingsForm.leadConfirmationMinutesBefore || "30"} min antes` },
-                { label: "3. Lead responde", value: "Confirma ou remarca" },
-                { label: "4. Sem acao", value: `${settingsForm.adminUnconfirmedNoticeMinutesBefore || "10"} min antes` },
-              ].map((step) => (
-                <div key={step.label} className="rounded-[14px] border border-cyan-100 bg-white px-3 py-3">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-cyan-700">{step.label}</p>
-                  <p className="mt-1 text-xs font-semibold text-[var(--admin-foreground)]">{step.value}</p>
-                </div>
-              ))}
-            </div>
-            <div className="mt-3 rounded-[14px] border border-[var(--admin-border)] bg-white p-3">
-              <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">
-                <MessageSquareText size={14} />
-                Preview da mensagem ao lead
-              </div>
-              <p className="mt-2 whitespace-pre-wrap text-xs leading-5 text-[var(--admin-foreground)]">
-                {renderTemplatePreview(settingsForm.messageTemplates.leadConfirmation, settingsForm, previewAppointment)}
-              </p>
-            </div>
-            <p className="mt-3 text-[11px] leading-5 text-[var(--admin-muted)]">
-              Variaveis: {"{{lead_nome}}"}, {"{{lead_primeiro_nome}}"}, {"{{lead_telefone}}"}, {"{{lead_email}}"}, {"{{horario}}"}, {"{{resumo_sdr}}"}, {"{{hora_inicio}}"}, {"{{hora_fim}}"}.
-            </p>
-          </div>
-        </div>
-
-        <details className="mt-4 rounded-[18px] border border-[var(--admin-border)] bg-slate-50 p-4">
-          <summary className="cursor-pointer text-sm font-semibold text-[var(--admin-foreground)]">
-            Mensagens automaticas do fluxo
-          </summary>
-          <div className="mt-4 grid gap-3 xl:grid-cols-2">
-            {TEMPLATE_FIELDS.map((field) => (
-              <label key={field.key} className="rounded-[16px] border border-[var(--admin-border)] bg-white p-3">
-                <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">{field.label}</span>
-                <span className="mt-1 block text-[11px] leading-4 text-[var(--admin-soft)]">{field.helper}</span>
-                <textarea
-                  value={settingsForm.messageTemplates[field.key]}
-                  onChange={(event) => updateTemplateField(field.key, event.target.value)}
-                  rows={field.key.includes("admin") ? 7 : 4}
-                  className="mt-3 w-full resize-y rounded-[14px] border border-[var(--admin-border)] bg-white px-3 py-2 text-xs leading-5 text-[var(--admin-foreground)] outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100"
-                />
-              </label>
-            ))}
-          </div>
-        </details>
       </section>
 
       <section className="mt-4 grid gap-4 xl:grid-cols-[220px_minmax(0,1fr)_360px]">

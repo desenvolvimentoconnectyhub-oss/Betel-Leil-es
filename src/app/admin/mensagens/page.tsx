@@ -1,7 +1,9 @@
 import Link from "next/link";
 import {
   AlertCircle,
+  CalendarClock,
   CheckCircle2,
+  Clock3,
   History,
   Mail,
   MessageCircle,
@@ -9,7 +11,9 @@ import {
   Route,
   Search,
   Send,
+  Settings2,
   Smartphone,
+  TimerReset,
   Users,
   type LucideIcon,
 } from "lucide-react";
@@ -22,11 +26,21 @@ import {
   listSystemWhatsAppSenderOptions,
   type SystemWhatsAppSenderOption,
 } from "@/lib/communication/system-whatsapp-sender";
+import {
+  getWhatsAppSdrAppointmentSettings,
+  listSdrAppointmentRecipients,
+} from "@/lib/whatsapp/sdr-appointments";
+import type {
+  WhatsAppSdrAppointmentMessageTemplates,
+  WhatsAppSdrAppointmentRecipient,
+  WhatsAppSdrAppointmentSettings,
+} from "@/lib/whatsapp/sdr-appointment-types";
 import { cn } from "@/lib/utils";
 import { saveSystemWhatsappSenderAction } from "../whatsapp/actions";
 import {
   queueDirectMessageAction,
   saveMessageRouteAction,
+  saveSdrAppointmentFlowAction,
   saveMessageTemplateAction,
 } from "./actions";
 
@@ -55,6 +69,62 @@ const templateGroups = [
   { key: "manual", label: "Envio manual" },
   { key: "sistema", label: "Sistema" },
 ] as const;
+
+const sdrTemplateFields: Array<{
+  key: keyof WhatsAppSdrAppointmentMessageTemplates;
+  label: string;
+  helper: string;
+  rows: number;
+}> = [
+  {
+    key: "leadConfirmation",
+    label: "Confirmacao enviada ao lead",
+    helper: "Sai antes da ligacao, com botoes Confirmar e Marcar por outro dia.",
+    rows: 4,
+  },
+  {
+    key: "leadConfirmedReply",
+    label: "Resposta ao lead confirmado",
+    helper: "Enviada quando o lead confirma o horario.",
+    rows: 3,
+  },
+  {
+    key: "leadReschedulePrompt",
+    label: "Pedido de novo horario",
+    helper: "Enviada quando o lead escolhe marcar por outro dia.",
+    rows: 3,
+  },
+  {
+    key: "adminScheduled",
+    label: "Aviso ao admin no agendamento",
+    helper: "Resumo enviado quando Evelyn reserva a ligacao.",
+    rows: 6,
+  },
+  {
+    key: "adminLeadConfirmed",
+    label: "Aviso ao admin quando confirmou",
+    helper: "Enviado quando o lead confirma a ligacao.",
+    rows: 6,
+  },
+  {
+    key: "adminUnconfirmedReminder",
+    label: "Aviso ao admin sem confirmacao",
+    helper: "Enviado antes da ligacao quando o lead nao respondeu.",
+    rows: 6,
+  },
+  {
+    key: "adminRescheduleRequested",
+    label: "Aviso ao admin ao pedir remarcacao",
+    helper: "Enviado quando o lead pede outro dia ou horario.",
+    rows: 5,
+  },
+  {
+    key: "adminRescheduled",
+    label: "Aviso ao admin apos remarcar",
+    helper: "Enviado quando Evelyn conclui o reagendamento.",
+    rows: 6,
+  },
+];
 
 function paramValue(params: QueryParams, key: string) {
   const value = params[key];
@@ -882,12 +952,175 @@ function RecipientsTab({ recipients }: { recipients: MessagingRecipientOption[] 
   );
 }
 
+function SdrAppointmentFlowCard({
+  settings,
+  recipients,
+}: {
+  settings: WhatsAppSdrAppointmentSettings;
+  recipients: WhatsAppSdrAppointmentRecipient[];
+}) {
+  const recipientOptions = [
+    { value: "", label: "Selecione um usuario com telefone" },
+    ...recipients.map((recipient) => ({
+      value: recipient.id,
+      label: `${recipient.displayName} - ${recipient.phone}`,
+    })),
+  ];
+
+  return (
+    <DashboardCard
+      title="Automacao da Agenda SDR"
+      eyebrow="evelyn / confirmacao / lembretes"
+      action={<CalendarClock size={18} className="text-[var(--admin-cyan)]" />}
+    >
+      <form action={saveSdrAppointmentFlowAction} className="grid gap-5">
+        <div className="grid gap-3 md:grid-cols-3">
+          <article className="rounded-lg border border-[var(--admin-border)] bg-white/70 p-4">
+            <div className="flex items-center gap-2 text-xs font-semibold text-[var(--admin-muted)]">
+              <Clock3 size={14} />
+              Confirmacao do lead
+            </div>
+            <p className="mt-2 text-xl font-semibold text-[var(--admin-foreground)]">
+              {settings.leadConfirmationMinutesBefore} min antes
+            </p>
+          </article>
+          <article className="rounded-lg border border-[var(--admin-border)] bg-white/70 p-4">
+            <div className="flex items-center gap-2 text-xs font-semibold text-[var(--admin-muted)]">
+              <TimerReset size={14} />
+              Sem resposta
+            </div>
+            <p className="mt-2 text-xl font-semibold text-[var(--admin-foreground)]">
+              {settings.adminUnconfirmedNoticeMinutesBefore} min antes
+            </p>
+          </article>
+          <article className="rounded-lg border border-[var(--admin-border)] bg-white/70 p-4">
+            <div className="flex items-center gap-2 text-xs font-semibold text-[var(--admin-muted)]">
+              <Users size={14} />
+              Capacidade
+            </div>
+            <p className="mt-2 text-xl font-semibold text-[var(--admin-foreground)]">
+              {settings.maxBookingsPerHour}/hora
+            </p>
+          </article>
+        </div>
+
+        <div className="grid gap-4 xl:grid-cols-[minmax(320px,0.8fr)_minmax(0,1.2fr)]">
+          <section className="grid gap-3">
+            <section className="grid gap-3 rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.62)] p-4">
+              <div>
+                <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--admin-muted)]">
+                  agenda / avisos
+                </p>
+                <h3 className="mt-1 text-sm font-semibold text-[var(--admin-foreground)]">Regras do fluxo</h3>
+              </div>
+              <SelectField
+                label="Usuario que recebe avisos"
+                name="notificationAdminUserId"
+                defaultValue={settings.notificationAdminUserId ?? ""}
+                options={recipientOptions}
+              />
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Inicio" name="businessStartHour" defaultValue={settings.businessStartHour} type="number" />
+                <Field label="Fim" name="businessEndHour" defaultValue={settings.businessEndHour} type="number" />
+                <Field label="Leads por hora" name="maxBookingsPerHour" defaultValue={settings.maxBookingsPerHour} type="number" />
+                <Field
+                  label="Confirmar com lead"
+                  name="leadConfirmationMinutesBefore"
+                  defaultValue={settings.leadConfirmationMinutesBefore}
+                  type="number"
+                />
+                <Field
+                  label="Avisar admin sem resposta"
+                  name="adminUnconfirmedNoticeMinutesBefore"
+                  defaultValue={settings.adminUnconfirmedNoticeMinutesBefore}
+                  type="number"
+                />
+              </div>
+              <div className="rounded-lg border border-[var(--admin-border)] bg-[rgba(8,145,178,0.08)] p-3 text-xs leading-5 text-[var(--admin-muted)]">
+                A Evelyn agenda entre {String(settings.businessStartHour).padStart(2, "0")}h e{" "}
+                {String(settings.businessEndHour).padStart(2, "0")}h. O aviso sem confirmacao deve ficar mais perto da ligacao do que a pergunta ao lead.
+              </div>
+            </section>
+
+            <section className="rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.62)] p-4">
+              <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--admin-muted)]">
+                usar nos textos
+              </p>
+              <h3 className="mt-1 text-sm font-semibold text-[var(--admin-foreground)]">Variaveis disponiveis</h3>
+              <div className="flex flex-wrap gap-2 text-[11px] font-semibold text-[var(--admin-muted)]">
+                {[
+                  "{{lead_nome}}",
+                  "{{lead_primeiro_nome}}",
+                  "{{lead_telefone}}",
+                  "{{lead_email}}",
+                  "{{horario}}",
+                  "{{resumo_sdr}}",
+                  "{{hora_inicio}}",
+                  "{{hora_fim}}",
+                  "{{limite_por_hora}}",
+                ].map((variable) => (
+                  <code key={variable} className="rounded-full border border-[var(--admin-border)] bg-white px-2 py-1">
+                    {variable}
+                  </code>
+                ))}
+              </div>
+            </section>
+          </section>
+
+          <section className="rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.62)] p-4">
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div>
+                <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--admin-muted)]">
+                  templates do agendamento
+                </p>
+                <h3 className="mt-1 text-sm font-semibold text-[var(--admin-foreground)]">Mensagens automaticas</h3>
+              </div>
+              <MessageSquareText size={18} className="text-[var(--admin-green)]" />
+            </div>
+            <div className="grid gap-3">
+              {sdrTemplateFields.map((field) => (
+                <div key={field.key} className="rounded-lg border border-[var(--admin-border)] bg-white/70 p-3">
+                  <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--admin-muted)]">
+                    {field.label}
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-[var(--admin-muted)]">{field.helper}</p>
+                  <TextArea
+                    label="Texto"
+                    name={`sdrTemplate_${field.key}`}
+                    defaultValue={settings.messageTemplates[field.key]}
+                    rows={field.rows}
+                  />
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--admin-border)] bg-white/70 p-3">
+          <div className="flex items-center gap-2 text-sm font-semibold text-[var(--admin-foreground)]">
+            <Settings2 size={16} className="text-[var(--admin-cyan)]" />
+            Alteracoes valem para os proximos disparos da automacao.
+          </div>
+          <Button className="h-9 bg-[var(--admin-green)] text-xs font-bold text-black hover:bg-white" type="submit">
+            <Settings2 size={14} />
+            Salvar automacao SDR
+          </Button>
+        </div>
+      </form>
+    </DashboardCard>
+  );
+}
+
 function SenderTab({
   systemSender,
   whatsappSenders,
+  sdrSettings,
+  sdrRecipients,
 }: {
   systemSender: Awaited<ReturnType<typeof getSystemWhatsAppSenderConfig>>;
   whatsappSenders: SystemWhatsAppSenderOption[];
+  sdrSettings: WhatsAppSdrAppointmentSettings;
+  sdrRecipients: WhatsAppSdrAppointmentRecipient[];
 }) {
   const selectedSender = systemSender.selected;
   const selectedSenderValue = selectedSender?.id || systemSender.instanceId || "";
@@ -1014,6 +1247,8 @@ function SenderTab({
           </div>
         </DashboardCard>
       </section>
+
+      <SdrAppointmentFlowCard settings={sdrSettings} recipients={sdrRecipients} />
     </section>
   );
 }
@@ -1066,10 +1301,12 @@ export default async function AdminMessagesPage({
 }: {
   searchParams?: Promise<QueryParams>;
 }) {
-  const [data, systemSender, whatsappSenders, params] = await Promise.all([
+  const [data, systemSender, whatsappSenders, sdrSettings, sdrRecipients, params] = await Promise.all([
     getMessagingAdminData(),
     getSystemWhatsAppSenderConfig(),
     listSystemWhatsAppSenderOptions(),
+    getWhatsAppSdrAppointmentSettings(),
+    listSdrAppointmentRecipients(),
     searchParams || Promise.resolve({}),
   ]);
   const status = paramValue(params, "status");
@@ -1152,7 +1389,12 @@ export default async function AdminMessagesPage({
         />
       )}
       {activeTab === "remetente" && (
-        <SenderTab systemSender={systemSender} whatsappSenders={whatsappSenders} />
+        <SenderTab
+          systemSender={systemSender}
+          whatsappSenders={whatsappSenders}
+          sdrSettings={sdrSettings}
+          sdrRecipients={sdrRecipients}
+        />
       )}
       {activeTab === "envio" && (
         <ManualSendTab templateOptions={templateOptions} segments={data.segments} recipients={data.recipients} />
