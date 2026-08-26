@@ -21,6 +21,7 @@ import {
   setConnectyHubWhatsappAgentControlStatus,
   testWillianWebhookDelivery,
   WILLIAN_AGENT_KEY,
+  WILLIAN_DEFAULT_INSTANCE_NAME,
 } from "@/lib/communication/connectyhub-client";
 
 export const dynamic = "force-dynamic";
@@ -84,7 +85,7 @@ async function generateWillianQrCode(input: { browser?: string; instanceName?: s
 
     const recoveryName =
       "warning" in deleteResult
-        ? `${instanceName || "willian-betel"}-${Date.now().toString(36)}`
+        ? `${instanceName || WILLIAN_DEFAULT_INSTANCE_NAME}-${Date.now().toString(36)}`
         : instanceName;
     steps.createAfterRecovery = await createWillianConnectyHubInstance({ instanceName: recoveryName });
     connect = await connectWillianConnectyHubInstance({ phone, browser });

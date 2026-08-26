@@ -57,7 +57,7 @@ const defaultWillianState: WillianInstanceState = {
   adminTokenSource: "missing",
   adminTokenPreview: "",
   adminTokenLooksValid: false,
-  instanceName: "willian-betel",
+  instanceName: "evelyn-betel",
   instanceTokenConfigured: false,
   instanceTokenPreview: "",
   webhookUrl: "",
@@ -279,7 +279,7 @@ const WHATSAPP_AGENT_INSTANCE_ENDPOINT = "/api/admin/whatsapp/agent-instance";
 const WHATSAPP_AGENT_CONFIG_ENDPOINT = "/api/admin/whatsapp/agent-config";
 const WHATSAPP_AGENT_GROUPS_ENDPOINT = "/api/admin/whatsapp/groups";
 const PRIMARY_WHATSAPP_AGENT_KEY = "multichannel-dispatch";
-const PRIMARY_WHATSAPP_AGENT_LABEL = "Agente de WhatsApp";
+const PRIMARY_WHATSAPP_AGENT_LABEL = "Evelyn";
 const PASSKEY_BLOCKED_STATUS = "passkey_blocked";
 const PASSKEY_PAIRING_UNSUPPORTED_REASON = "Passkey pairing not supported";
 
@@ -371,12 +371,28 @@ function isPrimaryWhatsappAgentName(value: unknown) {
   return /^willia[mn]\b/.test(name);
 }
 
+function isPrimaryWhatsappInstanceName(value: unknown) {
+  const name = cleanFormValue(value).toLowerCase();
+  return ["evelyn-betel", "willian-betel", "william-betel", "willian", "william"].includes(name);
+}
+
 function displayWhatsappAgentName(agent?: Pick<WhatsAppAgentInstanceSummary, "agentKey" | "agentName"> | null) {
   const name = cleanFormValue(agent?.agentName);
   if (!name || agent?.agentKey === PRIMARY_WHATSAPP_AGENT_KEY || isPrimaryWhatsappAgentName(name)) {
     return PRIMARY_WHATSAPP_AGENT_LABEL;
   }
   return name;
+}
+
+function displayWhatsappAgentReference(
+  agent: Pick<WhatsAppAgentInstanceSummary, "agentKey" | "phoneNumber" | "instanceName" | "sector">,
+  fallback = "Atendimento WhatsApp"
+) {
+  if (agent.phoneNumber) return agent.phoneNumber;
+  if (agent.agentKey === PRIMARY_WHATSAPP_AGENT_KEY && isPrimaryWhatsappInstanceName(agent.instanceName)) {
+    return "Instancia Evelyn";
+  }
+  return agent.instanceName || agent.sector || fallback;
 }
 
 function whatsappAgentRuntimeStatus(agent?: Pick<WhatsAppAgentInstanceSummary, "runtimeStatus" | "status"> | null) {
@@ -1676,7 +1692,7 @@ function WhatsAppAgentManager({
                     {agent.companyName || companyName}
                   </span>
                   <span className="mt-1 block truncate text-[10px] text-[var(--admin-muted)]">
-                    {agent.phoneNumber || agent.instanceName || agent.sector || "Atendimento WhatsApp"}
+                    {displayWhatsappAgentReference(agent)}
                   </span>
                 </span>
                 <div className="flex shrink-0 flex-col items-end gap-1">

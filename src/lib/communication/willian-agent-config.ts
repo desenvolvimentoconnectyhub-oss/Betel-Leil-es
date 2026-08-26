@@ -66,6 +66,24 @@ function agentPromptField(value: unknown, fallback: string) {
   return isLegacyBaseAgentPrompt(prompt) ? DEFAULT_WILLIAN_AGENT_PROMPT : prompt;
 }
 
+function isLegacyPrimaryAgentName(value: unknown) {
+  return /^willia[mn](\s|$|-|_)/i.test(stringField(value, ""));
+}
+
+function normalizePrimaryAgentName(agentKey: string, value: string) {
+  return agentKey === WILLIAN_AGENT_KEY && isLegacyPrimaryAgentName(value) ? WILLIAN_AGENT_NAME : value;
+}
+
+function normalizePrimaryVoiceLabel(agentKey: string, value: string) {
+  if (agentKey !== WILLIAN_AGENT_KEY) return value;
+  return /willia[mn]/i.test(value) ? "Clone da Evelyn" : value;
+}
+
+function normalizePrimaryIdentityText(agentKey: string, value: string) {
+  if (agentKey !== WILLIAN_AGENT_KEY) return value;
+  return value.replace(/\bwillia[mn]\b/gi, WILLIAN_AGENT_NAME);
+}
+
 function boolField(value: unknown, fallback: boolean) {
   return typeof value === "boolean" ? value : fallback;
 }
@@ -98,17 +116,32 @@ export function normalizeWillianAgentConfig(input: unknown): WillianAgentConfig 
   const defaults = DEFAULT_WILLIAN_AGENT_CONFIG;
   const quoteReplyMode = enumField(behavior.quoteReplyMode, defaults.behavior.quoteReplyMode, ["off", "smart", "always"]);
   const agentKey = stringField(source.agentKey, defaults.agentKey);
-  const agentName = stringField(source.agentName || source.name, agentKey === defaults.agentKey ? defaults.agentName : "Agente de WhatsApp");
+  const agentName = normalizePrimaryAgentName(
+    agentKey,
+    stringField(source.agentName || source.name, agentKey === defaults.agentKey ? defaults.agentName : "Agente de WhatsApp")
+  );
   const responseConversationMode = responseModeToConversationMode(behavior.responseMode, defaults.behavior.conversationMode);
+  const selectedVoiceLabel = normalizePrimaryVoiceLabel(
+    agentKey,
+    stringField(firstDefined(behavior.selectedVoiceLabel, behavior.audioVoiceName), defaults.behavior.selectedVoiceLabel)
+  );
+  const cloneProfileDisplayName = normalizePrimaryAgentName(
+    agentKey,
+    stringField(cloneProfile.displayName, defaults.cloneProfile.displayName)
+  );
+  const identityTextField = (value: unknown, fallback: string) =>
+    normalizePrimaryIdentityText(agentKey, stringField(value, fallback));
+  const identityTextArray = (value: unknown, fallback: string[]) =>
+    asStringArray(value, fallback).map((item) => normalizePrimaryIdentityText(agentKey, item));
 
   return {
     agentKey,
     agentName,
-    roleTitle: stringField(source.roleTitle || source.role, defaults.roleTitle),
+    roleTitle: identityTextField(source.roleTitle || source.role, defaults.roleTitle),
     companyName: stringField(source.companyName, defaults.companyName),
     status: enumField(source.status, "saved", ["draft", "saved", "needs_review"]),
     updatedAt: stringField(source.updatedAt, new Date().toISOString()),
-    globalPrompt: stringField(
+    globalPrompt: identityTextField(
       firstDefined(source.globalPrompt, source.whatsapp_global_prompt),
       defaults.globalPrompt
     ),
@@ -158,7 +191,7 @@ export function normalizeWillianAgentConfig(input: unknown): WillianAgentConfig 
         "active",
       ]),
       selectedVoiceId: stringField(firstDefined(behavior.selectedVoiceId, behavior.audioVoiceId), defaults.behavior.selectedVoiceId),
-      selectedVoiceLabel: stringField(firstDefined(behavior.selectedVoiceLabel, behavior.audioVoiceName), defaults.behavior.selectedVoiceLabel),
+      selectedVoiceLabel,
       voiceSearch: stringField(behavior.voiceSearch, defaults.behavior.voiceSearch),
       audioVoiceSource: stringField(behavior.audioVoiceSource, defaults.behavior.audioVoiceSource),
       audioVoicePublicOwnerId: stringField(
@@ -374,40 +407,40 @@ export function normalizeWillianAgentConfig(input: unknown): WillianAgentConfig 
       nextStepRules: asStringArray(qualification.nextStepRules, defaults.qualification.nextStepRules),
     },
     prompt: {
-      agentPrompt: agentPromptField(prompt.agentPrompt, defaults.prompt.agentPrompt),
-      dnaManual: stringField(prompt.dnaManual, defaults.prompt.dnaManual),
-      cloneMemory: stringField(prompt.cloneMemory, defaults.prompt.cloneMemory),
-      humanizationMetric: stringField(prompt.humanizationMetric, defaults.prompt.humanizationMetric),
+      agentPrompt: normalizePrimaryIdentityText(agentKey, agentPromptField(prompt.agentPrompt, defaults.prompt.agentPrompt)),
+      dnaManual: identityTextField(prompt.dnaManual, defaults.prompt.dnaManual),
+      cloneMemory: identityTextField(prompt.cloneMemory, defaults.prompt.cloneMemory),
+      humanizationMetric: identityTextField(prompt.humanizationMetric, defaults.prompt.humanizationMetric),
       productLink: stringField(prompt.productLink, defaults.prompt.productLink),
-      productNotes: stringField(prompt.productNotes, defaults.prompt.productNotes),
+      productNotes: identityTextField(prompt.productNotes, defaults.prompt.productNotes),
       sendButton: boolField(prompt.sendButton, defaults.prompt.sendButton),
       buttonLabel: stringField(prompt.buttonLabel, defaults.prompt.buttonLabel),
       buttonUrl: stringField(prompt.buttonUrl, defaults.prompt.buttonUrl),
-      tags: asStringArray(prompt.tags, defaults.prompt.tags),
+      tags: identityTextArray(prompt.tags, defaults.prompt.tags),
     },
     cloneProfile: {
       enabled: boolField(cloneProfile.enabled, defaults.cloneProfile.enabled),
       source: enumField(cloneProfile.source, defaults.cloneProfile.source, ["manual", "voice", "conversation", "hybrid"]),
-      displayName: stringField(cloneProfile.displayName, defaults.cloneProfile.displayName),
-      roleIdentity: stringField(cloneProfile.roleIdentity, defaults.cloneProfile.roleIdentity),
-      tone: stringField(cloneProfile.tone, defaults.cloneProfile.tone),
-      vocabulary: stringField(cloneProfile.vocabulary, defaults.cloneProfile.vocabulary),
-      responseRhythm: stringField(cloneProfile.responseRhythm, defaults.cloneProfile.responseRhythm),
-      salesStyle: stringField(cloneProfile.salesStyle, defaults.cloneProfile.salesStyle),
-      objectionStyle: stringField(cloneProfile.objectionStyle, defaults.cloneProfile.objectionStyle),
-      closingStyle: stringField(cloneProfile.closingStyle, defaults.cloneProfile.closingStyle),
-      emojiStyle: stringField(cloneProfile.emojiStyle, defaults.cloneProfile.emojiStyle),
-      audioStyle: stringField(cloneProfile.audioStyle, defaults.cloneProfile.audioStyle),
-      forbiddenPatterns: stringField(cloneProfile.forbiddenPatterns, defaults.cloneProfile.forbiddenPatterns),
-      notes: stringField(cloneProfile.notes, defaults.cloneProfile.notes),
+      displayName: cloneProfileDisplayName,
+      roleIdentity: identityTextField(cloneProfile.roleIdentity, defaults.cloneProfile.roleIdentity),
+      tone: identityTextField(cloneProfile.tone, defaults.cloneProfile.tone),
+      vocabulary: identityTextField(cloneProfile.vocabulary, defaults.cloneProfile.vocabulary),
+      responseRhythm: identityTextField(cloneProfile.responseRhythm, defaults.cloneProfile.responseRhythm),
+      salesStyle: identityTextField(cloneProfile.salesStyle, defaults.cloneProfile.salesStyle),
+      objectionStyle: identityTextField(cloneProfile.objectionStyle, defaults.cloneProfile.objectionStyle),
+      closingStyle: identityTextField(cloneProfile.closingStyle, defaults.cloneProfile.closingStyle),
+      emojiStyle: identityTextField(cloneProfile.emojiStyle, defaults.cloneProfile.emojiStyle),
+      audioStyle: identityTextField(cloneProfile.audioStyle, defaults.cloneProfile.audioStyle),
+      forbiddenPatterns: identityTextField(cloneProfile.forbiddenPatterns, defaults.cloneProfile.forbiddenPatterns),
+      notes: identityTextField(cloneProfile.notes, defaults.cloneProfile.notes),
     },
     cloneMemory: {
-      summary: stringField(cloneMemory.summary, defaults.cloneMemory.summary),
-      stylePatterns: asStringArray(cloneMemory.stylePatterns, defaults.cloneMemory.stylePatterns),
-      phrasePatterns: asStringArray(cloneMemory.phrasePatterns, defaults.cloneMemory.phrasePatterns),
-      salesPatterns: asStringArray(cloneMemory.salesPatterns, defaults.cloneMemory.salesPatterns),
-      correctionNotes: asStringArray(cloneMemory.correctionNotes, defaults.cloneMemory.correctionNotes),
-      avoidPatterns: asStringArray(cloneMemory.avoidPatterns, defaults.cloneMemory.avoidPatterns),
+      summary: identityTextField(cloneMemory.summary, defaults.cloneMemory.summary),
+      stylePatterns: identityTextArray(cloneMemory.stylePatterns, defaults.cloneMemory.stylePatterns),
+      phrasePatterns: identityTextArray(cloneMemory.phrasePatterns, defaults.cloneMemory.phrasePatterns),
+      salesPatterns: identityTextArray(cloneMemory.salesPatterns, defaults.cloneMemory.salesPatterns),
+      correctionNotes: identityTextArray(cloneMemory.correctionNotes, defaults.cloneMemory.correctionNotes),
+      avoidPatterns: identityTextArray(cloneMemory.avoidPatterns, defaults.cloneMemory.avoidPatterns),
       updatedAt: typeof cloneMemory.updatedAt === "string" ? cloneMemory.updatedAt : defaults.cloneMemory.updatedAt,
     },
     multichannel: {

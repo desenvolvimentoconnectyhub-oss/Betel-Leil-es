@@ -6,6 +6,9 @@ type DbRow = Record<string, unknown>;
 
 export const SYSTEM_WHATSAPP_INSTANCE_ID_CONFIG_KEY = "BETEL_SYSTEM_WHATSAPP_INSTANCE_ID";
 export const SYSTEM_WHATSAPP_AGENT_KEY_CONFIG_KEY = "BETEL_SYSTEM_WHATSAPP_AGENT_KEY";
+const PRIMARY_WHATSAPP_AGENT_KEY = "multichannel-dispatch";
+const PRIMARY_WHATSAPP_AGENT_LABEL = "Evelyn";
+const PRIMARY_WHATSAPP_LEGACY_NAMES = ["willian", "william", "willian-betel", "william-betel"];
 
 export type SystemWhatsAppSenderOption = {
   id: string;
@@ -37,6 +40,17 @@ function cleanString(value: unknown, fallback = "") {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
 
+function senderDisplayName(sender: Pick<SystemWhatsAppSenderOption, "agentKey" | "instanceName">) {
+  const instanceName = cleanString(sender.instanceName);
+  const normalizedInstanceName = instanceName.toLowerCase();
+  const agentKey = cleanString(sender.agentKey);
+  if (agentKey === PRIMARY_WHATSAPP_AGENT_KEY || PRIMARY_WHATSAPP_LEGACY_NAMES.includes(normalizedInstanceName)) {
+    return PRIMARY_WHATSAPP_AGENT_LABEL;
+  }
+
+  return instanceName || agentKey || "Agente WhatsApp";
+}
+
 function isUuidLike(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
@@ -62,7 +76,7 @@ function normalizeSender(row: DbRow): SystemWhatsAppSenderOption {
 
 function senderLabel(sender?: Pick<SystemWhatsAppSenderOption, "agentKey" | "instanceName" | "phone"> | null) {
   if (!sender) return "";
-  const name = cleanString(sender.instanceName || sender.agentKey, "Agente WhatsApp");
+  const name = senderDisplayName(sender);
   return sender.phone ? `${name} - ${sender.phone}` : name;
 }
 

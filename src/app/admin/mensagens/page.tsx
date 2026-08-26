@@ -70,6 +70,10 @@ const templateGroups = [
   { key: "sistema", label: "Sistema" },
 ] as const;
 
+const PRIMARY_WHATSAPP_AGENT_KEY = "multichannel-dispatch";
+const PRIMARY_WHATSAPP_AGENT_LABEL = "Evelyn";
+const PRIMARY_WHATSAPP_LEGACY_NAMES = ["willian", "william", "willian-betel", "william-betel"];
+
 const sdrTemplateFields: Array<{
   key: keyof WhatsAppSdrAppointmentMessageTemplates;
   label: string;
@@ -196,15 +200,26 @@ function recipientTypeLabel(value: string) {
   return value;
 }
 
+function senderDisplayName(input?: Pick<SystemWhatsAppSenderOption, "instanceName" | "agentKey"> | null) {
+  if (!input) return "WhatsApp Global";
+  const instanceName = input.instanceName?.trim() || "";
+  const normalizedInstanceName = instanceName.toLowerCase();
+  const agentKey = input.agentKey?.trim() || "";
+  if (agentKey === PRIMARY_WHATSAPP_AGENT_KEY || PRIMARY_WHATSAPP_LEGACY_NAMES.includes(normalizedInstanceName)) {
+    return PRIMARY_WHATSAPP_AGENT_LABEL;
+  }
+  return instanceName || agentKey || "WhatsApp Global";
+}
+
 function senderLabel(input: Pick<SystemWhatsAppSenderOption, "instanceName" | "agentKey" | "phone" | "connected" | "status">) {
-  const name = input.instanceName || input.agentKey || "Agente WhatsApp";
+  const name = senderDisplayName(input);
   const phone = input.phone ? ` - ${input.phone}` : "";
   const status = input.connected ? "conectado" : input.status || "pendente";
   return `${name}${phone} - ${status}`;
 }
 
 function senderTitle(input?: SystemWhatsAppSenderOption) {
-  return input?.instanceName || input?.agentKey || "WhatsApp Global";
+  return senderDisplayName(input);
 }
 
 function formatDate(value?: string) {
@@ -1137,7 +1152,7 @@ function SenderTab({
     senderOptions.push({
       value: selectedSenderValue,
       label: selectedSender
-        ? `${selectedSender.instanceName || selectedSender.agentKey || "Agente configurado"} - indisponivel`
+        ? `${senderTitle(selectedSender)} - indisponivel`
         : "Agente configurado - indisponivel",
     });
   }

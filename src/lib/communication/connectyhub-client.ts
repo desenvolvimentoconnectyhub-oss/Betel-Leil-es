@@ -7,7 +7,7 @@ import type { WhatsAppAgentInstanceSummary, WillianConnectionInfo, WillianInstan
 
 export const WILLIAN_AGENT_KEY = "multichannel-dispatch";
 export const WILLIAN_AGENT_NAME = "Evelyn";
-export const WILLIAN_DEFAULT_INSTANCE_NAME = "willian-betel";
+export const WILLIAN_DEFAULT_INSTANCE_NAME = "evelyn-betel";
 export const GLOBAL_WHATSAPP_AGENT_KEY = WILLIAN_AGENT_KEY;
 export const GLOBAL_WHATSAPP_AGENT_NAME = "WhatsApp Global";
 export const GLOBAL_WHATSAPP_DEFAULT_INSTANCE_NAME = WILLIAN_DEFAULT_INSTANCE_NAME;
@@ -130,6 +130,37 @@ export type WhatsAppAgentInstancePresence = "available" | "unavailable";
 
 function cleanString(value: unknown, fallback = "") {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+const PRIMARY_WHATSAPP_LEGACY_INSTANCE_NAMES = [
+  "willian",
+  "william",
+  "willian-betel",
+  "william-betel",
+];
+
+function normalizedLookupText(value: unknown) {
+  return cleanString(value).toLowerCase();
+}
+
+function isLegacyPrimaryWhatsappInstanceName(value: unknown) {
+  const normalized = normalizedLookupText(value);
+  return PRIMARY_WHATSAPP_LEGACY_INSTANCE_NAMES.includes(normalized);
+}
+
+function normalizePrimaryWhatsappInstanceName(value: unknown, fallback = WILLIAN_DEFAULT_INSTANCE_NAME) {
+  const clean = cleanString(value, fallback);
+  return isLegacyPrimaryWhatsappInstanceName(clean) ? WILLIAN_DEFAULT_INSTANCE_NAME : clean;
+}
+
+function primaryWhatsappInstanceLookupNames(instanceName: string) {
+  return Array.from(
+    new Set(
+      [instanceName, WILLIAN_DEFAULT_INSTANCE_NAME, ...PRIMARY_WHATSAPP_LEGACY_INSTANCE_NAMES]
+        .map((value) => cleanString(value).toLowerCase())
+        .filter(Boolean)
+    )
+  );
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -446,7 +477,7 @@ async function getWillianConfig() {
     apiTokenLooksValid: isConnectyHubApiKey(apiToken.value),
     webhookSecret: webhookSecret.value,
     webhookUrl: normalizePublicUrl(webhookUrl.value),
-    instanceName: instanceName.value,
+    instanceName: normalizePrimaryWhatsappInstanceName(instanceName.value),
     instanceId: instanceId.value,
     phoneNumber: normalizeWhatsAppNumber(phoneNumber.value),
     displayName: displayName.value,
@@ -1814,8 +1845,14 @@ async function listConnectyHubInstances() {
 
 async function findConnectyHubInstanceByName(instanceName: string) {
   const instances = await listConnectyHubInstances().catch(() => []);
-  const normalizedName = instanceName.toLowerCase();
+  const normalizedName = normalizedLookupText(instanceName);
   return instances.find((item) => extractInstanceName(item).toLowerCase() === normalizedName) || null;
+}
+
+async function findPrimaryConnectyHubInstanceByName(instanceName: string) {
+  const instances = await listConnectyHubInstances().catch(() => []);
+  const candidateNames = new Set(primaryWhatsappInstanceLookupNames(instanceName));
+  return instances.find((item) => candidateNames.has(extractInstanceName(item).toLowerCase())) || null;
 }
 
 async function resolveConnectyHubInstanceId(config?: Awaited<ReturnType<typeof getWillianConfig>>) {
@@ -1823,8 +1860,8 @@ async function resolveConnectyHubInstanceId(config?: Awaited<ReturnType<typeof g
   if (resolvedConfig.instanceId) return resolvedConfig.instanceId;
 
   const instances = await listConnectyHubInstances().catch(() => []);
-  const normalizedName = resolvedConfig.instanceName.toLowerCase();
-  const matched = instances.find((item) => extractInstanceName(item).toLowerCase() === normalizedName) || instances[0];
+  const candidateNames = new Set(primaryWhatsappInstanceLookupNames(resolvedConfig.instanceName));
+  const matched = instances.find((item) => candidateNames.has(extractInstanceName(item).toLowerCase())) || instances[0];
   const instanceId = extractInstanceId(matched);
   const instanceName = extractInstanceName(matched, resolvedConfig.instanceName);
 
@@ -1842,7 +1879,7 @@ async function resolveConnectyHubInstanceId(config?: Awaited<ReturnType<typeof g
 
 async function findConfiguredWillianInstanceId(config: Awaited<ReturnType<typeof getWillianConfig>>) {
   if (config.instanceId) return config.instanceId;
-  const matched = await findConnectyHubInstanceByName(config.instanceName).catch(() => null);
+  const matched = await findPrimaryConnectyHubInstanceByName(config.instanceName).catch(() => null);
   return extractInstanceId(matched);
 }
 
@@ -1857,6 +1894,9 @@ async function persistConnectyHubInstance(input: {
 }) {
   const agentKey = cleanString(input.agentKey, WILLIAN_AGENT_KEY);
   const persistWillianConfig = agentKey === WILLIAN_AGENT_KEY && input.persistWillianConfig !== false;
+  const instanceName = persistWillianConfig
+    ? normalizePrimaryWhatsappInstanceName(input.instanceName)
+    : input.instanceName;
 
   if (persistWillianConfig) {
     const records: Array<{ key: string; value: string; description: string; secret?: boolean }> = [];
@@ -1874,16 +1914,16 @@ async function persistConnectyHubInstance(input: {
         }
       );
     }
-    if (input.instanceName) {
+    if (instanceName) {
       records.push(
         {
           key: "BETEL_GLOBAL_WHATSAPP_INSTANCE_NAME",
-          value: input.instanceName,
+          value: instanceName,
           description: "Nome da instancia ConnectyHub usada pelo WhatsApp Global da Betel.",
         },
         {
           key: "BETEL_WILLIAN_CONNECTYHUB_INSTANCE_NAME",
-          value: input.instanceName,
+          value: instanceName,
           description: "Compatibilidade: nome da instancia ConnectyHub usada pelo antigo agente Willian.",
         }
       );
@@ -1893,7 +1933,7 @@ async function persistConnectyHubInstance(input: {
   }
 
   const supabase = getSupabaseAdminClient();
-  if (!supabase || !input.instanceName) return;
+  if (!supabase || !instanceName) return;
 
   const status = normalizeStatusPayload(input.statusPayload || {});
   const phone = extractWhatsappPhoneNumber(input.statusPayload);
@@ -1911,7 +1951,7 @@ async function persistConnectyHubInstance(input: {
     {
       agent_key: agentKey,
       provider: CONNECTYHUB_PROVIDER,
-      instance_name: input.instanceName,
+      instance_name: instanceName,
       provider_instance_id: input.instanceId || null,
       token_ciphertext: null,
       token_preview: null,
@@ -2535,7 +2575,7 @@ export async function createWillianConnectyHubInstance(input: { instanceName?: s
   const instanceName = cleanString(input.instanceName, config.instanceName || WILLIAN_DEFAULT_INSTANCE_NAME);
   if (!config.webhookUrl) throw new Error("Configure CONNECTYHUB_WEBHOOK_URL antes de criar a instancia.");
 
-  const existing = await findConnectyHubInstanceByName(instanceName);
+  const existing = await findPrimaryConnectyHubInstanceByName(instanceName);
   const existingId = extractInstanceId(existing);
   if (existingId) {
     const name = extractInstanceName(existing, instanceName);
@@ -3092,7 +3132,7 @@ export async function configureWillianWebhook() {
 export async function fetchWillianRemoteStatus() {
   const config = await getWillianConfig();
   const instanceId = await resolveConnectyHubInstanceId(config);
-  if (!instanceId) throw new Error("Instancia ConnectyHub nao localizada para o Willian.");
+  if (!instanceId) throw new Error("Instancia ConnectyHub nao localizada para a Evelyn.");
 
   const payload = await connectyhubRequest(`/instances/${encodeURIComponent(instanceId)}/status`, { method: "GET", timeoutMs: 10000 });
   const status = normalizeStatusPayload(payload);
@@ -3120,7 +3160,7 @@ export async function fetchWillianRemoteStatus() {
 async function runInstanceProviderAction(path: string, statusLabel: string) {
   const config = await getWillianConfig();
   const instanceId = await resolveConnectyHubInstanceId(config);
-  if (!instanceId) throw new Error("Instancia ConnectyHub nao localizada para o Willian.");
+  if (!instanceId) throw new Error("Instancia ConnectyHub nao localizada para a Evelyn.");
 
   const payload = await connectyhubRequest(path, {
     body: { instanceId },
