@@ -276,6 +276,34 @@ export function normalizeWillianAgentConfig(input: unknown): WillianAgentConfig 
       rescheduleTrigger: boolField(behavior.rescheduleTrigger, defaults.behavior.rescheduleTrigger),
       captureTrigger: boolField(behavior.captureTrigger, defaults.behavior.captureTrigger),
       locationTrigger: boolField(behavior.locationTrigger, defaults.behavior.locationTrigger),
+      companyLocationEnabled: boolField(
+        behavior.companyLocationEnabled,
+        defaults.behavior.companyLocationEnabled
+      ),
+      companyLocationAddress: stringField(
+        firstDefined(behavior.companyLocationAddress, behavior.company_location_address),
+        defaults.behavior.companyLocationAddress
+      ),
+      companyLocationLatitude: stringField(
+        firstDefined(behavior.companyLocationLatitude, behavior.company_location_latitude),
+        defaults.behavior.companyLocationLatitude
+      ),
+      companyLocationLongitude: stringField(
+        firstDefined(behavior.companyLocationLongitude, behavior.company_location_longitude),
+        defaults.behavior.companyLocationLongitude
+      ),
+      companyLocationMapsUrl: stringField(
+        firstDefined(behavior.companyLocationMapsUrl, behavior.company_location_maps_url),
+        defaults.behavior.companyLocationMapsUrl
+      ),
+      companyLocationButtonLabel: stringField(
+        firstDefined(behavior.companyLocationButtonLabel, behavior.company_location_button_label),
+        defaults.behavior.companyLocationButtonLabel
+      ),
+      companyLocationMessage: stringField(
+        firstDefined(behavior.companyLocationMessage, behavior.company_location_message),
+        defaults.behavior.companyLocationMessage
+      ),
       optOutEnabled: boolField(behavior.optOutEnabled, defaults.behavior.optOutEnabled),
       webLinksTrigger: boolField(behavior.webLinksTrigger, defaults.behavior.webLinksTrigger),
       quotedReplyContext: quoteReplyMode !== "off",

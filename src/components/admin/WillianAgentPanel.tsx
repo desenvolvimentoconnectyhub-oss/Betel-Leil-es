@@ -11,6 +11,7 @@ import {
   Copy,
   FileText,
   Loader2,
+  MapPin,
   MessageCircle,
   Mic2,
   MoreVertical,
@@ -2626,17 +2627,78 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
           </div>
         </Panel>
 
-        <Panel
-          title="Humano responsavel"
-          eyebrow="Handoff / alertas"
-        >
-          <TextAreaField
-            label="Numeros responsaveis"
-            rows={3}
-            value={config.responsibleNumbers}
-            onChange={(responsibleNumbers) => setBehavior({ responsibleNumbers })}
-          />
-        </Panel>
+        <div className="grid gap-4">
+          <Panel
+            title="Humano responsavel"
+            eyebrow="Handoff / alertas"
+          >
+            <TextAreaField
+              label="Numeros responsaveis"
+              rows={3}
+              value={config.responsibleNumbers}
+              onChange={(responsibleNumbers) => setBehavior({ responsibleNumbers })}
+            />
+          </Panel>
+
+          <Panel
+            title="Localizacao da empresa"
+            eyebrow="Maps / botao"
+            action={
+              <BehaviorIcon
+                icon={<MapPin size={15} />}
+                label={config.locationTrigger && config.companyLocationEnabled ? "Ativo" : "Pausado"}
+              />
+            }
+          >
+            <ToggleTile
+              title="Enviar localizacao por botao"
+              detail="Quando o lead pedir endereco, a Evelyn responde e anexa o Maps."
+              checked={config.locationTrigger && config.companyLocationEnabled}
+              onChange={(checked) => setBehavior({ locationTrigger: checked, companyLocationEnabled: checked })}
+            />
+            <div className="mt-3 grid gap-3 xl:grid-cols-[1.15fr_0.85fr]">
+              <TextAreaField
+                label="Endereco"
+                rows={3}
+                value={config.companyLocationAddress}
+                onChange={(companyLocationAddress) => setBehavior({ companyLocationAddress })}
+              />
+              <div className="grid gap-3">
+                <Field
+                  label="Link Google Maps"
+                  value={config.companyLocationMapsUrl}
+                  onChange={(companyLocationMapsUrl) => setBehavior({ companyLocationMapsUrl })}
+                  placeholder="https://maps.google.com/..."
+                />
+                <Field
+                  label="Texto do botao"
+                  value={config.companyLocationButtonLabel}
+                  onChange={(companyLocationButtonLabel) => setBehavior({ companyLocationButtonLabel })}
+                />
+              </div>
+            </div>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <Field
+                label="Latitude"
+                value={config.companyLocationLatitude}
+                onChange={(companyLocationLatitude) => setBehavior({ companyLocationLatitude })}
+              />
+              <Field
+                label="Longitude"
+                value={config.companyLocationLongitude}
+                onChange={(companyLocationLongitude) => setBehavior({ companyLocationLongitude })}
+              />
+            </div>
+            <div className="mt-3">
+              <TextAreaField
+                label="Mensagem antes do botao"
+                rows={2}
+                value={config.companyLocationMessage}
+                onChange={(companyLocationMessage) => setBehavior({ companyLocationMessage })}
+              />
+            </div>
+          </Panel>
+        </div>
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">

@@ -1322,6 +1322,108 @@ function runtimeActionButton(config: WillianAgentConfig, trackId: string) {
   };
 }
 
+function normalizeMapCoordinate(value: string) {
+  const normalized = cleanString(value).replace(",", ".").replace(/\s+/g, "");
+  if (!normalized) return "";
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? String(parsed) : "";
+}
+
+function companyLocationMapsUrl(config: WillianAgentConfig) {
+  const directUrl = cleanString(config.behavior.companyLocationMapsUrl);
+  if (/^https?:\/\//i.test(directUrl)) return directUrl;
+
+  const latitude = normalizeMapCoordinate(config.behavior.companyLocationLatitude);
+  const longitude = normalizeMapCoordinate(config.behavior.companyLocationLongitude);
+  if (latitude && longitude) {
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${latitude},${longitude}`)}`;
+  }
+
+  const address = cleanString(config.behavior.companyLocationAddress);
+  if (address) {
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+  }
+
+  return "";
+}
+
+function isCompanyLocationRequest(text: string) {
+  const normalized = ` ${normalizeSearchText(text)
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()} `;
+  if (!normalized.trim()) return false;
+
+  const strongLocationAsk =
+    /\b(endereco|enderecos|localizacao|localizacoes|maps|google maps|como chegar|onde fica|onde voces ficam|onde voce fica|qual endereco|qual o endereco|manda endereco|mande endereco|me passa endereco|me envia endereco|manda localizacao|mande localizacao|me passa localizacao|me envia localizacao)\b/.test(
+      normalized
+    );
+  const companyMention =
+    /\b(betel|empresa|voces|voce|sede|escritorio|atendimento|consultoria|assessoria)\b/.test(normalized);
+  const weakCompanyLocationAsk =
+    companyMention && /\b(local|cidade|bairro|rua|cep)\b/.test(normalized);
+  const propertyLocationAsk =
+    /\b(imovel|imoveis|casa|apartamento|terreno|lote|sala|galpao|oportunidade|leilao|edital|matricula|bairro do imovel|cidade do imovel|regiao do imovel)\b/.test(
+      normalized
+    );
+
+  if (propertyLocationAsk && !companyMention) return false;
+  return strongLocationAsk || weakCompanyLocationAsk;
+}
+
+function shouldHandleCompanyLocationRequest(config: WillianAgentConfig, text: string) {
+  if (!config.behavior.locationTrigger) return false;
+  return isCompanyLocationRequest(text);
+}
+
+function runtimeCompanyLocationActionButton(config: WillianAgentConfig, trackId: string) {
+  if (
+    !config.behavior.locationTrigger ||
+    !config.behavior.companyLocationEnabled ||
+    !config.behavior.interactiveMessages ||
+    !config.behavior.buttonsEnabled
+  ) {
+    return undefined;
+  }
+  const rawUrl = companyLocationMapsUrl(config);
+  const url = config.behavior.trackedLinksEnabled ? withTrackedParams(rawUrl, trackId, "company_location") : rawUrl;
+  if (!url) return undefined;
+
+  return {
+    label: cleanString(config.behavior.companyLocationButtonLabel, "Abrir localizacao"),
+    url,
+    footerText: "Betel Leiloes",
+  };
+}
+
+function buildCompanyLocationPromptContext(input: {
+  config: WillianAgentConfig;
+  requested: boolean;
+}) {
+  if (!input.requested) return "";
+
+  const address = cleanString(input.config.behavior.companyLocationAddress);
+  const locationUrl = companyLocationMapsUrl(input.config);
+  const canSendLocationButton = input.config.behavior.companyLocationEnabled && Boolean(locationUrl);
+  const message = cleanString(
+    input.config.behavior.companyLocationMessage,
+    "Claro. Vou te mandar a localizacao da Betel por aqui."
+  );
+
+  return [
+    "LOCALIZACAO DA BETEL:",
+    "O lead pediu endereco/localizacao da empresa. Responda curto, sem escrever link cru.",
+    `Mensagem sugerida: ${message}`,
+    address ? `Endereco cadastrado: ${address}.` : "",
+    canSendLocationButton
+      ? "O sistema anexara um botao do Google Maps nesta resposta."
+      : input.config.behavior.companyLocationEnabled
+        ? "Nao ha localizacao cadastrada; diga que vai confirmar o endereco com a Betel e continue o atendimento."
+        : "O envio automatico de localizacao esta pausado; responda sem prometer botao.",
+    "Nao use este fluxo para localizacao de imovel, cidade da oportunidade ou regiao de busca do lead.",
+  ].filter(Boolean).join("\n");
+}
+
 function shouldSendBetelGroupInviteAfterDisqualification(input: {
   config: WillianAgentConfig;
   decision: WhatsAppRuntimeDecision;
@@ -5569,7 +5671,17 @@ async function processWhatsappAgentRuntime(
       : groupInviteOutcome === "disqualified"
         ? "GRUPO BETEL: se estiver encerrando um lead frio/desqualificado, finalize com acolhimento; o sistema enviara automaticamente um botao rastreado para o grupo da Betel. Nao escreva o link na resposta principal."
         : "";
-  const runtimeDecisionPromptContext = [runtimeDecision.promptContext, sdrAppointmentPromptContext, groupInvitePromptContext]
+  const companyLocationRequested = shouldHandleCompanyLocationRequest(config, runtimeControlUnderstandingText);
+  const companyLocationPromptContext = buildCompanyLocationPromptContext({
+    config,
+    requested: companyLocationRequested,
+  });
+  const runtimeDecisionPromptContext = [
+    runtimeDecision.promptContext,
+    sdrAppointmentPromptContext,
+    groupInvitePromptContext,
+    companyLocationPromptContext,
+  ]
     .filter(Boolean)
     .join("\n");
 
@@ -5794,7 +5906,31 @@ async function processWhatsappAgentRuntime(
     ...preSendEvaluation.corrections,
     ...(responseText !== preSendEvaluation.text ? ["text_total_limit_applied"] : []),
   ]);
-  const replyActionButton = runtimeActionButton(config, trackId);
+  const replyActionButton = companyLocationRequested
+    ? runtimeCompanyLocationActionButton(config, trackId)
+    : runtimeActionButton(config, trackId);
+  if (companyLocationRequested) {
+    await insertRuntimeEvent(supabase, {
+      agentKey,
+      eventType: "whatsapp_agent_runtime_company_location",
+      status: replyActionButton ? "button_ready" : "button_unavailable",
+      message: replyActionButton
+        ? "Lead pediu localizacao da empresa; botao do Maps preparado para envio."
+        : "Lead pediu localizacao da empresa, mas nao havia botao de Maps disponivel.",
+      payload: {
+        eventId,
+        leadId,
+        conversationId,
+        companyLocationEnabled: config.behavior.companyLocationEnabled,
+        hasAddress: Boolean(cleanString(config.behavior.companyLocationAddress)),
+        hasMapsUrl: Boolean(cleanString(config.behavior.companyLocationMapsUrl)),
+        hasCoordinates: Boolean(
+          normalizeMapCoordinate(config.behavior.companyLocationLatitude) &&
+            normalizeMapCoordinate(config.behavior.companyLocationLongitude)
+        ),
+      },
+    });
+  }
   if (replyGuardCorrections.length || preSendEvaluation.flags.length || !preSendEvaluation.allow) {
     await insertRuntimeEvent(supabase, {
       agentKey,
@@ -5856,7 +5992,8 @@ async function processWhatsappAgentRuntime(
       audioToTextChancePct: config.behavior.audioToTextChancePct,
     },
   });
-  const wantsAudio = voiceDecision.mode === "audio";
+  const forceTextForCompanyLocationButton = companyLocationRequested && Boolean(replyActionButton);
+  const wantsAudio = voiceDecision.mode === "audio" && !forceTextForCompanyLocationButton;
   const plannedReplyParts = splitWhatsAppReply(responseText, {
     enabled: config.behavior.splitReplies,
     mode: wantsAudio ? "audio" : "text",

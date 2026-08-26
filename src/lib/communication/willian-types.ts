@@ -190,6 +190,13 @@ export type WillianBehaviorConfig = {
   rescheduleTrigger: boolean;
   captureTrigger: boolean;
   locationTrigger: boolean;
+  companyLocationEnabled: boolean;
+  companyLocationAddress: string;
+  companyLocationLatitude: string;
+  companyLocationLongitude: string;
+  companyLocationMapsUrl: string;
+  companyLocationButtonLabel: string;
+  companyLocationMessage: string;
   optOutEnabled: boolean;
   webLinksTrigger: boolean;
   quotedReplyContext: boolean;
@@ -631,6 +638,13 @@ export const DEFAULT_WILLIAN_AGENT_CONFIG: WillianAgentConfig = {
     rescheduleTrigger: true,
     captureTrigger: true,
     locationTrigger: true,
+    companyLocationEnabled: true,
+    companyLocationAddress: "Rua Jose Eugenio Muller, 1173 - Itajai/SC",
+    companyLocationLatitude: "-26.9078",
+    companyLocationLongitude: "-48.6619",
+    companyLocationMapsUrl: "https://www.google.com/maps/search/?api=1&query=-26.9078%2C-48.6619",
+    companyLocationButtonLabel: "Abrir localizacao",
+    companyLocationMessage: "Claro. Vou te mandar a localizacao da Betel por aqui.",
     optOutEnabled: true,
     webLinksTrigger: true,
     quotedReplyContext: true,
