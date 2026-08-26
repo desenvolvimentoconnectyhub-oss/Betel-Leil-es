@@ -2999,6 +2999,7 @@ function detectExternalOutboundTrace(payload: Record<string, unknown>) {
       label: "Celular WhatsApp",
       sentByApi,
       fromPhoneDevice,
+      shouldPauseAiForHandoff: true,
       rawSource,
     };
   }
@@ -3010,6 +3011,7 @@ function detectExternalOutboundTrace(payload: Record<string, unknown>) {
       label: "ConnectHub/API externo",
       sentByApi,
       fromPhoneDevice,
+      shouldPauseAiForHandoff: false,
       rawSource,
     };
   }
@@ -3020,6 +3022,7 @@ function detectExternalOutboundTrace(payload: Record<string, unknown>) {
     label: "WhatsApp externo",
     sentByApi,
     fromPhoneDevice,
+    shouldPauseAiForHandoff: false,
     rawSource,
   };
 }
@@ -3110,6 +3113,7 @@ async function persistExternalOutboundMessage(
 ) {
   const preview = externalOutboundPreview(input.message);
   const trace = detectExternalOutboundTrace(input.payload);
+  const shouldPauseAiForHandoff = Boolean(trace.shouldPauseAiForHandoff);
   const providerMessageId = normalizeProviderMessageId(input.message.providerMessageId);
 
   if (input.message.isGroup) {
@@ -3143,6 +3147,7 @@ async function persistExternalOutboundMessage(
     messageType: input.message.messageType || null,
     sentByApi: trace.sentByApi,
     fromPhoneDevice: trace.fromPhoneDevice,
+    shouldPauseAiForHandoff,
     rawSource: trace.rawSource || null,
     observedAt: input.receivedAt,
   };
@@ -3266,17 +3271,19 @@ async function persistExternalOutboundMessage(
 
   if (messageError) return { persisted: false, reason: messageError.message || "external_outbound_message_not_persisted" };
 
-  await markManualReplyHandoff(supabase, {
-    conversationId,
-    leadId,
-    agentKey: input.agentKey,
-    operatorLabel: trace.label,
-    reason: "external_outbound_detected",
-    source: trace.source,
-    note: "Mensagem enviada fora do painel da Betel e registrada para auditoria.",
-    now: input.receivedAt,
-    lastMessagePreview: preview,
-  });
+  if (shouldPauseAiForHandoff) {
+    await markManualReplyHandoff(supabase, {
+      conversationId,
+      leadId,
+      agentKey: input.agentKey,
+      operatorLabel: trace.label,
+      reason: "external_outbound_detected",
+      source: trace.source,
+      note: "Mensagem enviada fora do painel da Betel e registrada para auditoria.",
+      now: input.receivedAt,
+      lastMessagePreview: preview,
+    });
+  }
 
   await supabase
     .from("whatsapp_conversations")
@@ -3294,12 +3301,15 @@ async function persistExternalOutboundMessage(
   await insertRuntimeEvent(supabase, {
     agentKey: input.agentKey,
     eventType: "whatsapp_external_outbound_observed",
-    status: "persisted",
-    message: "Mensagem enviada fora do painel da Betel registrada e IA pausada para auditoria.",
+    status: shouldPauseAiForHandoff ? "persisted_with_handoff" : "persisted_without_handoff",
+    message: shouldPauseAiForHandoff
+      ? "Mensagem enviada fora do painel da Betel registrada e IA pausada para auditoria."
+      : "Mensagem enviada por API externa registrada para auditoria sem pausar a IA.",
     payload: {
       leadId,
       conversationId,
       messageId: cleanString(messageRow?.id) || null,
+      handoffTriggered: shouldPauseAiForHandoff,
       trace: leadAudit,
     },
   });
@@ -3310,6 +3320,7 @@ async function persistExternalOutboundMessage(
     leadId,
     conversationId,
     messageId: cleanString(messageRow?.id),
+    handoffTriggered: shouldPauseAiForHandoff,
     trace,
   };
 }

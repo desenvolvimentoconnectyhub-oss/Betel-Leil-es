@@ -446,6 +446,7 @@ function messageTrace(message: DbRow, agentKey: string, occurredAt: string) {
       isExternalHumanOutbound: false,
       isPanelHumanOutbound: false,
       isAiOutbound: false,
+      shouldPauseAiForHandoff: false,
       sentByApi: wasSentByApi,
       fromPhoneDevice: false,
       rawSource: cleanString(message.source) || null,
@@ -467,6 +468,7 @@ function messageTrace(message: DbRow, agentKey: string, occurredAt: string) {
       isExternalHumanOutbound: false,
       isPanelHumanOutbound: true,
       isAiOutbound: false,
+      shouldPauseAiForHandoff: true,
       sentByApi: wasSentByApi,
       fromPhoneDevice: false,
       rawSource: cleanString(message.source) || null,
@@ -495,6 +497,7 @@ function messageTrace(message: DbRow, agentKey: string, occurredAt: string) {
       isExternalHumanOutbound: false,
       isPanelHumanOutbound: false,
       isAiOutbound: true,
+      shouldPauseAiForHandoff: false,
       sentByApi: wasSentByApi,
       fromPhoneDevice: false,
       rawSource: cleanString(message.source) || null,
@@ -513,17 +516,19 @@ function messageTrace(message: DbRow, agentKey: string, occurredAt: string) {
         : !wasSentByApi
           ? "WhatsApp Web/Celular"
           : "API externa";
+  const isPhoneDeviceOutbound = label === "Celular WhatsApp" || label === "WhatsApp Web/Celular";
 
   return {
     direction: "outbound",
     authorType: "human",
     authorLabel: label,
-    source: label === "Celular WhatsApp" || label === "WhatsApp Web/Celular" ? "whatsapp_phone_device" : "connectyhub_external_api",
+    source: isPhoneDeviceOutbound ? "whatsapp_phone_device" : "connectyhub_external_api",
     origin: label === "API externa" ? "external_api" : currentTrackSource || rawSource || "external_outbound",
     label,
     isExternalHumanOutbound: true,
     isPanelHumanOutbound: false,
     isAiOutbound: false,
+    shouldPauseAiForHandoff: isPhoneDeviceOutbound,
     sentByApi: wasSentByApi,
     fromPhoneDevice: messageIsFromMe(message) && !wasSentByApi,
     rawSource: cleanString(message.source) || null,
@@ -863,7 +868,7 @@ async function persistHistoryMessage(
     supabase.from("whatsapp_conversations").update(conversationPatch).eq("id", conversation.id),
   ];
 
-  if (trace.isExternalHumanOutbound || trace.isPanelHumanOutbound) {
+  if (trace.shouldPauseAiForHandoff || trace.isPanelHumanOutbound) {
     updates.push(
       markManualReplyHandoff(supabase, {
         conversationId: conversation.id,
