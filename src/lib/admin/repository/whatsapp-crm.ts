@@ -187,6 +187,7 @@ export type WhatsAppCrmData = {
 
 const defaultAgentKey = "multichannel-dispatch";
 const whatsappAgentKeys = new Set([defaultAgentKey, "willian", "willian-whatsapp"]);
+const whatsappCrmMessageLimit = 3000;
 
 function timestamp(value: unknown) {
   const text = asString(value);
@@ -1078,7 +1079,7 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
     await Promise.all([
       supabase.from("whatsapp_leads").select("*").order("updated_at", { ascending: false }).limit(120),
       supabase.from("whatsapp_conversations").select("*").order("updated_at", { ascending: false }).limit(160),
-      supabase.from("whatsapp_conversation_messages").select("*").order("created_at", { ascending: false }).limit(600),
+      supabase.from("whatsapp_conversation_messages").select("*").order("created_at", { ascending: false }).limit(whatsappCrmMessageLimit),
       supabase.from("whatsapp_instances").select("*").order("updated_at", { ascending: false }).limit(80),
       supabase.from("ai_agents").select("*").order("updated_at", { ascending: false }).limit(120),
       supabase.from("whatsapp_lead_profiles").select("*").order("updated_at", { ascending: false }).limit(120),

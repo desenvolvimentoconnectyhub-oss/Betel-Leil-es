@@ -211,6 +211,12 @@ function incomingLeadsSince(previous: Map<string, LeadActivitySnapshot>, leads: 
     .sort((left, right) => dateMs(right.lastMessageAt) - dateMs(left.lastMessageAt));
 }
 
+function activeLeadsSince(previous: Map<string, LeadActivitySnapshot>, leads: WhatsAppCrmLeadCard[]) {
+  return leads
+    .filter((lead) => leadHasNewActivity(previous.get(leadActivityKey(lead)), lead))
+    .sort((left, right) => dateMs(right.lastMessageAt) - dateMs(left.lastMessageAt));
+}
+
 function notificationPreview(lead: WhatsAppCrmLeadCard) {
   const preview = (lead.lastMessagePreview || "Nova mensagem recebida.").replace(/\s+/g, " ").trim();
   return preview.length > 160 ? `${preview.slice(0, 157)}...` : preview;
@@ -1613,6 +1619,8 @@ export function WhatsAppCrmPage({ crmData }: { crmData: DataResult<WhatsAppCrmDa
   const [nowMs, setNowMs] = useState(() => Date.now());
   const knownLeadActivityRef = useRef(buildLeadActivityMap(crmData.data.leads));
   const selectedIdRef = useRef(selectedId);
+  const manualReplyRef = useRef(manualReply);
+  const leadFileOpenRef = useRef(leadFileOpen);
   const pollingInFlightRef = useRef(false);
   const audioContextRef = useRef<AudioContext | null>(null);
   const soundUnlockedRef = useRef(false);
@@ -1709,7 +1717,8 @@ export function WhatsAppCrmPage({ crmData }: { crmData: DataResult<WhatsAppCrmDa
           throw new Error("Nao foi possivel sincronizar o atendimento ao vivo.");
         }
 
-        const incoming = notify ? incomingLeadsSince(knownLeadActivityRef.current, result.data.leads) : [];
+        const activeLeads = notify ? activeLeadsSince(knownLeadActivityRef.current, result.data.leads) : [];
+        const incoming = activeLeads.filter((lead) => lead.lastMessageDirection === "inbound");
         knownLeadActivityRef.current = buildLeadActivityMap(result.data.leads);
         setLiveCrmData(result);
         setLiveSync({
@@ -1717,6 +1726,19 @@ export function WhatsAppCrmPage({ crmData }: { crmData: DataResult<WhatsAppCrmDa
           lastSyncedAt: result.data.generatedAt || new Date().toISOString(),
           message: "Atendimento ao vivo sincronizado.",
         });
+        const nextActiveLead = activeLeads.find((lead) => lead.lastMessageDirection === "inbound") || activeLeads[0];
+        if (
+          nextActiveLead &&
+          nextActiveLead.id !== selectedIdRef.current &&
+          !document.hidden &&
+          !leadFileOpenRef.current &&
+          !manualReplyRef.current.trim()
+        ) {
+          selectedIdRef.current = nextActiveLead.id;
+          setSelectedId(nextActiveLead.id);
+          setContextDraft(contextDraftFromLead(nextActiveLead));
+          setStageDraft(stageDraftFromLead(nextActiveLead));
+        }
         if (incoming.length) announceIncomingLeads(incoming);
       } catch (error) {
         setLiveSync({
@@ -1734,6 +1756,14 @@ export function WhatsAppCrmPage({ crmData }: { crmData: DataResult<WhatsAppCrmDa
   useEffect(() => {
     selectedIdRef.current = selectedId;
   }, [selectedId]);
+
+  useEffect(() => {
+    manualReplyRef.current = manualReply;
+  }, [manualReply]);
+
+  useEffect(() => {
+    leadFileOpenRef.current = leadFileOpen;
+  }, [leadFileOpen]);
 
   useEffect(() => {
     const enableNotifications = () => {
