@@ -11,6 +11,7 @@ import { metaWhatsAppCampaignsFunction } from "@/inngest/functions/meta-whatsapp
 import { trafficAiSyncFunction } from "@/inngest/functions/traffic-ai-sync";
 import { whatsappTempMediaCleanupFunction } from "@/inngest/functions/whatsapp-temp-media-cleanup";
 import { whatsappSdrAppointmentsFunction } from "@/inngest/functions/whatsapp-sdr-appointments";
+import { whatsappConversationHistorySyncFunction } from "@/inngest/functions/whatsapp-conversation-history-sync";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
@@ -26,5 +27,6 @@ export const { GET, POST, PUT } = serve({
     trafficAiSyncFunction,
     whatsappTempMediaCleanupFunction,
     whatsappSdrAppointmentsFunction,
+    whatsappConversationHistorySyncFunction,
   ],
 });

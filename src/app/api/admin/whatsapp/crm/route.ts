@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { requireAdminApi } from "@/lib/auth/admin-api";
 import { getWhatsAppCrmData } from "@/lib/admin/repository";
-import { reconcileExternalOutboundMessagesFromConnectyHub } from "@/lib/whatsapp/external-outbound-sync";
+import { reconcileWhatsAppConversationHistoryFromConnectyHub } from "@/lib/whatsapp/conversation-history-sync";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -12,8 +12,11 @@ export async function GET(request: NextRequest) {
   if (authorization.response) return authorization.response;
 
   if (request.nextUrl.searchParams.get("reconcile") === "1") {
-    await reconcileExternalOutboundMessagesFromConnectyHub().catch((error) => {
-      console.error("[whatsapp-crm] Falha ao reconciliar mensagens externas:", error);
+    await reconcileWhatsAppConversationHistoryFromConnectyHub({
+      limit: 300,
+      intervalMs: 15_000,
+    }).catch((error) => {
+      console.error("[whatsapp-crm] Falha ao reconciliar historico WhatsApp:", error);
     });
   }
 

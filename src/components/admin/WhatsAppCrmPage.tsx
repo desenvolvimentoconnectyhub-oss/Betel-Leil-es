@@ -127,7 +127,7 @@ const whatsappChatBackgroundStyle: CSSProperties = {
   backgroundSize: "420px auto",
 };
 const LIVE_CRM_REFRESH_MS = 3_000;
-const EXTERNAL_OUTBOUND_RECONCILE_MS = 15_000;
+const CONVERSATION_HISTORY_RECONCILE_MS = 15_000;
 const LIVE_NOTICE_TTL_MS = 12_000;
 
 function formatDateTime(value: string) {
@@ -1647,7 +1647,7 @@ export function WhatsAppCrmPage({ crmData }: { crmData: DataResult<WhatsAppCrmDa
   const manualReplyRef = useRef(manualReply);
   const leadFileOpenRef = useRef(leadFileOpen);
   const pollingInFlightRef = useRef(false);
-  const externalOutboundReconcileRef = useRef(0);
+  const conversationHistoryReconcileRef = useRef(0);
   const audioContextRef = useRef<AudioContext | null>(null);
   const soundUnlockedRef = useRef(false);
   const notificationPermissionRequestedRef = useRef(false);
@@ -1735,10 +1735,11 @@ export function WhatsAppCrmPage({ crmData }: { crmData: DataResult<WhatsAppCrmDa
 
       try {
         const now = Date.now();
-        const shouldReconcileExternal = now - externalOutboundReconcileRef.current >= EXTERNAL_OUTBOUND_RECONCILE_MS;
-        if (shouldReconcileExternal) externalOutboundReconcileRef.current = now;
+        const shouldReconcileHistory =
+          now - conversationHistoryReconcileRef.current >= CONVERSATION_HISTORY_RECONCILE_MS;
+        if (shouldReconcileHistory) conversationHistoryReconcileRef.current = now;
 
-        const response = await fetch(`/api/admin/whatsapp/crm${shouldReconcileExternal ? "?reconcile=1" : ""}`, {
+        const response = await fetch(`/api/admin/whatsapp/crm${shouldReconcileHistory ? "?reconcile=1" : ""}`, {
           cache: "no-store",
           headers: { accept: "application/json" },
         });

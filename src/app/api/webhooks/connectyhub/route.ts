@@ -1871,6 +1871,36 @@ function firstCleanString(...values: unknown[]) {
   return "";
 }
 
+function normalizedMessagePlaceholder(value: unknown) {
+  return cleanString(value).replace(/[\s_[\]{}().:-]/g, "").toLowerCase();
+}
+
+function isTechnicalMessagePlaceholder(value: unknown) {
+  return new Set([
+    "extendedtextmessage",
+    "conversation",
+    "audiomessage",
+    "imagemessage",
+    "videomessage",
+    "documentmessage",
+    "stickermessage",
+    "buttonsresponsemessage",
+    "listresponsemessage",
+    "templatebuttonreplymessage",
+    "interactiveresponsemessage",
+    "reactionmessage",
+    "protocolmessage",
+  ]).has(normalizedMessagePlaceholder(value));
+}
+
+function firstMessageText(...values: unknown[]) {
+  for (const value of values) {
+    const clean = cleanString(value);
+    if (clean && !isTechnicalMessagePlaceholder(clean)) return clean;
+  }
+  return "";
+}
+
 function normalizeProviderMessageId(value: unknown) {
   const raw =
     typeof value === "number" && Number.isFinite(value)
@@ -1943,7 +1973,7 @@ function collectQuotedCandidateRecords(
 
 function extractTextFromMessageLike(value: unknown, depth = 0): string {
   if (depth > 5) return "";
-  if (typeof value === "string") return cleanString(value);
+  if (typeof value === "string") return isTechnicalMessagePlaceholder(value) ? "" : cleanString(value);
   if (!value || typeof value !== "object") return "";
   if (Array.isArray(value)) {
     for (const item of value) {
@@ -1954,7 +1984,7 @@ function extractTextFromMessageLike(value: unknown, depth = 0): string {
   }
 
   const record = asRecord(value);
-  const direct = firstCleanString(
+  const direct = firstMessageText(
     record.text,
     record.body,
     record.conversation,
@@ -2058,7 +2088,7 @@ function extractMimeTypeFromMessageLike(value: unknown, depth = 0): string {
 function extractMessageTypeFromMessageLike(value: unknown): string {
   const record = asRecord(value);
   const direct = firstCleanString(record.messageType, record.mediaType, record.type, record.kind);
-  if (direct) return direct;
+  if (direct) return normalizeMessageTypeName(direct);
 
   const typedContainers = [
     "conversation",
@@ -2074,9 +2104,23 @@ function extractMessageTypeFromMessageLike(value: unknown): string {
     "interactiveResponseMessage",
   ];
   for (const key of typedContainers) {
-    if (record[key] !== undefined) return key === "conversation" || key === "extendedTextMessage" ? "text" : key.replace(/Message$/, "").toLowerCase();
+    if (record[key] !== undefined) return normalizeMessageTypeName(key);
   }
   return "";
+}
+
+function normalizeMessageTypeName(value: unknown, fallback = "") {
+  const clean = cleanString(value, fallback);
+  const normalized = normalizedMessagePlaceholder(clean);
+  if (!normalized) return fallback;
+  if (normalized === "conversation" || normalized === "extendedtextmessage") return "text";
+  if (normalized === "audiomessage") return "audio";
+  if (normalized === "imagemessage") return "image";
+  if (normalized === "videomessage") return "video";
+  if (normalized === "documentmessage") return "document";
+  if (normalized === "stickermessage") return "sticker";
+  if (normalized.includes("button") || normalized.includes("listresponse") || normalized.includes("interactive")) return "text";
+  return clean;
 }
 
 function normalizeQuotedReplyContext(value: unknown): QuotedReplyContext | null {
@@ -2409,20 +2453,29 @@ function extractWebhookMessage(payload: Record<string, unknown>) {
     chat.name,
     chat.wa_name
   );
-  const text = firstCleanString(
+  const text = firstMessageText(
     message.text,
     message.body,
     message.conversation,
     message.caption,
+    content.text,
+    content.body,
+    content.conversation,
+    content.caption,
+    extractTextFromMessageLike(content),
+    extractTextFromMessageLike(message),
     data.text,
     data.body,
     data.conversation,
     data.caption,
     findFirstString(data, ["text", "body", "conversation", "caption"])
   );
-  const messageType =
+  const messageType = normalizeMessageTypeName(
     firstCleanString(message.messageType, message.mediaType, message.type, chat.wa_lastMessageType, data.messageType, data.mediaType, data.type) ||
-    (text ? "text" : "unknown");
+      extractMessageTypeFromMessageLike(content) ||
+      extractMessageTypeFromMessageLike(message),
+    text ? "text" : "unknown"
+  );
   const mediaUrl = firstCleanString(
     message.mediaUrl,
     message.media_url,

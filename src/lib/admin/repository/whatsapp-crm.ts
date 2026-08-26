@@ -577,9 +577,97 @@ function messageCreatedAt(message?: DbRow) {
   return asString(message.occurred_at, asString(message.created_at));
 }
 
+function normalizedMessagePlaceholder(value: unknown) {
+  return asString(value).replace(/[\s_[\]{}().:-]/g, "").toLowerCase();
+}
+
+function isTechnicalMessagePlaceholder(value: unknown) {
+  return new Set([
+    "extendedtextmessage",
+    "conversation",
+    "audiomessage",
+    "imagemessage",
+    "videomessage",
+    "documentmessage",
+    "stickermessage",
+    "buttonsresponsemessage",
+    "listresponsemessage",
+    "templatebuttonreplymessage",
+    "interactiveresponsemessage",
+    "reactionmessage",
+    "protocolmessage",
+  ]).has(normalizedMessagePlaceholder(value));
+}
+
+function firstMessageText(...values: unknown[]) {
+  for (const value of values) {
+    const clean = asString(value);
+    if (clean && !isTechnicalMessagePlaceholder(clean)) return clean;
+  }
+  return "";
+}
+
+function extractTextFromMessagePayload(value: unknown, depth = 0): string {
+  if (depth > 7) return "";
+  if (typeof value === "string") return isTechnicalMessagePlaceholder(value) ? "" : asString(value);
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    if (!Array.isArray(value)) return "";
+    for (const item of value) {
+      const found = extractTextFromMessagePayload(item, depth + 1);
+      if (found) return found;
+    }
+    return "";
+  }
+
+  const record = asRecord(value);
+  const direct = firstMessageText(
+    record.text,
+    record.body,
+    record.conversation,
+    record.caption,
+    record.selectedDisplayText,
+    record.selectedRowId,
+    record.contentText,
+    record.displayText,
+    record.title,
+    record.description,
+    record.transcript,
+    record.transcription
+  );
+  if (direct) return direct;
+
+  for (const key of [
+    "content",
+    "message",
+    "messageData",
+    "extendedTextMessage",
+    "imageMessage",
+    "videoMessage",
+    "documentMessage",
+    "buttonsResponseMessage",
+    "listResponseMessage",
+    "templateButtonReplyMessage",
+    "interactiveResponseMessage",
+  ]) {
+    const found = extractTextFromMessagePayload(record[key], depth + 1);
+    if (found) return found;
+  }
+
+  return "";
+}
+
+function resolvedMessageText(message?: DbRow) {
+  if (!message) return "";
+  const stored = firstMessageText(message.text, message.transcript);
+  if (stored) return stored;
+  const payloadText = extractTextFromMessagePayload(message.payload);
+  if (payloadText) return payloadText;
+  return asString(message.text, asString(message.transcript));
+}
+
 function messagePreview(message?: DbRow) {
   if (!message) return "Sem mensagens registradas.";
-  const text = asString(message.text, asString(message.transcript));
+  const text = resolvedMessageText(message);
   if (text) return text.length > 150 ? `${text.slice(0, 147)}...` : text;
   const messageType = asString(message.message_type, "midia");
   return `[${messageType}]`;
@@ -587,7 +675,7 @@ function messagePreview(message?: DbRow) {
 
 function messageBody(message?: DbRow) {
   if (!message) return "[mensagem]";
-  const text = asString(message.text, asString(message.transcript));
+  const text = resolvedMessageText(message);
   if (text) return text.length > 1800 ? `${text.slice(0, 1797)}...` : text;
   const messageType = asString(message.message_type, "midia");
   return `[${messageType}]`;
