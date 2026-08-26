@@ -1379,9 +1379,7 @@ function shouldHandleCompanyLocationRequest(config: WillianAgentConfig, text: st
 function runtimeCompanyLocationActionButton(config: WillianAgentConfig, trackId: string) {
   if (
     !config.behavior.locationTrigger ||
-    !config.behavior.companyLocationEnabled ||
-    !config.behavior.interactiveMessages ||
-    !config.behavior.buttonsEnabled
+    !config.behavior.companyLocationEnabled
   ) {
     return undefined;
   }
@@ -1422,6 +1420,16 @@ function buildCompanyLocationPromptContext(input: {
         : "O envio automatico de localizacao esta pausado; responda sem prometer botao.",
     "Nao use este fluxo para localizacao de imovel, cidade da oportunidade ou regiao de busca do lead.",
   ].filter(Boolean).join("\n");
+}
+
+function buildCompanyLocationReplyText(config: WillianAgentConfig) {
+  const message = cleanString(
+    config.behavior.companyLocationMessage,
+    "Claro. Vou te mandar a localizacao da Betel por aqui."
+  );
+  const address = cleanString(config.behavior.companyLocationAddress);
+
+  return [message, address ? `Endereco: ${address}` : ""].filter(Boolean).join("\n\n");
 }
 
 function shouldSendBetelGroupInviteAfterDisqualification(input: {
@@ -5964,19 +5972,31 @@ async function processWhatsappAgentRuntime(
     return { ok: false, skipped: true, reason: generated.reason };
   }
 
-  const guardedReply = enforceWhatsAppReplyBehavior(config, {
-    text: generated.text,
-    inboundText: runtimeText,
-    history: runtimeContext.messages,
-    leadMetadata: runtimeContext.lead.metadata,
-    audioReplyRequested,
-  });
-  const preSendEvaluation = evaluateWhatsAppReplyBeforeSend({
-    text: guardedReply.text,
-    inboundText: runtimeText,
-    history: runtimeContext.messages,
-    decision: runtimeDecision,
-  });
+  const forcedCompanyLocationReply = companyLocationRequested ? buildCompanyLocationReplyText(config) : "";
+  const guardedReply = forcedCompanyLocationReply
+    ? { text: forcedCompanyLocationReply, corrections: ["company_location_reply_forced"] }
+    : enforceWhatsAppReplyBehavior(config, {
+        text: generated.text,
+        inboundText: runtimeText,
+        history: runtimeContext.messages,
+        leadMetadata: runtimeContext.lead.metadata,
+        audioReplyRequested,
+      });
+  const preSendEvaluation = forcedCompanyLocationReply
+    ? {
+        allow: true,
+        text: forcedCompanyLocationReply,
+        corrections: ["company_location_reply_forced"],
+        flags: [],
+        blockedReason: "",
+        score: 100,
+      }
+    : evaluateWhatsAppReplyBeforeSend({
+        text: guardedReply.text,
+        inboundText: runtimeText,
+        history: runtimeContext.messages,
+        decision: runtimeDecision,
+      });
   const responseText = audioReplyPossible
     ? preSendEvaluation.text
     : limitTextReplyTotal(preSendEvaluation.text);
@@ -6007,6 +6027,7 @@ async function processWhatsappAgentRuntime(
           normalizeMapCoordinate(config.behavior.companyLocationLatitude) &&
             normalizeMapCoordinate(config.behavior.companyLocationLongitude)
         ),
+        forcedReply: Boolean(forcedCompanyLocationReply),
       },
     });
   }

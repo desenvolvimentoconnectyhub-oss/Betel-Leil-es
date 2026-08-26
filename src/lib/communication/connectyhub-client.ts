@@ -68,6 +68,18 @@ type ConnectyHubWhatsAppMessageResult = {
   endpoint: "provider" | "legacy";
 };
 
+type ConnectyHubWhatsAppTextMessageInput = {
+  instanceId: string;
+  number: string;
+  text: string;
+  trackId: string;
+  idempotencyKey?: string;
+  sendOptions?: WhatsAppAgentSendOptions;
+  mentions?: string[];
+  replyId?: string;
+  timeoutMs?: number;
+};
+
 type ConnectyHubWhatsAppMediaResult = {
   payload: unknown;
   usedIdempotencyKey: boolean;
@@ -269,6 +281,13 @@ function normalizeActionButton(input: WhatsAppActionButtonInput | undefined, tex
 
 function removeButtonUrlFromText(text: string, url: string) {
   return text.replace(url, "").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function textWithButtonFallbackLinks(text: string, choices: { label: string; url: string }[]) {
+  const links = choices
+    .filter((choice) => choice.label && choice.url)
+    .map((choice) => `${choice.label}: ${choice.url}`);
+  return [cleanString(text), ...links].filter(Boolean).join("\n\n");
 }
 
 function configAliases(keys: string[]) {
@@ -1056,47 +1075,11 @@ async function connectyhubRequestWithIdempotencyFallback(
   }
 }
 
-async function sendConnectyHubWhatsAppMessage(input: {
-  instanceId: string;
-  number: string;
-  text: string;
-  trackId: string;
-  idempotencyKey?: string;
-  actionButton?: WhatsAppActionButtonInput;
-  inferActionButtonFromText?: boolean;
-  sendOptions?: WhatsAppAgentSendOptions;
-  mentions?: string[];
-  replyId?: string;
-  timeoutMs?: number;
-}): Promise<ConnectyHubWhatsAppMessageResult> {
-  const button = normalizeActionButton(input.actionButton, input.inferActionButtonFromText === false ? "" : input.text);
+async function sendConnectyHubWhatsAppTextMessage(
+  input: ConnectyHubWhatsAppTextMessageInput
+): Promise<ConnectyHubWhatsAppMessageResult> {
   const timeoutMs = input.timeoutMs || CONNECTYHUB_TEXT_SEND_TIMEOUT_MS;
   const sendFields = optionalSendFields(input.sendOptions);
-
-  if (button) {
-    const inferredUrl = button.choices[0]?.url || "";
-    const buttonText = button.explicit ? input.text.trim() : removeButtonUrlFromText(input.text, inferredUrl);
-
-    const { payload, usedIdempotencyKey } = await connectyhubRequestWithIdempotencyFallback("/provider/send/menu", {
-      body: {
-        instanceId: input.instanceId,
-        payload: {
-          number: input.number,
-          type: "button",
-          text: buttonText || input.text.trim(),
-          choices: button.choices.map((choice) => `${choice.label}|${choice.url}`),
-          footerText: button.footerText,
-          track_source: "betel_ai",
-          track_id: input.trackId,
-          ...sendFields,
-        },
-      },
-      idempotencyKey: input.idempotencyKey || input.trackId,
-      timeoutMs,
-    });
-
-    return { payload, usedIdempotencyKey, sentAsButton: true, endpoint: "provider" };
-  }
 
   try {
     const { payload, usedIdempotencyKey } = await connectyhubRequestWithIdempotencyFallback("/provider/send/text", {
@@ -1140,6 +1123,67 @@ async function sendConnectyHubWhatsAppMessage(input: {
 
     return { payload, usedIdempotencyKey, sentAsButton: false, endpoint: "legacy" };
   }
+}
+
+async function sendConnectyHubWhatsAppMessage(input: {
+  instanceId: string;
+  number: string;
+  text: string;
+  trackId: string;
+  idempotencyKey?: string;
+  actionButton?: WhatsAppActionButtonInput;
+  inferActionButtonFromText?: boolean;
+  sendOptions?: WhatsAppAgentSendOptions;
+  mentions?: string[];
+  replyId?: string;
+  timeoutMs?: number;
+}): Promise<ConnectyHubWhatsAppMessageResult> {
+  const button = normalizeActionButton(input.actionButton, input.inferActionButtonFromText === false ? "" : input.text);
+  const timeoutMs = input.timeoutMs || CONNECTYHUB_TEXT_SEND_TIMEOUT_MS;
+  const sendFields = optionalSendFields(input.sendOptions);
+
+  if (button) {
+    const inferredUrl = button.choices[0]?.url || "";
+    const buttonText = button.explicit ? input.text.trim() : removeButtonUrlFromText(input.text, inferredUrl);
+
+    try {
+      const { payload, usedIdempotencyKey } = await connectyhubRequestWithIdempotencyFallback("/provider/send/menu", {
+        body: {
+          instanceId: input.instanceId,
+          payload: {
+            number: input.number,
+            type: "button",
+            text: buttonText || input.text.trim(),
+            choices: button.choices.map((choice) => `${choice.label}|${choice.url}`),
+            footerText: button.footerText,
+            track_source: "betel_ai",
+            track_id: input.trackId,
+            ...sendFields,
+          },
+        },
+        idempotencyKey: input.idempotencyKey || input.trackId,
+        timeoutMs,
+      });
+
+      return { payload, usedIdempotencyKey, sentAsButton: true, endpoint: "provider" };
+    } catch (error) {
+      if (!shouldFallbackToLegacySend(error)) throw error;
+
+      return sendConnectyHubWhatsAppTextMessage({
+        instanceId: input.instanceId,
+        number: input.number,
+        text: textWithButtonFallbackLinks(buttonText || input.text.trim(), button.choices),
+        trackId: input.trackId,
+        idempotencyKey: `${input.idempotencyKey || input.trackId}-text-fallback`,
+        sendOptions: input.sendOptions,
+        mentions: input.mentions,
+        replyId: input.replyId,
+        timeoutMs,
+      });
+    }
+  }
+
+  return sendConnectyHubWhatsAppTextMessage(input);
 }
 
 async function sendConnectyHubWhatsAppMedia(input: {
