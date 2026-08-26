@@ -6,7 +6,11 @@ import {
   saveWhatsAppSdrAppointmentSettings,
   updateWhatsAppSdrAppointmentStatus,
 } from "@/lib/whatsapp/sdr-appointments";
-import type { SdrAppointmentStatus, WhatsAppSdrAppointmentMessageTemplates } from "@/lib/whatsapp/sdr-appointment-types";
+import type {
+  SdrAppointmentStatus,
+  WhatsAppSdrAppointmentMessageTemplates,
+  WhatsAppSdrGroupInviteSettings,
+} from "@/lib/whatsapp/sdr-appointment-types";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -29,6 +33,11 @@ function cleanInteger(value: unknown): number | undefined {
 function cleanMessageTemplates(value: unknown): Partial<WhatsAppSdrAppointmentMessageTemplates> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return value as Partial<WhatsAppSdrAppointmentMessageTemplates>;
+}
+
+function cleanGroupInvite(value: unknown): Partial<WhatsAppSdrGroupInviteSettings> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Partial<WhatsAppSdrGroupInviteSettings>;
 }
 
 function revalidateAgendaPaths() {
@@ -92,6 +101,7 @@ export async function POST(request: Request) {
       leadConfirmationMinutesBefore,
       adminUnconfirmedNoticeMinutesBefore,
       messageTemplates: cleanMessageTemplates(body.messageTemplates),
+      groupInvite: cleanGroupInvite(body.groupInvite),
     });
 
     revalidateAgendaPaths();

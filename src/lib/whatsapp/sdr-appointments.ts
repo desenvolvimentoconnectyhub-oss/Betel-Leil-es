@@ -14,6 +14,7 @@ import type {
   WhatsAppSdrAppointmentRecipient,
   WhatsAppSdrAppointmentSettings,
   WhatsAppSdrAppointmentSummary,
+  WhatsAppSdrGroupInviteSettings,
 } from "@/lib/whatsapp/sdr-appointment-types";
 
 type SupabaseAdminClient = NonNullable<ReturnType<typeof getSupabaseAdminClient>>;
@@ -65,6 +66,18 @@ const MAX_SUMMARY_LENGTH = 900;
 const MAX_BRIEFING_LENGTH = 1200;
 const CONFIRMATION_ACTIONS = new Set(["confirm", "reschedule"]);
 
+export const DEFAULT_BETEL_GROUP_URL = "https://chat.whatsapp.com/JGWIIzeCNerBFGeyQuhC7r";
+
+export const DEFAULT_SDR_GROUP_INVITE_SETTINGS: WhatsAppSdrGroupInviteSettings = {
+  enabled: true,
+  groupUrl: DEFAULT_BETEL_GROUP_URL,
+  buttonLabel: "Entrar no grupo da Betel",
+  footerText: "Grupo Betel",
+  trackingEnabled: true,
+  sendAfterScheduled: true,
+  sendAfterDisqualified: true,
+};
+
 export const DEFAULT_SDR_APPOINTMENT_MESSAGE_TEMPLATES: WhatsAppSdrAppointmentMessageTemplates = {
   adminScheduled:
     "Nova ligacao agendada BTL\nLead: {{lead_nome}}\nTelefone: {{lead_telefone}}\n{{lead_email_linha}}Horario: {{horario}}\n\nResumo para abordagem:\n{{resumo_sdr}}",
@@ -74,6 +87,10 @@ export const DEFAULT_SDR_APPOINTMENT_MESSAGE_TEMPLATES: WhatsAppSdrAppointmentMe
     "Perfeito, {{lead_primeiro_nome}}. Horario confirmado para {{horario}}. A equipe da Betel ja foi avisada.",
   leadReschedulePrompt:
     "Claro, {{lead_primeiro_nome}}. Me fala o novo dia e horario que fica melhor entre {{hora_inicio}} e {{hora_fim}}, que eu confiro a agenda por aqui.",
+  leadGroupInviteAfterScheduled:
+    "Fechado, {{lead_primeiro_nome}}. Sua ligacao ficou agendada para {{horario}}. Tambem te deixei o grupo da Betel pra vc acompanhar oportunidades e entender melhor nosso trabalho.",
+  leadGroupInviteAfterDisqualified:
+    "Boa, {{lead_primeiro_nome}}. Pelo que vc contou, talvez ainda nao seja o momento de marcar uma ligacao. Te deixei o grupo da Betel pra vc acompanhar oportunidades no seu ritmo.",
   adminLeadConfirmed:
     "Confirmacao de ligacao BTL\nLead: {{lead_nome}}\nTelefone: {{lead_telefone}}\nHorario confirmado: {{horario}}\n\nResumo para abordagem:\n{{resumo_sdr}}",
   adminRescheduleRequested:
@@ -133,6 +150,17 @@ function asNumber(value: unknown, fallback = 0): number {
   if (typeof value === "string") {
     const parsed = Number(value.replace(",", "."));
     if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
+function asBoolean(value: unknown, fallback = false): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 1;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["1", "true", "yes", "sim", "on", "enabled", "ativo"].includes(normalized)) return true;
+    if (["0", "false", "no", "nao", "não", "off", "disabled", "inativo"].includes(normalized)) return false;
   }
   return fallback;
 }
@@ -217,6 +245,32 @@ function normalizePhone(value: unknown) {
   return normalizeWhatsAppNumber(asString(value));
 }
 
+function normalizeGroupInviteUrl(value: unknown, fallback = DEFAULT_SDR_GROUP_INVITE_SETTINGS.groupUrl) {
+  const clean = asString(value).trim();
+  const candidate = clean || fallback;
+  if (!candidate || !/^https?:\/\//i.test(candidate)) return fallback;
+
+  try {
+    const url = new URL(candidate);
+    const host = url.hostname.toLowerCase();
+    if (url.protocol !== "https:") return fallback;
+    if (host !== "chat.whatsapp.com" && host !== "whatsapp.com" && host !== "www.whatsapp.com") return fallback;
+    return url.toString();
+  } catch {
+    return fallback;
+  }
+}
+
+function normalizeShortLabel(value: unknown, fallback: string, limit = 32) {
+  const clean = asString(value).replace(/[|\r\n]+/g, " ").replace(/\s+/g, " ").trim();
+  const label = clean || fallback;
+  return label.length > limit ? label.slice(0, limit).trim() : label;
+}
+
+function firstDefined(...values: unknown[]) {
+  return values.find((value) => value !== undefined && value !== null);
+}
+
 function publicAppUrl() {
   const vercelUrl = process.env.VERCEL_URL?.trim();
   const fallbackVercel = vercelUrl ? `https://${vercelUrl.replace(/^https?:\/\//i, "")}` : "";
@@ -292,6 +346,7 @@ function emptySettings(): WhatsAppSdrAppointmentSettings {
     leadConfirmationMinutesBefore: DEFAULT_LEAD_CONFIRMATION_MINUTES_BEFORE,
     adminUnconfirmedNoticeMinutesBefore: DEFAULT_ADMIN_UNCONFIRMED_NOTICE_MINUTES_BEFORE,
     messageTemplates: DEFAULT_SDR_APPOINTMENT_MESSAGE_TEMPLATES,
+    groupInvite: DEFAULT_SDR_GROUP_INVITE_SETTINGS,
     updatedAt: null,
   };
 }
@@ -304,6 +359,24 @@ function normalizeMessageTemplates(value: unknown): WhatsAppSdrAppointmentMessag
       return [key, template || fallback];
     }),
   ) as WhatsAppSdrAppointmentMessageTemplates;
+}
+
+function normalizeGroupInviteSettings(value: unknown): WhatsAppSdrGroupInviteSettings {
+  const record = asRecord(value);
+  const fallback = DEFAULT_SDR_GROUP_INVITE_SETTINGS;
+
+  return {
+    enabled: asBoolean(record.enabled, fallback.enabled),
+    groupUrl: normalizeGroupInviteUrl(firstDefined(record.groupUrl, record.group_url), fallback.groupUrl),
+    buttonLabel: normalizeShortLabel(firstDefined(record.buttonLabel, record.button_label), fallback.buttonLabel),
+    footerText: normalizeShortLabel(firstDefined(record.footerText, record.footer_text), fallback.footerText, 48),
+    trackingEnabled: asBoolean(firstDefined(record.trackingEnabled, record.tracking_enabled), fallback.trackingEnabled),
+    sendAfterScheduled: asBoolean(firstDefined(record.sendAfterScheduled, record.send_after_scheduled), fallback.sendAfterScheduled),
+    sendAfterDisqualified: asBoolean(
+      firstDefined(record.sendAfterDisqualified, record.send_after_disqualified),
+      fallback.sendAfterDisqualified,
+    ),
+  };
 }
 
 function settingsFlow(row: Record<string, unknown> | null | undefined) {
@@ -344,6 +417,7 @@ function normalizeSettings(
     leadConfirmationMinutesBefore,
     adminUnconfirmedNoticeMinutesBefore,
     messageTemplates: normalizeMessageTemplates(flow.messageTemplates),
+    groupInvite: normalizeGroupInviteSettings(flow.groupInvite),
     updatedAt: asNullableString(row.updated_at),
   };
 }
@@ -412,6 +486,7 @@ export async function saveWhatsAppSdrAppointmentSettings(input: {
   leadConfirmationMinutesBefore?: number;
   adminUnconfirmedNoticeMinutesBefore?: number;
   messageTemplates?: Partial<WhatsAppSdrAppointmentMessageTemplates>;
+  groupInvite?: Partial<WhatsAppSdrGroupInviteSettings>;
 }): Promise<WhatsAppSdrAppointmentSettings> {
   const supabase = getSupabaseAdminClient();
   if (!supabase) return emptySettings();
@@ -444,6 +519,10 @@ export async function saveWhatsAppSdrAppointmentSettings(input: {
     ...current.messageTemplates,
     ...(input.messageTemplates || {}),
   });
+  const groupInvite = normalizeGroupInviteSettings({
+    ...current.groupInvite,
+    ...(input.groupInvite || {}),
+  });
   const metadata = asRecord(currentRow?.metadata);
   const previousFlow = settingsFlow(currentRow);
   const nextMetadata = {
@@ -453,6 +532,7 @@ export async function saveWhatsAppSdrAppointmentSettings(input: {
       leadConfirmationMinutesBefore,
       adminUnconfirmedNoticeMinutesBefore,
       messageTemplates,
+      groupInvite,
     },
   };
 
@@ -1082,6 +1162,8 @@ function renderAppointmentTemplate(
     limite_por_hora: String(settings.maxBookingsPerHour),
     minutos_confirmacao_lead: String(settings.leadConfirmationMinutesBefore),
     minutos_aviso_admin: String(settings.adminUnconfirmedNoticeMinutesBefore),
+    grupo_betel_link: settings.groupInvite.groupUrl,
+    grupo_betel_botao: settings.groupInvite.buttonLabel,
   };
 
   return template
@@ -1271,7 +1353,7 @@ function buildPromptResult(
       status,
       appointment,
       suggestions,
-      promptContext: `AGENDA SDR: horario reservado com sucesso para ${appointment.scheduleLabel}. Confirme ao lead com naturalidade, mantenha a conversa ativa e diga que um consultor especialista vai ligar nesse horario.`,
+      promptContext: `AGENDA SDR: horario reservado com sucesso para ${appointment.scheduleLabel}. Confirme ao lead com naturalidade e diga que um consultor especialista vai ligar nesse horario. Nao envie link; o sistema enviara o botao rastreado do grupo da Betel depois desta resposta.`,
     };
   }
 
@@ -1281,7 +1363,7 @@ function buildPromptResult(
       status,
       appointment,
       suggestions,
-      promptContext: `AGENDA SDR: horario remarcado com sucesso para ${appointment.scheduleLabel}. Confirme ao lead com naturalidade, diga que a equipe recebeu a nova agenda e continue tirando duvidas.`,
+      promptContext: `AGENDA SDR: horario remarcado com sucesso para ${appointment.scheduleLabel}. Confirme ao lead com naturalidade e diga que a equipe recebeu a nova agenda. Nao envie link; o sistema enviara o botao rastreado do grupo da Betel depois desta resposta.`,
     };
   }
 
@@ -1291,7 +1373,7 @@ function buildPromptResult(
       status,
       appointment,
       suggestions,
-      promptContext: `AGENDA SDR: ja existe ligacao ativa para ${appointment.scheduleLabel}. Nao crie promessa nova; confirme o horario existente e continue tirando duvidas.`,
+      promptContext: `AGENDA SDR: ja existe ligacao ativa para ${appointment.scheduleLabel}. Nao crie promessa nova; confirme o horario existente. Nao envie link; se couber, o sistema enviara o botao rastreado do grupo da Betel depois desta resposta.`,
     };
   }
 

@@ -12,7 +12,10 @@ import {
   ExternalLink,
   Headphones,
   Loader2,
+  MapPin,
   MessageCircle,
+  MonitorSmartphone,
+  MousePointerClick,
   Paperclip,
   Phone,
   Save,
@@ -649,6 +652,91 @@ function SdrAppointmentBlock({
   );
 }
 
+function groupInviteEventLabel(eventType: WhatsAppCrmLeadCard["groupInviteEvents"][number]["eventType"]) {
+  if (eventType === "click") return "Clique";
+  if (eventType === "failed") return "Falha";
+  return "Enviado";
+}
+
+function groupInviteEventTone(eventType: WhatsAppCrmLeadCard["groupInviteEvents"][number]["eventType"]): ResourceTone {
+  if (eventType === "click") return "green";
+  if (eventType === "failed") return "red";
+  return "cyan";
+}
+
+function groupInviteOutcomeLabel(outcome: string) {
+  if (outcome === "scheduled") return "apos agenda";
+  if (outcome === "disqualified") return "lead frio";
+  return "grupo";
+}
+
+function GroupInviteTrackingBlock({
+  events,
+  compact = false,
+}: {
+  events: WhatsAppCrmLeadCard["groupInviteEvents"];
+  compact?: boolean;
+}) {
+  if (!events.length) return null;
+
+  const clicks = events.filter((event) => event.eventType === "click").length;
+  const visibleEvents = events.slice(0, compact ? 1 : 5);
+
+  return (
+    <details className={cn("group rounded-xl border border-[var(--admin-border)] bg-white", !compact && "mt-2")} open={!compact}>
+      <summary className="flex min-h-9 cursor-pointer list-none items-center justify-between gap-3 px-3">
+        <span className="inline-flex min-w-0 items-center gap-1.5 text-[11px] font-semibold text-[var(--admin-foreground)]">
+          <MousePointerClick size={13} className="text-[var(--admin-cyan)]" />
+          Grupo Betel
+        </span>
+        <StatusBadge tone={clicks ? "green" : "cyan"} className="h-5 shrink-0 px-1.5 text-[9px]">
+          {clicks ? `${clicks} clique${clicks > 1 ? "s" : ""}` : "enviado"}
+        </StatusBadge>
+      </summary>
+      <div className="grid gap-2 border-t border-[var(--admin-border)] p-2.5">
+        {visibleEvents.map((event) => {
+          const tone = groupInviteEventTone(event.eventType);
+          return (
+            <article key={event.id} className={cn("rounded-lg border px-2.5 py-2", toneBg[tone])}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[11px] font-semibold text-[var(--admin-foreground)]">
+                  {groupInviteEventLabel(event.eventType)} - {groupInviteOutcomeLabel(event.outcome)}
+                </span>
+                <span className="font-mono text-[9px] uppercase tracking-[0.12em] text-[var(--admin-muted)]">
+                  {formatDateTime(event.createdAt)}
+                </span>
+              </div>
+              <div className="mt-1.5 grid gap-1 text-[11px] leading-4 text-[var(--admin-muted)]">
+                <p className="inline-flex min-w-0 items-center gap-1.5">
+                  <MapPin size={12} className={toneText[tone]} />
+                  <span className="truncate">{event.location || event.ip || "localizacao ainda nao registrada"}</span>
+                </p>
+                <p className="inline-flex min-w-0 items-center gap-1.5">
+                  <MonitorSmartphone size={12} className={toneText[tone]} />
+                  <span className="truncate">
+                    {[event.deviceType, event.browser, event.os].filter(Boolean).join(" / ") || "dispositivo nao identificado"}
+                  </span>
+                </p>
+                {event.groupUrl ? (
+                  <a
+                    className="inline-flex w-fit items-center gap-1 text-[11px] font-semibold text-[var(--admin-cyan)] transition hover:text-[var(--admin-foreground)]"
+                    href={event.groupUrl}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    Abrir grupo
+                    <ExternalLink size={11} />
+                  </a>
+                ) : null}
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </details>
+  );
+}
+
 function ActionButton({
   icon: Icon,
   children,
@@ -1049,6 +1137,7 @@ function LeadDetail({
 
       <HandoffCountdown lead={lead} nowMs={nowMs} />
       <SdrAppointmentBlock appointment={lead.nextSdrAppointment} />
+      <GroupInviteTrackingBlock events={lead.groupInviteEvents} />
 
       <div className={cn("mt-2 rounded-lg border px-3 py-2.5", toneBg[lead.humanInterventionActive ? "yellow" : "cyan"])}>
         <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Resumo inteligente</p>
@@ -1363,6 +1452,7 @@ function LeadSidePanel({ lead, nowMs }: { lead?: WhatsAppCrmLeadCard; nowMs: num
 
           <HandoffCountdown lead={lead} nowMs={nowMs} />
           <SdrAppointmentBlock appointment={lead.nextSdrAppointment} compact />
+          <GroupInviteTrackingBlock events={lead.groupInviteEvents} compact />
 
           <div className="grid gap-2">
             {qualificationItems.slice(0, 4).map(([label, value]) => (

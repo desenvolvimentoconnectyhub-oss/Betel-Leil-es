@@ -45,7 +45,13 @@ import {
   evaluateWhatsAppReplyBeforeSend,
   type WhatsAppRuntimeDecision,
 } from "@/lib/whatsapp/conversation-runtime";
-import { createSdrAppointmentFromRuntimeDecision, handleSdrAppointmentInboundControl } from "@/lib/whatsapp/sdr-appointments";
+import { sendBetelGroupInvite, type BetelGroupInviteOutcome } from "@/lib/whatsapp/group-invite-tracking";
+import {
+  createSdrAppointmentFromRuntimeDecision,
+  getWhatsAppSdrAppointmentSettings,
+  handleSdrAppointmentInboundControl,
+  type SdrRuntimeAppointmentResult,
+} from "@/lib/whatsapp/sdr-appointments";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -1314,6 +1320,38 @@ function runtimeActionButton(config: WillianAgentConfig, trackId: string) {
     url,
     footerText: "Betel Leiloes",
   };
+}
+
+function shouldSendBetelGroupInviteAfterDisqualification(input: {
+  config: WillianAgentConfig;
+  decision: WhatsAppRuntimeDecision;
+  lead: RuntimeLeadContext;
+  text: string;
+}) {
+  const normalized = normalizeSearchText(input.text);
+  if (!normalized) return false;
+  if (input.decision.intents.includes("stop_contact")) return false;
+  if (input.config.behavior.optOutEnabled && hasStopWord(input.text, input.config.memory.stopWords)) return false;
+
+  const parsedBudget = budgetFromText(input.text);
+  const noInterest = /\b(nao tenho interesse|sem interesse|desisti|nao quero seguir|nao quero continuar)\b/.test(normalized);
+  const onlyResearch =
+    /\b(so curiosidade|so pesquisando|apenas curiosidade|apenas pesquisando|estou so olhando|to so olhando)\b/.test(normalized);
+  const noTiming =
+    /\b(agora nao|nao e o momento|nao eh o momento|mais pra frente|futuramente|depois eu vejo|sem previsao)\b/.test(normalized);
+  const noCapital =
+    /\b(sem capital|nao tenho capital|sem dinheiro|nao tenho dinheiro|capital baixo|orcamento baixo)\b/.test(normalized) ||
+    (parsedBudget > 0 && parsedBudget < 50_000);
+  const refusedCall =
+    /\b(nao quero|prefiro nao|agora nao|nao posso)\b.{0,60}\b(ligacao|reuniao|ligar|chamada|telefone|sdr|consultor|especialista)\b/.test(
+      normalized
+    ) ||
+    /\b(ligacao|reuniao|ligar|chamada|telefone|sdr|consultor|especialista)\b.{0,60}\b(nao quero|prefiro nao|agora nao|nao posso)\b/.test(
+      normalized
+    );
+  const explicitLost = input.decision.stage === "perdido" && !input.decision.riskFlags.includes("stop_contact");
+
+  return Boolean(explicitLost || noInterest || onlyResearch || noTiming || noCapital || refusedCall);
 }
 
 async function syncWhatsAppLeadProfile(
@@ -5468,6 +5506,7 @@ async function processWhatsappAgentRuntime(
     decision: runtimeDecision,
   });
 
+  let sdrAppointmentResult: SdrRuntimeAppointmentResult | null = null;
   let sdrAppointmentPromptContext =
     runtimeDecision.meetingSchedule?.requested && !runtimeDecision.meetingSchedule.confirmed
       ? "AGENDA SDR: antes de confirmar qualquer ligacao, peca um horario objetivo entre 08h e 19h."
@@ -5492,6 +5531,7 @@ async function processWhatsappAgentRuntime(
         "AGENDA SDR: houve falha tecnica ao tentar criar a agenda. Continue a conversa normalmente, colete o horario e nao prometa confirmacao definitiva.",
       error: error instanceof Error ? error.message : String(error),
     }));
+    sdrAppointmentResult = appointmentResult;
     sdrAppointmentPromptContext = appointmentResult.promptContext;
     await insertRuntimeEvent(supabase, {
       agentKey,
@@ -5511,7 +5551,25 @@ async function processWhatsappAgentRuntime(
       },
     });
   }
-  const runtimeDecisionPromptContext = [runtimeDecision.promptContext, sdrAppointmentPromptContext]
+  const groupInviteOutcome: BetelGroupInviteOutcome | null =
+    sdrAppointmentResult?.appointment &&
+    ["scheduled", "rescheduled", "already_scheduled"].includes(sdrAppointmentResult.status)
+      ? "scheduled"
+      : shouldSendBetelGroupInviteAfterDisqualification({
+          config,
+          decision: runtimeDecision,
+          lead: runtimeContext.lead,
+          text: runtimeControlUnderstandingText,
+        })
+        ? "disqualified"
+        : null;
+  const groupInvitePromptContext =
+    groupInviteOutcome === "scheduled"
+      ? "GRUPO BETEL: depois de confirmar a agenda, o sistema enviara automaticamente um botao rastreado para o grupo da Betel. Nao escreva o link na resposta principal."
+      : groupInviteOutcome === "disqualified"
+        ? "GRUPO BETEL: se estiver encerrando um lead frio/desqualificado, finalize com acolhimento; o sistema enviara automaticamente um botao rastreado para o grupo da Betel. Nao escreva o link na resposta principal."
+        : "";
+  const runtimeDecisionPromptContext = [runtimeDecision.promptContext, sdrAppointmentPromptContext, groupInvitePromptContext]
     .filter(Boolean)
     .join("\n");
 
@@ -6104,6 +6162,49 @@ async function processWhatsappAgentRuntime(
         humanization: humanizationPlan.summary,
       },
     });
+  }
+
+  if (deliveryOk && groupInviteOutcome) {
+    const settings = await getWhatsAppSdrAppointmentSettings().catch(() => null);
+    if (settings) {
+      const groupInviteResult = await sendBetelGroupInvite({
+        agentKey,
+        providerInstanceId,
+        leadId,
+        conversationId,
+        leadPhone: phone,
+        leadName: runtimeContext.lead.name || name || phone,
+        settings,
+        outcome: groupInviteOutcome,
+        appointment: groupInviteOutcome === "scheduled" ? sdrAppointmentResult?.appointment ?? null : null,
+        reason: groupInviteOutcome === "scheduled" ? "sdr_appointment_completed" : "lead_disqualified",
+        eventId,
+      }).catch((error: unknown) => ({
+        ok: false,
+        status: "delivery_failed" as const,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+
+      await insertRuntimeEvent(supabase, {
+        agentKey,
+        eventType: "whatsapp_agent_runtime_group_invite",
+        status: groupInviteResult.status,
+        message: groupInviteResult.ok
+          ? "Convite rastreado do grupo Betel processado para o lead."
+          : "Convite rastreado do grupo Betel nao foi enviado.",
+        payload: {
+          eventId,
+          leadId,
+          conversationId,
+          outcome: groupInviteOutcome,
+          appointmentId: sdrAppointmentResult?.appointment?.id ?? null,
+          status: groupInviteResult.status,
+          trackId: "trackId" in groupInviteResult ? groupInviteResult.trackId ?? null : null,
+          groupUrl: "groupUrl" in groupInviteResult ? groupInviteResult.groupUrl ?? null : null,
+          error: groupInviteResult.error ?? null,
+        },
+      });
+    }
   }
 
   return { ok: deliveryOk, replied: deliveryOk, providerStatus, parts: replyParts.length };

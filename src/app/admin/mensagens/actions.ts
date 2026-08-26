@@ -13,9 +13,13 @@ import {
 } from "@/lib/admin/repository";
 import {
   DEFAULT_SDR_APPOINTMENT_MESSAGE_TEMPLATES,
+  DEFAULT_SDR_GROUP_INVITE_SETTINGS,
   saveWhatsAppSdrAppointmentSettings,
 } from "@/lib/whatsapp/sdr-appointments";
-import type { WhatsAppSdrAppointmentMessageTemplates } from "@/lib/whatsapp/sdr-appointment-types";
+import type {
+  WhatsAppSdrAppointmentMessageTemplates,
+  WhatsAppSdrGroupInviteSettings,
+} from "@/lib/whatsapp/sdr-appointment-types";
 
 const managerRoles = new Set(["owner", "admin", "manager"]);
 const statusValues = new Set(["draft", "active", "archived"]);
@@ -230,6 +234,30 @@ export async function saveSdrAppointmentFlowAction(formData: FormData) {
       field(formData, `sdrTemplate_${key}`, DEFAULT_SDR_APPOINTMENT_MESSAGE_TEMPLATES[key as keyof WhatsAppSdrAppointmentMessageTemplates]),
     ]),
   ) as Partial<WhatsAppSdrAppointmentMessageTemplates>;
+  const groupInviteUrl = field(formData, "groupInviteGroupUrl", DEFAULT_SDR_GROUP_INVITE_SETTINGS.groupUrl);
+
+  try {
+    const parsedGroupUrl = new URL(groupInviteUrl);
+    const host = parsedGroupUrl.hostname.toLowerCase();
+    const isWhatsAppGroup =
+      parsedGroupUrl.protocol === "https:" &&
+      (host === "chat.whatsapp.com" || host === "whatsapp.com" || host === "www.whatsapp.com");
+    if (!isWhatsAppGroup) {
+      redirectWith("error", "Informe um link valido de grupo do WhatsApp para o convite da Betel.", context);
+    }
+  } catch {
+    redirectWith("error", "Informe um link valido de grupo do WhatsApp para o convite da Betel.", context);
+  }
+
+  const groupInvite: Partial<WhatsAppSdrGroupInviteSettings> = {
+    enabled: booleanField(formData, "groupInviteEnabled"),
+    groupUrl: groupInviteUrl,
+    buttonLabel: field(formData, "groupInviteButtonLabel", DEFAULT_SDR_GROUP_INVITE_SETTINGS.buttonLabel),
+    footerText: field(formData, "groupInviteFooterText", DEFAULT_SDR_GROUP_INVITE_SETTINGS.footerText),
+    trackingEnabled: booleanField(formData, "groupInviteTrackingEnabled"),
+    sendAfterScheduled: booleanField(formData, "groupInviteAfterScheduled"),
+    sendAfterDisqualified: booleanField(formData, "groupInviteAfterDisqualified"),
+  };
 
   await saveWhatsAppSdrAppointmentSettings({
     notificationAdminUserId: field(formData, "notificationAdminUserId") || null,
@@ -239,6 +267,7 @@ export async function saveSdrAppointmentFlowAction(formData: FormData) {
     leadConfirmationMinutesBefore,
     adminUnconfirmedNoticeMinutesBefore,
     messageTemplates,
+    groupInvite,
   });
 
   revalidateSdrAppointmentFlow();

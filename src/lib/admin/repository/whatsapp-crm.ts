@@ -82,6 +82,24 @@ export type WhatsAppCrmTimelineItem = {
   tone: ResourceTone;
 };
 
+export type WhatsAppCrmGroupInviteEvent = {
+  id: string;
+  eventType: "sent" | "click" | "failed";
+  outcome: string;
+  trackId: string;
+  groupUrl: string;
+  ip: string;
+  location: string;
+  country: string;
+  region: string;
+  city: string;
+  browser: string;
+  os: string;
+  deviceType: string;
+  userAgent: string;
+  createdAt: string;
+};
+
 export type WhatsAppCrmLeadCard = {
   id: string;
   leadId: string;
@@ -118,6 +136,7 @@ export type WhatsAppCrmLeadCard = {
   nextFollowUpAt: string;
   sdrAppointments: WhatsAppSdrAppointmentSummary[];
   nextSdrAppointment: WhatsAppSdrAppointmentSummary | null;
+  groupInviteEvents: WhatsAppCrmGroupInviteEvent[];
   nextAction: string;
   runtimeDecision: WhatsAppRuntimeDecisionSummary;
   latestReviewScore: number;
@@ -684,6 +703,36 @@ function normalizeSdrAppointment(row: DbRow, adminUsersById: Map<string, DbRow>)
   };
 }
 
+function normalizeGroupInviteEvent(row: DbRow): WhatsAppCrmGroupInviteEvent {
+  const metadata = asRecord(row.metadata);
+  const geo = asRecord(metadata.geo);
+  const device = asRecord(metadata.device);
+  const tracking = asRecord(metadata.tracking);
+  const eventType = asString(metadata.eventType, asString(metadata.event_type));
+  const city = asString(geo.city);
+  const region = asString(geo.region);
+  const country = asString(geo.country);
+  const location = [city, region, country].filter(Boolean).join(", ");
+
+  return {
+    id: asString(row.id, asString(metadata.trackId, asString(row.created_at))),
+    eventType: eventType === "click" ? "click" : eventType === "failed" ? "failed" : "sent",
+    outcome: asString(metadata.outcome),
+    trackId: asString(metadata.trackId),
+    groupUrl: asString(metadata.groupUrl, asString(row.file_url)),
+    ip: asString(tracking.ip),
+    location,
+    country,
+    region,
+    city,
+    browser: asString(device.browser),
+    os: asString(device.os),
+    deviceType: asString(device.deviceType),
+    userAgent: asString(device.userAgent),
+    createdAt: asString(row.created_at, asString(metadata.at)),
+  };
+}
+
 function mergeAppointmentLists(...lists: WhatsAppSdrAppointmentSummary[][]) {
   const seen = new Set<string>();
   return lists
@@ -916,6 +965,7 @@ function fallbackData(): WhatsAppCrmData {
         nextFollowUpAt: "",
         sdrAppointments: [],
         nextSdrAppointment: null,
+        groupInviteEvents: [],
         nextAction: "Confirmar capital disponivel e experiencia com leilao.",
         runtimeDecision: {
           primaryIntent: "buying_intent",
@@ -1023,6 +1073,7 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
     reviewsResult,
     appointmentsResult,
     adminUsersResult,
+    groupInviteFilesResult,
   ] =
     await Promise.all([
       supabase.from("whatsapp_leads").select("*").order("updated_at", { ascending: false }).limit(120),
@@ -1035,6 +1086,12 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
       supabase.from("whatsapp_agent_reviews").select("*").order("created_at", { ascending: false }).limit(120),
       supabase.from("whatsapp_sdr_appointments").select("*").order("scheduled_for", { ascending: false }).limit(240),
       supabase.from("admin_users").select("id, display_name, email, phone, role, status").limit(120),
+      supabase
+        .from("whatsapp_lead_files")
+        .select("id, lead_id, conversation_id, source, file_url, metadata, created_at")
+        .in("source", ["whatsapp_group_invite_sent", "whatsapp_group_invite_click", "whatsapp_group_invite_send_failed"])
+        .order("created_at", { ascending: false })
+        .limit(240),
     ]);
 
   const criticalErrors = [leadsResult.error, conversationsResult.error, messagesResult.error]
@@ -1061,6 +1118,7 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
   const reviewRows = reviewsResult.error ? [] : ((reviewsResult.data || []) as unknown[]).filter(isDbRow);
   const appointmentRows = appointmentsResult.error ? [] : ((appointmentsResult.data || []) as unknown[]).filter(isDbRow);
   const adminUserRows = adminUsersResult.error ? [] : ((adminUsersResult.data || []) as unknown[]).filter(isDbRow);
+  const groupInviteFileRows = groupInviteFilesResult.error ? [] : ((groupInviteFilesResult.data || []) as unknown[]).filter(isDbRow);
 
   const leadsById = new Map(leadRows.map((row) => [asString(row.id), row]));
   const conversationsById = new Map(conversationRows.map((row) => [asString(row.id), row]));
@@ -1073,6 +1131,7 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
   const reviewsByConversation = new Map<string, DbRow[]>();
   const appointmentsByLead = new Map<string, WhatsAppSdrAppointmentSummary[]>();
   const appointmentsByConversation = new Map<string, WhatsAppSdrAppointmentSummary[]>();
+  const groupInviteEventsByLead = new Map<string, WhatsAppCrmGroupInviteEvent[]>();
 
   for (const message of messageRows) {
     const conversationId = asString(message.conversation_id);
@@ -1099,6 +1158,22 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
         appointment,
       ]);
     }
+  }
+
+  for (const row of groupInviteFileRows) {
+    const leadId = asString(row.lead_id);
+    if (!leadId) continue;
+    groupInviteEventsByLead.set(leadId, [
+      ...(groupInviteEventsByLead.get(leadId) || []),
+      normalizeGroupInviteEvent(row),
+    ]);
+  }
+
+  for (const [leadId, events] of groupInviteEventsByLead.entries()) {
+    groupInviteEventsByLead.set(
+      leadId,
+      events.sort((left, right) => timestamp(right.createdAt) - timestamp(left.createdAt)),
+    );
   }
 
   const conversationLeadIds = new Set<string>();
@@ -1210,6 +1285,7 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
       nextFollowUpAt: asString(followUps.find((item) => ["queued", "scheduled"].includes(asString(item.status)))?.scheduled_for),
       sdrAppointments,
       nextSdrAppointment,
+      groupInviteEvents: groupInviteEventsByLead.get(leadId) || [],
       nextAction: action,
       runtimeDecision,
       latestReviewScore: Math.round(asNumber(latestReview?.score, 0)),
@@ -1315,6 +1391,7 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
       nextFollowUpAt: "",
       sdrAppointments,
       nextSdrAppointment,
+      groupInviteEvents: groupInviteEventsByLead.get(leadId) || [],
       nextAction: asString(profile?.next_action) || nextAction({
         score,
         optOut,
@@ -1468,6 +1545,7 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
     reviewsResult.error,
     appointmentsResult.error,
     adminUsersResult.error,
+    groupInviteFilesResult.error,
     instancesResult.error,
     agentsResult.error,
   ]

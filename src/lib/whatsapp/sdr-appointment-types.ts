@@ -23,10 +23,22 @@ export type WhatsAppSdrAppointmentMessageTemplates = {
   leadConfirmation: string;
   leadConfirmedReply: string;
   leadReschedulePrompt: string;
+  leadGroupInviteAfterScheduled: string;
+  leadGroupInviteAfterDisqualified: string;
   adminLeadConfirmed: string;
   adminRescheduleRequested: string;
   adminRescheduled: string;
   adminUnconfirmedReminder: string;
+};
+
+export type WhatsAppSdrGroupInviteSettings = {
+  enabled: boolean;
+  groupUrl: string;
+  buttonLabel: string;
+  footerText: string;
+  trackingEnabled: boolean;
+  sendAfterScheduled: boolean;
+  sendAfterDisqualified: boolean;
 };
 
 export type WhatsAppSdrAppointmentSettings = {
@@ -40,6 +52,7 @@ export type WhatsAppSdrAppointmentSettings = {
   leadConfirmationMinutesBefore: number;
   adminUnconfirmedNoticeMinutesBefore: number;
   messageTemplates: WhatsAppSdrAppointmentMessageTemplates;
+  groupInvite: WhatsAppSdrGroupInviteSettings;
   updatedAt: string | null;
 };
 

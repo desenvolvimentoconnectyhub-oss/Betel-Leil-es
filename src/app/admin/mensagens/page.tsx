@@ -5,9 +5,11 @@ import {
   CheckCircle2,
   Clock3,
   History,
+  Link2,
   Mail,
   MessageCircle,
   MessageSquareText,
+  MousePointerClick,
   Route,
   Search,
   Send,
@@ -97,6 +99,18 @@ const sdrTemplateFields: Array<{
     label: "Pedido de novo horario",
     helper: "Enviada quando o lead escolhe marcar por outro dia.",
     rows: 3,
+  },
+  {
+    key: "leadGroupInviteAfterScheduled",
+    label: "Convite ao grupo apos agenda",
+    helper: "Texto enviado com o botao do grupo quando a ligacao foi marcada.",
+    rows: 4,
+  },
+  {
+    key: "leadGroupInviteAfterDisqualified",
+    label: "Convite ao grupo para lead frio",
+    helper: "Texto enviado com o botao do grupo quando a Evelyn encerra um lead desqualificado.",
+    rows: 4,
   },
   {
     key: "adminScheduled",
@@ -967,6 +981,34 @@ function RecipientsTab({ recipients }: { recipients: MessagingRecipientOption[] 
   );
 }
 
+function CheckboxField({
+  name,
+  label,
+  helper,
+  defaultChecked,
+}: {
+  name: string;
+  label: string;
+  helper: string;
+  defaultChecked?: boolean;
+}) {
+  return (
+    <label className="flex items-start gap-3 rounded-lg border border-[var(--admin-border)] bg-white/70 p-3">
+      <input
+        className="mt-1 h-4 w-4 rounded border-[var(--admin-border)] text-[var(--admin-cyan)]"
+        defaultChecked={defaultChecked}
+        name={name}
+        type="checkbox"
+        value="1"
+      />
+      <span className="min-w-0">
+        <span className="block text-sm font-semibold text-[var(--admin-foreground)]">{label}</span>
+        <span className="mt-1 block text-xs leading-5 text-[var(--admin-muted)]">{helper}</span>
+      </span>
+    </label>
+  );
+}
+
 function SdrAppointmentFlowCard({
   settings,
   recipients,
@@ -1057,6 +1099,78 @@ function SdrAppointmentFlowCard({
               </div>
             </section>
 
+            <section className="grid gap-3 rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.62)] p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--admin-muted)]">
+                    grupo betel / rastreio
+                  </p>
+                  <h3 className="mt-1 text-sm font-semibold text-[var(--admin-foreground)]">Convite ao fim do atendimento</h3>
+                </div>
+                <Link2 size={18} className="text-[var(--admin-green)]" />
+              </div>
+              <CheckboxField
+                defaultChecked={settings.groupInvite.enabled}
+                helper="Permite enviar o botao do grupo quando a Evelyn concluir o atendimento."
+                label="Enviar convite automaticamente"
+                name="groupInviteEnabled"
+              />
+              <div className="grid gap-3">
+                <Field
+                  label="Link do grupo"
+                  name="groupInviteGroupUrl"
+                  defaultValue={settings.groupInvite.groupUrl}
+                  placeholder="https://chat.whatsapp.com/..."
+                  type="url"
+                />
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field
+                    label="Texto do botao"
+                    name="groupInviteButtonLabel"
+                    defaultValue={settings.groupInvite.buttonLabel}
+                    placeholder="Entrar no grupo da Betel"
+                  />
+                  <Field
+                    label="Rodape do botao"
+                    name="groupInviteFooterText"
+                    defaultValue={settings.groupInvite.footerText}
+                    placeholder="Grupo Betel"
+                  />
+                </div>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <CheckboxField
+                  defaultChecked={settings.groupInvite.sendAfterScheduled}
+                  helper="Dispara depois que a ligacao SDR foi marcada."
+                  label="Depois de agendar"
+                  name="groupInviteAfterScheduled"
+                />
+                <CheckboxField
+                  defaultChecked={settings.groupInvite.sendAfterDisqualified}
+                  helper="Dispara quando a Evelyn encerra um lead frio."
+                  label="Depois de desqualificar"
+                  name="groupInviteAfterDisqualified"
+                />
+              </div>
+              <CheckboxField
+                defaultChecked={settings.groupInvite.trackingEnabled}
+                helper="Ao clicar, o sistema grava IP, local aproximado, navegador e dispositivo no arquivo do lead."
+                label="Rastrear clique no botao"
+                name="groupInviteTrackingEnabled"
+              />
+              <div className="flex flex-wrap gap-2">
+                {["IP", "Local aproximado", "Dispositivo", "Navegador"].map((item) => (
+                  <span
+                    key={item}
+                    className="inline-flex items-center gap-1 rounded-full border border-[var(--admin-border)] bg-white px-2 py-1 text-[11px] font-semibold text-[var(--admin-muted)]"
+                  >
+                    <MousePointerClick size={12} />
+                    {item}
+                  </span>
+                ))}
+              </div>
+            </section>
+
             <section className="rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.62)] p-4">
               <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--admin-muted)]">
                 usar nos textos
@@ -1070,6 +1184,8 @@ function SdrAppointmentFlowCard({
                   "{{lead_email}}",
                   "{{horario}}",
                   "{{resumo_sdr}}",
+                  "{{grupo_betel_link}}",
+                  "{{grupo_betel_botao}}",
                   "{{hora_inicio}}",
                   "{{hora_fim}}",
                   "{{limite_por_hora}}",

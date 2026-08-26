@@ -1,5 +1,9 @@
 import { WhatsAppSdrAgendaPage } from "@/components/admin/WhatsAppSdrAgendaPage";
-import { DEFAULT_SDR_APPOINTMENT_MESSAGE_TEMPLATES, getWhatsAppSdrAgendaData } from "@/lib/whatsapp/sdr-appointments";
+import {
+  DEFAULT_SDR_APPOINTMENT_MESSAGE_TEMPLATES,
+  DEFAULT_SDR_GROUP_INVITE_SETTINGS,
+  getWhatsAppSdrAgendaData,
+} from "@/lib/whatsapp/sdr-appointments";
 import type { WhatsAppSdrAppointmentData } from "@/lib/whatsapp/sdr-appointment-types";
 
 export const dynamic = "force-dynamic";
@@ -19,6 +23,7 @@ function fallbackAgendaData(): WhatsAppSdrAppointmentData {
       leadConfirmationMinutesBefore: 30,
       adminUnconfirmedNoticeMinutesBefore: 10,
       messageTemplates: DEFAULT_SDR_APPOINTMENT_MESSAGE_TEMPLATES,
+      groupInvite: DEFAULT_SDR_GROUP_INVITE_SETTINGS,
       updatedAt: null,
     },
     recipients: [],
