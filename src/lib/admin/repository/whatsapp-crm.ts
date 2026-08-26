@@ -71,6 +71,8 @@ export type WhatsAppCrmTimelineItem = {
   direction: string;
   authorType: string;
   authorLabel: string;
+  originSource: string;
+  originLabel: string;
   messageType: string;
   text: string;
   transcript: string;
@@ -597,6 +599,22 @@ function deliveryStatus(message?: DbRow) {
   return asString(message?.delivery_status, asString(delivery.providerStatus, asString(delivery.status)));
 }
 
+function messageOrigin(message?: DbRow) {
+  const direction = asString(message?.direction);
+  const authorType = asString(message?.author_type);
+  const payload = asRecord(message?.payload);
+  const trace = asRecord(payload.betel_origin_trace || payload.betelOriginTrace);
+  const source = asString(trace.source, asString(payload.source));
+  const label = asString(trace.label);
+
+  if (direction === "inbound") return { source: source || "whatsapp_lead", label: "Lead" };
+  if (authorType === "external") return { source: source || "whatsapp_external_outbound", label: label || "WhatsApp externo" };
+  if (authorType === "human") return { source: source || "admin_whatsapp_panel", label: label || "Painel Betel" };
+  if (authorType === "ai") return { source: source || "whatsapp_agent_runtime", label: "IA Betel" };
+  if (authorType === "system") return { source: source || "betel_system", label: "Sistema" };
+  return { source: source || authorType || "unknown", label: label || "Origem incerta" };
+}
+
 function isEffectiveOutboundMessage(message: DbRow) {
   if (asString(message.direction) !== "outbound") return false;
   const status = deliveryStatus(message).toLowerCase();
@@ -606,11 +624,14 @@ function isEffectiveOutboundMessage(message: DbRow) {
 
 function timelineItem(message: DbRow): WhatsAppCrmTimelineItem {
   const direction = asString(message.direction, "system");
+  const origin = messageOrigin(message);
   return {
     id: asString(message.id, `${direction}-${messageCreatedAt(message)}`),
     direction,
     authorType: asString(message.author_type, direction === "inbound" ? "lead" : "ai"),
     authorLabel: asString(message.author_label, direction === "inbound" ? "Lead" : "Agente"),
+    originSource: origin.source,
+    originLabel: origin.label,
     messageType: asString(message.message_type, "text"),
     text: messageBody(message),
     transcript: asString(message.transcript),
@@ -999,6 +1020,8 @@ function fallbackData(): WhatsAppCrmData {
             direction: "inbound",
             authorType: "lead",
             authorLabel: "Lead",
+            originSource: "whatsapp_lead",
+            originLabel: "Lead",
             messageType: "text",
             text: "Tenho interesse em leilao residencial ate 400 mil em SC.",
             transcript: "",
@@ -1014,6 +1037,8 @@ function fallbackData(): WhatsAppCrmData {
             direction: "outbound",
             authorType: "ai",
             authorLabel: "Agente",
+            originSource: "whatsapp_agent_runtime",
+            originLabel: "IA Betel",
             messageType: "text",
             text: "Boa. Vou olhar oportunidades dentro desse perfil e te fazer uma pergunta por vez.",
             transcript: "",

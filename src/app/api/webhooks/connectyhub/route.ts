@@ -27,7 +27,7 @@ import {
   buildWhatsAppHumanizationPlan,
   type WhatsAppHumanizationPlan,
 } from "@/lib/whatsapp/humanization-runtime";
-import { handleInboundDuringManualHandoff } from "@/lib/whatsapp/manual-handoff";
+import { handleInboundDuringManualHandoff, markManualReplyHandoff } from "@/lib/whatsapp/manual-handoff";
 import {
   isWhatsAppAudioMessage,
   leadRequestedWhatsAppAudioReply,
@@ -2914,6 +2914,353 @@ async function markEventProcessed(
     .eq("id", eventId);
 }
 
+function textSignature(value: string) {
+  return normalizeSearchText(value).replace(/\s+/g, " ").trim();
+}
+
+function eventTimeMs(value: string) {
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function externalOutboundPreview(message: ReturnType<typeof extractWebhookMessage>) {
+  const text = cleanString(message.text || message.transcript);
+  if (text) return clampText(text, 180);
+  if (message.mediaUrl) return `[${cleanString(message.messageType, "midia")}]`;
+  return "";
+}
+
+function detectExternalOutboundTrace(payload: Record<string, unknown>) {
+  const data = eventPayload(payload);
+  const fromPhoneDevice = findFirstBoolean(data, ["fromMe", "isFromMe"]);
+  const sentByApi = findFirstBoolean(data, ["wasSentByApi", "fromApi", "sentByApi"]);
+  const rawSource = firstCleanString(
+    findFirstString(data, ["source", "origin", "platform", "device", "senderDevice"]),
+    findFirstString(payload, ["source", "origin", "platform"])
+  );
+
+  if (fromPhoneDevice && !sentByApi) {
+    return {
+      source: "whatsapp_phone_device",
+      origin: "phone_device",
+      label: "Celular WhatsApp",
+      sentByApi,
+      fromPhoneDevice,
+      rawSource,
+    };
+  }
+
+  if (sentByApi) {
+    return {
+      source: "connectyhub_external_api",
+      origin: "connectyhub_api",
+      label: "ConnectHub/API externo",
+      sentByApi,
+      fromPhoneDevice,
+      rawSource,
+    };
+  }
+
+  return {
+    source: "whatsapp_external_outbound",
+    origin: "unknown_outbound",
+    label: "WhatsApp externo",
+    sentByApi,
+    fromPhoneDevice,
+    rawSource,
+  };
+}
+
+function isBetelOwnedOutbound(row: Record<string, unknown>) {
+  const authorType = cleanString(row.author_type).toLowerCase();
+  const payload = asRecord(row.payload);
+  const source = cleanString(payload.source).toLowerCase();
+  return (
+    authorType === "ai" ||
+    authorType === "human" ||
+    authorType === "system" ||
+    source === "admin_whatsapp_panel" ||
+    source.startsWith("whatsapp_agent") ||
+    source.startsWith("whatsapp_follow_up") ||
+    source.startsWith("whatsapp_group_invite") ||
+    source === "evelyn_runtime"
+  );
+}
+
+async function findKnownBetelOutboundEcho(
+  supabase: NonNullable<ReturnType<typeof getSupabaseAdminClient>>,
+  input: {
+    conversationId: string;
+    eventId: string;
+    providerMessageId: string;
+    text: string;
+    receivedAt: string;
+  }
+) {
+  if (input.providerMessageId) {
+    const { data } = await supabase
+      .from("whatsapp_conversation_messages")
+      .select("id,author_type,payload")
+      .eq("provider_message_id", input.providerMessageId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (data?.id) return { id: cleanString(data.id), reason: "provider_message_id_match" };
+  }
+
+  if (input.eventId) {
+    const { data } = await supabase
+      .from("whatsapp_conversation_messages")
+      .select("id,author_type,payload")
+      .eq("webhook_event_id", input.eventId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (data?.id) return { id: cleanString(data.id), reason: "webhook_event_id_match" };
+  }
+
+  const signature = textSignature(input.text);
+  if (!signature || !input.conversationId) return null;
+
+  const receivedMs = eventTimeMs(input.receivedAt);
+  const { data } = await supabase
+    .from("whatsapp_conversation_messages")
+    .select("id,author_type,text,transcript,payload,occurred_at,created_at")
+    .eq("conversation_id", input.conversationId)
+    .eq("direction", "outbound")
+    .order("created_at", { ascending: false })
+    .limit(30);
+
+  const match = ((data || []) as Record<string, unknown>[]).find((row) => {
+    if (!isBetelOwnedOutbound(row)) return false;
+    const rowText = cleanString(row.text || row.transcript);
+    if (textSignature(rowText) !== signature) return false;
+    const rowMs = eventTimeMs(cleanString(row.occurred_at, cleanString(row.created_at)));
+    return Boolean(rowMs && receivedMs && Math.abs(receivedMs - rowMs) <= 10 * 60_000);
+  });
+
+  return match?.id ? { id: cleanString(match.id), reason: "recent_text_echo_match" } : null;
+}
+
+async function persistExternalOutboundMessage(
+  supabase: NonNullable<ReturnType<typeof getSupabaseAdminClient>>,
+  input: {
+    payload: Record<string, unknown>;
+    message: ReturnType<typeof extractWebhookMessage>;
+    eventId: string;
+    eventType: string;
+    instanceId: string;
+    providerInstanceId: string;
+    agentKey: string;
+    receivedAt: string;
+  }
+) {
+  const preview = externalOutboundPreview(input.message);
+  const trace = detectExternalOutboundTrace(input.payload);
+  const providerMessageId = normalizeProviderMessageId(input.message.providerMessageId);
+
+  if (input.message.isGroup) {
+    return { persisted: false, reason: "external_group_outbound_ignored" };
+  }
+
+  if (!input.message.phone) {
+    return { persisted: false, reason: "external_outbound_missing_phone" };
+  }
+
+  if (!preview && !input.message.mediaUrl) {
+    return { persisted: false, reason: "external_outbound_without_content" };
+  }
+
+  const { data: existingLeadData } = await supabase
+    .from("whatsapp_leads")
+    .select("id,name,metadata")
+    .eq("phone", input.message.phone)
+    .maybeSingle();
+  const existingLead = asRecord(existingLeadData);
+  const leadMetadata = asRecord(existingLead.metadata);
+  const leadAudit = {
+    source: trace.source,
+    origin: trace.origin,
+    label: trace.label,
+    providerMessageId: providerMessageId || null,
+    providerChatId: input.message.chatId || null,
+    eventId: input.eventId || null,
+    eventType: input.eventType || null,
+    textPreview: preview || null,
+    messageType: input.message.messageType || null,
+    sentByApi: trace.sentByApi,
+    fromPhoneDevice: trace.fromPhoneDevice,
+    rawSource: trace.rawSource || null,
+    observedAt: input.receivedAt,
+  };
+
+  let leadId = cleanString(existingLead.id);
+  if (!leadId) {
+    const { data: createdLead, error: leadError } = await supabase
+      .from("whatsapp_leads")
+      .insert({
+        phone: input.message.phone,
+        name: input.message.name && !looksLikeBusinessName(input.message.name) ? input.message.name : null,
+        owner_agent_key: input.agentKey,
+        last_message_at: input.receivedAt,
+        metadata: {
+          source: "connectyhub_webhook",
+          connectyhub_instance_id: input.providerInstanceId || null,
+          chat_id: input.message.chatId || null,
+          last_external_outbound_trace: leadAudit,
+        },
+      })
+      .select("id")
+      .maybeSingle();
+    if (leadError || !createdLead?.id) {
+      return { persisted: false, reason: leadError?.message || "external_outbound_lead_not_persisted" };
+    }
+    leadId = cleanString(createdLead.id);
+  } else {
+    await supabase
+      .from("whatsapp_leads")
+      .update({
+        last_message_at: input.receivedAt,
+        metadata: {
+          ...leadMetadata,
+          last_external_outbound_trace: leadAudit,
+          last_external_outbound_at: input.receivedAt,
+        },
+        updated_at: input.receivedAt,
+      })
+      .eq("id", leadId);
+  }
+
+  const { data: existingConversationData } = await supabase
+    .from("whatsapp_conversations")
+    .select("id,metadata")
+    .eq("lead_id", leadId)
+    .eq("agent_key", input.agentKey)
+    .neq("status", "closed")
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const existingConversation = asRecord(existingConversationData);
+  const conversationMetadata = asRecord(existingConversation.metadata);
+
+  let conversationId = cleanString(existingConversation.id);
+  if (!conversationId) {
+    const { data: createdConversation, error: conversationError } = await supabase
+      .from("whatsapp_conversations")
+      .insert({
+        lead_id: leadId,
+        instance_id: input.instanceId || null,
+        agent_key: input.agentKey,
+        status: "open",
+        last_message_at: input.receivedAt,
+        last_message_preview: preview || "Mensagem enviada fora do painel.",
+        metadata: {
+          source: CONNECTYHUB_PROVIDER,
+          chat_id: input.message.chatId || null,
+          last_external_outbound_trace: leadAudit,
+        },
+      })
+      .select("id")
+      .maybeSingle();
+    if (conversationError || !createdConversation?.id) {
+      return { persisted: false, reason: conversationError?.message || "external_outbound_conversation_not_persisted" };
+    }
+    conversationId = cleanString(createdConversation.id);
+  }
+
+  const knownEcho = await findKnownBetelOutboundEcho(supabase, {
+    conversationId,
+    eventId: input.eventId,
+    providerMessageId,
+    text: preview,
+    receivedAt: input.receivedAt,
+  });
+  if (knownEcho) {
+    return { persisted: false, reason: knownEcho.reason, knownMessageId: knownEcho.id, conversationId, leadId };
+  }
+
+  const messagePayload = {
+    ...input.payload,
+    source: trace.source,
+    betel_origin_trace: leadAudit,
+    betelOriginTrace: leadAudit,
+  };
+
+  const { data: messageRow, error: messageError } = await supabase
+    .from("whatsapp_conversation_messages")
+    .insert({
+      conversation_id: conversationId,
+      lead_id: leadId,
+      instance_id: input.instanceId || null,
+      webhook_event_id: input.eventId || null,
+      direction: "outbound",
+      author_type: "external",
+      author_label: trace.label,
+      message_type: input.message.messageType || (preview ? "text" : "unknown"),
+      text: preview || null,
+      transcript: input.message.transcript || null,
+      provider_message_id: providerMessageId || null,
+      provider_chat_id: input.message.chatId || null,
+      occurred_at: input.receivedAt,
+      media_url: input.message.mediaUrl || null,
+      media_mime_type: input.message.mediaUrl
+        ? fallbackMimeType(input.message.messageType, input.message.mediaMimeType)
+        : null,
+      payload: messagePayload,
+    })
+    .select("id")
+    .maybeSingle();
+
+  if (messageError) return { persisted: false, reason: messageError.message || "external_outbound_message_not_persisted" };
+
+  await markManualReplyHandoff(supabase, {
+    conversationId,
+    leadId,
+    agentKey: input.agentKey,
+    operatorLabel: trace.label,
+    reason: "external_outbound_detected",
+    source: trace.source,
+    note: "Mensagem enviada fora do painel da Betel e registrada para auditoria.",
+    now: input.receivedAt,
+    lastMessagePreview: preview,
+  });
+
+  await supabase
+    .from("whatsapp_conversations")
+    .update({
+      instance_id: input.instanceId || null,
+      metadata: {
+        ...conversationMetadata,
+        last_external_outbound_trace: leadAudit,
+        last_external_outbound_at: input.receivedAt,
+      },
+      updated_at: input.receivedAt,
+    })
+    .eq("id", conversationId);
+
+  await insertRuntimeEvent(supabase, {
+    agentKey: input.agentKey,
+    eventType: "whatsapp_external_outbound_observed",
+    status: "persisted",
+    message: "Mensagem enviada fora do painel da Betel registrada e IA pausada para auditoria.",
+    payload: {
+      leadId,
+      conversationId,
+      messageId: cleanString(messageRow?.id) || null,
+      trace: leadAudit,
+    },
+  });
+
+  return {
+    persisted: true,
+    reason: "external_outbound_recorded",
+    leadId,
+    conversationId,
+    messageId: cleanString(messageRow?.id),
+    trace,
+  };
+}
+
 async function persistWebhookCrm(
   supabase: NonNullable<ReturnType<typeof getSupabaseAdminClient>>,
   payload: Record<string, unknown>
@@ -2990,12 +3337,28 @@ async function persistWebhookCrm(
   }
 
   if (message.fromApi) {
-    await markEventProcessed(supabase, eventId, "skipped");
+    const outboundTrace = await persistExternalOutboundMessage(supabase, {
+      payload,
+      message,
+      eventId,
+      eventType,
+      instanceId,
+      providerInstanceId,
+      agentKey,
+      receivedAt,
+    });
+    await markEventProcessed(
+      supabase,
+      eventId,
+      outboundTrace.persisted ? "processed" : "skipped",
+      outboundTrace.reason
+    );
     return {
       ok: true,
       eventId,
-      skipped: true,
-      reason: "sent_by_api",
+      skipped: !outboundTrace.persisted,
+      reason: outboundTrace.reason || "sent_by_api",
+      outboundTrace,
       instanceId,
       providerInstanceId,
       agentKey,

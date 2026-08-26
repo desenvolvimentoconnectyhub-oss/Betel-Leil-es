@@ -532,6 +532,7 @@ function TimelineMessageIcon({ item }: { item: WhatsAppCrmTimelineItem }) {
   if (item.mediaUrl) return <Paperclip size={13} />;
   if (item.authorType === "lead") return <UserRound size={13} />;
   if (item.authorType === "human") return <CheckCircle2 size={13} />;
+  if (item.authorType === "external") return <Phone size={13} />;
   return <Bot size={13} />;
 }
 
@@ -553,8 +554,26 @@ function sortedTimeline(items: WhatsAppCrmTimelineItem[]) {
 function timelineActorLabel(item: WhatsAppCrmTimelineItem) {
   if (item.direction === "inbound") return item.authorLabel || "Lead";
   if (item.authorType === "human") return item.authorLabel || "Atendente";
+  if (item.authorType === "external") return item.authorLabel || "WhatsApp externo";
   if (item.authorType === "ai") return "Evelyn";
   return item.authorLabel || "Sistema";
+}
+
+function timelineOriginTone(item: WhatsAppCrmTimelineItem): ResourceTone {
+  if (item.direction === "inbound") return "cyan";
+  if (item.authorType === "external") return "red";
+  if (item.authorType === "human") return "yellow";
+  if (item.authorType === "ai") return "green";
+  return "muted";
+}
+
+function timelineOriginLabel(item: WhatsAppCrmTimelineItem) {
+  if (item.originLabel) return item.originLabel;
+  if (item.direction === "inbound") return "Lead";
+  if (item.authorType === "external") return "WhatsApp externo";
+  if (item.authorType === "human") return "Painel Betel";
+  if (item.authorType === "ai") return "IA Betel";
+  return "Sistema";
 }
 
 function conversationStatusLabel(lead: WhatsAppCrmLeadCard) {
@@ -835,7 +854,7 @@ function ChatBubble({ item }: { item: WhatsAppCrmTimelineItem }) {
   const isInbound = item.direction === "inbound";
   const isSystem = !isOutbound && !isInbound;
   const isAudio = isAudioTimelineItem(item);
-  const itemTone: ResourceTone = item.authorType === "human" ? "yellow" : item.tone;
+  const itemTone: ResourceTone = timelineOriginTone(item);
   const body = item.text || item.transcript || "Mensagem sem texto.";
 
   if (isSystem) {
@@ -856,7 +875,9 @@ function ChatBubble({ item }: { item: WhatsAppCrmTimelineItem }) {
           isOutbound
             ? item.authorType === "human"
               ? "rounded-br-sm border-[rgba(234,179,8,0.28)] bg-[#fff6d8]"
-              : "rounded-br-sm border-[#bde7b7] bg-[#d9fdd3]"
+              : item.authorType === "external"
+                ? "rounded-br-sm border-[rgba(239,68,68,0.26)] bg-[#fff4ed]"
+                : "rounded-br-sm border-[#bde7b7] bg-[#d9fdd3]"
             : "rounded-bl-sm border-[#f5efe6] bg-white"
         )}
       >
@@ -864,6 +885,9 @@ function ChatBubble({ item }: { item: WhatsAppCrmTimelineItem }) {
           <span className={cn("inline-flex min-w-0 items-center gap-1.5 text-[10px] font-semibold", toneText[itemTone])}>
             <TimelineMessageIcon item={item} />
             <span className="truncate">{timelineActorLabel(item)}</span>
+            <StatusBadge tone={itemTone} className="h-4 px-1.5 text-[8px]">
+              {timelineOriginLabel(item)}
+            </StatusBadge>
           </span>
           <span className="shrink-0 font-mono text-[10px] text-[var(--admin-muted)]">{formatRelative(item.createdAt)}</span>
         </div>
