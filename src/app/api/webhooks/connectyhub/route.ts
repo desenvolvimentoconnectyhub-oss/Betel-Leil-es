@@ -4438,19 +4438,83 @@ function responsibleNotificationNumbers(config: WillianAgentConfig, leadPhone: s
   );
 }
 
+type ResponsibleHumanNotificationInput = {
+  config: WillianAgentConfig;
+  agentKey: string;
+  instanceId: string;
+  leadId: string;
+  conversationId: string;
+  eventId: string;
+  leadPhone: string;
+  leadName?: string;
+  reason: string;
+  textPreview: string;
+};
+
+const QUALIFICATION_ONLY_ALERT_REASONS = new Set([
+  "lead_became_hot",
+  "lead_became_vip",
+  "vip_score",
+  "high_capital",
+]);
+
+function normalizedResponsibleAlertReason(reason: string) {
+  return cleanString(reason).toLowerCase().replace(/^ai_detected_/, "");
+}
+
+function shouldKeepResponsibleAlertInternalOnly(reason: string) {
+  return QUALIFICATION_ONLY_ALERT_REASONS.has(normalizedResponsibleAlertReason(reason));
+}
+
+function responsibleAlertReasonLabel(reason: string) {
+  const normalized = normalizedResponsibleAlertReason(reason);
+  const labels: Record<string, string> = {
+    anti_loop_max_messages: "A IA atingiu o limite de mensagens automaticas e precisa de revisao.",
+    financial_or_contract_sensitive: "O lead entrou em assunto sensivel de contrato ou pagamento.",
+    lead_requested_human: "O lead pediu atendimento humano.",
+    risk_or_complaint: "O lead trouxe risco, reclamacao ou tema juridico sensivel.",
+    lead_became_hot: "Lead ficou quente no CRM.",
+    lead_became_vip: "Lead ficou VIP no CRM.",
+    vip_score: "Lead atingiu score VIP.",
+    high_capital: "Lead informou capital alto.",
+  };
+  return labels[normalized] || reason;
+}
+
+function localizeLeadFormPreview(text: string) {
+  return cleanString(text)
+    .replace(/\bFull name\s*:/gi, "Nome completo:")
+    .replace(/\bPhone number\s*:/gi, "Telefone:")
+    .replace(/\bCity\s*:/gi, "Cidade:")
+    .replace(/\bEmail\s*:/gi, "Email:")
+    .replace(/\bHello!\s*I filled out your form and would like to know more about your business\./gi, "Ola! Preenchi o formulario e gostaria de saber mais sobre a empresa.");
+}
+
+async function recordResponsibleAlertSuppressed(
+  supabase: NonNullable<ReturnType<typeof getSupabaseAdminClient>>,
+  input: ResponsibleHumanNotificationInput
+) {
+  await insertRuntimeEvent(supabase, {
+    agentKey: input.agentKey,
+    eventType: "whatsapp_agent_runtime_human_alert_suppressed",
+    status: "waiting_sdr_appointment",
+    message: "Sinal de qualificacao mantido interno; administrador sera avisado somente quando a ligacao for agendada.",
+    payload: {
+      leadId: input.leadId,
+      conversationId: input.conversationId,
+      eventId: input.eventId,
+      reason: input.reason,
+      reasonLabel: responsibleAlertReasonLabel(input.reason),
+      leadPhone: input.leadPhone,
+      leadName: input.leadName || null,
+      textPreview: clampText(localizeLeadFormPreview(input.textPreview), 420),
+    },
+  });
+}
+
 async function notifyResponsibleHumans(
   supabase: NonNullable<ReturnType<typeof getSupabaseAdminClient>>,
-  input: {
-    config: WillianAgentConfig;
-    agentKey: string;
-    instanceId: string;
-    leadId: string;
-    conversationId: string;
-    eventId: string;
-    leadPhone: string;
-    reason: string;
-    textPreview: string;
-  }
+  input: ResponsibleHumanNotificationInput
 ) {
   if (!input.config.behavior.alertHuman) return [];
 
@@ -4471,11 +4535,14 @@ async function notifyResponsibleHumans(
     return [];
   }
 
+  const leadLabel = input.leadName ? `${input.leadName} (+${input.leadPhone})` : `+${input.leadPhone}`;
   const alertText = [
     "Alerta Betel WhatsApp",
-    `Motivo: ${input.reason}`,
-    `Lead: +${input.leadPhone}`,
-    `Resumo: ${clampText(input.textPreview, 260)}`,
+    responsibleAlertReasonLabel(input.reason),
+    `Lead: ${leadLabel}`,
+    "",
+    "Ultima mensagem:",
+    clampText(localizeLeadFormPreview(input.textPreview), 360),
   ].join("\n");
 
   const deliveries = await Promise.all(
@@ -4511,6 +4578,19 @@ async function notifyResponsibleHumans(
   });
 
   return deliveries;
+}
+
+async function maybeNotifyResponsibleHumans(
+  supabase: NonNullable<ReturnType<typeof getSupabaseAdminClient>>,
+  input: ResponsibleHumanNotificationInput
+) {
+  if (shouldKeepResponsibleAlertInternalOnly(input.reason)) {
+    await recordResponsibleAlertSuppressed(supabase, input);
+    return { deliveries: [], sent: false, suppressed: true };
+  }
+
+  const deliveries = await notifyResponsibleHumans(supabase, input);
+  return { deliveries, sent: deliveries.length > 0, suppressed: false };
 }
 
 async function insertOutboundMessages(
@@ -5245,7 +5325,7 @@ async function generateWhatsappAgentReply(
       "Se o lead disser que e iniciante, primeira vez, esta com duvida ou pedir como funciona o trabalho/assessoria/proposta da Betel, explique em passos simples antes de qualificar. Nao encaminhe para humano so por isso.",
       "Se a mensagem for apenas cumprimento curto, tipo 'oi', 'e ai', 'blz' ou 'tudo bem', responda no mesmo tom e nao pergunte ainda sobre CRM, capital, regiao, imovel ou objetivo.",
       "So puxe qualificacao quando o lead trouxer necessidade, duvida, interesse em leilao, imovel, investimento ou pedir ajuda.",
-      "Se o lead veio de formulario, tem capital/objetivo e aceitou ligacao, trate como lead quente: responda normalmente, confirme telefone/horario em uma frase e continue tirando duvidas.",
+      "Se o lead veio de formulario com capital/objetivo, use isso como contexto inicial, mas valide na conversa se ainda faz sentido antes de marcar ligacao.",
       "Pedido de ligacao, reuniao, SDR, consultor ou 5 minutos e agenda comercial, nao handoff. Nao pare a IA por isso.",
       "O objetivo comercial e qualificar, tirar duvidas e marcar uma ligacao com SDR quando houver fit real.",
       "So confirme ligacao marcada quando o contexto AGENDA SDR disser que o horario foi reservado. Se faltar horario, peca um horario objetivo; se estiver cheio ou fora do horario, ofereca outra opcao.",
@@ -5273,7 +5353,7 @@ async function generateWhatsappAgentReply(
       "",
       "Regra operacional atual da Betel:",
       "O agente neste atendimento se chama Evelyn.",
-      "Lead de formulario pago com capital, objetivo e abertura para ligacao deve ser tratado como lead quente: continuar respondendo, tirar duvidas e confirmar horario para ligacao com SDR/comercial.",
+      "Lead de formulario pago com capital e objetivo nao deve ser considerado pronto so pelo formulario. Continue respondendo, valide fit real na conversa e so acione agenda quando houver horario claro para ligacao.",
       "Ao confirmar horario, use a agenda do sistema: janela das 08h as 19h, no maximo 2 leads por hora, e registro completo no arquivo do lead.",
       "Nao transforme pedido de ligacao, reuniao, consultor, SDR ou 5 minutos em handoff. Handoff e alerta interno silencioso, nao motivo para parar a IA.",
       "",
@@ -5735,6 +5815,7 @@ async function processWhatsappAgentRuntime(
       conversationId,
       eventId,
       leadPhone: phone,
+      leadName: runtimeContext.lead.name || name,
       reason: "anti_loop_max_messages",
       textPreview: runtimeText,
     });
@@ -5751,19 +5832,13 @@ async function processWhatsappAgentRuntime(
   const trackId = `${agentKey}-${eventId || Date.now().toString(36)}`;
   const runtimeDecisionHandoffReason =
     config.behavior.aiHumanRequestTrigger && runtimeDecision.shouldHandoff ? runtimeDecision.handoffReason : "";
-  const runtimeDecisionAlertReason =
-    config.behavior.aiHumanRequestTrigger && runtimeDecision.alertHuman
-      ? runtimeDecisionHandoffReason ||
-        (runtimeDecision.stage === "quente" && runtimeContext.lead.qualificationScore < config.qualification.qualifiedScore
-          ? "lead_became_hot"
-          : "")
-      : "";
+  const runtimeDecisionAlertReason = runtimeDecisionHandoffReason;
   const aiHumanNeedReason = config.behavior.aiHumanRequestTrigger
     ? runtimeDecisionAlertReason || detectAiHumanNeed({ text: runtimeControlText, lead: runtimeContext.lead, config })
     : "";
   let humanAlertSent = false;
   if (aiHumanNeedReason) {
-    await notifyResponsibleHumans(supabase, {
+    const alertResult = await maybeNotifyResponsibleHumans(supabase, {
       config,
       agentKey,
       instanceId: providerInstanceId,
@@ -5771,21 +5846,24 @@ async function processWhatsappAgentRuntime(
       conversationId,
       eventId,
       leadPhone: phone,
+      leadName: runtimeContext.lead.name || name,
       reason: `ai_detected_${aiHumanNeedReason}`,
       textPreview: runtimeText,
     });
     await insertRuntimeEvent(supabase, {
       agentKey,
       eventType: "whatsapp_agent_runtime_human_alert_continued",
-      status: "continued",
-      message: "Humano avisado em silencio; Evelyn continuou o atendimento automatico.",
-      payload: { eventId, leadId, conversationId, reason: aiHumanNeedReason },
+      status: alertResult.suppressed ? "qualification_signal_internal" : "continued",
+      message: alertResult.suppressed
+        ? "Sinal de qualificacao mantido interno; Evelyn continuou e admin sera avisado apenas se houver agenda."
+        : "Humano avisado em silencio; Evelyn continuou o atendimento automatico.",
+      payload: { eventId, leadId, conversationId, reason: aiHumanNeedReason, suppressed: alertResult.suppressed },
     });
-    humanAlertSent = true;
+    humanAlertSent = alertResult.sent || alertResult.suppressed;
   }
 
   if (!aiHumanNeedReason && config.behavior.humanRequestTrigger && runtimeControlText && hasHumanRequest(runtimeControlText)) {
-    await notifyResponsibleHumans(supabase, {
+    const alertResult = await maybeNotifyResponsibleHumans(supabase, {
       config,
       agentKey,
       instanceId: providerInstanceId,
@@ -5793,6 +5871,7 @@ async function processWhatsappAgentRuntime(
       conversationId,
       eventId,
       leadPhone: phone,
+      leadName: runtimeContext.lead.name || name,
       reason: "lead_requested_human",
       textPreview: runtimeControlText,
     });
@@ -5808,7 +5887,7 @@ async function processWhatsappAgentRuntime(
         controlPreview: clampText(runtimeControlText, 160),
       },
     });
-    humanAlertSent = true;
+    humanAlertSent = alertResult.sent || alertResult.suppressed;
   }
 
   const cooldownSkip = shouldSkipForCooldown(config, runtimeContext.messages);
@@ -6183,7 +6262,7 @@ async function processWhatsappAgentRuntime(
   });
 
   if (memoryUpdate?.temperature === "vip" && runtimeContext.lead.temperature !== "vip" && !humanAlertSent) {
-    await notifyResponsibleHumans(supabase, {
+    await maybeNotifyResponsibleHumans(supabase, {
       config,
       agentKey,
       instanceId: providerInstanceId,
@@ -6191,6 +6270,7 @@ async function processWhatsappAgentRuntime(
       conversationId,
       eventId,
       leadPhone: phone,
+      leadName: runtimeContext.lead.name || name,
       reason: "lead_became_vip",
       textPreview: runtimeText,
     });

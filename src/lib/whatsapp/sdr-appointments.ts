@@ -925,6 +925,41 @@ function valueFromMetadata(metadata: Record<string, unknown>, keys: string[]) {
   return "";
 }
 
+function localizeLeadFormPreview(text: string) {
+  return asString(text)
+    .replace(/\bFull name\s*:/gi, "Nome completo:")
+    .replace(/\bPhone number\s*:/gi, "Telefone:")
+    .replace(/\bCity\s*:/gi, "Cidade:")
+    .replace(/\bEmail\s*:/gi, "Email:")
+    .replace(/\bHello!\s*I filled out your form and would like to know more about your business\./gi, "Ola! Preenchi o formulario e gostaria de saber mais sobre a empresa.");
+}
+
+function snapshotValue(value: unknown, fallback: string) {
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  const text = asString(value).trim();
+  return text || fallback;
+}
+
+function capitalSnapshotValue(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return `R$ ${value.toLocaleString("pt-BR")}`;
+  }
+  return snapshotValue(value, "nao informado");
+}
+
+function buildQualificationReason(snapshot: Record<string, unknown>) {
+  const reasons = [
+    capitalSnapshotValue(snapshot.capital) !== "nao informado" ? `capital informado de ${capitalSnapshotValue(snapshot.capital)}` : "",
+    snapshotValue(snapshot.objetivo, "") ? `objetivo de ${snapshotValue(snapshot.objetivo, "")}` : "",
+    snapshotValue(snapshot.regiao, "") ? `regiao de interesse: ${snapshotValue(snapshot.regiao, "")}` : "",
+    snapshotValue(snapshot.experiencia, "") ? `experiencia: ${snapshotValue(snapshot.experiencia, "")}` : "",
+  ].filter(Boolean);
+
+  return reasons.length
+    ? `Lead qualificado porque informou ${reasons.join("; ")}.`
+    : "Lead qualificado pela conversa recente e pelo interesse demonstrado em falar com a Betel.";
+}
+
 function buildQualificationSnapshot(lead: LeadRow, profile: ProfileRow) {
   const leadMetadata = asRecord(lead.metadata);
   const profileMetadata = asRecord(profile.metadata);
@@ -951,7 +986,7 @@ function lastMessagesSummary(messages: MessageRow[]) {
     .map((message) => {
       const direction = asString(message.direction);
       const author = asString(message.author_label) || asString(message.author_name) || asString(message.author_type) || direction;
-      const text = asString(message.text) || asString(message.content);
+      const text = localizeLeadFormPreview(asString(message.text) || asString(message.content));
       if (!text.trim()) return "";
       return `${author}: ${clampText(text, 180)}`;
     })
@@ -969,9 +1004,9 @@ function buildConversationSummary(input: {
   messages: MessageRow[];
   qualificationSnapshot: Record<string, unknown>;
 }) {
-  const capital = asString(input.qualificationSnapshot.capital) || "nao informado";
-  const objetivo = asString(input.qualificationSnapshot.objetivo) || "nao informado";
-  const regiao = asString(input.qualificationSnapshot.regiao) || "nao informada";
+  const capital = capitalSnapshotValue(input.qualificationSnapshot.capital);
+  const objetivo = snapshotValue(input.qualificationSnapshot.objetivo, "nao informado");
+  const regiao = snapshotValue(input.qualificationSnapshot.regiao, "nao informada");
   const ultimas = lastMessagesSummary(input.messages) || "Sem historico suficiente.";
 
   return clampText(
@@ -997,10 +1032,11 @@ function buildSdrBriefing(input: {
     `Score/etapa: ${asString(snapshot.score) || String(snapshot.score ?? "nao informado")} / ${
       asString(snapshot.classification) || asString(snapshot.stage) || "nao informado"
     }.`,
-    `Capital: ${asString(snapshot.capital) || "nao informado"}.`,
-    `Objetivo: ${asString(snapshot.objetivo) || "nao informado"}.`,
-    `Regiao: ${asString(snapshot.regiao) || "nao informada"}.`,
-    `Experiencia: ${asString(snapshot.experiencia) || "nao informada"}.`,
+    `Motivo da qualificacao: ${buildQualificationReason(snapshot)}`,
+    `Capital: ${capitalSnapshotValue(snapshot.capital)}.`,
+    `Objetivo: ${snapshotValue(snapshot.objetivo, "nao informado")}.`,
+    `Regiao: ${snapshotValue(snapshot.regiao, "nao informada")}.`,
+    `Experiencia: ${snapshotValue(snapshot.experiencia, "nao informada")}.`,
     `Ultimo contexto: ${lastMessagesSummary(input.messages) || "sem mensagens recentes."}`,
   ];
 
