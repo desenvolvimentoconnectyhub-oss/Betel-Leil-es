@@ -411,10 +411,19 @@ export async function listOpportunityValidationPipelines(limit = 100): Promise<D
   const fetched = await fetchOpportunityRows(safeLimit);
   const marketAnalyses = await fetchMarketAnalyses(fetched.opportunities);
   const pipelines = buildPipelines(fetched.opportunities, fetched.snapshots, marketAnalyses, false);
+
+  if (!error) {
+    return {
+      data: pipelines,
+      source: "supabase",
+      reason: fetched.error,
+    };
+  }
+
   return {
     data: pipelines,
     source: "supabase",
-    reason: error?.message || fetched.error || "Pipeline gerado em memoria ate a migration ser aplicada.",
+    reason: error.message || fetched.error || "Nao foi possivel carregar o historico persistido do pipeline.",
   };
 }
 
