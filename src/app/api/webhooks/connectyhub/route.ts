@@ -3194,7 +3194,7 @@ async function persistExternalOutboundMessage(
       instance_id: input.instanceId || null,
       webhook_event_id: input.eventId || null,
       direction: "outbound",
-      author_type: "external",
+      author_type: "human",
       author_label: trace.label,
       message_type: input.message.messageType || (preview ? "text" : "unknown"),
       text: preview || null,

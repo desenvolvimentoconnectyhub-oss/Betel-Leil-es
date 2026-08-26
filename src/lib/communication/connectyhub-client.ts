@@ -1865,10 +1865,24 @@ function asArrayPayload(payload: unknown) {
     if (value && typeof value === "object") return [value];
   }
 
+  const providerData = asRecord(data.provider);
+  for (const key of ["instances", "webhooks", "messages", "chats", "contacts", "deliveries", "items", "results"]) {
+    const value = providerData[key];
+    if (Array.isArray(value)) return value;
+    if (value && typeof value === "object") return [value];
+  }
+
   const nestedData = asRecord(data.data);
   if (Array.isArray(data.data)) return data.data;
   for (const key of ["instances", "webhooks", "messages", "chats", "contacts", "deliveries", "items", "results"]) {
     const value = nestedData[key];
+    if (Array.isArray(value)) return value;
+    if (value && typeof value === "object") return [value];
+  }
+
+  const nestedProviderData = asRecord(nestedData.provider);
+  for (const key of ["instances", "webhooks", "messages", "chats", "contacts", "deliveries", "items", "results"]) {
+    const value = nestedProviderData[key];
     if (Array.isArray(value)) return value;
     if (value && typeof value === "object") return [value];
   }
@@ -3404,6 +3418,43 @@ export async function fetchWillianConnectyHubDataOverview() {
       chats: cleanString(asRecord(chatsPayload).error),
       contacts: cleanString(asRecord(contactsPayload).error),
     },
+  };
+}
+
+export async function fetchConnectyHubWhatsappMessages(input: {
+  agentKey?: string;
+  instanceId?: string;
+  chatId?: string;
+  limit?: number;
+  offset?: number;
+  timeoutMs?: number;
+}) {
+  const config = await getWillianConfig();
+  const persisted = input.agentKey && !input.instanceId ? await findPersistedWhatsappInstance(input.agentKey) : null;
+  const instanceId = cleanString(
+    input.instanceId ||
+      persisted?.provider_instance_id ||
+      config.instanceId ||
+      (await resolveConnectyHubInstanceId(config).catch(() => ""))
+  );
+
+  if (!instanceId) throw new Error("Instancia ConnectyHub nao localizada para consultar mensagens.");
+
+  const payload = await connectyhubRequest("/messages", {
+    method: "POST",
+    timeoutMs: input.timeoutMs || 12000,
+    body: {
+      instanceId,
+      limit: Math.max(1, Math.min(Number(input.limit || 120), 300)),
+      offset: Math.max(0, Number(input.offset || 0)),
+      ...(cleanString(input.chatId) ? { chatId: cleanString(input.chatId) } : {}),
+    },
+  });
+
+  return {
+    instanceId,
+    messages: asArrayPayload(payload).map((message) => asRecord(message)),
+    payload: sanitizePayload(payload),
   };
 }
 

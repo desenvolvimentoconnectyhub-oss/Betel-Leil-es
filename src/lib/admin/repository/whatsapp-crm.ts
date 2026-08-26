@@ -599,6 +599,18 @@ function deliveryStatus(message?: DbRow) {
   return asString(message?.delivery_status, asString(delivery.providerStatus, asString(delivery.status)));
 }
 
+function isExternalOutboundSource(source: string, authorType: string) {
+  const normalized = source.toLowerCase();
+  return (
+    authorType === "external" ||
+    normalized === "connectyhub_external_api" ||
+    normalized === "whatsapp_phone_device" ||
+    normalized === "whatsapp_external_outbound" ||
+    normalized === "external_api" ||
+    normalized.includes("external")
+  );
+}
+
 function messageOrigin(message?: DbRow) {
   const direction = asString(message?.direction);
   const authorType = asString(message?.author_type);
@@ -608,7 +620,9 @@ function messageOrigin(message?: DbRow) {
   const label = asString(trace.label);
 
   if (direction === "inbound") return { source: source || "whatsapp_lead", label: "Lead" };
-  if (authorType === "external") return { source: source || "whatsapp_external_outbound", label: label || "WhatsApp externo" };
+  if (isExternalOutboundSource(source, authorType)) {
+    return { source: source || "whatsapp_external_outbound", label: label || "WhatsApp externo" };
+  }
   if (authorType === "human") return { source: source || "admin_whatsapp_panel", label: label || "Painel Betel" };
   if (authorType === "ai") return { source: source || "whatsapp_agent_runtime", label: "IA Betel" };
   if (authorType === "system") return { source: source || "betel_system", label: "Sistema" };
@@ -625,10 +639,12 @@ function isEffectiveOutboundMessage(message: DbRow) {
 function timelineItem(message: DbRow): WhatsAppCrmTimelineItem {
   const direction = asString(message.direction, "system");
   const origin = messageOrigin(message);
+  const authorType = asString(message.author_type, direction === "inbound" ? "lead" : "ai");
+  const displayAuthorType = isExternalOutboundSource(origin.source, authorType) ? "external" : authorType;
   return {
     id: asString(message.id, `${direction}-${messageCreatedAt(message)}`),
     direction,
-    authorType: asString(message.author_type, direction === "inbound" ? "lead" : "ai"),
+    authorType: displayAuthorType,
     authorLabel: asString(message.author_label, direction === "inbound" ? "Lead" : "Agente"),
     originSource: origin.source,
     originLabel: origin.label,
