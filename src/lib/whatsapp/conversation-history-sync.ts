@@ -10,6 +10,7 @@ type SupabaseAdminClient = NonNullable<ReturnType<typeof getSupabaseAdminClient>
 const DEFAULT_AGENT_KEY = "multichannel-dispatch";
 const CONNECTYHUB_PROVIDER = "connectyhub";
 const SYNC_STATE_KEY = "WHATSAPP_CONVERSATION_HISTORY_SYNCED_AT";
+const RESET_STATE_KEY = "WHATSAPP_CONVERSATION_RESET_CUTOFFS";
 const DEFAULT_SYNC_INTERVAL_MS = 15_000;
 const DEFAULT_MAX_AGE_MS = 48 * 60 * 60_000;
 
@@ -26,6 +27,38 @@ function asBoolean(value: unknown) {
   if (typeof value === "number") return value === 1;
   const clean = cleanString(value).toLowerCase();
   return ["1", "true", "yes", "sim", "on"].includes(clean);
+}
+
+function asResetCutoffs(value: unknown): Record<string, string> {
+  if (!value) return {};
+
+  try {
+    const parsed = typeof value === "string" ? JSON.parse(value) : value;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+
+    return Object.entries(parsed as Record<string, unknown>).reduce<Record<string, string>>((acc, [phone, resetAt]) => {
+      const normalizedPhone = normalizeWhatsAppNumber(phone);
+      const normalizedResetAt = cleanString(resetAt);
+      if (normalizedPhone && Number.isFinite(Date.parse(normalizedResetAt))) acc[normalizedPhone] = normalizedResetAt;
+      return acc;
+    }, {});
+  } catch {
+    return {};
+  }
+}
+
+async function loadResetCutoffs(supabase: SupabaseAdminClient) {
+  const { data } = await supabase.from("app_config").select("value").eq("key", RESET_STATE_KEY).maybeSingle();
+  return asResetCutoffs(asRecord(data).value);
+}
+
+function messageIsBeforeResetCutoff(resetCutoffs: Record<string, string>, phone: string, occurredAt: string) {
+  const resetAt = resetCutoffs[normalizeWhatsAppNumber(phone)];
+  if (!resetAt) return false;
+
+  const occurredMs = Date.parse(occurredAt);
+  const resetMs = Date.parse(resetAt);
+  return Number.isFinite(occurredMs) && Number.isFinite(resetMs) && occurredMs <= resetMs;
 }
 
 function clampText(value: string, limit = 220) {
@@ -933,6 +966,7 @@ export async function reconcileWhatsAppConversationHistoryFromConnectyHub(input:
   await markSyncAttempt(supabase).catch(() => undefined);
 
   const instances = await activeInstances(supabase, input.agentKey);
+  const resetCutoffs = await loadResetCutoffs(supabase);
   let scanned = 0;
   let imported = 0;
   const importedByDirection: Record<string, number> = {};
@@ -961,7 +995,9 @@ export async function reconcileWhatsAppConversationHistoryFromConnectyHub(input:
         const occurredAt = messageOccurredAt(message);
         const ageMs = Date.now() - Date.parse(occurredAt);
         if (Number.isFinite(ageMs) && (ageMs > maxAgeMs || ageMs < -5 * 60_000)) return false;
-        return Boolean(leadPhoneForMessage(message));
+        const phone = leadPhoneForMessage(message);
+        if (!phone) return false;
+        return !messageIsBeforeResetCutoff(resetCutoffs, phone, occurredAt);
       })
       .sort((left, right) => Date.parse(messageOccurredAt(left)) - Date.parse(messageOccurredAt(right)));
 
