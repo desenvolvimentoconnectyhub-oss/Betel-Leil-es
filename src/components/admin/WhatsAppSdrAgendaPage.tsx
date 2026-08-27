@@ -91,7 +91,7 @@ function statusClassName(status: SdrAppointmentStatus) {
 function leadConfirmationLabel(status: WhatsAppSdrAppointmentSummary["leadConfirmationStatus"]) {
   if (status === "confirmed") return "lead confirmou";
   if (status === "reschedule_requested") return "remarcando";
-  return "confirmacao pendente";
+  return "aguardando confirmacao automatica";
 }
 
 function leadConfirmationClassName(status: WhatsAppSdrAppointmentSummary["leadConfirmationStatus"]) {

@@ -828,6 +828,19 @@ function extractExplicitTime(normalized: string) {
   const hourMatch = normalized.match(/(?<!\d)([01]?\d|2[0-3])\s*h(?:\s*([0-5]\d))?(?!\d)/);
   if (hourMatch) return { hour: Number(hourMatch[1]), minute: hourMatch[2] ? Number(hourMatch[2]) : 0 };
 
+  const looseText = normalized.replace(/\s+/g, " ").trim();
+  if (!/\b(mil|milhao|milhoes|reais|anos|dias|meses|por cento|%)\b/.test(looseText)) {
+    const looseSentenceMatch = looseText.match(
+      /\b(?:as|a|por volta das|por volta de|umas?)\s+([01]?\d|2[0-3])\s*(?:h|horas?)?\b/,
+    );
+    if (looseSentenceMatch) return { hour: Number(looseSentenceMatch[1]), minute: 0 };
+
+    const looseDirectMatch = looseText.match(
+      /^(?:pode ser\s+|pode\s+|fica\s+|fechado\s+|combinado\s+|ok\s+)?([01]?\d|2[0-3])\s*(?:h|horas?)?$/,
+    );
+    if (looseDirectMatch) return { hour: Number(looseDirectMatch[1]), minute: 0 };
+  }
+
   return null;
 }
 

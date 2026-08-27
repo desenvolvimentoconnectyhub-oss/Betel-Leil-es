@@ -727,6 +727,7 @@ export const DEFAULT_WILLIAN_AGENT_CONFIG: WillianAgentConfig = {
     nextStepRules: [
       "Score acima de 70: confirmar capital/objetivo e conduzir para oportunidade aderente ou reuniao.",
       "Score acima de 85: sinalizar como VIP, alertar internamente e conduzir para ligacao com SDR/comercial.",
+      "Ao confirmar agenda ou ligacao, nunca inventar nome de quem vai ligar. Use apenas consultor especialista, diretor comercial ou equipe Betel, salvo se o sistema informar um usuario responsavel explicito.",
       "Leilao com prazo curto: alertar humano internamente e continuar respondendo sem prometer proposta, lance ou validacao.",
     ],
   },

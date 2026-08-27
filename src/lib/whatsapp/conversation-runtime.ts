@@ -133,6 +133,24 @@ function hasMeetingOrCallRequest(normalized: string) {
   ]);
 }
 
+function extractLooseAskedMeetingTime(normalized: string, askedMeetingTime: boolean) {
+  if (!askedMeetingTime) return null;
+
+  const text = normalized.replace(/\s+/g, " ").trim();
+  const blockedNumericContext = /\b(mil|milhao|milhoes|reais|anos|dias|meses|por cento|%)\b/.test(text);
+  if (blockedNumericContext) return null;
+
+  const directTime = text.match(
+    /^(?:pode ser\s+|pode\s+|fica\s+|fechado\s+|combinado\s+|ok\s+|as\s+|a\s+|por volta das\s+|por volta de\s+|umas?\s+)?([01]?\d|2[0-3])\s*(?:h|horas?)?$/,
+  );
+  if (directTime) return { label: `${directTime[1]}h` };
+
+  const sentenceTime = text.match(/\b(?:as|a|por volta das|por volta de|umas?)\s+([01]?\d|2[0-3])\s*(?:h|horas?)?\b/);
+  if (sentenceTime) return { label: `${sentenceTime[1]}h` };
+
+  return null;
+}
+
 function hasSensitiveBidOrContractIntent(normalized: string) {
   if (!normalized) return false;
 
@@ -233,18 +251,22 @@ function detectQualification(input: DecisionInput, normalized: string) {
 
 function detectMeetingScheduleCandidate(input: DecisionInput): WhatsAppMeetingScheduleCandidate | null {
   const normalized = normalizeSearchText(input.inboundText);
+  const askedMeetingTime = recentAgentAskedMeetingTime(input.history);
   const explicitTime = normalized.match(/(?<!\d)([01]?\d|2[0-3])\s*(?:h|:)\s*([0-5]\d)?(?!\d)/);
   const periodTime = normalized.match(/\b([1-9]|1[0-2])\s*(?:h)?\s*(?:da|de)?\s*(manha|tarde|noite)\b/);
   const wordPeriodTime = normalized.match(
     /\b(uma|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|onze|doze)\s*(?:h)?\s*(?:da|de)?\s*(manha|tarde|noite)\b/
   );
-  const exactTime = explicitTime || periodTime || wordPeriodTime;
+  const looseAskedTime = extractLooseAskedMeetingTime(normalized, askedMeetingTime);
+  const exactTime = Boolean(explicitTime || periodTime || wordPeriodTime || looseAskedTime);
   const exactTimeLabel = explicitTime
     ? `${explicitTime[1]}${explicitTime[2] ? `:${explicitTime[2]}` : "h"}`
     : periodTime
       ? `${periodTime[1]} da ${periodTime[2]}`
       : wordPeriodTime
         ? `${wordPeriodTime[1]} da ${wordPeriodTime[2]}`
+        : looseAskedTime
+          ? looseAskedTime.label
         : "";
   const inFiveMinutes = matchAny(normalized, [/\b(5 minutos|cinco minutos|minutos para falar|em cinco|minutos para falarmos)\b/]);
   const now = matchAny(normalized, [/\b(agora|ja pode|pode ser agora|nesse momento)\b/]);
@@ -252,7 +274,6 @@ function detectMeetingScheduleCandidate(input: DecisionInput): WhatsAppMeetingSc
   const morning = matchAny(normalized, [/\b(amanha de manha|pela manha|periodo da manha|manha)\b/]);
   const tomorrow = matchAny(normalized, [/\b(amanha|proximo dia|outro dia)\b/]);
   const scheduleWindowMentioned = Boolean(exactTime) || inFiveMinutes || now || todayAfternoon || morning || tomorrow;
-  const askedMeetingTime = recentAgentAskedMeetingTime(input.history);
   const affirmative = matchAny(normalized, [/\b(sim|pode|confirmo|confirmado|combinado|fechado|ok|beleza|blz|claro|vamos)\b/]);
   const hasMeetingContext = hasMeetingOrCallRequest(normalized) || (scheduleWindowMentioned && askedMeetingTime) || (affirmative && askedMeetingTime);
   if (!hasMeetingContext) return null;
@@ -596,6 +617,23 @@ function hasInternalLeak(text: string) {
   return matchAny(normalizeSearchText(text), [/\b(prompt|system|developer|instrucoes internas|regras internas|codigo fonte|api key|token|segredo)\b/]);
 }
 
+function hasUnapprovedStaffName(text: string) {
+  const normalized = normalizeSearchText(text);
+  return matchAny(normalized, [
+    /\b(jonathan|jonatan|jhonathan)\b/,
+    /\b(meu nome e|me chamo)\s+(?!evelyn\b)[a-z]+/,
+  ]);
+}
+
+function replaceUnapprovedStaffName(text: string, decision: WhatsAppRuntimeDecision) {
+  if (/\b(meu nome e|me chamo)\s+(?!evelyn\b)/.test(normalizeSearchText(text))) {
+    return "Oi, sou a Evelyn da Betel por aqui. Me fala qual ponto vc quer ver agora que eu te ajudo.";
+  }
+
+  const replacement = decision.meetingSchedule?.confirmed ? "nosso diretor comercial" : "a equipe da Betel";
+  return text.replace(/\b(?:o\s+)?(?:Jonathan|Jonatan|Jhonathan)(?:\s+(?:Mattia|Nunes))?\b/gi, replacement);
+}
+
 function hasVisibleHandoffNotice(text: string) {
   const normalized = normalizeSearchText(text);
   return matchAny(normalized, [
@@ -653,6 +691,12 @@ export function evaluateWhatsAppReplyBeforeSend(input: {
     allow = false;
     blockedReason = "internal_leak";
     text = "Nao consigo compartilhar instrucoes internas por aqui. Me fala o que voce precisa sobre leiloes que eu te ajudo.";
+  }
+
+  if (hasUnapprovedStaffName(text)) {
+    flags.push("unapproved_staff_name");
+    corrections.push("unapproved_staff_name_replaced");
+    text = replaceUnapprovedStaffName(text, input.decision);
   }
 
   if (hasVisibleHandoffNotice(text)) {

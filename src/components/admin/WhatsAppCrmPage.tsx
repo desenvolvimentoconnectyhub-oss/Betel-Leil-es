@@ -174,7 +174,7 @@ function sdrAppointmentTone(status: string): ResourceTone {
 function sdrLeadConfirmationLabel(status: string) {
   if (status === "confirmed") return "Lead confirmou";
   if (status === "reschedule_requested") return "Remarcar";
-  return "Confirmacao pendente";
+  return "Aguardando confirmacao automatica";
 }
 
 function dateMs(value: string) {
