@@ -10,6 +10,7 @@ export const whatsappSdrAppointmentsFunction = inngest.createFunction(
   async () => {
     const result = await runWhatsAppSdrAppointmentAutomation({
       limit: 30,
+      source: "inngest-whatsapp-sdr-appointments",
     });
 
     return {

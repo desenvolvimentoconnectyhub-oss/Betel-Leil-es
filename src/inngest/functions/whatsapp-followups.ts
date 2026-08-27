@@ -1,6 +1,7 @@
 import { inngest } from "../client";
 import { planWhatsAppFollowUps } from "@/lib/whatsapp/follow-up-planner";
 import { processWhatsAppFollowUps } from "@/lib/whatsapp/follow-up-worker";
+import { runWhatsAppSdrAppointmentAutomation } from "@/lib/whatsapp/sdr-appointments";
 
 export const whatsappFollowUpsFunction = inngest.createFunction(
   {
@@ -9,6 +10,10 @@ export const whatsappFollowUpsFunction = inngest.createFunction(
     triggers: [{ cron: "*/10 * * * *" }],
   },
   async () => {
+    const appointments = await runWhatsAppSdrAppointmentAutomation({
+      limit: 30,
+      source: "inngest-whatsapp-followups-backstop",
+    });
     const planned = await planWhatsAppFollowUps({
       dryRun: false,
       limit: 80,
@@ -20,7 +25,8 @@ export const whatsappFollowUpsFunction = inngest.createFunction(
     });
 
     return {
-      ok: planned.ok && processed.ok,
+      ok: appointments.ok && planned.ok && processed.ok,
+      appointments,
       planned,
       processed,
       timestamp: new Date().toISOString(),

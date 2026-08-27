@@ -65,6 +65,8 @@ const RESCHEDULE_REQUESTED_STATUS: SdrLeadConfirmationStatus = "reschedule_reque
 const MAX_SUMMARY_LENGTH = 900;
 const MAX_BRIEFING_LENGTH = 1200;
 const CONFIRMATION_ACTIONS = new Set(["confirm", "reschedule"]);
+const AUTOMATION_CLAIM_RETRY_MS = 3 * 60_000;
+const ADMIN_REMINDER_CATCHUP_MS = 60 * 60_000;
 
 export const DEFAULT_BETEL_GROUP_URL = "https://chat.whatsapp.com/JGWIIzeCNerBFGeyQuhC7r";
 
@@ -1353,6 +1355,27 @@ async function sendAppointmentLeadMessage(input: {
   });
 }
 
+function deliveryErrorMessage(delivery: unknown, fallback: string) {
+  const record = asRecord(delivery);
+  return asString(record.errorMessage) || asString(record.error) || fallback;
+}
+
+async function insertAppointmentAutomationRuntimeEvent(
+  supabase: SupabaseAdminClient,
+  input: {
+    status: string;
+    message: string;
+    payload: Record<string, unknown>;
+  },
+) {
+  await supabase.from("agent_runtime_events").insert({
+    event_type: "whatsapp_sdr_appointment_automation",
+    status: input.status,
+    message: input.message,
+    payload: input.payload,
+  });
+}
+
 async function summarizeAppointmentData(supabase: SupabaseAdminClient, row: unknown) {
   const record = asRecord(row);
   const assignedId = asNullableString(record.assigned_admin_user_id);
@@ -2124,10 +2147,28 @@ async function processLeadConfirmationDue(
   supabase: SupabaseAdminClient,
   appointment: WhatsAppSdrAppointmentSummary,
   settings: WhatsAppSdrAppointmentSettings,
+  nowIso: string,
 ) {
   if (!isAppointmentActive(appointment)) return { ok: true, skipped: true, reason: "inactive" };
   if (appointment.leadConfirmationStatus !== "pending") return { ok: true, skipped: true, reason: "already_answered" };
-  if (Date.parse(appointment.scheduledFor) <= Date.now()) return { ok: true, skipped: true, reason: "past_appointment" };
+  const nowMs = Date.parse(nowIso) || Date.now();
+  if (Date.parse(appointment.scheduledFor) <= nowMs) return { ok: true, skipped: true, reason: "past_appointment" };
+
+  const staleClaimBefore = new Date(nowMs - AUTOMATION_CLAIM_RETRY_MS).toISOString();
+  const { data: claimed, error: claimError } = await supabase
+    .from("whatsapp_sdr_appointments")
+    .update({
+      lead_confirmation_requested_at: nowIso,
+    })
+    .eq("id", appointment.id)
+    .eq("lead_confirmation_status", "pending")
+    .is("confirmation_sent_at", null)
+    .or(`lead_confirmation_requested_at.is.null,lead_confirmation_requested_at.lt.${staleClaimBefore}`)
+    .select("id")
+    .maybeSingle();
+
+  if (claimError) return { ok: false, error: claimError.message };
+  if (!claimed) return { ok: true, skipped: true, reason: "already_claimed" };
 
   const providerInstanceId = await providerInstanceIdForAppointment(supabase, appointment);
   const agentKey = appointment.agentKey || "";
@@ -2140,14 +2181,29 @@ async function processLeadConfirmationDue(
     actionButton: appointmentActionButton(appointment),
   });
 
-  if (!delivery.ok) return { ok: false, error: "errorMessage" in delivery ? delivery.errorMessage : "lead_confirmation_failed" };
+  if (!delivery.ok) {
+    const notificationPayload = await latestNotificationPayload(supabase, appointment.id, appointment.notificationPayload);
+    await supabase
+      .from("whatsapp_sdr_appointments")
+      .update({
+        lead_confirmation_requested_at: null,
+        notification_payload: {
+          ...notificationPayload,
+          leadConfirmationDeliveryError: delivery,
+          leadConfirmationDeliveryFailedAt: nowIso,
+        },
+      })
+      .eq("id", appointment.id)
+      .is("confirmation_sent_at", null);
+    return { ok: false, error: deliveryErrorMessage(delivery, "lead_confirmation_failed") };
+  }
 
   const notificationPayload = await latestNotificationPayload(supabase, appointment.id, appointment.notificationPayload);
   const { data } = await supabase
     .from("whatsapp_sdr_appointments")
     .update({
-      lead_confirmation_requested_at: appointment.leadConfirmationRequestedAt ?? new Date().toISOString(),
-      confirmation_sent_at: new Date().toISOString(),
+      lead_confirmation_requested_at: nowIso,
+      confirmation_sent_at: nowIso,
       notification_payload: {
         ...notificationPayload,
         leadConfirmationDelivery: delivery,
@@ -2167,19 +2223,38 @@ async function processAdminReminderDue(
   supabase: SupabaseAdminClient,
   appointment: WhatsAppSdrAppointmentSummary,
   settings: WhatsAppSdrAppointmentSettings,
+  nowIso: string,
 ) {
   if (!isAppointmentActive(appointment)) return { ok: true, skipped: true, reason: "inactive" };
   if (appointment.leadConfirmationStatus !== "pending") {
     return { ok: true, skipped: true, reason: "lead_already_answered" };
   }
-  if (Date.parse(appointment.scheduledFor) <= Date.now() - 2 * 60_000) {
+  const nowMs = Date.parse(nowIso) || Date.now();
+  if (Date.parse(appointment.scheduledFor) <= nowMs - ADMIN_REMINDER_CATCHUP_MS) {
     return { ok: true, skipped: true, reason: "past_appointment" };
   }
+
+  const { data: claimed, error: claimError } = await supabase
+    .from("whatsapp_sdr_appointments")
+    .update({
+      admin_reminder_sent_at: nowIso,
+    })
+    .eq("id", appointment.id)
+    .eq("lead_confirmation_status", "pending")
+    .is("admin_reminder_sent_at", null)
+    .select("id")
+    .maybeSingle();
+
+  if (claimError) return { ok: false, error: claimError.message };
+  if (!claimed) return { ok: true, skipped: true, reason: "already_claimed" };
 
   const providerInstanceId = await providerInstanceIdForAppointment(supabase, appointment);
   const recipient = await recipientForAppointment(supabase, appointment);
   const agentKey = appointment.agentKey || "";
-  if (!recipient) return { ok: false, error: "missing_recipient" };
+  if (!recipient) {
+    await supabase.from("whatsapp_sdr_appointments").update({ admin_reminder_sent_at: null }).eq("id", appointment.id);
+    return { ok: false, error: "missing_recipient" };
+  }
 
   const delivery = await notifyAppointmentRecipient({
     appointment,
@@ -2190,13 +2265,27 @@ async function processAdminReminderDue(
     trackIdSuffix: "admin-reminder",
   });
 
-  if (!delivery.ok) return { ok: false, error: "errorMessage" in delivery ? delivery.errorMessage : "admin_reminder_failed" };
+  if (!delivery.ok) {
+    const notificationPayload = await latestNotificationPayload(supabase, appointment.id, appointment.notificationPayload);
+    await supabase
+      .from("whatsapp_sdr_appointments")
+      .update({
+        admin_reminder_sent_at: null,
+        notification_payload: {
+          ...notificationPayload,
+          adminReminderDeliveryError: delivery,
+          adminReminderDeliveryFailedAt: nowIso,
+        },
+      })
+      .eq("id", appointment.id);
+    return { ok: false, error: deliveryErrorMessage(delivery, "admin_reminder_failed") };
+  }
 
   const notificationPayload = await latestNotificationPayload(supabase, appointment.id, appointment.notificationPayload);
   const { data } = await supabase
     .from("whatsapp_sdr_appointments")
     .update({
-      admin_reminder_sent_at: new Date().toISOString(),
+      admin_reminder_sent_at: nowIso,
       notification_payload: {
         ...notificationPayload,
         adminReminderDelivery: delivery,
@@ -2212,15 +2301,18 @@ async function processAdminReminderDue(
   return { ok: true, appointmentId: appointment.id };
 }
 
-export async function runWhatsAppSdrAppointmentAutomation(input: { now?: string; limit?: number } = {}) {
+export async function runWhatsAppSdrAppointmentAutomation(input: { now?: string; limit?: number; source?: string } = {}) {
   const supabase = getSupabaseAdminClient();
   if (!supabase) return { ok: false, error: "Supabase admin nao configurado." };
 
-  const nowIso = input.now || new Date().toISOString();
-  const nowMs = Date.parse(nowIso) || Date.now();
+  const parsedNow = Date.parse(input.now || "");
+  const nowMs = Number.isFinite(parsedNow) ? parsedNow : Date.now();
+  const nowIso = new Date(nowMs).toISOString();
   const limit = input.limit ?? 25;
+  const source = input.source || "whatsapp-sdr-appointments";
   const activeStatuses = ACTIVE_STATUSES;
   const settings = await getWhatsAppSdrAppointmentSettings();
+  const adminReminderCatchupSince = new Date(nowMs - ADMIN_REMINDER_CATCHUP_MS).toISOString();
 
   const [confirmationsResult, adminRemindersResult] = await Promise.all([
     supabase
@@ -2242,12 +2334,13 @@ export async function runWhatsAppSdrAppointmentAutomation(input: { now?: string;
       .is("admin_reminder_sent_at", null)
       .not("reminder_due_at", "is", null)
       .lte("reminder_due_at", nowIso)
-      .gt("scheduled_for", new Date(nowMs - 2 * 60_000).toISOString())
+      .gt("scheduled_for", adminReminderCatchupSince)
       .order("scheduled_for", { ascending: true })
       .limit(limit),
   ]);
 
   const errors: string[] = [];
+  const skippedReasons: Record<string, number> = {};
   const result = {
     confirmationsSent: 0,
     adminUnconfirmedNoticesSent: 0,
@@ -2256,7 +2349,7 @@ export async function runWhatsAppSdrAppointmentAutomation(input: { now?: string;
 
   const processRows = async (
     rows: unknown[] | null | undefined,
-    handler: (appointment: WhatsAppSdrAppointmentSummary) => Promise<{ ok: boolean; skipped?: boolean; error?: string }>,
+    handler: (appointment: WhatsAppSdrAppointmentSummary) => Promise<{ ok: boolean; skipped?: boolean; reason?: string; error?: string }>,
     counter: keyof Pick<typeof result, "confirmationsSent" | "adminUnconfirmedNoticesSent">,
   ) => {
     for (const row of rows || []) {
@@ -2267,7 +2360,11 @@ export async function runWhatsAppSdrAppointmentAutomation(input: { now?: string;
       }));
       const skipped = "skipped" in processed && Boolean(processed.skipped);
       if (processed.ok && !skipped) result[counter] += 1;
-      else if (skipped) result.skipped += 1;
+      else if (skipped) {
+        result.skipped += 1;
+        const reason = processed.reason || "skipped";
+        skippedReasons[reason] = (skippedReasons[reason] || 0) + 1;
+      }
       else errors.push(`${appointment.id}: ${processed.error || "erro desconhecido"}`);
     }
   };
@@ -2275,13 +2372,40 @@ export async function runWhatsAppSdrAppointmentAutomation(input: { now?: string;
   if (confirmationsResult.error) errors.push(`confirmations: ${confirmationsResult.error.message}`);
   if (adminRemindersResult.error) errors.push(`admin_unconfirmed_notices: ${adminRemindersResult.error.message}`);
 
-  await processRows(confirmationsResult.data as unknown[], (appointment) => processLeadConfirmationDue(supabase, appointment, settings), "confirmationsSent");
-  await processRows(adminRemindersResult.data as unknown[], (appointment) => processAdminReminderDue(supabase, appointment, settings), "adminUnconfirmedNoticesSent");
+  const confirmationsDue = Array.isArray(confirmationsResult.data) ? (confirmationsResult.data as unknown[]) : [];
+  const adminRemindersDue = Array.isArray(adminRemindersResult.data) ? (adminRemindersResult.data as unknown[]) : [];
+
+  await processRows(confirmationsDue, (appointment) => processLeadConfirmationDue(supabase, appointment, settings, nowIso), "confirmationsSent");
+  await processRows(adminRemindersDue, (appointment) => processAdminReminderDue(supabase, appointment, settings, nowIso), "adminUnconfirmedNoticesSent");
+
+  const eventStatus = errors.length > 0 ? "error" : result.confirmationsSent || result.adminUnconfirmedNoticesSent ? "processed" : "skipped";
+  if (confirmationsDue.length > 0 || adminRemindersDue.length > 0 || errors.length > 0) {
+    await insertAppointmentAutomationRuntimeEvent(supabase, {
+      status: eventStatus,
+      message:
+        eventStatus === "processed"
+          ? "Rotina de confirmacao da Agenda SDR processada."
+          : eventStatus === "error"
+            ? "Rotina de confirmacao da Agenda SDR encontrou erro."
+            : "Rotina de confirmacao da Agenda SDR executou sem envio.",
+      payload: {
+        source,
+        nowIso,
+        confirmationsDue: confirmationsDue.map((row) => asString(asRecord(row).id)).filter(Boolean),
+        adminRemindersDue: adminRemindersDue.map((row) => asString(asRecord(row).id)).filter(Boolean),
+        skippedReasons,
+        errors,
+        result,
+      },
+    });
+  }
 
   return {
     ok: errors.length === 0,
     ...result,
     errors,
+    skippedReasons,
+    source,
     timestamp: new Date().toISOString(),
   };
 }
