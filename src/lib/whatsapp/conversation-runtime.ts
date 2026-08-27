@@ -116,6 +116,20 @@ function matchAny(text: string, patterns: RegExp[]) {
   return patterns.some((pattern) => pattern.test(text));
 }
 
+function hasStopContactIntent(normalized: string) {
+  return matchAny(normalized, [
+    /\b(nao|n) quero (mais )?(receber|mensagens|mensagem|contato|ser chamado|ser chamada)\b/,
+    /\b(nao|n) (me chama|me chame|me manda|me mande|envia|mande) mais\b/,
+    /\b(pare|para) de (mandar|enviar|me chamar|me mandar|entrar em contato)\b/,
+    /\bparar (mensagens|mensagem|contato|atendimento|envios|comunicacao)\b/,
+    /\bcancelar (mensagens|mensagem|contato|atendimento|cadastro|envios)\b/,
+    /\b(remover|remova|retirar|retire|tirar|tire) (me |meu numero |meu contato )?(da lista|do contato|dos contatos|da base)\b/,
+    /\bme (remove|remova|retira|retire|tira|tire) (da lista|do contato|dos contatos|da base)\b/,
+    /\bsair (da lista|do grupo|dos contatos|da base)\b/,
+    /\b(descadastrar|descadastre|opt out|stop)\b/,
+  ]);
+}
+
 function hasExplicitHumanRequest(normalized: string) {
   return matchAny(normalized, [
     /\b(atendimento humano|falar com alguem|falar com uma pessoa|falar com atendente|falar com humano|quero humano|prefiro humano)\b/,
@@ -343,7 +357,7 @@ function detectIntents(input: DecisionInput): WhatsAppRuntimeIntent[] {
   if (matchAny(normalized, [/\b(ignore|ignora|desconsidere).*\b(instrucoes|regras|sistema|prompt)\b/, /\b(prompt|system prompt|developer|codigo fonte|api key|token|segredo)\b/])) {
     intents.push("prompt_attack");
   }
-  if (matchAny(normalized, [/\b(parar|sair|remover|cancelar mensagens|nao quero receber|pare de mandar)\b/])) intents.push("stop_contact");
+  if (hasStopContactIntent(normalized)) intents.push("stop_contact");
   if (hasExplicitHumanRequest(normalized)) {
     intents.push("human_request");
   }

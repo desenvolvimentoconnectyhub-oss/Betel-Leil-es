@@ -198,11 +198,39 @@ function isInsideAgentWindow(config: WillianAgentConfig, phone = "") {
   return now >= start || now <= end;
 }
 
+function normalizeStopControlText(text: string) {
+  return normalizeSearchText(text)
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function hasStopWord(text: string, stopWords: string[]) {
-  const normalizedText = ` ${normalizeSearchText(text).replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim()} `;
+  const normalizedText = normalizeStopControlText(text);
+  if (!normalizedText) return false;
+
+  const explicitOptOutPatterns = [
+    /\b(nao|n) quero (mais )?(receber|mensagens|mensagem|contato|ser chamado|ser chamada)\b/,
+    /\b(nao|n) (me chama|me chame|me manda|me mande|envia|mande) mais\b/,
+    /\b(pare|para) de (mandar|enviar|me chamar|me mandar|entrar em contato)\b/,
+    /\bparar (mensagens|mensagem|contato|atendimento|envios|comunicacao)\b/,
+    /\bcancelar (mensagens|mensagem|contato|atendimento|cadastro|envios)\b/,
+    /\b(remover|remova|retirar|retire|tirar|tire) (me |meu numero |meu contato )?(da lista|do contato|dos contatos|da base)\b/,
+    /\bme (remove|remova|retira|retire|tira|tire) (da lista|do contato|dos contatos|da base)\b/,
+    /\bsair (da lista|do grupo|dos contatos|da base)\b/,
+    /\b(descadastrar|descadastre|opt out|stop)\b/,
+  ];
+
+  if (explicitOptOutPatterns.some((pattern) => pattern.test(normalizedText))) return true;
+
   return stopWords.some((word) => {
-    const clean = normalizeSearchText(word).replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
-    return clean.length >= 3 && normalizedText.includes(` ${clean} `);
+    const clean = normalizeStopControlText(word);
+    if (clean.length < 3) return false;
+    if (["sair", "cancelar", "remover", "parar"].includes(clean)) {
+      return ["cancelar", "remover", "parar"].includes(normalizedText);
+    }
+    if (clean.includes(" ")) return ` ${normalizedText} `.includes(` ${clean} `);
+    return normalizedText === clean;
   });
 }
 
@@ -3115,6 +3143,7 @@ async function persistExternalOutboundMessage(
   const trace = detectExternalOutboundTrace(input.payload);
   const shouldPauseAiForHandoff = Boolean(trace.shouldPauseAiForHandoff);
   const providerMessageId = normalizeProviderMessageId(input.message.providerMessageId);
+  const providerChatId = input.message.chatId || `${input.message.phone}@s.whatsapp.net`;
 
   if (input.message.isGroup) {
     return { persisted: false, reason: "external_group_outbound_ignored" };
@@ -3189,15 +3218,31 @@ async function persistExternalOutboundMessage(
       .eq("id", leadId);
   }
 
-  const { data: existingConversationData } = await supabase
-    .from("whatsapp_conversations")
-    .select("id,metadata")
-    .eq("lead_id", leadId)
-    .eq("agent_key", input.agentKey)
-    .neq("status", "closed")
-    .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  let existingConversationData: Record<string, unknown> | null = null;
+  if (providerChatId && input.instanceId) {
+    const { data: chatConversation } = await supabase
+      .from("whatsapp_conversations")
+      .select("id,metadata")
+      .eq("instance_id", input.instanceId)
+      .eq("provider_chat_id", providerChatId)
+      .neq("status", "closed")
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    existingConversationData = asRecord(chatConversation);
+  }
+  if (!cleanString(existingConversationData?.id)) {
+    const { data: leadConversation } = await supabase
+      .from("whatsapp_conversations")
+      .select("id,metadata")
+      .eq("lead_id", leadId)
+      .eq("agent_key", input.agentKey)
+      .neq("status", "closed")
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    existingConversationData = asRecord(leadConversation);
+  }
   const existingConversation = asRecord(existingConversationData);
   const conversationMetadata = asRecord(existingConversation.metadata);
 
@@ -3209,6 +3254,8 @@ async function persistExternalOutboundMessage(
         lead_id: leadId,
         instance_id: input.instanceId || null,
         agent_key: input.agentKey,
+        provider: CONNECTYHUB_PROVIDER,
+        provider_chat_id: providerChatId || null,
         status: "open",
         last_message_at: input.receivedAt,
         last_message_preview: preview || "Mensagem enviada fora do painel.",
@@ -3258,7 +3305,7 @@ async function persistExternalOutboundMessage(
       text: preview || null,
       transcript: input.message.transcript || null,
       provider_message_id: providerMessageId || null,
-      provider_chat_id: input.message.chatId || null,
+      provider_chat_id: providerChatId || null,
       occurred_at: input.receivedAt,
       media_url: input.message.mediaUrl || null,
       media_mime_type: input.message.mediaUrl
@@ -3289,6 +3336,8 @@ async function persistExternalOutboundMessage(
     .from("whatsapp_conversations")
     .update({
       instance_id: input.instanceId || null,
+      provider: CONNECTYHUB_PROVIDER,
+      provider_chat_id: providerChatId || null,
       metadata: {
         ...conversationMetadata,
         last_external_outbound_trace: leadAudit,
@@ -3668,6 +3717,7 @@ async function persistWebhookCrm(
     };
   }
 
+  const providerChatId = message.chatId || `${message.phone}@s.whatsapp.net`;
   const audioResolution =
     !message.text && !message.transcript && agentConfig?.behavior.transcribeAudio
       ? await maybeTranscribeInboundAudio({
@@ -3901,15 +3951,31 @@ async function persistWebhookCrm(
 
   if (leadError || !leadRow?.id) return { ok: false, reason: leadError?.message || "lead_not_persisted" };
 
-  const { data: existingConversation } = await supabase
-    .from("whatsapp_conversations")
-    .select("id")
-    .eq("lead_id", leadRow.id)
-    .eq("agent_key", agentKey)
-    .neq("status", "closed")
-    .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  let existingConversation: Record<string, unknown> | null = null;
+  if (providerChatId && instanceId) {
+    const { data: chatConversation } = await supabase
+      .from("whatsapp_conversations")
+      .select("id")
+      .eq("instance_id", instanceId)
+      .eq("provider_chat_id", providerChatId)
+      .neq("status", "closed")
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    existingConversation = asRecord(chatConversation);
+  }
+  if (!cleanString(existingConversation?.id)) {
+    const { data: leadConversation } = await supabase
+      .from("whatsapp_conversations")
+      .select("id")
+      .eq("lead_id", leadRow.id)
+      .eq("agent_key", agentKey)
+      .neq("status", "closed")
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    existingConversation = asRecord(leadConversation);
+  }
 
   let conversationId = cleanString(existingConversation?.id);
   if (!conversationId) {
@@ -3919,8 +3985,11 @@ async function persistWebhookCrm(
         lead_id: leadRow.id,
         instance_id: instanceId || null,
         agent_key: agentKey,
+        provider: CONNECTYHUB_PROVIDER,
+        provider_chat_id: providerChatId || null,
         status: "open",
         last_message_at: receivedAt,
+        last_message_preview: preliminaryInboundText || "Mensagem recebida.",
         metadata: {
           source: CONNECTYHUB_PROVIDER,
           chat_id: message.chatId || null,
@@ -3936,7 +4005,13 @@ async function persistWebhookCrm(
   } else {
     await supabase
       .from("whatsapp_conversations")
-      .update({ instance_id: instanceId || null, last_message_at: receivedAt, updated_at: receivedAt })
+      .update({
+        instance_id: instanceId || null,
+        provider: CONNECTYHUB_PROVIDER,
+        provider_chat_id: providerChatId || null,
+        last_message_at: receivedAt,
+        updated_at: receivedAt,
+      })
       .eq("id", conversationId);
   }
 
@@ -4092,7 +4167,7 @@ async function persistWebhookCrm(
       message_type: message.messageType,
       text: inboundText || null,
       provider_message_id: message.providerMessageId || null,
-      provider_chat_id: message.chatId || null,
+      provider_chat_id: providerChatId || null,
       occurred_at: receivedAt,
       media_url: inboundMediaUrl || null,
       media_mime_type: inboundMediaUrl ? fallbackMimeType(message.messageType, inboundMediaMimeType) : null,

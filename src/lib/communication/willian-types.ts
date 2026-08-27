@@ -829,7 +829,14 @@ export const DEFAULT_WILLIAN_AGENT_CONFIG: WillianAgentConfig = {
       "lead pediu edital ou matricula",
       "lead solicitou parar contato",
     ],
-    stopWords: ["parar", "sair", "remover", "cancelar", "nao quero receber"],
+    stopWords: [
+      "parar mensagens",
+      "pare de mandar",
+      "nao quero receber",
+      "remover da lista",
+      "sair da lista",
+      "cancelar mensagens",
+    ],
     handoffRules: [
       "Quando houver duvida juridica, ocupacao, matricula, lance ou risco, alertar humano em silencio e continuar respondendo sem prometer validacao.",
       "Quando o lead pedir pessoa, corretor, consultor ou atendimento humano, alertar internamente e continuar ajudando ate a equipe assumir.",
