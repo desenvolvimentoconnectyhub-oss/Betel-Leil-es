@@ -45,6 +45,9 @@ export type WhatsAppSdrAppointmentSettings = {
   notificationAdminUserId: string | null;
   notificationAdminUserName: string | null;
   notificationAdminUserPhone: string | null;
+  handoffAlertAdminUserId: string | null;
+  handoffAlertAdminUserName: string | null;
+  handoffAlertAdminUserPhone: string | null;
   timezone: string;
   businessStartHour: number;
   businessEndHour: number;

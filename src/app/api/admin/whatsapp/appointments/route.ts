@@ -95,6 +95,7 @@ export async function POST(request: Request) {
 
     const settings = await saveWhatsAppSdrAppointmentSettings({
       notificationAdminUserId: cleanString(body.notificationAdminUserId) || null,
+      handoffAlertAdminUserId: cleanString(body.handoffAlertAdminUserId) || null,
       businessStartHour,
       businessEndHour,
       maxBookingsPerHour,

@@ -1071,9 +1071,15 @@ function SdrAppointmentFlowCard({
                 <h3 className="mt-1 text-sm font-semibold text-[var(--admin-foreground)]">Regras do fluxo</h3>
               </div>
               <SelectField
-                label="Usuario que recebe avisos"
+                label="Usuario da agenda SDR"
                 name="notificationAdminUserId"
                 defaultValue={settings.notificationAdminUserId ?? ""}
+                options={recipientOptions}
+              />
+              <SelectField
+                label="Usuario do handoff/alerta"
+                name="handoffAlertAdminUserId"
+                defaultValue={settings.handoffAlertAdminUserId ?? ""}
                 options={recipientOptions}
               />
               <div className="grid gap-3 sm:grid-cols-2">

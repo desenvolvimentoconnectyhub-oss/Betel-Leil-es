@@ -339,6 +339,9 @@ function emptySettings(): WhatsAppSdrAppointmentSettings {
     notificationAdminUserId: null,
     notificationAdminUserName: null,
     notificationAdminUserPhone: null,
+    handoffAlertAdminUserId: null,
+    handoffAlertAdminUserName: null,
+    handoffAlertAdminUserPhone: null,
     timezone: DEFAULT_TIMEZONE,
     businessStartHour: DEFAULT_BUSINESS_START_HOUR,
     businessEndHour: DEFAULT_BUSINESS_END_HOUR,
@@ -384,14 +387,37 @@ function settingsFlow(row: Record<string, unknown> | null | undefined) {
   return asRecord(metadata.sdrAppointmentFlow);
 }
 
+function handoffAlertAdminUserIdFromRow(row: Record<string, unknown> | null | undefined) {
+  const flow = settingsFlow(row);
+  return (
+    asNullableString(flow.handoffAlertAdminUserId) ??
+    asNullableString(flow.handoff_alert_admin_user_id) ??
+    asNullableString(flow.humanAlertAdminUserId) ??
+    asNullableString(flow.human_alert_admin_user_id) ??
+    null
+  );
+}
+
 function normalizeSettings(
   row: Record<string, unknown> | null | undefined,
   recipient: WhatsAppSdrAppointmentRecipient | null,
+  handoffRecipient: WhatsAppSdrAppointmentRecipient | null,
 ): WhatsAppSdrAppointmentSettings {
   const fallback = emptySettings();
-  if (!row) return { ...fallback, notificationAdminUserId: recipient?.id ?? null, notificationAdminUserName: recipient?.displayName ?? null, notificationAdminUserPhone: recipient?.phone ?? null };
+  if (!row) {
+    return {
+      ...fallback,
+      notificationAdminUserId: recipient?.id ?? null,
+      notificationAdminUserName: recipient?.displayName ?? null,
+      notificationAdminUserPhone: recipient?.phone ?? null,
+      handoffAlertAdminUserId: handoffRecipient?.id ?? null,
+      handoffAlertAdminUserName: handoffRecipient?.displayName ?? null,
+      handoffAlertAdminUserPhone: handoffRecipient?.phone ?? null,
+    };
+  }
 
   const notificationAdminUserId = recipient?.id ?? asNullableString(row.notification_admin_user_id) ?? null;
+  const handoffAlertAdminUserId = handoffRecipient?.id ?? handoffAlertAdminUserIdFromRow(row);
   const flow = settingsFlow(row);
   const leadConfirmationMinutesBefore = asClampedInteger(
     flow.leadConfirmationMinutesBefore,
@@ -410,6 +436,9 @@ function normalizeSettings(
     notificationAdminUserId,
     notificationAdminUserName: recipient?.displayName ?? null,
     notificationAdminUserPhone: recipient?.phone ?? null,
+    handoffAlertAdminUserId,
+    handoffAlertAdminUserName: handoffRecipient?.displayName ?? null,
+    handoffAlertAdminUserPhone: handoffRecipient?.phone ?? null,
     timezone: asString(row.timezone) || fallback.timezone,
     businessStartHour: asNumber(row.business_start_hour, fallback.businessStartHour),
     businessEndHour: asNumber(row.business_end_hour, fallback.businessEndHour),
@@ -462,11 +491,11 @@ export async function listSdrAppointmentRecipients(): Promise<WhatsAppSdrAppoint
 
 async function resolveNotificationRecipient(supabase: SupabaseAdminClient, settingsRow: Record<string, unknown> | null) {
   const configuredId = asNullableString(settingsRow?.notification_admin_user_id);
-  const configuredRecipient = await getRecipientById(supabase, configuredId);
-  if (configuredRecipient) return configuredRecipient;
+  return getRecipientById(supabase, configuredId);
+}
 
-  const recipients = await listSdrAppointmentRecipients();
-  return recipients[0] ?? null;
+async function resolveHandoffAlertRecipient(supabase: SupabaseAdminClient, settingsRow: Record<string, unknown> | null) {
+  return getRecipientById(supabase, handoffAlertAdminUserIdFromRow(settingsRow));
 }
 
 export async function getWhatsAppSdrAppointmentSettings(): Promise<WhatsAppSdrAppointmentSettings> {
@@ -474,12 +503,16 @@ export async function getWhatsAppSdrAppointmentSettings(): Promise<WhatsAppSdrAp
   if (!supabase) return emptySettings();
 
   const row = await maybeReadSettingsRow(supabase);
-  const recipient = await resolveNotificationRecipient(supabase, row);
-  return normalizeSettings(row, recipient);
+  const [recipient, handoffRecipient] = await Promise.all([
+    resolveNotificationRecipient(supabase, row),
+    resolveHandoffAlertRecipient(supabase, row),
+  ]);
+  return normalizeSettings(row, recipient, handoffRecipient);
 }
 
 export async function saveWhatsAppSdrAppointmentSettings(input: {
   notificationAdminUserId?: string | null;
+  handoffAlertAdminUserId?: string | null;
   businessStartHour?: number;
   businessEndHour?: number;
   maxBookingsPerHour?: number;
@@ -492,13 +525,22 @@ export async function saveWhatsAppSdrAppointmentSettings(input: {
   if (!supabase) return emptySettings();
 
   const currentRow = await maybeReadSettingsRow(supabase);
-  const currentRecipient = await resolveNotificationRecipient(supabase, currentRow);
-  const current = normalizeSettings(currentRow, currentRecipient);
+  const [currentRecipient, currentHandoffRecipient] = await Promise.all([
+    resolveNotificationRecipient(supabase, currentRow),
+    resolveHandoffAlertRecipient(supabase, currentRow),
+  ]);
+  const current = normalizeSettings(currentRow, currentRecipient, currentHandoffRecipient);
   const nextRecipientId = Object.prototype.hasOwnProperty.call(input, "notificationAdminUserId")
     ? input.notificationAdminUserId ?? null
     : current.notificationAdminUserId;
   const selectedRecipient = nextRecipientId
     ? await getRecipientById(supabase, nextRecipientId)
+    : null;
+  const nextHandoffRecipientId = Object.prototype.hasOwnProperty.call(input, "handoffAlertAdminUserId")
+    ? input.handoffAlertAdminUserId ?? null
+    : current.handoffAlertAdminUserId;
+  const selectedHandoffRecipient = nextHandoffRecipientId
+    ? await getRecipientById(supabase, nextHandoffRecipientId)
     : null;
   const businessStartHour = asClampedInteger(input.businessStartHour, current.businessStartHour, 0, 23);
   const businessEndHour = asClampedInteger(input.businessEndHour, current.businessEndHour, 1, 24);
@@ -531,6 +573,7 @@ export async function saveWhatsAppSdrAppointmentSettings(input: {
       ...previousFlow,
       leadConfirmationMinutesBefore,
       adminUnconfirmedNoticeMinutesBefore,
+      handoffAlertAdminUserId: selectedHandoffRecipient?.id ?? null,
       messageTemplates,
       groupInvite,
     },
@@ -1616,7 +1659,8 @@ export async function createSdrAppointmentFromRuntimeDecision(
 
   const settingsRow = await maybeReadSettingsRow(supabase);
   const recipient = await resolveNotificationRecipient(supabase, settingsRow);
-  const settings = normalizeSettings(settingsRow, recipient);
+  const handoffRecipient = await resolveHandoffAlertRecipient(supabase, settingsRow);
+  const settings = normalizeSettings(settingsRow, recipient, handoffRecipient);
 
   if (!scheduledFor) return buildPromptResult("needs_time", null);
 
@@ -1827,7 +1871,8 @@ async function markAppointmentLeadAction(input: {
   const recipient = await recipientForAppointment(supabase, appointment);
   const settingsRow = await maybeReadSettingsRow(supabase);
   const settingsRecipient = await resolveNotificationRecipient(supabase, settingsRow);
-  const settings = normalizeSettings(settingsRow, settingsRecipient);
+  const settingsHandoffRecipient = await resolveHandoffAlertRecipient(supabase, settingsRow);
+  const settings = normalizeSettings(settingsRow, settingsRecipient, settingsHandoffRecipient);
   const agentKey = appointment.agentKey || "";
 
   if (!providerInstanceId || !agentKey) {

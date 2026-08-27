@@ -4865,14 +4865,6 @@ function samePhoneNumber(left: string, right: string) {
   return false;
 }
 
-function responsibleNotificationNumbers(config: WillianAgentConfig, leadPhone: string) {
-  return uniqueStrings(
-    asStringList(config.behavior.responsibleNumbers.replace(/\r?\n/g, ","))
-      .map((number) => normalizeWhatsAppNumber(number))
-      .filter((number) => number && !samePhoneNumber(number, leadPhone))
-  );
-}
-
 type ResponsibleHumanNotificationInput = {
   config: WillianAgentConfig;
   agentKey: string;
@@ -4885,6 +4877,26 @@ type ResponsibleHumanNotificationInput = {
   reason: string;
   textPreview: string;
 };
+
+type ResponsibleHumanNotificationTarget = {
+  id: string | null;
+  label: string;
+  phone: string;
+};
+
+async function responsibleNotificationTargets(leadPhone: string): Promise<ResponsibleHumanNotificationTarget[]> {
+  const settings = await getWhatsAppSdrAppointmentSettings();
+  const phone = normalizeWhatsAppNumber(settings.handoffAlertAdminUserPhone || "");
+  if (!phone || samePhoneNumber(phone, leadPhone)) return [];
+
+  return [
+    {
+      id: settings.handoffAlertAdminUserId,
+      label: settings.handoffAlertAdminUserName || phone,
+      phone,
+    },
+  ];
+}
 
 const QUALIFICATION_ONLY_ALERT_REASONS = new Set([
   "lead_became_hot",
@@ -4953,13 +4965,13 @@ async function notifyResponsibleHumans(
 ) {
   if (!input.config.behavior.alertHuman) return [];
 
-  const numbers = responsibleNotificationNumbers(input.config, input.leadPhone);
-  if (!numbers.length) {
+  const targets = await responsibleNotificationTargets(input.leadPhone);
+  if (!targets.length) {
     await insertRuntimeEvent(supabase, {
       agentKey: input.agentKey,
       eventType: "whatsapp_agent_runtime_human_alert",
-      status: "missing_responsible_numbers",
-      message: "Alerta humano solicitado, mas nao ha numeros responsaveis configurados.",
+      status: "missing_handoff_alert_user",
+      message: "Alerta humano solicitado, mas nao ha usuario de handoff configurado em Mensagens e remetente.",
       payload: {
         leadId: input.leadId,
         conversationId: input.conversationId,
@@ -4981,11 +4993,11 @@ async function notifyResponsibleHumans(
   ].join("\n");
 
   const deliveries = await Promise.all(
-    numbers.map((number, index) =>
+    targets.map((target, index) =>
       sendWhatsAppAgentReply({
         agentKey: input.agentKey,
         instanceId: input.instanceId,
-        number,
+        number: target.phone,
         text: alertText,
         trackId: `${input.agentKey}-${input.eventId || Date.now().toString(36)}-human-alert-${index + 1}`,
         sendOptions: {
@@ -5007,7 +5019,8 @@ async function notifyResponsibleHumans(
       conversationId: input.conversationId,
       eventId: input.eventId,
       reason: input.reason,
-      targetCount: numbers.length,
+      targetCount: targets.length,
+      targets,
       deliveries,
     },
   });

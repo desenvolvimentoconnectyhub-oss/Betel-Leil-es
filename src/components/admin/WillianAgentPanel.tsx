@@ -2629,18 +2629,6 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
 
         <div className="grid gap-4">
           <Panel
-            title="Humano responsavel"
-            eyebrow="Handoff / alertas"
-          >
-            <TextAreaField
-              label="Numeros responsaveis"
-              rows={3}
-              value={config.responsibleNumbers}
-              onChange={(responsibleNumbers) => setBehavior({ responsibleNumbers })}
-            />
-          </Panel>
-
-          <Panel
             title="Localizacao da empresa"
             eyebrow="Maps / botao"
             action={

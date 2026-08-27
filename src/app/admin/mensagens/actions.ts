@@ -261,6 +261,7 @@ export async function saveSdrAppointmentFlowAction(formData: FormData) {
 
   await saveWhatsAppSdrAppointmentSettings({
     notificationAdminUserId: field(formData, "notificationAdminUserId") || null,
+    handoffAlertAdminUserId: field(formData, "handoffAlertAdminUserId") || null,
     businessStartHour,
     businessEndHour,
     maxBookingsPerHour,
