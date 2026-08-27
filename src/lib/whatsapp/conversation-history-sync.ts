@@ -52,8 +52,75 @@ async function loadResetCutoffs(supabase: SupabaseAdminClient) {
   return asResetCutoffs(asRecord(data).value);
 }
 
-function messageIsBeforeResetCutoff(resetCutoffs: Record<string, string>, phone: string, occurredAt: string) {
-  const resetAt = resetCutoffs[normalizeWhatsAppNumber(phone)];
+function validIsoDate(value: unknown) {
+  const clean = cleanString(value);
+  return clean && Number.isFinite(Date.parse(clean)) ? clean : "";
+}
+
+function latestIsoDate(...values: unknown[]) {
+  let latest = "";
+  let latestMs = Number.NEGATIVE_INFINITY;
+
+  for (const value of values.flat()) {
+    const candidate = validIsoDate(value);
+    const candidateMs = candidate ? Date.parse(candidate) : Number.NaN;
+    if (Number.isFinite(candidateMs) && candidateMs > latestMs) {
+      latest = candidate;
+      latestMs = candidateMs;
+    }
+  }
+
+  return latest;
+}
+
+function resetCutoffFromMetadata(...metadataValues: unknown[]) {
+  return latestIsoDate(
+    metadataValues.flatMap((value) => {
+      const metadata = asRecord(value);
+      return [
+        metadata.reset_for_test_at,
+        metadata.resetForTestAt,
+        metadata.conversation_reset_cutoff_at,
+        metadata.conversationResetCutoffAt,
+        metadata.reset_cutoff_at,
+        metadata.resetCutoffAt,
+      ];
+    })
+  );
+}
+
+function resetCutoffForIdentifiers(resetCutoffs: Record<string, string>, ...identifiers: unknown[]) {
+  const candidates = identifiers
+    .flatMap((identifier) => {
+      const clean = cleanString(identifier);
+      if (!clean) return [];
+      return [clean, numberFromChatId(clean), normalizeWhatsAppNumber(clean)];
+    })
+    .filter(Boolean);
+
+  return latestIsoDate(
+    candidates.flatMap((candidate) => {
+      const normalized = normalizeWhatsAppNumber(candidate);
+      return [resetCutoffs[candidate], normalized ? resetCutoffs[normalized] : ""];
+    })
+  );
+}
+
+function messageResetCutoff(
+  resetCutoffs: Record<string, string>,
+  identifiers: unknown[],
+  ...metadataValues: unknown[]
+) {
+  return latestIsoDate(resetCutoffForIdentifiers(resetCutoffs, ...identifiers), resetCutoffFromMetadata(...metadataValues));
+}
+
+function messageIsBeforeResetCutoff(
+  resetCutoffs: Record<string, string>,
+  identifiers: unknown[],
+  occurredAt: string,
+  ...metadataValues: unknown[]
+) {
+  const resetAt = messageResetCutoff(resetCutoffs, identifiers, ...metadataValues);
   if (!resetAt) return false;
 
   const occurredMs = Date.parse(occurredAt);
@@ -779,6 +846,7 @@ async function persistHistoryMessage(
     message: DbRow;
     instance: DbRow;
     agentKey: string;
+    resetCutoffs?: Record<string, string>;
   }
 ) {
   if (isGroupOrStatusMessage(input.message)) return { imported: false, reason: "group_or_status_ignored" };
@@ -794,6 +862,7 @@ async function persistHistoryMessage(
   if (!text && !mediaUrl) return { imported: false, reason: "empty_message" };
 
   const chatId = providerChatId(input.message);
+  const resetIdentifiers = [phone, chatId];
   const type = messageType(input.message, text, mediaUrl);
   const providerIds = providerMessageIdCandidates(input.message);
   const currentTrackId = trackId(input.message);
@@ -809,6 +878,10 @@ async function persistHistoryMessage(
   });
   if (!lead) return { imported: false, reason: "lead_not_persisted" };
 
+  if (messageIsBeforeResetCutoff(input.resetCutoffs || {}, resetIdentifiers, occurredAt, lead.row.metadata)) {
+    return { imported: false, reason: "before_reset_cutoff" };
+  }
+
   const conversation = await findOrCreateConversation(supabase, {
     leadId: lead.id,
     instanceId: cleanString(input.instance.id),
@@ -819,6 +892,18 @@ async function persistHistoryMessage(
     trace,
   });
   if (!conversation) return { imported: false, reason: "conversation_not_persisted" };
+
+  if (
+    messageIsBeforeResetCutoff(
+      input.resetCutoffs || {},
+      resetIdentifiers,
+      occurredAt,
+      lead.row.metadata,
+      conversation.row.metadata
+    )
+  ) {
+    return { imported: false, reason: "before_reset_cutoff" };
+  }
 
   if (
     await knownMessageExists(supabase, {
@@ -996,15 +1081,16 @@ export async function reconcileWhatsAppConversationHistoryFromConnectyHub(input:
         const ageMs = Date.now() - Date.parse(occurredAt);
         if (Number.isFinite(ageMs) && (ageMs > maxAgeMs || ageMs < -5 * 60_000)) return false;
         const phone = leadPhoneForMessage(message);
-        if (!phone) return false;
-        return !messageIsBeforeResetCutoff(resetCutoffs, phone, occurredAt);
+        const chatId = providerChatId(message);
+        if (!phone && !chatId) return false;
+        return !messageIsBeforeResetCutoff(resetCutoffs, [phone, chatId], occurredAt);
       })
       .sort((left, right) => Date.parse(messageOccurredAt(left)) - Date.parse(messageOccurredAt(right)));
 
     scanned += messages.length;
 
     for (const message of messages) {
-      const result = await persistHistoryMessage(supabase, { message, instance, agentKey });
+      const result = await persistHistoryMessage(supabase, { message, instance, agentKey, resetCutoffs });
       if (result.imported) {
         imported += 1;
         const direction = cleanString(result.direction, "unknown");
@@ -1014,7 +1100,13 @@ export async function reconcileWhatsAppConversationHistoryFromConnectyHub(input:
       }
       if (
         !result.imported &&
-        !["known_message", "empty_message", "group_or_status_ignored", "internal_admin_notification_ignored"].includes(result.reason)
+        ![
+          "known_message",
+          "empty_message",
+          "group_or_status_ignored",
+          "internal_admin_notification_ignored",
+          "before_reset_cutoff",
+        ].includes(result.reason)
       ) {
         errors.push(result.reason);
       }
