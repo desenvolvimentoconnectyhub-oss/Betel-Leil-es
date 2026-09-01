@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { HeadBucketCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getGeminiApiKey, getGeminiModel } from "@/lib/ai/config";
+import { GECKO_API_DEFAULT_BASE_URL, testGeckoApiConnection } from "@/lib/geckoapi/client";
 import { testMetaWhatsAppConnection } from "@/lib/meta-whatsapp/official";
 import { TRAFFIC_CONFIG_DEFAULTS } from "@/lib/traffic-ai/dashboard";
 import { testElevenLabsConnection } from "@/lib/voice/elevenlabs";
@@ -29,6 +30,7 @@ const DEFAULT_CONFIG_VALUES: Record<string, string> = {
   betel_sncr_base_url: "https://sncr.serpro.gov.br/sncr-web",
   betel_bcb_imoveis_api_base_url: "https://dadosabertos.bcb.gov.br/api/3/action",
   betel_nominatim_api_base_url: "https://nominatim.openstreetmap.org",
+  betel_geckoapi_api_base_url: GECKO_API_DEFAULT_BASE_URL,
   meta_graph_api_version: "v26.0",
   meta_default_language: "pt_BR",
   meta_rate_limit_per_minute: "60",
@@ -617,6 +619,7 @@ const testMap: Record<string, () => Promise<TestResult>> = {
   gemini: testGemini,
   resend: testResend,
   elevenlabs: testElevenLabs,
+  geckoapi: testGeckoApiConnection,
   ibge: testIbge,
   brasilapi: testBrasilApi,
   viacep: testViaCep,

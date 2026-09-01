@@ -16,6 +16,7 @@ const SECRET_CONFIG_KEYS = new Set([
   "connectyhub_webhook_secret",
   "resend_api_key",
   "elevenlabs_api_key",
+  "betel_geckoapi_api_key",
   "betel_datazap_api_key",
   "betel_fipezap_api_key",
   "betel_datajud_api_key",

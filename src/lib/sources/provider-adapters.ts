@@ -1,4 +1,5 @@
 import "server-only";
+import { GECKO_API_DEFAULT_BASE_URL } from "@/lib/geckoapi/client";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 
 export type SourceProviderMode = "mock" | "sandbox" | "provider";
@@ -102,6 +103,7 @@ const DEFAULT_SOURCE_PROVIDER_CONFIG: Record<string, string> = {
   betel_datajud_api_base_url: "https://api-publica.datajud.cnj.jus.br",
   betel_ibge_api_base_url: "https://servicodados.ibge.gov.br/api/v1/localidades",
   betel_receitaws_api_base_url: "https://www.receitaws.com.br/v1/cnpj",
+  betel_geckoapi_api_base_url: GECKO_API_DEFAULT_BASE_URL,
 };
 
 const sourceProviderConfigs: SourceProviderConfig[] = [
@@ -154,6 +156,16 @@ const sourceProviderConfigs: SourceProviderConfig[] = [
     baseUrlEnv: "BETEL_COMPARABLES_API_BASE_URL",
     tokenEnv: "BETEL_COMPARABLES_API_KEY",
     releasedEnv: "BETEL_COMPARABLES_PROVIDER_RELEASED",
+  },
+  {
+    key: "geckoapi",
+    label: "GeckoAPI Imoveis",
+    purpose: "Extrair anuncios de venda e aluguel em portais imobiliarios para comparaveis e referencias publicas.",
+    defaultProvider: "geckoapi-extract",
+    providerEnv: "BETEL_GECKOAPI_PROVIDER",
+    baseUrlEnv: "BETEL_GECKOAPI_API_BASE_URL",
+    tokenEnv: "BETEL_GECKOAPI_API_KEY",
+    releasedEnv: "BETEL_GECKOAPI_PROVIDER_RELEASED",
   },
   {
     key: "datajud",

@@ -7,6 +7,7 @@ import {
   TRAFFIC_CONNECTION_DEFINITIONS,
   type TrafficConnectionDefinition,
 } from "@/lib/traffic-ai/dashboard";
+import { GECKO_API_DEFAULT_BASE_URL } from "@/lib/geckoapi/client";
 
 export type MaintenanceStatusValue = "ok" | "warning" | "missing" | "error";
 
@@ -54,6 +55,7 @@ const DEFAULT_CONFIG_VALUES: Record<string, string> = {
   betel_sncr_base_url: "https://sncr.serpro.gov.br/sncr-web",
   betel_bcb_imoveis_api_base_url: "https://dadosabertos.bcb.gov.br/api/3/action",
   betel_nominatim_api_base_url: "https://nominatim.openstreetmap.org",
+  betel_geckoapi_api_base_url: GECKO_API_DEFAULT_BASE_URL,
   meta_graph_api_version: "v26.0",
   meta_default_language: "pt_BR",
   meta_rate_limit_per_minute: "60",
@@ -516,6 +518,11 @@ export async function getMaintenanceStatus(): Promise<MaintenancePayload> {
     elevenlabs,
 
     // --- Prioridade 3: Dados de mercado ---
+    staticCheck("geckoapi", "GeckoAPI Imoveis", "Extracao estruturada de anuncios de venda e aluguel em portais imobiliarios.", [
+      "BETEL_GECKOAPI_API_BASE_URL",
+      "BETEL_GECKOAPI_API_KEY",
+    ], { group: "Dados de Mercado e Avaliacao", usedBy: "Helena (Curadora), Rafael (Estrategia), Renata (Scraper)", site: "geckoapi.com.br" }, appConfig),
+
     staticCheck("datazap", "DataZAP+ (OLX Group)", "Avaliacao de imoveis e preco/m².", [
       "BETEL_DATAZAP_API_BASE_URL",
       "BETEL_DATAZAP_API_KEY",
