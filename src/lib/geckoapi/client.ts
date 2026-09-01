@@ -35,10 +35,54 @@ export type GeckoApiConnectionTestResult = {
   credits?: GeckoApiCredits;
 };
 
+export type GeckoApiBusinessType = "sale" | "rent";
+export type GeckoApiExtractType = "plp" | "pdp";
+export type GeckoApiExtractTarget =
+  | "zapimoveis.com.br"
+  | "vivareal.com.br"
+  | "chavesnamao.com.br"
+  | "olx.com.br";
+
+export type GeckoApiExtractInput = {
+  target: GeckoApiExtractTarget;
+  type: GeckoApiExtractType;
+  url?: string;
+  keyword?: string;
+  city?: string;
+  state?: string;
+  neighborhood?: string;
+  businessType?: GeckoApiBusinessType;
+  propertyTypes?: string[];
+  bedrooms?: number[];
+  bathrooms?: number[];
+  parkingSpots?: number[];
+  priceMin?: number;
+  priceMax?: number;
+  areaMin?: number;
+  areaMax?: number;
+  latitude?: number;
+  longitude?: number;
+  sort?: string;
+  directOwner?: boolean;
+  page?: number;
+  executionId?: string;
+};
+
+export type GeckoApiExtractResult = {
+  ok: boolean;
+  status: number;
+  latencyMs: number;
+  payload: unknown;
+  requestPayload: GeckoApiExtractInput;
+  error?: string;
+};
+
 const ENV_ALIASES: Record<"baseUrl" | "apiKey", string[]> = {
   baseUrl: ["BETEL_GECKOAPI_API_BASE_URL", "BETEL_GECKO_API_BASE_URL", "GECKOAPI_API_BASE_URL"],
   apiKey: ["BETEL_GECKOAPI_API_KEY", "BETEL_GECKO_API_KEY", "GECKOAPI_API_KEY"],
 };
+
+const GECKO_API_EXTRACT_TIMEOUT_MS = 30_000;
 
 const APP_CONFIG_ALIASES: Record<"baseUrl" | "apiKey", string[]> = {
   baseUrl: [GECKO_API_BASE_URL_CONFIG_KEY, "betel_gecko_api_base_url"],
@@ -129,6 +173,81 @@ function getPayloadMessage(payload: unknown) {
     ? (record.error as Record<string, unknown>)
     : {};
   return cleanString(error.message || record.message || record.error || record.response);
+}
+
+function stripEmptyFields(input: GeckoApiExtractInput): GeckoApiExtractInput {
+  const output: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (value === "" || value === null || value === undefined) continue;
+    if (Array.isArray(value) && value.length === 0) continue;
+    output[key] = value;
+  }
+  return output as GeckoApiExtractInput;
+}
+
+export async function executeGeckoApiExtract(input: GeckoApiExtractInput): Promise<GeckoApiExtractResult> {
+  const start = Date.now();
+  const config = await getGeckoApiConfig();
+  const requestPayload = stripEmptyFields({
+    ...input,
+    page: input.page || 1,
+  });
+
+  if (!config.apiKey) {
+    return {
+      ok: false,
+      status: 0,
+      latencyMs: Date.now() - start,
+      payload: {},
+      requestPayload,
+      error: "API key da GeckoAPI pendente.",
+    };
+  }
+
+  try {
+    const response = await fetch(geckoApiUrl(config.baseUrl, "/v1/extract"), {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${config.apiKey}`,
+        "Content-Type": "application/json",
+        "X-API-Key": config.apiKey,
+      },
+      body: JSON.stringify(requestPayload),
+      signal: AbortSignal.timeout(GECKO_API_EXTRACT_TIMEOUT_MS),
+    });
+    const latencyMs = Date.now() - start;
+    const payload = await readJsonPayload(response);
+
+    if (!response.ok) {
+      const detail = getPayloadMessage(payload);
+      return {
+        ok: false,
+        status: response.status,
+        latencyMs,
+        payload,
+        requestPayload,
+        error: detail ? `GeckoAPI retornou ${response.status}: ${detail}` : `GeckoAPI retornou ${response.status}.`,
+      };
+    }
+
+    return {
+      ok: true,
+      status: response.status,
+      latencyMs,
+      payload,
+      requestPayload,
+    };
+  } catch (error: unknown) {
+    return {
+      ok: false,
+      status: 0,
+      latencyMs: Date.now() - start,
+      payload: {},
+      requestPayload,
+      error: error instanceof Error ? error.message : "Falha ao chamar GeckoAPI.",
+    };
+  }
 }
 
 export async function testGeckoApiConnection(): Promise<GeckoApiConnectionTestResult> {

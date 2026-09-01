@@ -2392,6 +2392,60 @@ function estimatedCostTotal(costs: MarketCostItem[]) {
   return costs.reduce((total, item) => total + (Number(item.value) || 0), 0);
 }
 
+function averagePositive(values: number[]) {
+  const positives = values.filter((value) => Number.isFinite(value) && value > 0);
+  if (!positives.length) return 0;
+  return Math.round(positives.reduce((total, value) => total + value, 0) / positives.length);
+}
+
+function comparablePlaceLabel(comparable: DeepMarketComparable) {
+  return uniqueStrings([
+    comparable.neighborhood,
+    [comparable.city, comparable.state].filter(Boolean).join("/"),
+  ], 2).join(", ");
+}
+
+function buildMarketResearchCommunicationSummary(input: {
+  marketResearch: DeepMarketResearchResult | null;
+  extraction: AuctionLinkExtraction;
+  marketValueBase: number;
+}) {
+  const research = input.marketResearch;
+  if (!research) return "";
+
+  const saleComparables = research.saleComparables.filter((comparable) => comparable.sourceUrl && comparable.askingPrice > 0);
+  const rentalComparables = research.rentalComparables.filter((comparable) => comparable.sourceUrl && comparable.monthlyRent > 0);
+  const areaM2 = firstPositive(input.extraction.privateAreaM2, input.extraction.builtAreaM2, input.extraction.landAreaM2);
+  const marketValue = formatMoneyForSupplement(firstPositive(input.marketValueBase, research.marketValueBase));
+  const pricePerM2 = averagePositive(
+    saleComparables.map((comparable) => comparable.pricePerM2 || calculatePricePerM2(comparable.askingPrice, comparable.areaM2 || areaM2))
+  );
+  const saleSources = uniqueStrings(saleComparables.map((comparable) => comparable.sourceLabel), 3).join(", ");
+  const rentalSources = uniqueStrings(rentalComparables.map((comparable) => comparable.sourceLabel), 3).join(", ");
+  const salePlaces = uniqueStrings(saleComparables.map(comparablePlaceLabel), 3).join("; ");
+  const rentalPlaces = uniqueStrings(rentalComparables.map(comparablePlaceLabel), 3).join("; ");
+  const rentAverage = averagePositive(rentalComparables.map((comparable) => comparable.monthlyRent));
+  const rentValue = formatMoneyForSupplement(firstPositive(research.rentalMonthlyRent, rentAverage));
+
+  const lines = [
+    marketValue
+      ? `Valor de mercado calculado: ${marketValue}, pela media proporcional por m2 dos comparaveis aceitos.`
+      : "Valor de mercado ainda pendente de comparaveis suficientes.",
+    saleComparables.length
+      ? `A pesquisa encontrou ${saleComparables.length} referencia(s) de venda${saleSources ? ` em ${saleSources}` : ""}${pricePerM2 ? `, com media de ${formatMoneyForSupplement(pricePerM2)}/m2` : ""}${salePlaces ? ` na regiao de ${salePlaces}` : ""}.`
+      : "A pesquisa ainda nao encontrou referencia direta de venda com link aproveitavel.",
+    rentalComparables.length
+      ? `Para locacao, encontrou ${rentalComparables.length} referencia(s)${rentalSources ? ` em ${rentalSources}` : ""}${rentValue ? `, com aluguel medio de ${rentValue}/mes` : ""}${rentalPlaces ? ` na regiao de ${rentalPlaces}` : ""}.`
+      : "Referencia direta de aluguel ainda pendente; nao liberar copy de renda sem validacao.",
+  ];
+
+  if (saleComparables.length < 3 || rentalComparables.length < 1) {
+    lines.push("Completar curadoria antes de envio comercial se o minimo de 3 referencias de mercado nao estiver disponivel.");
+  }
+
+  return lines.join(" ");
+}
+
 function buildRentalEstimatePayload(input: {
   marketResearch: DeepMarketResearchResult | null;
   marketValueBase: number;
@@ -2449,16 +2503,20 @@ async function replaceDeepMarketComparables(input: {
         asking_price: referenceValue,
         sold_price: 0,
         price_per_m2: comparable.pricePerM2,
-        distance_km: 0,
+        distance_km: comparable.distanceKm || 0,
         similarity_score: comparable.similarityScore,
         quality: comparable.quality,
         notes: comparable.notes,
         collected_at: comparable.collectedAt,
         raw_payload: {
           source: "deep_market_research",
+          evidenceSource: comparable.evidenceSource || "web_search",
           listingType: comparable.listingType,
           askingPrice: comparable.askingPrice,
           monthlyRent: comparable.monthlyRent,
+          latitude: comparable.latitude || null,
+          longitude: comparable.longitude || null,
+          payload: comparable.rawPayload || null,
         },
       };
     });
@@ -2504,6 +2562,11 @@ async function upsertPreliminaryMarketAnalysis(input: {
     marketResearch: input.marketResearch,
     marketValueBase,
     initialBid: input.initialBid,
+  });
+  const communicationSummary = buildMarketResearchCommunicationSummary({
+    marketResearch: input.marketResearch,
+    extraction: input.extraction,
+    marketValueBase,
   });
   const missing = new Set(marketAnalysisMissingFields(input.extraction.missingFields || []));
   if (!marketValueBase) missing.add("valor de avaliacao/mercado");
@@ -2592,6 +2655,7 @@ async function upsertPreliminaryMarketAnalysis(input: {
           missing.size ? `Pendencias: ${Array.from(missing).join(", ")}.` : "",
         ].filter(Boolean).join(" "),
         summary:
+          communicationSummary ||
           input.extraction.summary ||
           "Captura inicial por link enviada pela equipe. Completar comparaveis de mercado antes de liberar teto de lance.",
         caution_notes: [
@@ -2609,6 +2673,7 @@ async function upsertPreliminaryMarketAnalysis(input: {
           marketValueSource,
           auctionAppraisalValue: input.auctionAppraisalValue,
           rentalEstimate,
+          communicationSummary,
           opportunityEvaluation,
           evaluationRuleVersion: opportunityEvaluation.ruleVersion,
           marketResearch: input.marketResearch,

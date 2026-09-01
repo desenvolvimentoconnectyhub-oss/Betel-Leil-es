@@ -7,6 +7,14 @@ import {
   type MarketCostItem,
 } from "@/lib/admin/market-analysis";
 import { getGeminiApiKey, getGeminiModel, normalizeGeminiModel } from "@/lib/ai/config";
+import {
+  executeGeckoApiExtract,
+  getGeckoApiConfig,
+  type GeckoApiBusinessType,
+  type GeckoApiExtractInput,
+  type GeckoApiExtractResult,
+  type GeckoApiExtractTarget,
+} from "@/lib/geckoapi/client";
 import type { AuctionLinkExtraction } from "./auction-link-extractor";
 import { normalizeLocationName, normalizeStateUf } from "./location-normalization";
 
@@ -32,6 +40,11 @@ export type DeepMarketComparable = {
   quality: MarketComparableQuality;
   notes: string;
   collectedAt: string;
+  distanceKm?: number;
+  latitude?: number;
+  longitude?: number;
+  evidenceSource?: string;
+  rawPayload?: Record<string, unknown>;
 };
 
 export type DeepMarketResearchResult = {
@@ -90,6 +103,19 @@ const MAX_SALE_PAGES = 14;
 const MAX_RENT_PAGES = 8;
 const GEMINI_GROUNDED_TIMEOUT_MS = 45_000;
 const MAX_GROUNDED_COMPARABLES = 10;
+const MAX_GECKOAPI_COMPARABLES = 18;
+const GECKOAPI_PAGE = 1;
+
+const GECKOAPI_TARGETS: Array<{
+  target: GeckoApiExtractTarget;
+  label: string;
+  supportsNeighborhood: boolean;
+  supportsPropertyTypes: boolean;
+}> = [
+  { target: "vivareal.com.br", label: "VivaReal", supportsNeighborhood: true, supportsPropertyTypes: true },
+  { target: "zapimoveis.com.br", label: "Zapimoveis", supportsNeighborhood: false, supportsPropertyTypes: false },
+  { target: "chavesnamao.com.br", label: "Chaves na Mao", supportsNeighborhood: true, supportsPropertyTypes: true },
+];
 
 const MARKET_SOURCE_ALLOWLIST = [
   "zapimoveis",
@@ -545,6 +571,454 @@ function buildSearchQueries(subject: SubjectProfile) {
     ...saleQueries.map((query) => ({ query, kind: "sale" as const })),
     ...rentQueries.map((query) => ({ query, kind: "rent" as const })),
   ].filter((item) => item.query.length > 8);
+}
+
+function propertyTypesForGecko(subjectType: string) {
+  const group = propertyGroup(subjectType);
+  if (group === "apartment") return ["apartment"];
+  if (group === "house") return ["house"];
+  if (group === "land") return ["land"];
+  if (group === "commercial") return ["commercial"];
+  return [];
+}
+
+function nearbyCountFilter(value: number) {
+  const rounded = Math.round(asNumber(value));
+  if (!rounded) return [];
+  return Array.from(new Set([rounded, rounded - 1, rounded + 1]))
+    .filter((item) => item > 0 && item <= 12)
+    .sort((a, b) => a - b);
+}
+
+function areaRangeForGecko(subject: SubjectProfile) {
+  if (!subject.areaM2) return {};
+  const group = propertyGroup(subject.propertyType);
+  const minFactor = group === "land" ? 0.55 : 0.65;
+  const maxFactor = group === "land" ? 1.8 : 1.45;
+  return {
+    areaMin: Math.max(20, Math.floor(subject.areaM2 * minFactor)),
+    areaMax: Math.ceil(subject.areaM2 * maxFactor),
+  };
+}
+
+function geckoBusinessLabel(kind: ListingKind) {
+  return kind === "rent" ? "aluguel" : "venda";
+}
+
+function geckoKeyword(subject: SubjectProfile, target: { supportsNeighborhood: boolean }) {
+  const type = subject.propertyType || "imovel";
+  const street = streetForSearch(subject.address);
+  if (subject.condoName) return compactQuery([subject.condoName, type]);
+  if (target.supportsNeighborhood) return "";
+  return compactQuery([subject.neighborhood || street, type]);
+}
+
+function buildGeckoApiPayload(
+  subject: SubjectProfile,
+  target: (typeof GECKOAPI_TARGETS)[number],
+  kind: ListingKind
+): GeckoApiExtractInput {
+  const group = propertyGroup(subject.propertyType);
+  const payload: GeckoApiExtractInput = {
+    target: target.target,
+    type: "plp",
+    city: subject.city,
+    state: subject.state,
+    businessType: kind as GeckoApiBusinessType,
+    page: GECKOAPI_PAGE,
+    ...areaRangeForGecko(subject),
+  };
+  const keyword = geckoKeyword(subject, target);
+  if (keyword) payload.keyword = keyword;
+  if (target.supportsNeighborhood && subject.neighborhood) payload.neighborhood = subject.neighborhood;
+  if (target.supportsPropertyTypes) payload.propertyTypes = propertyTypesForGecko(subject.propertyType);
+  if (group !== "land") {
+    payload.bedrooms = nearbyCountFilter(subject.bedrooms);
+    payload.parkingSpots = nearbyCountFilter(subject.parkingSpaces);
+  }
+  return payload;
+}
+
+function geckoSearchLabel(payload: GeckoApiExtractInput) {
+  return [
+    "GeckoAPI",
+    payload.target,
+    payload.businessType ? geckoBusinessLabel(payload.businessType) : "",
+    payload.city && payload.state ? `${payload.city}/${payload.state}` : "",
+    payload.neighborhood ? `bairro ${payload.neighborhood}` : "",
+    payload.keyword ? `busca "${payload.keyword}"` : "",
+    payload.areaMin && payload.areaMax ? `${payload.areaMin}-${payload.areaMax} m2` : "",
+  ].filter(Boolean).join(" - ");
+}
+
+function pathValue(value: unknown, path: string[]) {
+  let current = value;
+  for (const part of path) {
+    if (Array.isArray(current)) {
+      const index = Number(part);
+      current = Number.isInteger(index) ? current[index] : current[0];
+      if (current === undefined) return undefined;
+      continue;
+    }
+    const record = asRecord(current);
+    if (!Object.keys(record).length) return undefined;
+    current = record[part];
+    if (current === undefined || current === null) return undefined;
+  }
+  return current;
+}
+
+function textFromUnknown(value: unknown): string {
+  if (typeof value === "string") return cleanString(value);
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (Array.isArray(value)) {
+    return value.map((item) => textFromUnknown(item)).find(Boolean) || "";
+  }
+  if (value && typeof value === "object") {
+    const record = asRecord(value);
+    return firstText(
+      record.formattedAddress,
+      record.label,
+      record.name,
+      record.title,
+      record.value,
+      record.text,
+      record.description
+    );
+  }
+  return "";
+}
+
+function numberFromUnknown(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") return asNumber(value);
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const number = numberFromUnknown(item);
+      if (number > 0) return number;
+    }
+    return 0;
+  }
+  if (value && typeof value === "object") {
+    const record = asRecord(value);
+    return firstPositive(
+      numberFromUnknown(record.mainValue),
+      numberFromUnknown(record.value),
+      numberFromUnknown(record.amount),
+      numberFromUnknown(record.price),
+      numberFromUnknown(record.min),
+      numberFromUnknown(record.max),
+      numberFromUnknown(record.total)
+    );
+  }
+  return 0;
+}
+
+function firstTextPath(value: unknown, paths: string[][]) {
+  for (const path of paths) {
+    const text = textFromUnknown(pathValue(value, path));
+    if (text) return text;
+  }
+  return "";
+}
+
+function firstNumberPath(value: unknown, paths: string[][]) {
+  for (const path of paths) {
+    const number = numberFromUnknown(pathValue(value, path));
+    if (number > 0) return number;
+  }
+  return 0;
+}
+
+function firstUrlPath(value: unknown, paths: string[][], target: GeckoApiExtractTarget) {
+  for (const path of paths) {
+    const raw = textFromUnknown(pathValue(value, path));
+    if (!raw) continue;
+    if (/^https?:\/\//i.test(raw)) return raw;
+    if (raw.startsWith("//")) return `https:${raw}`;
+    if (raw.startsWith("/")) return `https://www.${target}${raw}`;
+  }
+  return "";
+}
+
+function arrayFromPath(value: unknown, path: string[]) {
+  const candidate = pathValue(value, path);
+  if (Array.isArray(candidate)) {
+    return candidate.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item));
+  }
+  return [];
+}
+
+function extractGeckoApiItems(payload: unknown) {
+  const arrays = [
+    arrayFromPath(payload, ["data", "items"]),
+    arrayFromPath(payload, ["data", "data", "items"]),
+    arrayFromPath(payload, ["data", "results"]),
+    arrayFromPath(payload, ["data", "listings"]),
+    arrayFromPath(payload, ["items"]),
+    arrayFromPath(payload, ["results"]),
+    arrayFromPath(payload, ["listings"]),
+  ];
+  return arrays.find((items) => items.length) || [];
+}
+
+function geckoSearchUrls(result: GeckoApiExtractResult, kind: ListingKind) {
+  return uniqueSearchedUrls([
+    firstUrlPath(result.payload, [["data", "url"], ["data", "requestUrl"], ["url"], ["requestUrl"]], result.requestPayload.target)
+      ? {
+          label: geckoSearchLabel(result.requestPayload),
+          url: firstUrlPath(result.payload, [["data", "url"], ["data", "requestUrl"], ["url"], ["requestUrl"]], result.requestPayload.target),
+          kind,
+        }
+      : null,
+  ].filter((item): item is MarketSearchUrl => Boolean(item)));
+}
+
+function normalizeGeckoApiComparable(
+  subject: SubjectProfile,
+  target: (typeof GECKOAPI_TARGETS)[number],
+  kind: ListingKind,
+  item: Record<string, unknown>,
+  result: GeckoApiExtractResult
+): DeepMarketComparable | null {
+  const sourceUrl = firstUrlPath(item, [
+    ["url"],
+    ["canonicalUrl"],
+    ["link"],
+    ["href"],
+    ["permalink"],
+    ["detailsUrl"],
+  ], target.target);
+  if (!isAcceptableGroundedMarketSource(sourceUrl)) return null;
+
+  const description = firstTextPath(item, [
+    ["description"],
+    ["summary"],
+    ["subtitle"],
+    ["snippet"],
+  ]);
+  const title = firstTextPath(item, [
+    ["title"],
+    ["name"],
+    ["listingTitle"],
+    ["headline"],
+  ]) || description.slice(0, 140) || "Comparavel GeckoAPI";
+  const evidence = `${title} ${description} ${JSON.stringify(item).slice(0, 5000)} ${sourceUrl}`;
+  const propertyType = firstTextPath(item, [
+    ["propertyType"],
+    ["property_type"],
+    ["unitType"],
+    ["unitTypes"],
+    ["type"],
+    ["category"],
+  ]) || subject.propertyType;
+  const neighborhood = normalizeLocationName(firstTextPath(item, [
+    ["address", "neighborhood"],
+    ["address", "bairro"],
+    ["neighborhood"],
+    ["bairro"],
+    ["location", "neighborhood"],
+  ])) || (subject.neighborhood && includesToken(evidence, subject.neighborhood) ? subject.neighborhood : "");
+  const city = normalizeLocationName(firstTextPath(item, [
+    ["address", "city"],
+    ["address", "cidade"],
+    ["city"],
+    ["cidade"],
+    ["location", "city"],
+  ]) || subject.city);
+  const state = normalizeStateUf(firstTextPath(item, [
+    ["address", "state"],
+    ["address", "uf"],
+    ["address", "stateAcronym"],
+    ["state"],
+    ["uf"],
+    ["location", "state"],
+  ]) || subject.state);
+  const address = firstTextPath(item, [
+    ["address", "formattedAddress"],
+    ["address", "street"],
+    ["address", "name"],
+    ["address", "label"],
+    ["location", "address"],
+    ["address"],
+  ]);
+  const areaM2 = firstNumberPath(item, [
+    ["areaM2"],
+    ["area_m2"],
+    ["usableArea"],
+    ["usableAreas"],
+    ["totalArea"],
+    ["privateArea"],
+    ["area"],
+    ["size"],
+    ["details", "usableArea"],
+    ["details", "area"],
+  ]);
+  const price = firstNumberPath(item, [
+    ["prices", "mainValue"],
+    ["prices", "value"],
+    ["pricing", "price"],
+    ["priceInfo", "price"],
+    ["price"],
+    ["mainValue"],
+    ["value"],
+    ["amount"],
+  ]);
+  const askingPrice = kind === "sale" ? price : 0;
+  const monthlyRent = kind === "rent" ? price : 0;
+  const comparableBase = {
+    sourceLabel: target.label,
+    sourceUrl,
+    listingType: kind,
+    propertyType,
+    title,
+    address,
+    neighborhood,
+    city,
+    state,
+    areaM2,
+    askingPrice,
+    monthlyRent,
+    pricePerM2: kind === "sale" ? calculatePricePerM2(askingPrice, areaM2) : 0,
+    bedrooms: firstNumberPath(item, [["bedrooms"], ["rooms"], ["dormitories"], ["details", "bedrooms"]]),
+    parkingSpaces: firstNumberPath(item, [["parkingSpaces"], ["parkingSpots"], ["garages"], ["garage"], ["details", "parkingSpaces"]]),
+  };
+  const similarityScore = scoreComparable(subject, comparableBase);
+  const quality = qualityFromScore(similarityScore);
+  if (quality === "discarded" || !isRelevantComparable(subject, comparableBase, similarityScore)) return null;
+
+  const latitude = firstNumberPath(item, [["address", "latitude"], ["latitude"], ["location", "latitude"], ["location", "lat"]]);
+  const longitude = firstNumberPath(item, [["address", "longitude"], ["longitude"], ["location", "longitude"], ["location", "lng"]]);
+  const scope = subject.condoName && includesToken(evidence, subject.condoName)
+    ? "mesmo condominio/nome"
+    : subject.neighborhood && includesToken(evidence, subject.neighborhood)
+      ? "mesmo bairro"
+      : "mesma cidade";
+
+  return {
+    ...comparableBase,
+    similarityScore,
+    quality,
+    notes: [
+      `GeckoAPI ${target.label}: anuncio de ${geckoBusinessLabel(kind)} em ${scope}.`,
+      areaM2 ? `Area capturada: ${areaM2} m2.` : "Area nao confirmada no item retornado.",
+      price ? `${kind === "rent" ? "Aluguel" : "Preco"} capturado no portal.` : "",
+      `HTTP ${result.status}; latencia ${result.latencyMs}ms.`,
+    ].filter(Boolean).join(" "),
+    collectedAt: new Date().toISOString(),
+    latitude: latitude || undefined,
+    longitude: longitude || undefined,
+    evidenceSource: "geckoapi",
+    rawPayload: {
+      source: "geckoapi",
+      target: target.target,
+      request: result.requestPayload,
+      item,
+    },
+  };
+}
+
+async function runGeckoApiMarketResearch(
+  subject: SubjectProfile
+): Promise<{
+  research: DeepMarketResearchResult | null;
+  error: string;
+}> {
+  const config = await getGeckoApiConfig();
+  if (!config.configured) {
+    return { research: null, error: "GeckoAPI nao configurada." };
+  }
+
+  const warnings: string[] = [];
+  const searchQueries: string[] = [];
+  const searchedUrls: MarketSearchUrl[] = [];
+  let saleComparables: DeepMarketComparable[] = [];
+  let rentalComparables: DeepMarketComparable[] = [];
+
+  for (const target of GECKOAPI_TARGETS) {
+    const pending: Array<{ kind: ListingKind; payload: GeckoApiExtractInput }> = [];
+    if (saleComparables.length < MIN_SALE_REFERENCES) pending.push({ kind: "sale", payload: buildGeckoApiPayload(subject, target, "sale") });
+    if (rentalComparables.length < MIN_RENT_REFERENCES) pending.push({ kind: "rent", payload: buildGeckoApiPayload(subject, target, "rent") });
+    if (!pending.length) break;
+
+    const results = await Promise.all(pending.map((request) => executeGeckoApiExtract(request.payload)));
+    for (let index = 0; index < results.length; index += 1) {
+      const result = results[index];
+      const request = pending[index];
+      if (!request) continue;
+      searchQueries.push(geckoSearchLabel(request.payload));
+      searchedUrls.push(...geckoSearchUrls(result, request.kind));
+
+      if (!result.ok) {
+        warnings.push(`${target.label} ${geckoBusinessLabel(request.kind)}: ${result.error || `HTTP ${result.status}`}.`);
+        continue;
+      }
+
+      const items = extractGeckoApiItems(result.payload);
+      const comparables = items
+        .map((item) => normalizeGeckoApiComparable(subject, target, request.kind, item, result))
+        .filter((item): item is DeepMarketComparable => Boolean(item));
+      if (!comparables.length) {
+        warnings.push(`${target.label} ${geckoBusinessLabel(request.kind)} nao retornou comparaveis aderentes.`);
+      }
+      if (request.kind === "sale") saleComparables = mergeComparableLists([...saleComparables, ...comparables]);
+      else rentalComparables = mergeComparableLists([...rentalComparables, ...comparables]);
+      searchedUrls.push(...comparables.map((item) => ({
+        label: `GeckoAPI ${geckoBusinessLabel(item.listingType)}: ${item.sourceLabel}`,
+        url: item.sourceUrl,
+        kind: item.listingType,
+      })));
+    }
+
+    if (saleComparables.length >= MIN_SALE_REFERENCES && rentalComparables.length >= MIN_RENT_REFERENCES) break;
+  }
+
+  if (!saleComparables.length && !rentalComparables.length) {
+    return {
+      research: null,
+      error: uniqueStrings(warnings, 4).join(" ") || "GeckoAPI nao retornou comparaveis aproveitaveis.",
+    };
+  }
+
+  const calculatedMarket = calculateMarketValue(subject, saleComparables);
+  const rental = calculateRental(subject, rentalComparables, calculatedMarket.base);
+  const missingFields = new Set<string>();
+  if (!calculatedMarket.base) missingFields.add("valor de mercado por comparaveis GeckoAPI");
+  if (saleComparables.length < MIN_SALE_REFERENCES) missingFields.add(`minimo de ${MIN_SALE_REFERENCES} comparaveis de venda`);
+  if (rentalComparables.length < MIN_RENT_REFERENCES) missingFields.add("referencia direta de aluguel");
+  if (!subject.areaM2) missingFields.add("area para preco por m2");
+
+  const confidenceScore = clampMarketScore(
+    (calculatedMarket.base ? 52 : 25) +
+      calculatedMarket.confidenceBoost +
+      Math.min(14, rentalComparables.length * 7) +
+      (saleComparables.some((item) => item.quality === "strong") ? 8 : 0) -
+      Math.max(0, missingFields.size - 1) * 5
+  );
+
+  return {
+    research: {
+      status: calculatedMarket.base && saleComparables.length >= MIN_SALE_REFERENCES ? "completed" : "partial",
+      searchQueries: uniqueStrings(searchQueries, 12),
+      searchedUrls: uniqueSearchedUrls(searchedUrls),
+      saleComparables: saleComparables.slice(0, MAX_GECKOAPI_COMPARABLES),
+      rentalComparables: rentalComparables.slice(0, MAX_GECKOAPI_COMPARABLES),
+      marketValueLow: calculatedMarket.low,
+      marketValueBase: calculatedMarket.base,
+      marketValueHigh: calculatedMarket.high,
+      rentalMonthlyRent: rental.monthlyRent,
+      rentalReferenceUrl: rental.referenceUrl,
+      confidenceScore,
+      liquidityScore: clampMarketScore(48 + Math.min(24, saleComparables.length * 5) + Math.min(14, rentalComparables.length * 7)),
+      estimatedCosts: buildEstimatedCosts(subject.initialBid, calculatedMarket.base),
+      missingFields: uniqueStrings(Array.from(missingFields), 12),
+      cautionNotes: uniqueStrings([
+        "GeckoAPI usada como fonte estruturada de anuncios; conferir aderencia dos links antes de aprovar envio.",
+        ...warnings,
+      ], 12),
+    },
+    error: "",
+  };
 }
 
 async function searchMarketResults(subject: SubjectProfile) {
@@ -1387,13 +1861,29 @@ export async function runDeepMarketResearch(input: {
     } satisfies DeepMarketResearchResult;
   }
 
-  const groundedAttempt = await runGeminiGroundedMarketResearch(input, subject);
+  const geckoAttempt = await runGeckoApiMarketResearch(subject);
+  const geckoResearch = geckoAttempt.research;
+  const needsGeminiGrounding =
+    !geckoResearch ||
+    !geckoResearch.marketValueBase ||
+    geckoResearch.saleComparables.length < MIN_SALE_REFERENCES ||
+    geckoResearch.rentalComparables.length < MIN_RENT_REFERENCES;
+  const groundedAttempt = needsGeminiGrounding
+    ? await runGeminiGroundedMarketResearch(input, subject)
+    : { research: null, error: "", grounding: undefined };
   const groundedResearch = groundedAttempt.research;
+  const baseSaleComparables = mergeComparableLists([
+    ...(geckoResearch?.saleComparables || []),
+    ...(groundedResearch?.saleComparables || []),
+  ]);
+  const baseRentalComparables = mergeComparableLists([
+    ...(geckoResearch?.rentalComparables || []),
+    ...(groundedResearch?.rentalComparables || []),
+  ]);
   const needsFallbackSearch =
-    !groundedResearch ||
-    !groundedResearch.marketValueBase ||
-    groundedResearch.saleComparables.length < MIN_SALE_REFERENCES ||
-    groundedResearch.rentalComparables.length < MIN_RENT_REFERENCES;
+    !baseSaleComparables.length ||
+    baseSaleComparables.length < MIN_SALE_REFERENCES ||
+    baseRentalComparables.length < MIN_RENT_REFERENCES;
 
   const search = needsFallbackSearch
     ? await searchMarketResults(subject)
@@ -1413,32 +1903,41 @@ export async function runDeepMarketResearch(input: {
     : [];
   const comparables = hydrated.filter((item): item is DeepMarketComparable => Boolean(item));
   const saleComparables = mergeComparableLists([
-    ...(groundedResearch?.saleComparables || []),
+    ...baseSaleComparables,
     ...comparables.filter((item) => item.listingType === "sale"),
   ]);
   const rentalComparables = mergeComparableLists([
-    ...(groundedResearch?.rentalComparables || []),
+    ...baseRentalComparables,
     ...comparables.filter((item) => item.listingType === "rent"),
   ]);
   const calculatedMarketValue = calculateMarketValue(subject, saleComparables);
   const marketValue = {
-    low: firstPositive(calculatedMarketValue.low, groundedResearch?.marketValueLow || 0),
-    base: firstPositive(calculatedMarketValue.base, groundedResearch?.marketValueBase || 0),
-    high: firstPositive(calculatedMarketValue.high, groundedResearch?.marketValueHigh || 0),
+    low: firstPositive(calculatedMarketValue.low, geckoResearch?.marketValueLow || 0, groundedResearch?.marketValueLow || 0),
+    base: firstPositive(calculatedMarketValue.base, geckoResearch?.marketValueBase || 0, groundedResearch?.marketValueBase || 0),
+    high: firstPositive(calculatedMarketValue.high, geckoResearch?.marketValueHigh || 0, groundedResearch?.marketValueHigh || 0),
     confidenceBoost: calculatedMarketValue.confidenceBoost,
   };
   const rental = calculateRental(subject, rentalComparables, marketValue.base);
-  const rentalMonthlyRent = firstPositive(rental.monthlyRent, groundedResearch?.rentalMonthlyRent || 0);
-  const rentalReferenceUrl = firstText(rental.referenceUrl, groundedResearch?.rentalReferenceUrl || "");
+  const rentalMonthlyRent = firstPositive(rental.monthlyRent, geckoResearch?.rentalMonthlyRent || 0, groundedResearch?.rentalMonthlyRent || 0);
+  const rentalReferenceUrl = firstText(rental.referenceUrl, geckoResearch?.rentalReferenceUrl || "", groundedResearch?.rentalReferenceUrl || "");
 
   if (saleComparables.length < MIN_SALE_REFERENCES) missingFields.push(`minimo de ${MIN_SALE_REFERENCES} comparaveis de venda`);
   if (!marketValue.base) missingFields.push("valor de mercado por comparaveis");
   if (rentalComparables.length < MIN_RENT_REFERENCES) missingFields.push("referencia direta de aluguel");
   if (!subject.areaM2) missingFields.push("area para preco por m2");
+  (geckoResearch?.missingFields || []).forEach((field) => missingFields.push(field));
   (groundedResearch?.missingFields || []).forEach((field) => missingFields.push(field));
+  if (geckoAttempt.error) cautionNotes.push(`GeckoAPI: ${geckoAttempt.error}`);
+  cautionNotes.push(...(geckoResearch?.cautionNotes || []));
   if (groundedAttempt.error) cautionNotes.push(`Pesquisa Gemini/Google: ${groundedAttempt.error}`);
   cautionNotes.push(...(groundedResearch?.cautionNotes || []));
-  if (needsFallbackSearch && !search.results.length && !groundedResults.length && !(groundedResearch?.searchedUrls.length)) {
+  if (
+    needsFallbackSearch &&
+    !search.results.length &&
+    !groundedResults.length &&
+    !(geckoResearch?.searchedUrls.length) &&
+    !(groundedResearch?.searchedUrls.length)
+  ) {
     cautionNotes.push("Nenhum resultado de mercado aderente foi encontrado na busca automatica.");
   }
   if (saleComparables.length && saleComparables.length < MIN_SALE_REFERENCES) {
@@ -1453,18 +1952,25 @@ export async function runDeepMarketResearch(input: {
       (subject.condoName && saleComparables.some((item) => includesToken(item.title, subject.condoName)) ? 8 : 0) -
       Math.max(0, missingFields.length - 1) * 6
   );
-  const confidenceScore = groundedResearch?.confidenceScore
-    ? clampMarketScore(Math.round((calculatedConfidenceScore + groundedResearch.confidenceScore) / 2))
-    : calculatedConfidenceScore;
+  const confidenceInputs = [
+    calculatedConfidenceScore,
+    geckoResearch?.confidenceScore || 0,
+    groundedResearch?.confidenceScore || 0,
+  ].filter((score) => score > 0);
+  const confidenceScore = clampMarketScore(
+    Math.round(confidenceInputs.reduce((total, score) => total + score, 0) / Math.max(1, confidenceInputs.length))
+  );
 
   return {
     status: marketValue.base && saleComparables.length >= MIN_SALE_REFERENCES ? "completed" : "partial",
     searchQueries: uniqueStrings([
+      ...(geckoResearch?.searchQueries || []),
       ...(groundedResearch?.searchQueries || []),
       ...(groundedAttempt.grounding?.queries || []),
       ...search.searchQueries,
     ], 18),
     searchedUrls: uniqueSearchedUrls([
+      ...(geckoResearch?.searchedUrls || []),
       ...(groundedResearch?.searchedUrls || []),
       ...(groundedAttempt.grounding?.sourceLinks || []),
       ...search.searchedUrls,

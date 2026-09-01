@@ -106,6 +106,19 @@ function asNumber(value: unknown, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function uniqueStrings(values: string[], limit = 20) {
+  const seen = new Set<string>();
+  return values
+    .map((value) => cleanString(value))
+    .filter(Boolean)
+    .filter((value) => {
+      if (seen.has(value)) return false;
+      seen.add(value);
+      return true;
+    })
+    .slice(0, limit);
+}
+
 function appUrl() {
   const vercelUrl = process.env.VERCEL_URL?.trim();
   const fallbackVercel = vercelUrl ? `https://${vercelUrl.replace(/^https?:\/\//i, "")}` : "";
@@ -480,6 +493,86 @@ function firstPositiveNumber(...values: unknown[]) {
   return values.map((value) => asNumber(value)).find((value) => Number.isFinite(value) && value > 0) || 0;
 }
 
+function averagePositiveNumber(values: number[]) {
+  const positives = values.filter((value) => Number.isFinite(value) && value > 0);
+  if (!positives.length) return 0;
+  return Math.round(positives.reduce((total, value) => total + value, 0) / positives.length);
+}
+
+function comparablePlaceLabel(comparable: DeepMarketComparable) {
+  return uniqueStrings([
+    comparable.neighborhood,
+    [comparable.city, comparable.state].filter(Boolean).join("/"),
+  ], 2).join(", ");
+}
+
+function buildResearchCommunicationSummary(input: {
+  analysis: PropertyMarketAnalysis | null;
+  research: DeepMarketResearchResult;
+}) {
+  const saleComparables = input.research.saleComparables.filter((comparable) => comparable.sourceUrl && comparable.askingPrice > 0);
+  const rentalComparables = input.research.rentalComparables.filter((comparable) => comparable.sourceUrl && comparable.monthlyRent > 0);
+  const marketValue = formatCurrency(firstPositiveNumber(input.research.marketValueBase, input.analysis?.marketValueBase));
+  const pricePerM2 = averagePositiveNumber(saleComparables.map((comparable) => comparable.pricePerM2));
+  const saleSources = uniqueStrings(saleComparables.map((comparable) => comparable.sourceLabel), 3).join(", ");
+  const rentalSources = uniqueStrings(rentalComparables.map((comparable) => comparable.sourceLabel), 3).join(", ");
+  const salePlaces = uniqueStrings(saleComparables.map(comparablePlaceLabel), 3).join("; ");
+  const rentalPlaces = uniqueStrings(rentalComparables.map(comparablePlaceLabel), 3).join("; ");
+  const rentAverage = averagePositiveNumber(rentalComparables.map((comparable) => comparable.monthlyRent));
+  const rentValue = formatCurrency(firstPositiveNumber(input.research.rentalMonthlyRent, rentAverage));
+  const lines = [
+    marketValue
+      ? `Valor de mercado calculado: ${marketValue}, pela media proporcional por m2 dos comparaveis aceitos.`
+      : "Valor de mercado ainda pendente de comparaveis suficientes.",
+    saleComparables.length
+      ? `A pesquisa encontrou ${saleComparables.length} referencia(s) de venda${saleSources ? ` em ${saleSources}` : ""}${pricePerM2 ? `, com media de ${formatCurrency(pricePerM2)}/m2` : ""}${salePlaces ? ` na regiao de ${salePlaces}` : ""}.`
+      : "A pesquisa ainda nao encontrou referencia direta de venda com link aproveitavel.",
+    rentalComparables.length
+      ? `Para locacao, encontrou ${rentalComparables.length} referencia(s)${rentalSources ? ` em ${rentalSources}` : ""}${rentValue ? `, com aluguel medio de ${rentValue}/mes` : ""}${rentalPlaces ? ` na regiao de ${rentalPlaces}` : ""}.`
+      : "Referencia direta de aluguel ainda pendente; nao liberar copy de renda sem validacao.",
+  ];
+
+  if (saleComparables.length < MIN_PUBLICATION_REFERENCE_LINKS || rentalComparables.length < 1) {
+    lines.push(`Completar curadoria antes de envio comercial se o minimo de ${MIN_PUBLICATION_REFERENCE_LINKS} referencias de mercado nao estiver disponivel.`);
+  }
+
+  return lines.join(" ");
+}
+
+function buildRefreshedRentalEstimate(input: {
+  analysis: PropertyMarketAnalysis;
+  research: DeepMarketResearchResult;
+}) {
+  const monthlyRent = firstPositiveNumber(input.research.rentalMonthlyRent, input.analysis.rentalEstimate.monthlyRent);
+  const referenceUrl = firstHttpUrl(input.research.rentalReferenceUrl, input.analysis.rentalEstimate.referenceUrl);
+  return {
+    ...input.analysis.rentalEstimate,
+    monthlyRent,
+    referenceUrl,
+    referenceFound: Boolean(referenceUrl),
+    valueKnown: Boolean(input.research.rentalComparables.length || input.analysis.rentalEstimate.valueKnown),
+    monthlyYieldOnMarketPct:
+      input.analysis.marketValueBase && monthlyRent
+        ? Math.round((monthlyRent / input.analysis.marketValueBase) * 10000) / 100
+        : input.analysis.rentalEstimate.monthlyYieldOnMarketPct,
+    annualYieldOnMarketPct:
+      input.analysis.marketValueBase && monthlyRent
+        ? Math.round(((monthlyRent * 12) / input.analysis.marketValueBase) * 10000) / 100
+        : input.analysis.rentalEstimate.annualYieldOnMarketPct,
+    monthlyYieldOnBidPct:
+      input.analysis.initialBid && monthlyRent
+        ? Math.round((monthlyRent / input.analysis.initialBid) * 10000) / 100
+        : input.analysis.rentalEstimate.monthlyYieldOnBidPct,
+    annualYieldOnBidPct:
+      input.analysis.initialBid && monthlyRent
+        ? Math.round(((monthlyRent * 12) / input.analysis.initialBid) * 10000) / 100
+        : input.analysis.rentalEstimate.annualYieldOnBidPct,
+    notes: input.research.rentalComparables.length
+      ? "Aluguel baseado em referencias encontradas na pesquisa profunda."
+      : input.analysis.rentalEstimate.notes,
+  };
+}
+
 function researchSourceLinks(analysis: PropertyMarketAnalysis | null, auctionUrl: string, research: DeepMarketResearchResult) {
   const links = [
     ...(analysis?.sourceLinks || []),
@@ -545,16 +638,20 @@ function comparableRowsForRefresh(input: {
         asking_price: referenceValue,
         sold_price: 0,
         price_per_m2: comparable.pricePerM2,
-        distance_km: 0,
+        distance_km: comparable.distanceKm || 0,
         similarity_score: comparable.similarityScore,
         quality: comparable.quality,
         notes: comparable.notes,
         collected_at: comparable.collectedAt,
         raw_payload: {
           source: "publication_reference_refresh",
+          evidenceSource: comparable.evidenceSource || "web_search",
           listingType: comparable.listingType,
           askingPrice: comparable.askingPrice,
           monthlyRent: comparable.monthlyRent,
+          latitude: comparable.latitude || null,
+          longitude: comparable.longitude || null,
+          payload: comparable.rawPayload || null,
         },
       };
     });
@@ -647,9 +744,12 @@ async function refreshPublicationReferences(input: {
   if (comparableRows.length) await supabase.from("property_market_comparables").insert(comparableRows);
 
   const sourceLinks = researchSourceLinks(input.analysis, auctionUrl, research);
+  const refreshedRentalEstimate = buildRefreshedRentalEstimate({ analysis: input.analysis, research });
+  const communicationSummary = buildResearchCommunicationSummary({ analysis: input.analysis, research });
   await supabase
     .from("property_market_analyses")
     .update({
+      summary: communicationSummary || input.analysis.summary,
       source_links: sourceLinks,
       subject_property_snapshot: {
         ...input.analysis.subject,
@@ -671,7 +771,10 @@ async function refreshPublicationReferences(input: {
           refreshedAt: new Date().toISOString(),
           saleComparables: research.saleComparables.length,
           rentalComparables: research.rentalComparables.length,
+          sourceLinks: sourceLinks.length,
         },
+        rentalEstimate: refreshedRentalEstimate,
+        communicationSummary,
         marketResearch: research,
       },
       updated_at: new Date().toISOString(),
