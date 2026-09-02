@@ -1438,13 +1438,19 @@ function OpportunityActionNotice({
       detail: "Essa oportunidade ja tinha uma campanha igual agendada.",
       tone: "yellow",
     },
+    "whatsapp-referencias-bloqueado": {
+      title: "WhatsApp nao enviado: referencias pendentes",
+      detail: message || "A busca automatica terminou sem o minimo de referencias publicas validas. Nenhuma campanha foi criada.",
+      tone: "red",
+    },
   };
   const notice = notices[status];
   if (!notice) return null;
+  const NoticeIcon = notice.tone === "red" ? XCircle : notice.tone === "yellow" ? Info : CheckCircle2;
 
   return (
     <div className={cn("mt-3 flex items-start gap-2 rounded-lg border px-3 py-2 text-sm", toneBorder[notice.tone], toneBg[notice.tone])}>
-      <CheckCircle2 size={16} className={cn("mt-0.5 shrink-0", toneText[notice.tone])} />
+      <NoticeIcon size={16} className={cn("mt-0.5 shrink-0", toneText[notice.tone])} />
       <div className="min-w-0">
         <p className="font-semibold text-[var(--admin-foreground)]">{notice.title}</p>
         <p className="mt-0.5 break-words text-xs leading-5 text-[var(--admin-muted)]">{notice.detail}</p>
@@ -4302,6 +4308,7 @@ export function OpportunityDetailCenter({
             />
             <OpportunityActionNotice
               campaignId={publicationCampaign}
+              message={actionMessage}
               remoteGroups={remoteGroups}
               status={marketStatus}
               syncedGroups={syncedGroups}

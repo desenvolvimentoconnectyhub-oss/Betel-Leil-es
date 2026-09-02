@@ -105,6 +105,7 @@ const GEMINI_GROUNDED_TIMEOUT_MS = 45_000;
 const MAX_GROUNDED_COMPARABLES = 10;
 const MAX_GECKOAPI_COMPARABLES = 18;
 const GECKOAPI_PAGE = 1;
+const MAX_GECKOAPI_REQUESTS_PER_ANALYSIS = 18;
 
 const GECKOAPI_TARGETS: Array<{
   target: GeckoApiExtractTarget;
@@ -115,6 +116,46 @@ const GECKOAPI_TARGETS: Array<{
   { target: "vivareal.com.br", label: "VivaReal", supportsNeighborhood: true, supportsPropertyTypes: true },
   { target: "zapimoveis.com.br", label: "Zapimoveis", supportsNeighborhood: false, supportsPropertyTypes: false },
   { target: "chavesnamao.com.br", label: "Chaves na Mao", supportsNeighborhood: true, supportsPropertyTypes: true },
+];
+
+type GeckoApiSearchScope = {
+  label: string;
+  useNeighborhood: boolean;
+  useKeyword: boolean;
+  useFeatures: boolean;
+  usePropertyTypes: boolean;
+  minAreaFactor: number;
+  maxAreaFactor: number;
+};
+
+const GECKOAPI_SEARCH_SCOPES: GeckoApiSearchScope[] = [
+  {
+    label: "precisa",
+    useNeighborhood: true,
+    useKeyword: true,
+    useFeatures: true,
+    usePropertyTypes: true,
+    minAreaFactor: 0.65,
+    maxAreaFactor: 1.45,
+  },
+  {
+    label: "bairro ampliado",
+    useNeighborhood: true,
+    useKeyword: true,
+    useFeatures: false,
+    usePropertyTypes: true,
+    minAreaFactor: 0.45,
+    maxAreaFactor: 2.1,
+  },
+  {
+    label: "cidade inteira",
+    useNeighborhood: false,
+    useKeyword: false,
+    useFeatures: false,
+    usePropertyTypes: true,
+    minAreaFactor: 0.35,
+    maxAreaFactor: 2.8,
+  },
 ];
 
 const MARKET_SOURCE_ALLOWLIST = [
@@ -590,11 +631,11 @@ function nearbyCountFilter(value: number) {
     .sort((a, b) => a - b);
 }
 
-function areaRangeForGecko(subject: SubjectProfile) {
+function areaRangeForGecko(subject: SubjectProfile, scope: GeckoApiSearchScope) {
   if (!subject.areaM2) return {};
   const group = propertyGroup(subject.propertyType);
-  const minFactor = group === "land" ? 0.55 : 0.65;
-  const maxFactor = group === "land" ? 1.8 : 1.45;
+  const minFactor = group === "land" ? Math.min(scope.minAreaFactor, 0.55) : scope.minAreaFactor;
+  const maxFactor = group === "land" ? Math.max(scope.maxAreaFactor, 2.2) : scope.maxAreaFactor;
   return {
     areaMin: Math.max(20, Math.floor(subject.areaM2 * minFactor)),
     areaMax: Math.ceil(subject.areaM2 * maxFactor),
@@ -616,7 +657,8 @@ function geckoKeyword(subject: SubjectProfile, target: { supportsNeighborhood: b
 function buildGeckoApiPayload(
   subject: SubjectProfile,
   target: (typeof GECKOAPI_TARGETS)[number],
-  kind: ListingKind
+  kind: ListingKind,
+  scope: GeckoApiSearchScope
 ): GeckoApiExtractInput {
   const group = propertyGroup(subject.propertyType);
   const payload: GeckoApiExtractInput = {
@@ -626,22 +668,23 @@ function buildGeckoApiPayload(
     state: subject.state,
     businessType: kind as GeckoApiBusinessType,
     page: GECKOAPI_PAGE,
-    ...areaRangeForGecko(subject),
+    ...areaRangeForGecko(subject, scope),
   };
-  const keyword = geckoKeyword(subject, target);
+  const keyword = scope.useKeyword ? geckoKeyword(subject, target) : "";
   if (keyword) payload.keyword = keyword;
-  if (target.supportsNeighborhood && subject.neighborhood) payload.neighborhood = subject.neighborhood;
-  if (target.supportsPropertyTypes) payload.propertyTypes = propertyTypesForGecko(subject.propertyType);
-  if (group !== "land") {
+  if (scope.useNeighborhood && target.supportsNeighborhood && subject.neighborhood) payload.neighborhood = subject.neighborhood;
+  if (scope.usePropertyTypes && target.supportsPropertyTypes) payload.propertyTypes = propertyTypesForGecko(subject.propertyType);
+  if (scope.useFeatures && group !== "land") {
     payload.bedrooms = nearbyCountFilter(subject.bedrooms);
     payload.parkingSpots = nearbyCountFilter(subject.parkingSpaces);
   }
   return payload;
 }
 
-function geckoSearchLabel(payload: GeckoApiExtractInput) {
+function geckoSearchLabel(payload: GeckoApiExtractInput, scopeLabel = "") {
   return [
     "GeckoAPI",
+    scopeLabel,
     payload.target,
     payload.businessType ? geckoBusinessLabel(payload.businessType) : "",
     payload.city && payload.state ? `${payload.city}/${payload.state}` : "",
@@ -762,11 +805,11 @@ function extractGeckoApiItems(payload: unknown) {
   return arrays.find((items) => items.length) || [];
 }
 
-function geckoSearchUrls(result: GeckoApiExtractResult, kind: ListingKind) {
+function geckoSearchUrls(result: GeckoApiExtractResult, kind: ListingKind, scopeLabel = "") {
   return uniqueSearchedUrls([
     firstUrlPath(result.payload, [["data", "url"], ["data", "requestUrl"], ["url"], ["requestUrl"]], result.requestPayload.target)
       ? {
-          label: geckoSearchLabel(result.requestPayload),
+          label: geckoSearchLabel(result.requestPayload, scopeLabel),
           url: firstUrlPath(result.payload, [["data", "url"], ["data", "requestUrl"], ["url"], ["requestUrl"]], result.requestPayload.target),
           kind,
         }
@@ -934,43 +977,65 @@ async function runGeckoApiMarketResearch(
   const searchedUrls: MarketSearchUrl[] = [];
   let saleComparables: DeepMarketComparable[] = [];
   let rentalComparables: DeepMarketComparable[] = [];
+  let requestCount = 0;
 
-  for (const target of GECKOAPI_TARGETS) {
-    const pending: Array<{ kind: ListingKind; payload: GeckoApiExtractInput }> = [];
-    if (saleComparables.length < MIN_SALE_REFERENCES) pending.push({ kind: "sale", payload: buildGeckoApiPayload(subject, target, "sale") });
-    if (rentalComparables.length < MIN_RENT_REFERENCES) pending.push({ kind: "rent", payload: buildGeckoApiPayload(subject, target, "rent") });
-    if (!pending.length) break;
+  for (const scope of GECKOAPI_SEARCH_SCOPES) {
+    for (const target of GECKOAPI_TARGETS) {
+      const pending: Array<{ kind: ListingKind; payload: GeckoApiExtractInput }> = [];
+      if (saleComparables.length < MIN_SALE_REFERENCES) {
+        pending.push({ kind: "sale", payload: buildGeckoApiPayload(subject, target, "sale", scope) });
+      }
+      if (rentalComparables.length < MIN_RENT_REFERENCES) {
+        pending.push({ kind: "rent", payload: buildGeckoApiPayload(subject, target, "rent", scope) });
+      }
+      if (!pending.length) break;
 
-    const results = await Promise.all(pending.map((request) => executeGeckoApiExtract(request.payload)));
-    for (let index = 0; index < results.length; index += 1) {
-      const result = results[index];
-      const request = pending[index];
-      if (!request) continue;
-      searchQueries.push(geckoSearchLabel(request.payload));
-      searchedUrls.push(...geckoSearchUrls(result, request.kind));
-
-      if (!result.ok) {
-        warnings.push(`${target.label} ${geckoBusinessLabel(request.kind)}: ${result.error || `HTTP ${result.status}`}.`);
-        continue;
+      const remainingRequests = Math.max(0, MAX_GECKOAPI_REQUESTS_PER_ANALYSIS - requestCount);
+      const batch = pending.slice(0, remainingRequests);
+      if (!batch.length) {
+        warnings.push(`Limite de ${MAX_GECKOAPI_REQUESTS_PER_ANALYSIS} consultas GeckoAPI atingido antes de completar as referencias.`);
+        break;
       }
 
-      const items = extractGeckoApiItems(result.payload);
-      const comparables = items
-        .map((item) => normalizeGeckoApiComparable(subject, target, request.kind, item, result))
-        .filter((item): item is DeepMarketComparable => Boolean(item));
-      if (!comparables.length) {
-        warnings.push(`${target.label} ${geckoBusinessLabel(request.kind)} nao retornou comparaveis aderentes.`);
+      requestCount += batch.length;
+      const results = await Promise.all(batch.map((request) => executeGeckoApiExtract(request.payload)));
+      for (let index = 0; index < results.length; index += 1) {
+        const result = results[index];
+        const request = batch[index];
+        if (!request) continue;
+        searchQueries.push(geckoSearchLabel(request.payload, scope.label));
+        searchedUrls.push(...geckoSearchUrls(result, request.kind, scope.label));
+
+        if (!result.ok) {
+          warnings.push(`${target.label} ${geckoBusinessLabel(request.kind)} (${scope.label}): ${result.error || `HTTP ${result.status}`}.`);
+          continue;
+        }
+
+        const items = extractGeckoApiItems(result.payload);
+        const comparables = items
+          .map((item) => normalizeGeckoApiComparable(subject, target, request.kind, item, result))
+          .filter((item): item is DeepMarketComparable => Boolean(item));
+        if (!comparables.length) {
+          warnings.push(`${target.label} ${geckoBusinessLabel(request.kind)} (${scope.label}) nao retornou comparaveis aderentes.`);
+        }
+        if (request.kind === "sale") saleComparables = mergeComparableLists([...saleComparables, ...comparables]);
+        else rentalComparables = mergeComparableLists([...rentalComparables, ...comparables]);
+        searchedUrls.push(...comparables.map((item) => ({
+          label: `GeckoAPI ${scope.label} ${geckoBusinessLabel(item.listingType)}: ${item.sourceLabel}`,
+          url: item.sourceUrl,
+          kind: item.listingType,
+        })));
       }
-      if (request.kind === "sale") saleComparables = mergeComparableLists([...saleComparables, ...comparables]);
-      else rentalComparables = mergeComparableLists([...rentalComparables, ...comparables]);
-      searchedUrls.push(...comparables.map((item) => ({
-        label: `GeckoAPI ${geckoBusinessLabel(item.listingType)}: ${item.sourceLabel}`,
-        url: item.sourceUrl,
-        kind: item.listingType,
-      })));
+
+      if (saleComparables.length >= MIN_SALE_REFERENCES && rentalComparables.length >= MIN_RENT_REFERENCES) break;
     }
 
-    if (saleComparables.length >= MIN_SALE_REFERENCES && rentalComparables.length >= MIN_RENT_REFERENCES) break;
+    if (
+      requestCount >= MAX_GECKOAPI_REQUESTS_PER_ANALYSIS ||
+      (saleComparables.length >= MIN_SALE_REFERENCES && rentalComparables.length >= MIN_RENT_REFERENCES)
+    ) {
+      break;
+    }
   }
 
   if (!saleComparables.length && !rentalComparables.length) {

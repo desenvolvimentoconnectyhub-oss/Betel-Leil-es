@@ -726,7 +726,7 @@ async function refreshPublicationReferences(input: {
   if (comparables.length < MIN_PUBLICATION_REFERENCE_LINKS) {
     return {
       refreshed: false,
-      reason: `Pesquisa automatica encontrou ${comparables.length} referencia(s) validas.`,
+      reason: `Varredura ampliada encontrou ${comparables.length} referencia(s) valida(s): ${research.saleComparables.length} venda e ${research.rentalComparables.length} aluguel.`,
     };
   }
 
@@ -959,7 +959,8 @@ export async function buildOpportunityWhatsAppPost(
       source: analysisResult.source,
       reason: [
         `A analise ainda nao possui ${MIN_PUBLICATION_REFERENCE_LINKS} referencias validas de mercado.`,
-        refreshReason || "Reprocesse ou complete os comparaveis antes de enviar no WhatsApp.",
+        refreshReason || "A varredura automatica nao encontrou links publicos suficientes.",
+        "Nenhuma mensagem foi enviada e nenhuma campanha WhatsApp foi criada.",
       ].filter(Boolean).join(" "),
     };
   }

@@ -116,7 +116,8 @@ function submitLabelForMode(mode: SendMode) {
   return "Aprovar e enviar grupo";
 }
 
-function sendProcessingTitle(mode: SendMode) {
+function sendProcessingTitle(mode: SendMode, validatingReferences = false) {
+  if (validatingReferences) return "Validando referencias antes do envio";
   if (mode === "test") return "Enviando teste WhatsApp";
   if (mode === "channel") return "Publicando no canal";
   if (mode === "broadcast") return "Enviando para a lista";
@@ -279,22 +280,29 @@ export function OpportunityWhatsAppSendPanel({
   };
   const linkFormatNeedsReferences = linkFormat === "source_buttons" || linkFormat === "source_links";
   const referencesBlocked = linkFormatNeedsReferences && !activeReferenceStatus.ready;
-  const blockedReason =
+  const hardBlockedReason =
     !agents.length
       ? "Nenhum agente WhatsApp conectado para enviar."
       : !modeReady
         ? "Selecione um destino valido para enviar."
         : !canSubmit
           ? submitBlockReason || "Complete a analise antes de aprovar ou enviar pelo WhatsApp."
-          : referencesBlocked
-            ? activeReferenceStatus.reason
-            : "";
+          : "";
+  const blockedReason = hardBlockedReason;
   const submitDisabled = Boolean(blockedReason);
   const destinationName = currentMode === "test" ? testNumber.trim() || "numero de teste" : selectedDestination?.name || "destino selecionado";
   const referenceSummary = linkFormatNeedsReferences
     ? `${activeReferenceStatus.validCount}/${activeReferenceStatus.requiredCount} referencias validas`
     : linkFormatCopy[linkFormat].title;
-  const sendButtonHint = blockedReason || `Destino: ${destinationName} | Fontes: ${referenceSummary}`;
+  const sendButtonHint =
+    blockedReason ||
+    (referencesBlocked
+      ? `Vai buscar referencias antes de enviar | Fontes atuais: ${referenceSummary}`
+      : `Destino: ${destinationName} | Fontes: ${referenceSummary}`);
+  const processingDetail = linkFormatNeedsReferences
+    ? "O sistema esta validando referencias publicas antes de enviar. Se nao encontrar links suficientes, nada sera disparado e a tela volta com o motivo."
+    : "O criativo esta sendo montado e enviado pela ConnectyHub. Aguarde a confirmacao antes de mexer nesta revisao.";
+  const processingStatus = linkFormatNeedsReferences ? "validando fontes" : "processando";
 
   useEffect(() => {
     if (!sendProcessingOpen) {
@@ -355,9 +363,9 @@ export function OpportunityWhatsAppSendPanel({
               <LoaderCircle size={22} className="animate-spin" />
             </div>
             <div className="min-w-0">
-              <p className="text-sm font-semibold text-[var(--admin-foreground)]">{sendProcessingTitle(currentMode)}</p>
+              <p className="text-sm font-semibold text-[var(--admin-foreground)]">{sendProcessingTitle(currentMode, linkFormatNeedsReferences)}</p>
               <p className="mt-1 text-xs leading-5 text-[var(--admin-muted)]">
-                O criativo esta sendo montado e enviado pela ConnectyHub. Aguarde a confirmacao antes de mexer nesta revisao.
+                {processingDetail}
               </p>
             </div>
           </div>
@@ -375,7 +383,7 @@ export function OpportunityWhatsAppSendPanel({
               <span className="font-medium text-[var(--admin-muted)]">Status</span>
               <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--admin-cyan)]">
                 <LoaderCircle size={13} className="animate-spin" />
-                processando
+                {processingStatus}
               </span>
             </div>
           </div>
@@ -521,7 +529,7 @@ export function OpportunityWhatsAppSendPanel({
             <div className="mt-2 flex items-start gap-2 rounded-lg border border-[rgba(210,54,43,0.28)] bg-[rgba(210,54,43,0.06)] px-3 py-2 text-xs leading-5 text-[var(--admin-red)]">
               <AlertCircle size={14} className="mt-0.5 shrink-0" />
               <span>
-                {activeReferenceStatus.reason} Reprocesse a analise ou adicione comparaveis antes de enviar com referencias.
+                {activeReferenceStatus.reason} Ao clicar em enviar, o sistema tentara uma varredura ampliada e so dispara se encontrar links suficientes.
               </span>
             </div>
           ) : null}

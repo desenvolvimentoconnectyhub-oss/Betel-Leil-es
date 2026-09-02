@@ -78,6 +78,26 @@ function errorRedirect(path: string, message: string): never {
   redirect(`${path}?status=error&message=${encodeURIComponent(message)}`);
 }
 
+function isReferencePublicationBlock(message: string) {
+  const normalized = message
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  return /referenc|comparavel|comparaveis|mercado/.test(normalized) && /whatsapp|criativo|publicacao|envio|enviar/.test(normalized);
+}
+
+function publicationErrorRedirect(path: string, message: string, fallback: string): never {
+  const detail = message || fallback;
+  if (isReferencePublicationBlock(detail)) {
+    const params = new URLSearchParams({
+      market: "whatsapp-referencias-bloqueado",
+      message: detail,
+    });
+    redirect(`${path}?${params.toString()}`);
+  }
+  errorRedirect(path, detail);
+}
+
 const workflowApprovalStages = ["validation", "creative", "communication"] as const;
 
 function workflowApprovalParam(stageKey: string) {
@@ -501,9 +521,10 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
     });
 
     if (!publicationResult.ok || !publicationResult.data) {
-      errorRedirect(
+      publicationErrorRedirect(
         detailPath,
-        publicationResult.error || "Nao foi possivel enviar o teste WhatsApp."
+        publicationResult.error || "",
+        "Nao foi possivel enviar o teste WhatsApp."
       );
     }
 
@@ -537,9 +558,10 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
     });
 
     if (!publicationResult.ok || !publicationResult.data) {
-      errorRedirect(
+      publicationErrorRedirect(
         detailPath,
-        publicationResult.error || "Analise aprovada, mas nao foi possivel agendar a publicacao WhatsApp."
+        publicationResult.error || "",
+        "Analise aprovada, mas nao foi possivel agendar a publicacao WhatsApp."
       );
     }
 
