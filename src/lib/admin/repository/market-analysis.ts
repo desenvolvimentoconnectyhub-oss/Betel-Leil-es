@@ -172,7 +172,11 @@ function marketResearchSourceLinks(rawPayload: Record<string, unknown>) {
     })),
     searchedUrls.map((item) => ({
       label: [
-        /^rent|alug/i.test(asString(item.kind)) ? "Busca aluguel" : "Busca venda",
+        /^location|local/i.test(asString(item.kind))
+          ? "Busca localizacao"
+          : /^rent|alug/i.test(asString(item.kind))
+            ? "Busca aluguel"
+            : "Busca venda",
         asString(item.label || item.sourceLabel || item.source_label),
       ].filter(Boolean).join(": "),
       url: firstUrl(item.url, item.sourceUrl, item.source_url),

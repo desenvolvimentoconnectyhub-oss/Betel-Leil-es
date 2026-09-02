@@ -22,6 +22,16 @@ import {
   type GoogleMapsGeocodeResult,
   type GoogleMapsNearbySignal,
 } from "@/lib/google-maps/client";
+import {
+  getBrightDataConfig,
+  searchBrightDataSerp,
+  unlockUrlWithBrightData,
+} from "@/lib/brightdata/client";
+import {
+  fetchUrlWithApifyWebsiteContent,
+  getApifyConfig,
+  searchWebWithApify,
+} from "@/lib/apify/client";
 import type { AuctionLinkExtraction } from "./auction-link-extractor";
 import { normalizeLocationName, normalizeStateUf } from "./location-normalization";
 
@@ -93,13 +103,21 @@ type SearchResult = {
   url: string;
   snippet: string;
   kind: ListingKind;
-  provider: "bing" | "duckduckgo" | "google-grounding";
+  provider: "bing" | "duckduckgo" | "google-grounding" | "brightdata-serp" | "apify-web-search";
 };
 
 type MarketSearchUrl = {
   label: string;
   url: string;
   kind: MarketSourceKind;
+};
+
+type ComparablePageFetch = {
+  text: string;
+  status: number;
+  finalUrl: string;
+  provider: "direct" | "brightdata-unlocker" | "apify-website-content";
+  error?: string;
 };
 
 type SubjectProfile = {
@@ -127,6 +145,9 @@ const MIN_SALE_REFERENCES = 3;
 const MIN_RENT_REFERENCES = 1;
 const MAX_SALE_PAGES = 14;
 const MAX_RENT_PAGES = 8;
+const MAX_BRIGHTDATA_SERP_QUERIES = 6;
+const MAX_APIFY_WEB_SEARCH_QUERIES = 4;
+const MAX_EXTERNAL_PAGE_FALLBACKS = 10;
 const GEMINI_GROUNDED_TIMEOUT_MS = 45_000;
 const MAX_GROUNDED_COMPARABLES = 10;
 const MAX_GECKOAPI_COMPARABLES = 18;
@@ -505,6 +526,48 @@ function extractDuckDuckGoResults(html: string, kind: ListingKind) {
   return results;
 }
 
+function unwrapGoogleUrl(url: string) {
+  const decoded = htmlDecode(url);
+  try {
+    const parsed = new URL(decoded, "https://www.google.com");
+    const target = parsed.searchParams.get("q") || parsed.searchParams.get("url");
+    if (target && /^https?:\/\//i.test(target)) return htmlDecode(target);
+    if (/google\./i.test(parsed.hostname)) return "";
+    return parsed.href;
+  } catch {
+    return decoded;
+  }
+}
+
+function extractGoogleResults(html: string, kind: ListingKind, provider: "brightdata-serp") {
+  const results: SearchResult[] = [];
+  const seen = new Set<string>();
+  const blocks =
+    html.match(/<div\b[^>]*class=["'][^"']*\bg\b[^"']*["'][\s\S]*?(?=<div\b[^>]*class=["'][^"']*\bg\b|<\/body>)/gi) ||
+    [];
+  const candidates = blocks.length
+    ? blocks
+    : html.match(/<a\b[^>]*href=["'][^"']+["'][\s\S]*?<\/a>/gi) || [];
+
+  for (const block of candidates) {
+    const links = [...block.matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)];
+    for (const link of links) {
+      const url = unwrapGoogleUrl(link[1] || "");
+      if (!isLikelyMarketSource(url)) continue;
+      const canonical = canonicalMarketUrl(url);
+      if (!canonical || seen.has(canonical)) continue;
+      seen.add(canonical);
+      const title = stripTags(block.match(/<h3\b[^>]*>([\s\S]*?)<\/h3>/i)?.[1] || link[2] || sourceLabel(url));
+      const snippet = stripTags(block).slice(0, 500);
+      results.push({ title, url, snippet, kind, provider });
+      if (results.length >= MAX_SEARCH_RESULTS) break;
+    }
+    if (results.length >= MAX_SEARCH_RESULTS) break;
+  }
+
+  return results;
+}
+
 async function fetchText(url: string, timeoutMs: number) {
   try {
     const response = await fetch(url, {
@@ -515,11 +578,67 @@ async function fetchText(url: string, timeoutMs: number) {
       },
       signal: AbortSignal.timeout(timeoutMs),
     });
-    if (!response.ok) return { text: "", status: response.status, finalUrl: response.url };
+    if (!response.ok) return { text: "", status: response.status, finalUrl: response.url || url };
     return { text: await response.text(), status: response.status, finalUrl: response.url || url };
-  } catch {
-    return { text: "", status: 0, finalUrl: url };
+  } catch (error: unknown) {
+    return {
+      text: "",
+      status: 0,
+      finalUrl: url,
+      error: error instanceof Error ? error.message : "Falha ao buscar pagina.",
+    };
   }
+}
+
+function pageLooksBlocked(fetched: { text: string; status: number }) {
+  const sample = normalizeText(fetched.text.slice(0, 4000));
+  if (!fetched.text) return true;
+  if ([401, 403, 407, 408, 409, 429].includes(fetched.status) || fetched.status >= 500) return true;
+  return /(attention required|cloudflare|just a moment|access denied|captcha|blocked|bot detection|verifique que voce nao e robo|confirme que voce nao e um robo)/i.test(sample);
+}
+
+async function fetchComparablePage(
+  url: string,
+  options: { allowExternalFallback: boolean }
+): Promise<ComparablePageFetch> {
+  const direct = await fetchText(url, PAGE_TIMEOUT_MS);
+  const directResult: ComparablePageFetch = {
+    text: direct.text,
+    status: direct.status,
+    finalUrl: direct.finalUrl || url,
+    provider: "direct",
+    error: direct.error,
+  };
+
+  if (!options.allowExternalFallback || !pageLooksBlocked(directResult)) return directResult;
+
+  const brightDataConfig = await getBrightDataConfig();
+  if (brightDataConfig.webUnlockerConfigured) {
+    const unlocked = await unlockUrlWithBrightData(url);
+    const unlockedResult: ComparablePageFetch = {
+      text: unlocked.payloadText,
+      status: unlocked.status,
+      finalUrl: unlocked.url || url,
+      provider: "brightdata-unlocker",
+      error: unlocked.error,
+    };
+    if (unlocked.ok && !pageLooksBlocked(unlockedResult)) return unlockedResult;
+  }
+
+  const apifyConfig = await getApifyConfig();
+  if (apifyConfig.configured && apifyConfig.websiteContentActor) {
+    const crawled = await fetchUrlWithApifyWebsiteContent(url);
+    const crawledResult: ComparablePageFetch = {
+      text: crawled.text,
+      status: crawled.status,
+      finalUrl: crawled.finalUrl || url,
+      provider: "apify-website-content",
+      error: crawled.error,
+    };
+    if (crawled.ok && !pageLooksBlocked(crawledResult)) return crawledResult;
+  }
+
+  return directResult;
 }
 
 function inferPropertyType(value: string) {
@@ -776,6 +895,16 @@ function buildSearchQueries(subject: SubjectProfile) {
     ...saleQueries.map((query) => ({ query, kind: "sale" as const })),
     ...rentQueries.map((query) => ({ query, kind: "rent" as const })),
   ].filter((item) => item.query.length > 8);
+}
+
+function selectSearchesByKind(
+  searches: Array<{ query: string; kind: ListingKind }>,
+  limits: { sale: number; rent: number }
+) {
+  return [
+    ...searches.filter((item) => item.kind === "sale").slice(0, limits.sale),
+    ...searches.filter((item) => item.kind === "rent").slice(0, limits.rent),
+  ];
 }
 
 function propertyTypesForGecko(subjectType: string) {
@@ -1327,6 +1456,156 @@ async function searchMarketResults(subject: SubjectProfile) {
       ...pages.map((item) => ({ label: `${item.provider}: ${item.query}`, url: item.url, kind: item.kind })),
     ]),
     results: uniqueResults,
+    cautionNotes: [] as string[],
+  };
+}
+
+async function searchBrightDataMarketResults(subject: SubjectProfile) {
+  const config = await getBrightDataConfig();
+  if (!config.configured) {
+    return {
+      searchQueries: [] as string[],
+      searchedUrls: [] as MarketSearchUrl[],
+      results: [] as SearchResult[],
+      cautionNotes: ["Bright Data SERP nao configurada."],
+    };
+  }
+
+  const searches = selectSearchesByKind(buildSearchQueries(subject), {
+    sale: Math.ceil(MAX_BRIGHTDATA_SERP_QUERIES * 0.65),
+    rent: Math.floor(MAX_BRIGHTDATA_SERP_QUERIES * 0.35),
+  });
+  const pages = await Promise.all(
+    searches.map(async (item) => {
+      const response = await searchBrightDataSerp(item.query);
+      const results = response.ok ? extractGoogleResults(response.payloadText, item.kind, "brightdata-serp") : [];
+      const googleUrl = new URL("https://www.google.com/search");
+      googleUrl.searchParams.set("q", item.query);
+      googleUrl.searchParams.set("hl", "pt-BR");
+      googleUrl.searchParams.set("gl", "br");
+      return {
+        ...item,
+        url: googleUrl.toString(),
+        status: response.status,
+        error: response.error,
+        results,
+      };
+    })
+  );
+  const results = uniqueSearchResults(pages.flatMap((page) => page.results));
+  const resultUrls = results
+    .filter((item) => isAcceptableGroundedMarketSource(item.url))
+    .map((item) => ({
+      label: `Resultado Bright Data SERP: ${item.title || sourceLabel(item.url)}`,
+      url: item.url,
+      kind: item.kind,
+    }));
+
+  return {
+    searchQueries: searches.map((item) => item.query),
+    searchedUrls: uniqueSearchedUrls([
+      ...resultUrls,
+      ...pages.map((item) => ({ label: `Bright Data SERP: ${item.query}`, url: item.url, kind: item.kind })),
+    ]),
+    results,
+    cautionNotes: uniqueStrings(
+      pages
+        .filter((page) => page.error)
+        .map((page) => `Bright Data SERP ${page.kind}: ${page.error || `HTTP ${page.status}`}.`),
+      6
+    ),
+  };
+}
+
+async function searchApifyMarketResults(subject: SubjectProfile) {
+  const config = await getApifyConfig();
+  if (!config.configured) {
+    return {
+      searchQueries: [] as string[],
+      searchedUrls: [] as MarketSearchUrl[],
+      results: [] as SearchResult[],
+      cautionNotes: ["Apify nao configurada."],
+    };
+  }
+
+  const searches = selectSearchesByKind(buildSearchQueries(subject), {
+    sale: Math.ceil(MAX_APIFY_WEB_SEARCH_QUERIES * 0.65),
+    rent: Math.floor(MAX_APIFY_WEB_SEARCH_QUERIES * 0.35),
+  });
+  const pages = await Promise.all(
+    searches.map(async (item) => {
+      const response = await searchWebWithApify(item.query);
+      const results: SearchResult[] = response.results
+        .filter((result) => isLikelyMarketSource(result.url))
+        .map((result) => ({
+          title: result.title || sourceLabel(result.url),
+          url: result.url,
+          snippet: result.snippet,
+          kind: item.kind,
+          provider: "apify-web-search" as const,
+        }));
+      return {
+        ...item,
+        actorId: response.actorId,
+        status: response.status,
+        error: response.error,
+        results,
+      };
+    })
+  );
+  const results = uniqueSearchResults(pages.flatMap((page) => page.results));
+  const resultUrls = results
+    .filter((item) => isAcceptableGroundedMarketSource(item.url))
+    .map((item) => ({
+      label: `Resultado Apify: ${item.title || sourceLabel(item.url)}`,
+      url: item.url,
+      kind: item.kind,
+    }));
+
+  return {
+    searchQueries: searches.map((item) => item.query),
+    searchedUrls: uniqueSearchedUrls([
+      ...resultUrls,
+      ...pages.map((item) => ({ label: `Apify ${item.actorId}: ${item.query}`, url: `https://console.apify.com/actors/${item.actorId.replace(/\//g, "~")}`, kind: item.kind })),
+    ]),
+    results,
+    cautionNotes: uniqueStrings(
+      pages
+        .filter((page) => page.error)
+        .map((page) => `Apify ${page.kind}: ${page.error || `HTTP ${page.status}`}.`),
+      6
+    ),
+  };
+}
+
+async function runFallbackMarketSearches(subject: SubjectProfile) {
+  const [directSearch, brightDataSearch, apifySearch] = await Promise.all([
+    searchMarketResults(subject),
+    searchBrightDataMarketResults(subject),
+    searchApifyMarketResults(subject),
+  ]);
+
+  return {
+    searchQueries: uniqueStrings([
+      ...directSearch.searchQueries,
+      ...brightDataSearch.searchQueries,
+      ...apifySearch.searchQueries,
+    ], 24),
+    searchedUrls: uniqueSearchedUrls([
+      ...directSearch.searchedUrls,
+      ...brightDataSearch.searchedUrls,
+      ...apifySearch.searchedUrls,
+    ]),
+    results: uniqueSearchResults([
+      ...directSearch.results,
+      ...brightDataSearch.results,
+      ...apifySearch.results,
+    ]),
+    cautionNotes: uniqueStrings([
+      ...directSearch.cautionNotes,
+      ...brightDataSearch.cautionNotes,
+      ...apifySearch.cautionNotes,
+    ], 10),
   };
 }
 
@@ -1511,8 +1790,14 @@ function qualityFromScore(score: number): MarketComparableQuality {
   return "discarded";
 }
 
-async function hydrateSearchResult(subject: SubjectProfile, result: SearchResult): Promise<DeepMarketComparable | null> {
-  const fetched = await fetchText(result.url, PAGE_TIMEOUT_MS);
+async function hydrateSearchResult(
+  subject: SubjectProfile,
+  result: SearchResult,
+  options: { allowExternalFallback?: boolean } = {}
+): Promise<DeepMarketComparable | null> {
+  const fetched = await fetchComparablePage(result.url, {
+    allowExternalFallback: Boolean(options.allowExternalFallback),
+  });
   const sourceUrl = fetched.finalUrl || result.url;
   if (!isAcceptableGroundedMarketSource(sourceUrl)) return null;
   const html = fetched.text;
@@ -1553,6 +1838,10 @@ async function hydrateSearchResult(subject: SubjectProfile, result: SearchResult
     areaM2 ? `Area capturada: ${areaM2} m2.` : "Area nao confirmada na pagina do comparavel.",
     fetched.status ? `HTTP ${fetched.status}.` : "Pagina do comparavel nao confirmou status HTTP.",
     result.provider === "google-grounding" ? "Referencia derivada de link real retornado pelo Google Search." : "",
+    result.provider === "brightdata-serp" ? "Referencia encontrada via Bright Data SERP." : "",
+    result.provider === "apify-web-search" ? "Referencia encontrada via Apify Web Search." : "",
+    fetched.provider === "brightdata-unlocker" ? "Pagina lida com Bright Data Web Unlocker." : "",
+    fetched.provider === "apify-website-content" ? "Pagina lida com Apify Website Content Crawler." : "",
   ].filter(Boolean).join(" ");
 
   return {
@@ -1561,6 +1850,7 @@ async function hydrateSearchResult(subject: SubjectProfile, result: SearchResult
     quality,
     notes,
     collectedAt: new Date().toISOString(),
+    evidenceSource: fetched.provider === "direct" ? result.provider : fetched.provider,
   };
 }
 
@@ -2155,11 +2445,12 @@ export async function runDeepMarketResearch(input: {
     baseRentalComparables.length < MIN_RENT_REFERENCES;
 
   const search = needsFallbackSearch
-    ? await searchMarketResults(subject)
+    ? await runFallbackMarketSearches(subject)
     : {
         searchQueries: [] as string[],
         searchedUrls: [] as Array<{ label: string; url: string; kind: MarketSourceKind }>,
         results: [] as SearchResult[],
+        cautionNotes: [] as string[],
       };
   const saleResults = search.results.filter((item) => item.kind === "sale").slice(0, MAX_SALE_PAGES);
   const rentResults = search.results.filter((item) => item.kind === "rent").slice(0, MAX_RENT_PAGES);
@@ -2168,7 +2459,11 @@ export async function runDeepMarketResearch(input: {
     : [];
   const fallbackResults = uniqueSearchResults([...groundedResults, ...saleResults, ...rentResults]);
   const hydrated = needsFallbackSearch
-    ? await Promise.all(fallbackResults.map((result) => hydrateSearchResult(subject, result)))
+    ? await Promise.all(
+        fallbackResults.map((result, index) =>
+          hydrateSearchResult(subject, result, { allowExternalFallback: index < MAX_EXTERNAL_PAGE_FALLBACKS })
+        )
+      )
     : [];
   const comparables = hydrated.filter((item): item is DeepMarketComparable => Boolean(item));
   const saleComparables = mergeComparableLists([
@@ -2200,6 +2495,7 @@ export async function runDeepMarketResearch(input: {
   cautionNotes.push(...(geckoResearch?.cautionNotes || []));
   if (groundedAttempt.error) cautionNotes.push(`Pesquisa Gemini/Google: ${groundedAttempt.error}`);
   cautionNotes.push(...(groundedResearch?.cautionNotes || []));
+  cautionNotes.push(...search.cautionNotes);
   if (
     needsFallbackSearch &&
     !search.results.length &&

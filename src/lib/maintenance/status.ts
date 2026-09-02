@@ -12,6 +12,15 @@ import {
   GOOGLE_MAPS_API_DEFAULT_BASE_URL,
   GOOGLE_PLACES_API_DEFAULT_BASE_URL,
 } from "@/lib/google-maps/client";
+import {
+  BRIGHTDATA_API_DEFAULT_BASE_URL,
+  BRIGHTDATA_SERP_ZONE_DEFAULT,
+} from "@/lib/brightdata/client";
+import {
+  APIFY_API_DEFAULT_BASE_URL,
+  APIFY_WEB_SEARCH_ACTOR_DEFAULT,
+  APIFY_WEBSITE_CONTENT_ACTOR_DEFAULT,
+} from "@/lib/apify/client";
 
 export type MaintenanceStatusValue = "ok" | "warning" | "missing" | "error";
 
@@ -63,6 +72,11 @@ const DEFAULT_CONFIG_VALUES: Record<string, string> = {
   betel_google_maps_api_base_url: GOOGLE_MAPS_API_DEFAULT_BASE_URL,
   betel_google_places_api_base_url: GOOGLE_PLACES_API_DEFAULT_BASE_URL,
   betel_google_maps_nearby_enabled: "true",
+  betel_brightdata_api_base_url: BRIGHTDATA_API_DEFAULT_BASE_URL,
+  betel_brightdata_serp_zone: BRIGHTDATA_SERP_ZONE_DEFAULT,
+  betel_apify_api_base_url: APIFY_API_DEFAULT_BASE_URL,
+  betel_apify_web_search_actor: APIFY_WEB_SEARCH_ACTOR_DEFAULT,
+  betel_apify_website_content_actor: APIFY_WEBSITE_CONTENT_ACTOR_DEFAULT,
   meta_graph_api_version: "v26.0",
   meta_default_language: "pt_BR",
   meta_rate_limit_per_minute: "60",
@@ -398,7 +412,7 @@ function staticCheck(
   title: string,
   message: string,
   vars: string[],
-  extra?: { group?: string; usedBy?: string; site?: string },
+  extra?: { group?: string; usedBy?: string; site?: string; optionalVars?: string[] },
   appConfig: MaintenanceAppConfig = new Map(),
 ) {
   const items = vars.map((name) =>
@@ -409,14 +423,17 @@ function staticCheck(
       appConfig
     )
   );
-  const missing = items.filter((item) => !item.configured);
+  const optionalVars = new Set((extra?.optionalVars || []).map((name) => name.toLowerCase()));
+  const missing = items.filter((item) => !optionalVars.has(item.name.toLowerCase()) && !item.configured);
   return {
     id,
     title,
     status: missing.length ? "missing" : "ok",
     message: missing.length ? "Variaveis pendentes." : message,
     items,
-    ...extra,
+    group: extra?.group,
+    usedBy: extra?.usedBy,
+    site: extra?.site,
   } satisfies MaintenanceIntegration;
 }
 
@@ -536,6 +553,25 @@ export async function getMaintenanceStatus(): Promise<MaintenancePayload> {
       "GOOGLE_MAPS_API_KEY",
       "BETEL_GOOGLE_MAPS_NEARBY_ENABLED",
     ], { group: "Dados de Mercado e Avaliacao", usedBy: "Helena (Curadora), Rafael (Estrategia), Renata (Scraper)", site: "developers.google.com/maps" }, appConfig),
+
+    staticCheck("brightdata", "Bright Data SERP", "Busca Google SERP e fallback de desbloqueio para referencias publicas de mercado.", [
+      "BETEL_BRIGHTDATA_API_BASE_URL",
+      "BETEL_BRIGHTDATA_API_KEY",
+      "BETEL_BRIGHTDATA_SERP_ZONE",
+      "BETEL_BRIGHTDATA_WEB_UNLOCKER_ZONE",
+    ], {
+      group: "Dados de Mercado e Avaliacao",
+      usedBy: "Helena (Curadora), Rafael (Estrategia), Renata (Scraper)",
+      site: "brightdata.com",
+      optionalVars: ["BETEL_BRIGHTDATA_WEB_UNLOCKER_ZONE"],
+    }, appConfig),
+
+    staticCheck("apify", "Apify Web Actors", "Busca web e captura de conteudo de paginas para reforcar referencias quando a busca direta falhar.", [
+      "BETEL_APIFY_API_BASE_URL",
+      "BETEL_APIFY_API_TOKEN",
+      "BETEL_APIFY_WEB_SEARCH_ACTOR",
+      "BETEL_APIFY_WEBSITE_CONTENT_ACTOR",
+    ], { group: "Dados de Mercado e Avaliacao", usedBy: "Helena (Curadora), Rafael (Estrategia), Renata (Scraper)", site: "apify.com" }, appConfig),
 
     staticCheck("datazap", "DataZAP+ (OLX Group)", "Avaliacao de imoveis e preco/m².", [
       "BETEL_DATAZAP_API_BASE_URL",

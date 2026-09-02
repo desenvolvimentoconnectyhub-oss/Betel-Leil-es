@@ -19,6 +19,10 @@ const SECRET_CONFIG_KEYS = new Set([
   "betel_geckoapi_api_key",
   "google_maps_api_key",
   "betel_google_maps_api_key",
+  "betel_brightdata_api_key",
+  "brightdata_api_key",
+  "betel_apify_api_token",
+  "apify_api_token",
   "betel_datazap_api_key",
   "betel_fipezap_api_key",
   "betel_datajud_api_key",
@@ -35,6 +39,10 @@ const ENV_ALIASES: Record<string, string[]> = {
   gemini_api_key: ["GEMINI_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"],
   google_maps_api_key: ["GOOGLE_MAPS_API_KEY", "BETEL_GOOGLE_MAPS_API_KEY", "GOOGLE_MAPS_PLATFORM_API_KEY"],
   betel_google_maps_api_key: ["BETEL_GOOGLE_MAPS_API_KEY", "GOOGLE_MAPS_API_KEY", "GOOGLE_MAPS_PLATFORM_API_KEY"],
+  betel_brightdata_api_key: ["BETEL_BRIGHTDATA_API_KEY", "BRIGHTDATA_API_KEY"],
+  brightdata_api_key: ["BRIGHTDATA_API_KEY", "BETEL_BRIGHTDATA_API_KEY"],
+  betel_apify_api_token: ["BETEL_APIFY_API_TOKEN", "APIFY_API_TOKEN"],
+  apify_api_token: ["APIFY_API_TOKEN", "BETEL_APIFY_API_TOKEN"],
 };
 
 function cleanString(value: unknown) {

@@ -8,6 +8,17 @@ import {
   GOOGLE_PLACES_API_DEFAULT_BASE_URL,
   testGoogleMapsConnection,
 } from "@/lib/google-maps/client";
+import {
+  BRIGHTDATA_API_DEFAULT_BASE_URL,
+  BRIGHTDATA_SERP_ZONE_DEFAULT,
+  testBrightDataConnection,
+} from "@/lib/brightdata/client";
+import {
+  APIFY_API_DEFAULT_BASE_URL,
+  APIFY_WEB_SEARCH_ACTOR_DEFAULT,
+  APIFY_WEBSITE_CONTENT_ACTOR_DEFAULT,
+  testApifyConnection,
+} from "@/lib/apify/client";
 import { testMetaWhatsAppConnection } from "@/lib/meta-whatsapp/official";
 import { TRAFFIC_CONFIG_DEFAULTS } from "@/lib/traffic-ai/dashboard";
 import { testElevenLabsConnection } from "@/lib/voice/elevenlabs";
@@ -39,6 +50,11 @@ const DEFAULT_CONFIG_VALUES: Record<string, string> = {
   betel_google_maps_api_base_url: GOOGLE_MAPS_API_DEFAULT_BASE_URL,
   betel_google_places_api_base_url: GOOGLE_PLACES_API_DEFAULT_BASE_URL,
   betel_google_maps_nearby_enabled: "true",
+  betel_brightdata_api_base_url: BRIGHTDATA_API_DEFAULT_BASE_URL,
+  betel_brightdata_serp_zone: BRIGHTDATA_SERP_ZONE_DEFAULT,
+  betel_apify_api_base_url: APIFY_API_DEFAULT_BASE_URL,
+  betel_apify_web_search_actor: APIFY_WEB_SEARCH_ACTOR_DEFAULT,
+  betel_apify_website_content_actor: APIFY_WEBSITE_CONTENT_ACTOR_DEFAULT,
   meta_graph_api_version: "v26.0",
   meta_default_language: "pt_BR",
   meta_rate_limit_per_minute: "60",
@@ -629,6 +645,8 @@ const testMap: Record<string, () => Promise<TestResult>> = {
   elevenlabs: testElevenLabs,
   geckoapi: testGeckoApiConnection,
   google_maps: testGoogleMapsConnection,
+  brightdata: testBrightDataConnection,
+  apify: testApifyConnection,
   ibge: testIbge,
   brasilapi: testBrasilApi,
   viacep: testViaCep,
