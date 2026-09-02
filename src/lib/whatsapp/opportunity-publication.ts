@@ -37,6 +37,8 @@ export type OpportunityWhatsAppAgentOption = {
   label: string;
   instanceId: string;
   phone: string;
+  status: string;
+  connected: boolean;
 };
 
 export type OpportunityWhatsAppDestinationOption = {
@@ -1029,6 +1031,8 @@ function normalizeAgentOption(row: Awaited<ReturnType<typeof listSystemWhatsAppS
     label: cleanString(label, row.agentKey || "Agente WhatsApp"),
     instanceId: row.id,
     phone: row.phone,
+    status: row.status,
+    connected: row.connected,
   };
 }
 

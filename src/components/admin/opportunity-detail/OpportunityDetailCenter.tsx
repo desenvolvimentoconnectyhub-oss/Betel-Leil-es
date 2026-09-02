@@ -1843,11 +1843,15 @@ function OpportunityActionsPanel({
   analysis,
   qualificationDossier,
   whatsappPublicationOptions,
+  actionStatus,
+  actionMessage,
 }: {
   opportunity: AuctionOpportunity;
   analysis: PropertyMarketAnalysis | null;
   qualificationDossier?: PropertyQualificationDossier | null;
   whatsappPublicationOptions?: OpportunityWhatsAppPublicationOptions;
+  actionStatus?: string;
+  actionMessage?: string;
 }) {
   const evaluation = buildDetailOpportunityEvaluation(opportunity, analysis, qualificationDossier);
   const canSubmit = Boolean(analysis?.marketValueBase);
@@ -1873,6 +1877,8 @@ function OpportunityActionsPanel({
           preview={whatsappPreview}
           referenceStatus={whatsappReferenceStatus}
           submitBlockReason={submitBlockReason}
+          actionStatus={actionStatus}
+          actionMessage={actionMessage}
         />
       ) : null}
       <div className="flex flex-wrap justify-end gap-2">
@@ -4337,6 +4343,8 @@ export function OpportunityDetailCenter({
             analysis={analysis}
             qualificationDossier={qualificationDossier}
             whatsappPublicationOptions={whatsappPublicationOptions}
+            actionStatus={actionStatus}
+            actionMessage={actionMessage}
           />
         </div>
       </div>

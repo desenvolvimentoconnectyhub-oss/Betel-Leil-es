@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
 import {
@@ -148,6 +148,47 @@ function mergePhoneLists(currentValue: string, importedNumbers: string[]) {
 
 type AutoSyncState = "idle" | "syncing" | "done" | "error";
 
+type SenderConnectionModalState = {
+  title: string;
+  detail: string;
+  status?: string;
+};
+
+type SenderStatusResponse = {
+  success?: boolean;
+  data?: {
+    connected?: boolean;
+    state?: string;
+    lastDisconnectReason?: string;
+  };
+  error?: string;
+};
+
+function normalizeForMatch(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function isWhatsAppConnectionProblem(message?: string) {
+  const text = normalizeForMatch(message || "");
+  if (!text) return false;
+  return (
+    /whatsapp|connectyhub|instancia|instance|sessao|session|remetente/.test(text) &&
+    /desconect|disconnect|not reconnectable|not_connected|missing_connectyhub_instance|sem instancia|nao esta conectada|nao conectado|nenhum agente|offline/.test(text)
+  );
+}
+
+function senderConnectionModalFromMessage(message?: string): SenderConnectionModalState {
+  return {
+    title: "WhatsApp desconectado",
+    detail:
+      message ||
+      "Nao foi possivel prosseguir porque a instancia WhatsApp selecionada nao esta conectada. Reconecte o numero ou escolha outro remetente conectado.",
+  };
+}
+
 export function OpportunityWhatsAppSendPanel({
   canSubmit,
   opportunityCode,
@@ -155,6 +196,8 @@ export function OpportunityWhatsAppSendPanel({
   preview,
   referenceStatus,
   submitBlockReason,
+  actionStatus,
+  actionMessage,
 }: {
   canSubmit: boolean;
   opportunityCode: string;
@@ -162,6 +205,8 @@ export function OpportunityWhatsAppSendPanel({
   preview: WhatsAppPreview;
   referenceStatus?: OpportunityWhatsAppReferenceStatus;
   submitBlockReason?: string;
+  actionStatus?: string;
+  actionMessage?: string;
 }) {
   const router = useRouter();
   const { pending } = useFormStatus();
@@ -194,8 +239,11 @@ export function OpportunityWhatsAppSendPanel({
   const [autoSyncMessage, setAutoSyncMessage] = useState("");
   const [modeManuallySelected, setModeManuallySelected] = useState(false);
   const [sendProcessingOpen, setSendProcessingOpen] = useState(false);
+  const [senderCheckPending, setSenderCheckPending] = useState(false);
+  const [senderConnectionModal, setSenderConnectionModal] = useState<SenderConnectionModalState | null>(null);
   const sendPendingSeenRef = useRef(false);
   const currentMode = modeManuallySelected ? mode : initialMode;
+  const selectedAgent = agents.find((agent) => agent.agentKey === agentKey);
   const currentGroupId = groups.some((group) => group.id === groupId) ? groupId : groups[0]?.id || "";
   const currentChannelId = channels.some((channel) => channel.id === channelId) ? channelId : channels[0]?.id || "";
   const currentBroadcastSourceId = groups.some((group) => group.id === broadcastSourceId) ? broadcastSourceId : "";
@@ -283,13 +331,16 @@ export function OpportunityWhatsAppSendPanel({
   const hardBlockedReason =
     !agents.length
       ? "Nenhum agente WhatsApp conectado para enviar."
-      : !modeReady
-        ? "Selecione um destino valido para enviar."
-        : !canSubmit
-          ? submitBlockReason || "Complete a analise antes de aprovar ou enviar pelo WhatsApp."
-          : "";
+      : !selectedAgent
+        ? "Selecione um agente WhatsApp conectado para enviar."
+        : selectedAgent.connected === false || !selectedAgent.instanceId
+          ? "A instancia WhatsApp selecionada nao esta conectada."
+          : !modeReady
+            ? "Selecione um destino valido para enviar."
+            : !canSubmit
+              ? submitBlockReason || "Complete a analise antes de aprovar ou enviar pelo WhatsApp."
+              : "";
   const blockedReason = hardBlockedReason;
-  const submitDisabled = Boolean(blockedReason);
   const destinationName = currentMode === "test" ? testNumber.trim() || "numero de teste" : selectedDestination?.name || "destino selecionado";
   const referenceSummary = linkFormatNeedsReferences
     ? `${activeReferenceStatus.validCount}/${activeReferenceStatus.requiredCount} referencias validas`
@@ -303,6 +354,14 @@ export function OpportunityWhatsAppSendPanel({
     ? "O sistema esta validando referencias publicas antes de enviar. Se nao encontrar links suficientes, nada sera disparado e a tela volta com o motivo."
     : "O criativo esta sendo montado e enviado pela ConnectyHub. Aguarde a confirmacao antes de mexer nesta revisao.";
   const processingStatus = linkFormatNeedsReferences ? "validando fontes" : "processando";
+
+  useEffect(() => {
+    if (actionStatus !== "error" || !isWhatsAppConnectionProblem(actionMessage)) return;
+    const modalTimer = window.setTimeout(() => {
+      setSenderConnectionModal(senderConnectionModalFromMessage(actionMessage));
+    }, 0);
+    return () => window.clearTimeout(modalTimer);
+  }, [actionMessage, actionStatus]);
 
   useEffect(() => {
     if (!sendProcessingOpen) {
@@ -348,8 +407,131 @@ export function OpportunityWhatsAppSendPanel({
     }
   }
 
+  async function checkSenderConnection() {
+    if (!selectedAgent) {
+      setSenderConnectionModal({
+        title: "Remetente nao selecionado",
+        detail: "Selecione um agente WhatsApp conectado antes de enviar.",
+      });
+      return false;
+    }
+
+    if (selectedAgent.connected === false || !selectedAgent.instanceId) {
+      setSenderConnectionModal({
+        title: "WhatsApp desconectado",
+        detail: "Nao foi possivel prosseguir porque a instancia WhatsApp selecionada nao esta conectada.",
+        status: selectedAgent.status,
+      });
+      return false;
+    }
+
+    setSenderCheckPending(true);
+    try {
+      const params = new URLSearchParams({ agentKey: selectedAgent.agentKey });
+      const response = await fetch(`/api/admin/whatsapp/sender-status?${params.toString()}`, { cache: "no-store" });
+      const payload = (await response.json().catch(() => ({}))) as SenderStatusResponse;
+      const connected = Boolean(payload.data?.connected);
+      if (!response.ok || !payload.success || !connected) {
+        setSenderConnectionModal({
+          title: "WhatsApp desconectado",
+          detail:
+            payload.error ||
+            "Nao foi possivel prosseguir porque a instancia WhatsApp selecionada nao esta conectada.",
+          status: payload.data?.state || payload.data?.lastDisconnectReason,
+        });
+        router.refresh();
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      setSenderConnectionModal({
+        title: "Status do WhatsApp indisponivel",
+        detail: error instanceof Error ? error.message : "Nao foi possivel confirmar se a instancia WhatsApp esta conectada.",
+      });
+      return false;
+    } finally {
+      setSenderCheckPending(false);
+    }
+  }
+
+  async function handleSendClick(event: MouseEvent<HTMLButtonElement>) {
+    if (pending || senderCheckPending) {
+      event.preventDefault();
+      return;
+    }
+
+    if (blockedReason) {
+      event.preventDefault();
+      setSenderConnectionModal(
+        isWhatsAppConnectionProblem(blockedReason)
+          ? senderConnectionModalFromMessage(blockedReason)
+          : {
+              title: "Envio nao liberado",
+              detail: blockedReason,
+            }
+      );
+      return;
+    }
+
+    const button = event.currentTarget;
+    event.preventDefault();
+    const connected = await checkSenderConnection();
+    if (!connected) return;
+
+    sendPendingSeenRef.current = false;
+    setSendProcessingOpen(true);
+    window.setTimeout(() => button.form?.requestSubmit(button), 0);
+  }
+
   return (
     <>
+    {senderConnectionModal ? (
+      <div
+        aria-live="assertive"
+        aria-modal="true"
+        className="fixed inset-0 z-[90] grid place-items-center bg-black/35 px-4 backdrop-blur-[2px]"
+        role="alertdialog"
+      >
+        <div className="w-full max-w-md rounded-xl border border-[rgba(210,54,43,0.28)] bg-white p-5 text-left shadow-2xl">
+          <div className="flex items-start gap-3">
+            <div className="grid size-11 shrink-0 place-items-center rounded-lg bg-[rgba(210,54,43,0.08)] text-[var(--admin-red)]">
+              <AlertCircle size={22} />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-[var(--admin-foreground)]">{senderConnectionModal.title}</p>
+              <p className="mt-1 text-xs leading-5 text-[var(--admin-muted)]">{senderConnectionModal.detail}</p>
+              {senderConnectionModal.status ? (
+                <p className="mt-2 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card-2)] px-3 py-2 text-xs font-medium text-[var(--admin-foreground)]">
+                  Status: {senderConnectionModal.status}
+                </p>
+              ) : null}
+            </div>
+          </div>
+          <div className="mt-4 flex flex-wrap justify-end gap-2">
+            <Button
+              className="h-9 border-[var(--admin-border)] bg-white text-[var(--admin-foreground)] hover:bg-[var(--admin-card-2)]"
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setSenderConnectionModal(null);
+                router.refresh();
+              }}
+            >
+              Atualizar tela
+            </Button>
+            <Button
+              className="h-9 bg-[var(--admin-cyan)] text-white hover:brightness-95"
+              type="button"
+              onClick={() => setSenderConnectionModal(null)}
+            >
+              Entendi
+            </Button>
+          </div>
+        </div>
+      </div>
+    ) : null}
+
     {sendProcessingOpen ? (
       <div
         aria-live="assertive"
@@ -668,22 +850,18 @@ export function OpportunityWhatsAppSendPanel({
 
         <Button
           className="h-auto min-h-14 w-full justify-start gap-3 whitespace-normal rounded-lg border border-[rgba(200,90,31,0.34)] bg-[var(--admin-cyan)] px-3 py-3 text-left text-white shadow-sm shadow-[rgba(200,90,31,0.18)] hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-55"
-          disabled={submitDisabled || pending}
+          disabled={pending || senderCheckPending}
           name="submitStatus"
           type="submit"
           value={submitValueForMode(currentMode)}
-          onClick={() => {
-            if (submitDisabled || pending) return;
-            sendPendingSeenRef.current = false;
-            setSendProcessingOpen(true);
-          }}
+          onClick={handleSendClick}
         >
           <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-white/15">
-            {pending && sendProcessingOpen ? <LoaderCircle size={17} className="animate-spin" /> : <Send size={17} />}
+            {(pending && sendProcessingOpen) || senderCheckPending ? <LoaderCircle size={17} className="animate-spin" /> : <Send size={17} />}
           </span>
           <span className="min-w-0 flex-1">
             <span className="block text-sm font-semibold leading-5">
-              {pending && sendProcessingOpen ? "Enviando WhatsApp..." : submitLabelForMode(currentMode)}
+              {senderCheckPending ? "Verificando WhatsApp..." : pending && sendProcessingOpen ? "Enviando WhatsApp..." : submitLabelForMode(currentMode)}
             </span>
             <span className="block truncate text-xs font-normal leading-5 text-white/80">{sendButtonHint}</span>
           </span>
