@@ -71,7 +71,7 @@ const modeCopy: Record<SendMode, { title: string; detail: string; icon: typeof S
 const linkFormatCopy: Record<LinkFormat, { title: string; detail: string; icon: typeof Send }> = {
   source_buttons: {
     title: "3 botoes",
-    detail: "Envia as 3 referencias como botoes.",
+    detail: "Botoes e links no texto.",
     icon: ExternalLink,
   },
   source_links: {

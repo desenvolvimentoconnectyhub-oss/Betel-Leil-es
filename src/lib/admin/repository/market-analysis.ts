@@ -84,14 +84,21 @@ export type SavePropertyMarketAnalysisInput = {
 };
 
 function makeMarketAnalysisCode(opportunityCode: string) {
-  const seed = opportunityCode
+  const normalized = opportunityCode
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-zA-Z0-9]/g, "")
-    .slice(0, 12)
+    .replace(/[^a-zA-Z0-9-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
     .toUpperCase();
+  let hash = 0;
+  for (const char of opportunityCode) {
+    hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  }
+  const suffix = hash.toString(36).toUpperCase().padStart(6, "0").slice(-6);
+  const seed = (normalized || "OPP").slice(0, 64 - "MKT-".length - suffix.length - 1);
 
-  return `MKT-${seed || Date.now().toString(36).toUpperCase()}`;
+  return `MKT-${seed}-${suffix}`;
 }
 
 function numberFromRecord(record: Record<string, unknown>, keys: string[], fallback = 0) {

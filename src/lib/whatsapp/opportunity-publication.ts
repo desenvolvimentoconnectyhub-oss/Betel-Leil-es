@@ -1000,8 +1000,8 @@ export async function buildOpportunityWhatsAppPost(
     "",
     `👉 ${publicSignal}`,
   ]);
-  const shouldAppendLinksToCaption = linkFormat === "source_links" || (linkFormat === "source_buttons" && Boolean(auctionUrl));
-  const caption = shouldAppendLinksToCaption ? appendSourceLinksToCaption(baseCaption, auctionUrl, linkFormat === "source_links" ? sourceLinks : []) : baseCaption;
+  const shouldAppendLinksToCaption = linkFormat === "source_links" || linkFormat === "source_buttons";
+  const caption = shouldAppendLinksToCaption ? appendSourceLinksToCaption(baseCaption, auctionUrl, sourceLinks) : baseCaption;
 
   return {
     data: {
