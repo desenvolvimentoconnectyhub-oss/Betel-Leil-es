@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type FormEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
@@ -10,6 +10,7 @@ import {
   Link2,
   Loader2,
   Play,
+  Plus,
   RefreshCw,
   Trash2,
   Upload,
@@ -33,8 +34,6 @@ type Props = {
 
 const inputClass =
   "h-9 w-full rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.04)] px-3 text-sm text-white placeholder:text-[var(--admin-muted)] outline-none transition focus:border-[var(--admin-cyan)]";
-const textareaClass =
-  "min-h-32 w-full resize-y rounded-lg border border-[var(--admin-border)] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-sm leading-5 text-white placeholder:text-[var(--admin-muted)] outline-none transition focus:border-[var(--admin-cyan)]";
 
 type ImportMode = "file" | "manual";
 type ProcessingModalTone = "working" | "success" | "error";
@@ -187,6 +186,32 @@ function formatResetSummary(summary?: MarketAnalysisResetSummary) {
   ].join(" ");
 }
 
+function cleanManualLinkValue(value: string) {
+  return value.trim().replace(/[)\].,;]+$/g, "");
+}
+
+function extractManualLinkValues(value: string) {
+  return [...value.matchAll(/\b(?:https?:\/\/|www\.)[^\s<>"']+/gi)]
+    .map((match) => cleanManualLinkValue(match[0]))
+    .map((url) => (url.toLowerCase().startsWith("www.") ? `https://${url}` : url))
+    .filter(Boolean);
+}
+
+function normalizeManualLinkValues(values: string[]) {
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const value of values) {
+    const clean = cleanManualLinkValue(value);
+    if (!clean) continue;
+    const url = clean.toLowerCase().startsWith("www.") ? `https://${clean}` : clean;
+    const key = url.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(url);
+  }
+  return output;
+}
+
 export function LinkScraperDashboardPage({ module, data }: Props) {
   const router = useRouter();
   const [dashboard, setDashboard] = useState(data.data);
@@ -197,7 +222,7 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
   const [importMode, setImportMode] = useState<ImportMode>("file");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [filePreview, setFilePreview] = useState<ParsedLinkImportFile | null>(null);
-  const [manualLinks, setManualLinks] = useState("");
+  const [manualLinks, setManualLinks] = useState<string[]>([""]);
   const [analysisDepth, setAnalysisDepth] = useState<LinkAnalysisDepth>("deep");
   const [resetConfirmation, setResetConfirmation] = useState("");
   const [processingModal, setProcessingModal] = useState<ProcessingModalState | null>(null);
@@ -211,6 +236,7 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
     () => dashboard.batches.filter((batch) => batch.status !== "concluido"),
     [dashboard.batches]
   );
+  const manualLinkValues = useMemo(() => normalizeManualLinkValues(manualLinks), [manualLinks]);
 
   const refresh = useCallback(async () => {
     const res = await fetch("/api/admin/scraper", { cache: "no-store" });
@@ -267,8 +293,45 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
       setSelectedFile(null);
       setFilePreview(null);
     } else {
-      setManualLinks("");
+      setManualLinks([""]);
     }
+  }
+
+  function addManualLinkField() {
+    setManualLinks((current) => [...current, ""]);
+  }
+
+  function removeManualLinkField(index: number) {
+    setManualLinks((current) => {
+      if (current.length <= 1) return [""];
+      return current.filter((_, currentIndex) => currentIndex !== index);
+    });
+  }
+
+  function updateManualLinkField(index: number, value: string) {
+    const pastedLinks = extractManualLinkValues(value);
+    if (pastedLinks.length > 1) {
+      setManualLinks((current) => {
+        const next = [...current];
+        next.splice(index, 1, ...pastedLinks);
+        return next;
+      });
+      return;
+    }
+
+    setManualLinks((current) => current.map((item, currentIndex) => (currentIndex === index ? value : item)));
+  }
+
+  function pasteManualLinks(index: number, event: ClipboardEvent<HTMLInputElement>) {
+    const pastedLinks = extractManualLinkValues(event.clipboardData.getData("text"));
+    if (pastedLinks.length <= 1) return;
+
+    event.preventDefault();
+    setManualLinks((current) => {
+      const next = [...current];
+      next.splice(index, 1, ...pastedLinks);
+      return next;
+    });
   }
 
   function onFileChange(event: ChangeEvent<HTMLInputElement>) {
@@ -365,8 +428,8 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
   }, [analysisDepth, busy, filePreview, importMode, saveImportedFile, selectedFile]);
 
   async function importManualLinks() {
-    const links = manualLinks.trim();
-    if (!links) {
+    const links = manualLinkValues;
+    if (!links.length) {
       setFeedback({ type: "err", message: "Cole pelo menos um link para criar o lote." });
       return;
     }
@@ -390,7 +453,7 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
       const detail = parsed
         ? ` ${parsed.invalidRowCount} invalido(s), ${parsed.ignoredRowCount} linha(s) ignorada(s).`
         : "";
-      setManualLinks("");
+      setManualLinks([""]);
       setFeedback({ type: "ok", message: `Lote manual criado com ${rowsCreated} link(s).${detail}` });
       await refresh();
     } catch (error) {
@@ -649,25 +712,65 @@ export function LinkScraperDashboardPage({ module, data }: Props) {
               </label>
             ) : (
               <div className="space-y-3 rounded-lg border border-dashed border-[var(--admin-border)] p-4">
-                <label htmlFor="manual-links" className="flex items-center gap-2 text-sm font-semibold text-white">
-                  <Link2 size={16} />
-                  Colar links para analise
-                </label>
-                <textarea
-                  id="manual-links"
-                  value={manualLinks}
-                  onChange={(event) => setManualLinks(event.target.value)}
-                  className={textareaClass}
-                  placeholder={"https://exemplo.com/lote-1\nhttps://exemplo.com/lote-2"}
-                />
-                <button
-                  type="submit"
-                  disabled={!manualLinks.trim() || busy === "import_manual_links"}
-                  className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-[var(--admin-cyan)] px-3 text-sm font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {busy === "import_manual_links" ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
-                  Adicionar lote para analise
-                </button>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                    <Link2 size={16} />
+                    Links para analise
+                  </div>
+                  <button
+                    type="button"
+                    onClick={addManualLinkField}
+                    disabled={busy === "import_manual_links"}
+                    className="inline-flex h-9 w-fit items-center justify-center gap-2 rounded-lg border border-[var(--admin-border)] px-3 text-sm font-semibold text-white transition hover:border-[var(--admin-cyan)] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Plus size={16} />
+                    Adicionar link
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {manualLinks.map((link, index) => {
+                    const inputId = `manual-link-${index}`;
+                    return (
+                      <div key={inputId} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_2.25rem]">
+                        <label htmlFor={inputId} className="sr-only">
+                          Link manual {index + 1}
+                        </label>
+                        <input
+                          id={inputId}
+                          type="text"
+                          inputMode="url"
+                          value={link}
+                          onChange={(event) => updateManualLinkField(index, event.target.value)}
+                          onPaste={(event) => pasteManualLinks(index, event)}
+                          className={inputClass}
+                          placeholder={`https://exemplo.com/lote-${index + 1}`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removeManualLinkField(index)}
+                          disabled={busy === "import_manual_links"}
+                          aria-label={`Remover link ${index + 1}`}
+                          className="inline-flex h-9 items-center justify-center rounded-lg border border-[var(--admin-border)] text-[var(--admin-muted)] transition hover:border-red-300 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    type="submit"
+                    disabled={!manualLinkValues.length || busy === "import_manual_links"}
+                    className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-[var(--admin-cyan)] px-3 text-sm font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {busy === "import_manual_links" ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
+                    Adicionar lote para analise
+                  </button>
+                  <span className="text-xs text-[var(--admin-muted)]">
+                    {manualLinkValues.length} link(s) preenchido(s)
+                  </span>
+                </div>
               </div>
             )}
             {(busy === "preview_file" || busy === "import_file" || busy === "import_manual_links") && (

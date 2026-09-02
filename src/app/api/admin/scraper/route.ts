@@ -21,6 +21,16 @@ function cleanString(value: unknown, fallback = "") {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
 
+function manualLinksText(value: unknown) {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => cleanString(item))
+      .filter(Boolean)
+      .join("\n");
+  }
+  return cleanString(value);
+}
+
 function revalidateScraper() {
   revalidatePath("/admin");
   revalidatePath("/admin/scraper");
@@ -99,7 +109,7 @@ export async function POST(request: Request) {
 
     if (action === "import_manual_links") {
       const parsed = parsePropertyLinkImportText({
-        text: cleanString(body.links),
+        text: manualLinksText(body.links),
         filename: cleanString(body.filename),
       });
       const result = await createLinkScraperBatch({
