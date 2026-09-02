@@ -15,10 +15,18 @@ import {
   type GeckoApiExtractResult,
   type GeckoApiExtractTarget,
 } from "@/lib/geckoapi/client";
+import {
+  geocodeAddressWithGoogleMaps,
+  getGoogleMapsConfig,
+  searchNearbyPlacesWithGoogleMaps,
+  type GoogleMapsGeocodeResult,
+  type GoogleMapsNearbySignal,
+} from "@/lib/google-maps/client";
 import type { AuctionLinkExtraction } from "./auction-link-extractor";
 import { normalizeLocationName, normalizeStateUf } from "./location-normalization";
 
 type ListingKind = "sale" | "rent";
+type MarketSourceKind = ListingKind | "location";
 
 export type DeepMarketComparable = {
   sourceLabel: string;
@@ -47,10 +55,24 @@ export type DeepMarketComparable = {
   rawPayload?: Record<string, unknown>;
 };
 
+export type DeepMarketLocationContext = {
+  provider: "google_maps";
+  query: string;
+  formattedAddress: string;
+  placeId: string;
+  locationType: string;
+  latitude: number;
+  longitude: number;
+  partialMatch: boolean;
+  nearbySignals: GoogleMapsNearbySignal[];
+  confidenceBoost: number;
+  cautionNotes: string[];
+};
+
 export type DeepMarketResearchResult = {
   status: "completed" | "partial" | "skipped";
   searchQueries: string[];
-  searchedUrls: Array<{ label: string; url: string; kind: ListingKind }>;
+  searchedUrls: Array<{ label: string; url: string; kind: MarketSourceKind }>;
   saleComparables: DeepMarketComparable[];
   rentalComparables: DeepMarketComparable[];
   marketValueLow: number;
@@ -63,6 +85,7 @@ export type DeepMarketResearchResult = {
   estimatedCosts: MarketCostItem[];
   missingFields: string[];
   cautionNotes: string[];
+  locationContext?: DeepMarketLocationContext;
 };
 
 type SearchResult = {
@@ -76,7 +99,7 @@ type SearchResult = {
 type MarketSearchUrl = {
   label: string;
   url: string;
-  kind: ListingKind;
+  kind: MarketSourceKind;
 };
 
 type SubjectProfile = {
@@ -91,6 +114,9 @@ type SubjectProfile = {
   bedrooms: number;
   parkingSpaces: number;
   initialBid: number;
+  latitude?: number;
+  longitude?: number;
+  geocodedAddress?: string;
 };
 
 const SEARCH_TIMEOUT_MS = 8_000;
@@ -112,10 +138,11 @@ const GECKOAPI_TARGETS: Array<{
   label: string;
   supportsNeighborhood: boolean;
   supportsPropertyTypes: boolean;
+  supportsCoordinates: boolean;
 }> = [
-  { target: "vivareal.com.br", label: "VivaReal", supportsNeighborhood: true, supportsPropertyTypes: true },
-  { target: "zapimoveis.com.br", label: "Zapimoveis", supportsNeighborhood: false, supportsPropertyTypes: false },
-  { target: "chavesnamao.com.br", label: "Chaves na Mao", supportsNeighborhood: true, supportsPropertyTypes: true },
+  { target: "vivareal.com.br", label: "VivaReal", supportsNeighborhood: true, supportsPropertyTypes: true, supportsCoordinates: false },
+  { target: "zapimoveis.com.br", label: "Zapimoveis", supportsNeighborhood: false, supportsPropertyTypes: false, supportsCoordinates: true },
+  { target: "chavesnamao.com.br", label: "Chaves na Mao", supportsNeighborhood: true, supportsPropertyTypes: true, supportsCoordinates: false },
 ];
 
 type GeckoApiSearchScope = {
@@ -124,6 +151,7 @@ type GeckoApiSearchScope = {
   useKeyword: boolean;
   useFeatures: boolean;
   usePropertyTypes: boolean;
+  useCoordinates: boolean;
   minAreaFactor: number;
   maxAreaFactor: number;
 };
@@ -135,6 +163,7 @@ const GECKOAPI_SEARCH_SCOPES: GeckoApiSearchScope[] = [
     useKeyword: true,
     useFeatures: true,
     usePropertyTypes: true,
+    useCoordinates: true,
     minAreaFactor: 0.65,
     maxAreaFactor: 1.45,
   },
@@ -144,6 +173,7 @@ const GECKOAPI_SEARCH_SCOPES: GeckoApiSearchScope[] = [
     useKeyword: true,
     useFeatures: false,
     usePropertyTypes: true,
+    useCoordinates: true,
     minAreaFactor: 0.45,
     maxAreaFactor: 2.1,
   },
@@ -153,9 +183,17 @@ const GECKOAPI_SEARCH_SCOPES: GeckoApiSearchScope[] = [
     useKeyword: false,
     useFeatures: false,
     usePropertyTypes: true,
+    useCoordinates: false,
     minAreaFactor: 0.35,
     maxAreaFactor: 2.8,
   },
+];
+
+const GOOGLE_MAPS_NEARBY_SIGNALS = [
+  { label: "mercados", includedTypes: ["supermarket"], radiusMeters: 1000 },
+  { label: "educacao", includedTypes: ["school"], radiusMeters: 1200 },
+  { label: "saude", includedTypes: ["hospital", "pharmacy"], radiusMeters: 1500 },
+  { label: "mobilidade", includedTypes: ["transit_station", "bus_station"], radiusMeters: 1500 },
 ];
 
 const MARKET_SOURCE_ALLOWLIST = [
@@ -559,6 +597,132 @@ function buildSubjectProfile(input: {
   } satisfies SubjectProfile;
 }
 
+function buildGoogleMapsGeocodeQuery(subject: SubjectProfile) {
+  return uniqueStrings([
+    subject.address,
+    subject.neighborhood,
+    subject.city,
+    subject.state,
+    "Brasil",
+  ], 8).join(", ");
+}
+
+function distanceKmBetween(
+  origin: { latitude?: number; longitude?: number },
+  target: { latitude?: number; longitude?: number }
+) {
+  const originLat = origin.latitude;
+  const originLng = origin.longitude;
+  const targetLat = target.latitude;
+  const targetLng = target.longitude;
+  if (
+    !Number.isFinite(originLat) ||
+    !Number.isFinite(originLng) ||
+    !Number.isFinite(targetLat) ||
+    !Number.isFinite(targetLng)
+  ) {
+    return 0;
+  }
+
+  const radians = (degrees: number) => (degrees * Math.PI) / 180;
+  const earthRadiusKm = 6371;
+  const deltaLat = radians(Number(targetLat) - Number(originLat));
+  const deltaLng = radians(Number(targetLng) - Number(originLng));
+  const lat1 = radians(Number(originLat));
+  const lat2 = radians(Number(targetLat));
+  const a =
+    Math.sin(deltaLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLng / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return Math.round(earthRadiusKm * c * 10) / 10;
+}
+
+function googleMapsConfidenceBoost(geocode: GoogleMapsGeocodeResult, nearbySignals: GoogleMapsNearbySignal[]) {
+  const locationBoost = geocode.locationType === "ROOFTOP" ? 8 : geocode.locationType === "RANGE_INTERPOLATED" ? 6 : 4;
+  const partialPenalty = geocode.partialMatch ? -3 : 0;
+  const nearbyBoost = Math.min(8, nearbySignals.reduce((total, signal) => total + Math.min(2, signal.count), 0));
+  return Math.max(0, locationBoost + partialPenalty + nearbyBoost);
+}
+
+async function enrichSubjectWithGoogleMaps(subject: SubjectProfile): Promise<{
+  subject: SubjectProfile;
+  locationContext?: DeepMarketLocationContext;
+  cautionNotes: string[];
+  searchedUrls: MarketSearchUrl[];
+}> {
+  const config = await getGoogleMapsConfig();
+  if (!config.configured) {
+    return {
+      subject,
+      cautionNotes: ["Google Maps nao configurado; pesquisa seguiu sem coordenada oficial."],
+      searchedUrls: [],
+    };
+  }
+
+  const query = buildGoogleMapsGeocodeQuery(subject);
+  const geocode = await geocodeAddressWithGoogleMaps(query);
+  if (!geocode.ok) {
+    return {
+      subject,
+      cautionNotes: [`Google Maps nao confirmou coordenadas: ${geocode.error || geocode.status}.`],
+      searchedUrls: [],
+    };
+  }
+
+  const enrichedSubject: SubjectProfile = {
+    ...subject,
+    latitude: geocode.latitude,
+    longitude: geocode.longitude,
+    geocodedAddress: geocode.formattedAddress,
+  };
+  const nearbySignals = config.nearbyEnabled
+    ? await Promise.all(
+        GOOGLE_MAPS_NEARBY_SIGNALS.map((signal) =>
+          searchNearbyPlacesWithGoogleMaps({
+            ...signal,
+            center: { latitude: geocode.latitude, longitude: geocode.longitude },
+            maxResultCount: 3,
+          })
+        )
+      )
+    : [];
+  const locationContext: DeepMarketLocationContext = {
+    provider: "google_maps",
+    query,
+    formattedAddress: geocode.formattedAddress,
+    placeId: geocode.placeId,
+    locationType: geocode.locationType,
+    latitude: geocode.latitude,
+    longitude: geocode.longitude,
+    partialMatch: geocode.partialMatch,
+    nearbySignals,
+    confidenceBoost: googleMapsConfidenceBoost(geocode, nearbySignals),
+    cautionNotes: [
+      geocode.partialMatch ? "Google Maps retornou correspondencia parcial; validar endereco antes de aprovar." : "",
+      ...nearbySignals.filter((signal) => signal.error).map((signal) => `${signal.label}: ${signal.error}`),
+    ].filter(Boolean),
+  };
+  const searchedUrls = nearbySignals.flatMap((signal) =>
+    signal.places
+      .filter((place) => place.googleMapsUri)
+      .map((place) => ({
+        label: `Google Maps ${signal.label}: ${place.name}`,
+        url: place.googleMapsUri,
+        kind: "location" as const,
+      }))
+  );
+
+  return {
+    subject: enrichedSubject,
+    locationContext,
+    cautionNotes: [
+      `Google Maps confirmou coordenadas para ${geocode.formattedAddress || query}.`,
+      ...locationContext.cautionNotes,
+    ],
+    searchedUrls,
+  };
+}
+
 function compactQuery(parts: Array<string | number | undefined>) {
   return uniqueStrings(parts.map((part) => cleanString(part)).filter(Boolean), 12).join(" ");
 }
@@ -674,6 +838,15 @@ function buildGeckoApiPayload(
   if (keyword) payload.keyword = keyword;
   if (scope.useNeighborhood && target.supportsNeighborhood && subject.neighborhood) payload.neighborhood = subject.neighborhood;
   if (scope.usePropertyTypes && target.supportsPropertyTypes) payload.propertyTypes = propertyTypesForGecko(subject.propertyType);
+  if (
+    scope.useCoordinates &&
+    target.supportsCoordinates &&
+    Number.isFinite(subject.latitude) &&
+    Number.isFinite(subject.longitude)
+  ) {
+    payload.latitude = subject.latitude;
+    payload.longitude = subject.longitude;
+  }
   if (scope.useFeatures && group !== "land") {
     payload.bedrooms = nearbyCountFilter(subject.bedrooms);
     payload.parkingSpots = nearbyCountFilter(subject.parkingSpaces);
@@ -690,6 +863,9 @@ function geckoSearchLabel(payload: GeckoApiExtractInput, scopeLabel = "") {
     payload.city && payload.state ? `${payload.city}/${payload.state}` : "",
     payload.neighborhood ? `bairro ${payload.neighborhood}` : "",
     payload.keyword ? `busca "${payload.keyword}"` : "",
+    Number.isFinite(payload.latitude) && Number.isFinite(payload.longitude)
+      ? `geo ${Number(payload.latitude).toFixed(5)},${Number(payload.longitude).toFixed(5)}`
+      : "",
     payload.areaMin && payload.areaMax ? `${payload.areaMin}-${payload.areaMax} m2` : "",
   ].filter(Boolean).join(" - ");
 }
@@ -773,6 +949,14 @@ function firstNumberPath(value: unknown, paths: string[][]) {
   return 0;
 }
 
+function firstCoordinatePath(value: unknown, paths: string[][], min: number, max: number) {
+  for (const path of paths) {
+    const number = numberFromUnknown(pathValue(value, path));
+    if (Number.isFinite(number) && number >= min && number <= max) return number;
+  }
+  return 0;
+}
+
 function firstUrlPath(value: unknown, paths: string[][], target: GeckoApiExtractTarget) {
   for (const path of paths) {
     const raw = textFromUnknown(pathValue(value, path));
@@ -806,15 +990,14 @@ function extractGeckoApiItems(payload: unknown) {
 }
 
 function geckoSearchUrls(result: GeckoApiExtractResult, kind: ListingKind, scopeLabel = "") {
-  return uniqueSearchedUrls([
-    firstUrlPath(result.payload, [["data", "url"], ["data", "requestUrl"], ["url"], ["requestUrl"]], result.requestPayload.target)
-      ? {
-          label: geckoSearchLabel(result.requestPayload, scopeLabel),
-          url: firstUrlPath(result.payload, [["data", "url"], ["data", "requestUrl"], ["url"], ["requestUrl"]], result.requestPayload.target),
-          kind,
-        }
-      : null,
-  ].filter((item): item is MarketSearchUrl => Boolean(item)));
+  const url = firstUrlPath(result.payload, [["data", "url"], ["data", "requestUrl"], ["url"], ["requestUrl"]], result.requestPayload.target);
+  return uniqueSearchedUrls(url
+    ? [{
+        label: geckoSearchLabel(result.requestPayload, scopeLabel),
+        url,
+        kind,
+      }]
+    : []);
 }
 
 function normalizeGeckoApiComparable(
@@ -909,6 +1092,9 @@ function normalizeGeckoApiComparable(
   ]);
   const askingPrice = kind === "sale" ? price : 0;
   const monthlyRent = kind === "rent" ? price : 0;
+  const latitude = firstCoordinatePath(item, [["address", "latitude"], ["latitude"], ["location", "latitude"], ["location", "lat"]], -90, 90);
+  const longitude = firstCoordinatePath(item, [["address", "longitude"], ["longitude"], ["location", "longitude"], ["location", "lng"]], -180, 180);
+  const distanceKm = distanceKmBetween(subject, { latitude, longitude });
   const comparableBase = {
     sourceLabel: target.label,
     sourceUrl,
@@ -925,18 +1111,21 @@ function normalizeGeckoApiComparable(
     pricePerM2: kind === "sale" ? calculatePricePerM2(askingPrice, areaM2) : 0,
     bedrooms: firstNumberPath(item, [["bedrooms"], ["rooms"], ["dormitories"], ["details", "bedrooms"]]),
     parkingSpaces: firstNumberPath(item, [["parkingSpaces"], ["parkingSpots"], ["garages"], ["garage"], ["details", "parkingSpaces"]]),
+    distanceKm: distanceKm || undefined,
+    latitude: Number.isFinite(latitude) && latitude ? latitude : undefined,
+    longitude: Number.isFinite(longitude) && longitude ? longitude : undefined,
   };
   const similarityScore = scoreComparable(subject, comparableBase);
   const quality = qualityFromScore(similarityScore);
   if (quality === "discarded" || !isRelevantComparable(subject, comparableBase, similarityScore)) return null;
 
-  const latitude = firstNumberPath(item, [["address", "latitude"], ["latitude"], ["location", "latitude"], ["location", "lat"]]);
-  const longitude = firstNumberPath(item, [["address", "longitude"], ["longitude"], ["location", "longitude"], ["location", "lng"]]);
   const scope = subject.condoName && includesToken(evidence, subject.condoName)
     ? "mesmo condominio/nome"
     : subject.neighborhood && includesToken(evidence, subject.neighborhood)
       ? "mesmo bairro"
-      : "mesma cidade";
+      : distanceKm
+        ? `${distanceKm} km do alvo`
+        : "mesma cidade";
 
   return {
     ...comparableBase,
@@ -946,11 +1135,13 @@ function normalizeGeckoApiComparable(
       `GeckoAPI ${target.label}: anuncio de ${geckoBusinessLabel(kind)} em ${scope}.`,
       areaM2 ? `Area capturada: ${areaM2} m2.` : "Area nao confirmada no item retornado.",
       price ? `${kind === "rent" ? "Aluguel" : "Preco"} capturado no portal.` : "",
+      distanceKm ? `Distancia Google Maps: ${distanceKm} km.` : "",
       `HTTP ${result.status}; latencia ${result.latencyMs}ms.`,
     ].filter(Boolean).join(" "),
     collectedAt: new Date().toISOString(),
-    latitude: latitude || undefined,
-    longitude: longitude || undefined,
+    distanceKm: distanceKm || undefined,
+    latitude: Number.isFinite(latitude) && latitude ? latitude : undefined,
+    longitude: Number.isFinite(longitude) && longitude ? longitude : undefined,
     evidenceSource: "geckoapi",
     rawPayload: {
       source: "geckoapi",
@@ -1151,7 +1342,7 @@ function searchResultFromMarketSource(source: MarketSearchUrl): SearchResult {
     title: cleanString(source.label, sourceLabel(source.url)),
     url: source.url,
     snippet: source.label,
-    kind: inferListingKindFromText(`${source.label} ${source.url}`, source.kind),
+    kind: inferListingKindFromText(`${source.label} ${source.url}`, source.kind === "rent" ? "rent" : "sale"),
     provider: "google-grounding",
   };
 }
@@ -1240,14 +1431,16 @@ function comparableEvidenceText(comparable: Pick<DeepMarketComparable, "title" |
   return `${comparable.title} ${comparable.address} ${comparable.neighborhood} ${comparable.city} ${comparable.state} ${comparable.sourceUrl}`;
 }
 
-function hasLocationEvidence(subject: SubjectProfile, comparable: Pick<DeepMarketComparable, "title" | "address" | "neighborhood" | "city" | "state" | "sourceUrl">) {
+function hasLocationEvidence(subject: SubjectProfile, comparable: Pick<DeepMarketComparable, "title" | "address" | "neighborhood" | "city" | "state" | "sourceUrl" | "distanceKm">) {
   const text = comparableEvidenceText(comparable);
   const cityMatches = subject.city && includesToken(text, subject.city);
   const stateMatches = subject.state && includesToken(text, subject.state);
   const neighborhoodMatches = subject.neighborhood && includesToken(text, subject.neighborhood);
   const condoMatches = subject.condoName && includesToken(text, subject.condoName);
+  const distanceMatches = Number.isFinite(comparable.distanceKm || 0) && (comparable.distanceKm || 0) > 0 && (comparable.distanceKm || 0) <= 6;
 
   if (condoMatches || neighborhoodMatches) return true;
+  if (distanceMatches) return true;
   if (cityMatches && (!subject.state || stateMatches || normalizeText(comparable.state) === normalizeText(subject.state))) return true;
   return false;
 }
@@ -1296,9 +1489,16 @@ function scoreComparable(subject: SubjectProfile, comparable: Omit<DeepMarketCom
 
   if (subject.bedrooms && comparable.bedrooms) score += subject.bedrooms === comparable.bedrooms ? 6 : -2;
   if (subject.parkingSpaces && comparable.parkingSpaces) score += subject.parkingSpaces === comparable.parkingSpaces ? 5 : 0;
+  if (comparable.distanceKm && comparable.distanceKm > 0) {
+    if (comparable.distanceKm <= 0.5) score += 18;
+    else if (comparable.distanceKm <= 1) score += 14;
+    else if (comparable.distanceKm <= 2) score += 9;
+    else if (comparable.distanceKm <= 6) score += 4;
+    else score -= 18;
+  }
   if (comparable.listingType === "sale" && comparable.askingPrice) score += 6;
   if (comparable.listingType === "rent" && comparable.monthlyRent) score += 6;
-  if (!includesToken(text, subject.city) && !includesToken(text, subject.condoName)) score -= 30;
+  if (!includesToken(text, subject.city) && !includesToken(text, subject.condoName) && !comparable.distanceKm) score -= 30;
   if (!isLikelyListingDetailUrl(comparable.sourceUrl)) score -= 24;
 
   return clampMarketScore(score);
@@ -1902,11 +2102,11 @@ export async function runDeepMarketResearch(input: {
   title: string;
   initialBid: number;
 }) {
-  const subject = buildSubjectProfile(input);
+  const baseSubject = buildSubjectProfile(input);
   const missingFields: string[] = [];
   const cautionNotes: string[] = [];
 
-  if (!subject.city || !subject.state) {
+  if (!baseSubject.city || !baseSubject.state) {
     return {
       status: "skipped",
       searchQueries: [],
@@ -1925,6 +2125,10 @@ export async function runDeepMarketResearch(input: {
       cautionNotes: ["Pesquisa de mercado ignorada: cidade/UF nao foram confirmadas."],
     } satisfies DeepMarketResearchResult;
   }
+
+  const locationAttempt = await enrichSubjectWithGoogleMaps(baseSubject);
+  const subject = locationAttempt.subject;
+  cautionNotes.push(...locationAttempt.cautionNotes);
 
   const geckoAttempt = await runGeckoApiMarketResearch(subject);
   const geckoResearch = geckoAttempt.research;
@@ -1954,7 +2158,7 @@ export async function runDeepMarketResearch(input: {
     ? await searchMarketResults(subject)
     : {
         searchQueries: [] as string[],
-        searchedUrls: [] as Array<{ label: string; url: string; kind: ListingKind }>,
+        searchedUrls: [] as Array<{ label: string; url: string; kind: MarketSourceKind }>,
         results: [] as SearchResult[],
       };
   const saleResults = search.results.filter((item) => item.kind === "sale").slice(0, MAX_SALE_PAGES);
@@ -2009,11 +2213,14 @@ export async function runDeepMarketResearch(input: {
     cautionNotes.push(`Apenas ${saleComparables.length} comparavel(is) de venda aderente(s); revisar manualmente antes de aprovar.`);
   }
   if (!rentalComparables.length && rentalMonthlyRent) cautionNotes.push(rental.note);
+  const locationConfidenceBoost = locationAttempt.locationContext?.confidenceBoost || 0;
+  const nearbySignalCount = locationAttempt.locationContext?.nearbySignals.reduce((total, signal) => total + signal.count, 0) || 0;
 
   const calculatedConfidenceScore = clampMarketScore(
     (marketValue.base ? 48 : 20) +
       marketValue.confidenceBoost +
       Math.min(12, rentalComparables.length * 4) +
+      locationConfidenceBoost +
       (subject.condoName && saleComparables.some((item) => includesToken(item.title, subject.condoName)) ? 8 : 0) -
       Math.max(0, missingFields.length - 1) * 6
   );
@@ -2038,6 +2245,7 @@ export async function runDeepMarketResearch(input: {
       ...(geckoResearch?.searchedUrls || []),
       ...(groundedResearch?.searchedUrls || []),
       ...(groundedAttempt.grounding?.sourceLinks || []),
+      ...locationAttempt.searchedUrls,
       ...search.searchedUrls,
     ]),
     saleComparables,
@@ -2048,9 +2256,15 @@ export async function runDeepMarketResearch(input: {
     rentalMonthlyRent,
     rentalReferenceUrl,
     confidenceScore,
-    liquidityScore: clampMarketScore(45 + Math.min(25, saleComparables.length * 5) + Math.min(15, rentalComparables.length * 5)),
+    liquidityScore: clampMarketScore(
+      45 +
+        Math.min(25, saleComparables.length * 5) +
+        Math.min(15, rentalComparables.length * 5) +
+        Math.min(10, nearbySignalCount)
+    ),
     estimatedCosts: buildEstimatedCosts(input.initialBid, marketValue.base),
     missingFields: uniqueStrings(missingFields, 12),
     cautionNotes: uniqueStrings(cautionNotes, 12),
+    locationContext: locationAttempt.locationContext,
   } satisfies DeepMarketResearchResult;
 }

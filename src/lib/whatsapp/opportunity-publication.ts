@@ -520,10 +520,14 @@ function buildResearchCommunicationSummary(input: {
   const rentalPlaces = uniqueStrings(rentalComparables.map(comparablePlaceLabel), 3).join("; ");
   const rentAverage = averagePositiveNumber(rentalComparables.map((comparable) => comparable.monthlyRent));
   const rentValue = formatCurrency(firstPositiveNumber(input.research.rentalMonthlyRent, rentAverage));
+  const geocodedAddress = cleanString(input.research.locationContext?.formattedAddress);
   const lines = [
     marketValue
       ? `Valor de mercado calculado: ${marketValue}, pela media proporcional por m2 dos comparaveis aceitos.`
       : "Valor de mercado ainda pendente de comparaveis suficientes.",
+    geocodedAddress
+      ? `Google Maps confirmou a localizacao do alvo em ${geocodedAddress}.`
+      : "",
     saleComparables.length
       ? `A pesquisa encontrou ${saleComparables.length} referencia(s) de venda${saleSources ? ` em ${saleSources}` : ""}${pricePerM2 ? `, com media de ${formatCurrency(pricePerM2)}/m2` : ""}${salePlaces ? ` na regiao de ${salePlaces}` : ""}.`
       : "A pesquisa ainda nao encontrou referencia direta de venda com link aproveitavel.",
@@ -536,7 +540,7 @@ function buildResearchCommunicationSummary(input: {
     lines.push(`Completar curadoria antes de envio comercial se o minimo de ${MIN_PUBLICATION_REFERENCE_LINKS} referencias de mercado nao estiver disponivel.`);
   }
 
-  return lines.join(" ");
+  return lines.filter(Boolean).join(" ");
 }
 
 function buildRefreshedRentalEstimate(input: {

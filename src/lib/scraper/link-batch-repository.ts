@@ -2355,7 +2355,7 @@ function isLikelyMarketListingUrl(value: string) {
   }
 }
 
-function searchReferenceLabel(input: { label: string; url: string; kind: "sale" | "rent" }) {
+function searchReferenceLabel(input: { label: string; url: string; kind: string }) {
   const label = cleanString(input.label);
   const domain = sourceDomain(input.url);
   if (input.kind === "rent" || /alug|rent/i.test(label)) return `Referencia aluguel: ${domain || label || "fonte"}`;
@@ -2367,7 +2367,9 @@ function marketSourceLinks(input: {
   marketResearch: DeepMarketResearchResult | null;
 }) {
   const searchedReferenceLinks = (input.marketResearch?.searchedUrls || [])
-    .filter((item) => isLikelyMarketListingUrl(item.url))
+    .filter((item): item is { label: string; url: string; kind: "sale" | "rent" } =>
+      item.kind !== "location" && isLikelyMarketListingUrl(item.url)
+    )
     .map((item) => ({ label: searchReferenceLabel(item), url: item.url }));
   const links = [
     { label: "Link leilao", url: input.auctionUrl },
@@ -2426,11 +2428,15 @@ function buildMarketResearchCommunicationSummary(input: {
   const rentalPlaces = uniqueStrings(rentalComparables.map(comparablePlaceLabel), 3).join("; ");
   const rentAverage = averagePositive(rentalComparables.map((comparable) => comparable.monthlyRent));
   const rentValue = formatMoneyForSupplement(firstPositive(research.rentalMonthlyRent, rentAverage));
+  const geocodedAddress = cleanString(research.locationContext?.formattedAddress);
 
   const lines = [
     marketValue
       ? `Valor de mercado calculado: ${marketValue}, pela media proporcional por m2 dos comparaveis aceitos.`
       : "Valor de mercado ainda pendente de comparaveis suficientes.",
+    geocodedAddress
+      ? `Google Maps confirmou a localizacao do alvo em ${geocodedAddress}.`
+      : "",
     saleComparables.length
       ? `A pesquisa encontrou ${saleComparables.length} referencia(s) de venda${saleSources ? ` em ${saleSources}` : ""}${pricePerM2 ? `, com media de ${formatMoneyForSupplement(pricePerM2)}/m2` : ""}${salePlaces ? ` na regiao de ${salePlaces}` : ""}.`
       : "A pesquisa ainda nao encontrou referencia direta de venda com link aproveitavel.",
@@ -2443,7 +2449,7 @@ function buildMarketResearchCommunicationSummary(input: {
     lines.push("Completar curadoria antes de envio comercial se o minimo de 3 referencias de mercado nao estiver disponivel.");
   }
 
-  return lines.join(" ");
+  return lines.filter(Boolean).join(" ");
 }
 
 function buildRentalEstimatePayload(input: {
