@@ -31,6 +31,41 @@ const statusMessages: Record<string, string> = {
   admin_ready: "Acesso administrativo ativo. Entre com sua senha.",
 };
 
+type SupabaseLoginError = {
+  code?: string;
+  message?: string;
+  name?: string;
+  status?: number;
+};
+
+function supabaseLoginErrorMessage(input: unknown) {
+  const error = (input || {}) as SupabaseLoginError;
+  const message = `${error.code || ""} ${error.message || ""} ${error.name || ""}`.toLowerCase();
+
+  if (message.includes("invalid login credentials") || message.includes("invalid_credentials")) {
+    return "Email ou senha invalidos.";
+  }
+
+  if (message.includes("email not confirmed") || message.includes("email_not_confirmed")) {
+    return "Email ainda nao confirmado. Abra o link de convite/confirmacao enviado ao operador.";
+  }
+
+  if (
+    error.status === 503 ||
+    error.status === 504 ||
+    message.includes("exceed_egress_quota") ||
+    message.includes("project is restricted") ||
+    message.includes("service for this project is restricted") ||
+    message.includes("quota") ||
+    message.includes("network") ||
+    message.includes("fetch failed")
+  ) {
+    return "Servico de login temporariamente indisponivel. Verifique a cota/egress do Supabase e tente novamente.";
+  }
+
+  return "Nao foi possivel validar o login agora. Tente novamente em instantes ou chame o suporte.";
+}
+
 export function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -66,7 +101,7 @@ export function LoginPage() {
     });
 
     if (signInError) {
-      setError("Email ou senha invalidos.");
+      setError(supabaseLoginErrorMessage(signInError));
       setIsSubmitting(false);
       return;
     }
@@ -83,12 +118,19 @@ export function LoginPage() {
 
     await supabase.rpc("claim_admin_user_by_email");
 
-    const { data: adminUser } = await supabase
+    const { data: adminUser, error: adminLookupError } = await supabase
       .from("admin_users")
       .select("id,status")
       .eq("auth_user_id", user.id)
       .eq("status", "active")
       .maybeSingle();
+
+    if (adminLookupError) {
+      await supabase.auth.signOut();
+      setError("Login validado, mas nao foi possivel consultar a permissao administrativa. Verifique o Supabase e tente novamente.");
+      setIsSubmitting(false);
+      return;
+    }
 
     if (adminUser) {
       router.replace(nextPath.startsWith("/") ? nextPath : "/admin");
