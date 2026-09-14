@@ -39,8 +39,6 @@ type GeminiModelOption = {
   id: string;
   name: string;
   description: string;
-  inputTokenLimit: number;
-  outputTokenLimit: number;
 };
 
 type Status = "ok" | "warning" | "missing" | "error";
@@ -241,7 +239,7 @@ function ModelSelect({
             {loading
               ? "Carregando modelos..."
               : selected
-                ? `${selected.id} — ${formatTokenLimit(selected.inputTokenLimit)} in / ${formatTokenLimit(selected.outputTokenLimit)} out`
+                ? selected.id
                 : value || "Selecione um modelo"}
           </span>
           {loading ? <Loader2 size={16} className="shrink-0 animate-spin text-[var(--muted)]" /> : <ChevronDown size={16} className={`shrink-0 text-[var(--muted)] transition ${open ? "rotate-180" : ""}`} />}
@@ -271,14 +269,6 @@ function ModelSelect({
                       {model.name}
                     </div>
                   </div>
-                  <div className="shrink-0 text-right">
-                    <div className="font-mono text-[11px] text-[var(--green)]">
-                      {formatTokenLimit(model.inputTokenLimit)} in
-                    </div>
-                    <div className="font-mono text-[11px] text-[var(--muted)]">
-                      {formatTokenLimit(model.outputTokenLimit)} out
-                    </div>
-                  </div>
                 </button>
               );
             })}
@@ -292,13 +282,6 @@ function ModelSelect({
       )}
     </div>
   );
-}
-
-function formatTokenLimit(limit: number) {
-  if (!limit) return "?";
-  if (limit >= 1_000_000) return `${(limit / 1_000_000).toFixed(1)}M`;
-  if (limit >= 1_000) return `${Math.round(limit / 1_000)}k`;
-  return String(limit);
 }
 
 function FieldInput({

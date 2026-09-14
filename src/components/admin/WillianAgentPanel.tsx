@@ -562,15 +562,20 @@ export function WillianAgentPanel({
 
   useEffect(() => {
     let cancelled = false;
+    let polling = false;
 
     async function refreshRemoteState() {
+      if (polling) return;
+      polling = true;
       try {
         const res = await fetch(`${WHATSAPP_AGENT_INSTANCE_ENDPOINT}?remote=true`, {
           cache: "no-store",
           method: "GET",
+          signal: AbortSignal.timeout(20_000),
         });
         const result = await res.json();
         const nextState = result?.data?.state as WillianInstanceState | undefined;
+        if (!res.ok || !nextState) throw new Error("Leitura de conexao indisponivel.");
         if (!cancelled) {
           applyInstanceState(nextState);
           if (connectionHasPasskeyBlock(nextState?.connection, nextState)) {
@@ -579,13 +584,17 @@ export function WillianAgentPanel({
         }
       } catch {
         if (!cancelled) applyInstanceState({ ...(initialState || defaultWillianState), status: { state: "unknown", connected: false, loggedIn: false, jid: null }, agentInstances: (initialState?.agentInstances || []).map(agent => ({ ...agent, status: "unknown", connected: false })) });
+      } finally {
+        polling = false;
       }
     }
 
     void refreshRemoteState();
+    const timer = window.setInterval(() => void refreshRemoteState(), 30_000);
 
     return () => {
       cancelled = true;
+      window.clearInterval(timer);
     };
   }, [applyInstanceState, openPasskeyBlockedDialog, initialState]);
 
