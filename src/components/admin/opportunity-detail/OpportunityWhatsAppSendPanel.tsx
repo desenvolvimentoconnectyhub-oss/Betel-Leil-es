@@ -27,6 +27,7 @@ import type {
   OpportunityWhatsAppReferenceStatus,
 } from "@/lib/whatsapp/opportunity-publication";
 import { cn } from "@/lib/utils";
+import { useSendPanelOpen } from "./OpportunityWorkspace";
 
 type Destination = OpportunityWhatsAppPublicationOptions["destinations"][number];
 type SendMode = "test" | "group" | "channel" | "broadcast";
@@ -204,6 +205,7 @@ export function OpportunityWhatsAppSendPanel({
   actionMessage?: string;
 }) {
   const router = useRouter();
+  const panelOpen = useSendPanelOpen();
   const { pending } = useFormStatus();
   const agents = options?.agents || [];
   const defaultAgentKey = options?.defaultAgentKey || agents[0]?.agentKey || "";
@@ -244,7 +246,7 @@ export function OpportunityWhatsAppSendPanel({
   const currentBroadcastSourceId = groups.some((group) => group.id === broadcastSourceId) ? broadcastSourceId : "";
 
   useEffect(() => {
-    if (!agentKey) return;
+    if (!agentKey || !panelOpen) return;
 
     const storageKey = `betel-wa-auto-sync:${opportunityCode}:${agentKey}`;
     const lastSync = Number(window.sessionStorage.getItem(storageKey) || "0");
@@ -295,7 +297,7 @@ export function OpportunityWhatsAppSendPanel({
       cancelled = true;
       window.clearTimeout(syncStateTimer);
     };
-  }, [agentKey, opportunityCode, router]);
+  }, [agentKey, opportunityCode, router, panelOpen]);
 
   const selectedDestination =
     currentMode === "group"
@@ -583,7 +585,6 @@ export function OpportunityWhatsAppSendPanel({
           className="h-9 border-[var(--admin-border)] bg-white text-[var(--admin-foreground)] hover:bg-[var(--admin-card-2)]"
           disabled={!agents.length || autoSyncState === "syncing"}
           formAction={syncOpportunityWhatsAppGroupsAction}
-          name="submitStatus"
           type="submit"
           value="sync_whatsapp_groups"
           variant="outline"
@@ -593,7 +594,6 @@ export function OpportunityWhatsAppSendPanel({
         </Button>
       </div>
 
-      <input name="opportunityCode" type="hidden" value={opportunityCode} />
       <input name="whatsappLinkFormat" type="hidden" value={linkFormat} />
 
       <div className="mt-3 grid gap-3">
