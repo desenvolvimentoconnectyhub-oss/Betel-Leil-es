@@ -149,7 +149,7 @@ export const turingScenarioSuite: TuringScenario[] = [
     severity: "critical",
     modality: "text",
     persona: "Lead no trabalho que nao consegue ler.",
-    setup: "Voz ElevenLabs esta ativa e autorizada.",
+    setup: "Voz ConnectyHub esta ativa e autorizada.",
     messages: ["Agora me explica em um audio, estou no trabalho e vou ouvindo."],
     expectedBehavior: [
       "Gerar conteudo normalmente e enviar em audio.",

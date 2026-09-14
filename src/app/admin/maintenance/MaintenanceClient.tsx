@@ -111,7 +111,7 @@ const icons: Record<string, typeof Database> = {
   traffic_ai_governance: Shield,
   connectyhub_llm: Sparkles,
   resend: Mail,
-  elevenlabs: Sparkles,
+  connectyhub_voice: Sparkles,
   geckoapi: Search,
   datazap: TrendingUp,
   fipezap: BarChart3,
@@ -149,7 +149,7 @@ const integrationDescriptions: Record<string, string> = {
   traffic_ai_governance: "Travas internas: modo leitura, aprovacao humana e sincronizacao por Inngest.",
   connectyhub_llm: "ConnectyHub para analise IA e agentes, usando o projeto e a carteira da Betel.",
   resend: "Email transacional. Gratis ate 3k emails/mes.",
-  elevenlabs: "Token da conta ElevenLabs usado pelos agentes para voz IA.",
+  connectyhub_voice: "Chave ConnectyHub Voz da Betel. As geracoes usam os creditos da propria conta.",
   geckoapi: "Extrai anuncios estruturados de venda e aluguel em portais imobiliarios para referencias de mercado.",
   datazap: "Avaliacao de imoveis, preco/m² e comparaveis. Contrato comercial OLX Group.",
   fipezap: "Indice de precos de imoveis por cidade e regiao.",
@@ -303,7 +303,7 @@ function FieldInput({
   const configKey = item.configKey || item.name.toLowerCase();
   const configuredSecret = Boolean(item.secret && item.configured);
   const displayValue = item.secret ? value || revealedValue || "" : value;
-  const canToggleSecret = Boolean(item.secret && (displayValue || (configKey !== "connectyhub_llm_api_key" && item.configured) || revealing));
+  const canToggleSecret = Boolean(item.secret && (displayValue || (!["connectyhub_llm_api_key", "connectyhub_voice_api_key"].includes(configKey) && item.configured) || revealing));
   const placeholder = configuredSecret && !displayValue
     ? SECRET_MASK
     : item.configured
@@ -358,7 +358,7 @@ function FieldInput({
       </div>
       {configuredSecret && (
         <p className="mt-1.5 text-[11px] leading-5 text-[var(--muted)]">
-          {configKey === "connectyhub_llm_api_key" ? "Chave protegida no servidor. Para substituir, cole uma nova chave do projeto Betel." : "A credencial fica mascarada por padrao. Clique no olho para revelar e clique novamente para ocultar."}
+          {["connectyhub_llm_api_key", "connectyhub_voice_api_key"].includes(configKey) ? "Chave protegida no servidor. Para substituir, cole uma nova chave do projeto Betel." : "A credencial fica mascarada por padrao. Clique no olho para revelar e clique novamente para ocultar."}
         </p>
       )}
     </div>

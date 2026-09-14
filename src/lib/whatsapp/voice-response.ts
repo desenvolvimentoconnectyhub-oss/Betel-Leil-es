@@ -7,7 +7,9 @@ import {
   type WhatsAppAgentSendOptions,
 } from "@/lib/communication/connectyhub-client";
 import type { WillianAgentConfig } from "@/lib/communication/willian-types";
-import { getElevenLabsConfig, synthesizeElevenLabsPreview } from "@/lib/voice/elevenlabs";
+import { getConnectyHubVoiceConfig } from "@/lib/voice/config";
+import { synthesizeConnectyHubVoice } from "@/lib/voice/connectyhub";
+import { voiceOperationId } from "@/lib/voice/receipts";
 
 export type WhatsAppVoiceResponseSource = "runtime" | "followup";
 
@@ -63,8 +65,8 @@ async function resolveConfiguredVoiceId(config: WillianAgentConfig) {
   if (selectedVoiceId) return selectedVoiceId;
 
   try {
-    const elevenLabsConfig = await getElevenLabsConfig();
-    return configuredVoiceId(config, elevenLabsConfig.willianVoiceId.value);
+    const connectyHubVoiceConfig = await getConnectyHubVoiceConfig();
+    return configuredVoiceId(config, connectyHubVoiceConfig.willianVoiceId.value);
   } catch {
     return "";
   }
@@ -197,10 +199,11 @@ export async function sendWhatsAppAgentVoiceReply(input: {
     };
   }
 
-  let audio: Awaited<ReturnType<typeof synthesizeElevenLabsPreview>>;
+  let audio: Awaited<ReturnType<typeof synthesizeConnectyHubVoice>>;
 
   try {
-    audio = await synthesizeElevenLabsPreview({
+    audio = await synthesizeConnectyHubVoice({
+      operationId: voiceOperationId(`${input.agentKey}:${input.instanceId || ""}:${input.trackId}`),
       voiceId: input.decision.voiceId,
       modelId: input.decision.modelId,
       text: input.text,

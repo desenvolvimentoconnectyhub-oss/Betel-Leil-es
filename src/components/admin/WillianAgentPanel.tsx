@@ -90,7 +90,7 @@ const tabs: Array<{ key: WillianAgentConfigTab; label: string; subtitle: string;
   { key: "files", label: "Arquivos", subtitle: "Conhecimento", icon: Paperclip },
 ];
 
-type ElevenLabsVoice = {
+type ConnectyHubVoice = {
   voiceId: string;
   name: string;
   category: string;
@@ -268,7 +268,7 @@ function voicePayloadMessage(payload: Record<string, unknown>, fallback: string)
   return voicePayloadText(payload, "message") || fallback;
 }
 
-const MAX_VOICE_CLONE_UPLOAD_BYTES = 4 * 1024 * 1024;
+const MAX_VOICE_CLONE_UPLOAD_BYTES = 3 * 1024 * 1024;
 
 function formatFileSize(bytes: number) {
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
@@ -2301,14 +2301,17 @@ function QualificationTab({ config, setQualification }: { config: WillianQualifi
 
 function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; setBehavior: (patch: Partial<WillianBehaviorConfig>) => void }) {
   const initialVoiceLoadRef = useRef(false);
-  const [voices, setVoices] = useState<ElevenLabsVoice[]>([]);
+  const [voices, setVoices] = useState<ConnectyHubVoice[]>([]);
+  const [voiceModels, setVoiceModels] = useState<Array<{ modelId: string; name: string; available: boolean; minimumCredits: number | null; creditsPerCharacter: number | null }>>([]);
+  const [voiceCatalogLoaded, setVoiceCatalogLoaded] = useState(false);
   const [voiceLoading, setVoiceLoading] = useState(false);
   const [voiceAction, setVoiceAction] = useState<string | null>(null);
   const [voiceError, setVoiceError] = useState("");
   const [voiceNotice, setVoiceNotice] = useState<{ type: "info" | "ok" | "err"; msg: string } | null>(null);
   const [voicePreviewUrl, setVoicePreviewUrl] = useState("");
+  const [voicePreviewCredits, setVoicePreviewCredits] = useState<number | null>(null);
+  const [previewOperationId, setPreviewOperationId] = useState("");
   const [cloneName, setCloneName] = useState(config.selectedVoiceLabel || "Agente Betel");
-  const [cloneDescription, setCloneDescription] = useState("Voz autorizada do agente de WhatsApp para atendimento Betel.");
   const [cloneFiles, setCloneFiles] = useState<File[]>([]);
   const [cloneConsentConfirmed, setCloneConsentConfirmed] = useState(false);
   const [voiceSectionOpen, setVoiceSectionOpen] = useState(false);
@@ -2336,10 +2339,12 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
     try {
       const res = await fetch(WHATSAPP_AGENT_VOICE_ENDPOINT, { cache: "no-store" });
       const data = await readVoiceEndpointPayload(res);
-      if (!res.ok || !data.success) throw new Error(voicePayloadMessage(data, "Falha ao buscar vozes ElevenLabs."));
+      if (!res.ok || !data.success) throw new Error(voicePayloadMessage(data, "Falha ao buscar vozes ConnectyHub Voz."));
 
-      const nextVoices = Array.isArray(data.voices) ? data.voices as ElevenLabsVoice[] : [];
+      const nextVoices = Array.isArray(data.voices) ? data.voices as ConnectyHubVoice[] : [];
       setVoices(nextVoices);
+      setVoiceModels(Array.isArray(data.models) ? data.models as typeof voiceModels : []);
+      setVoiceCatalogLoaded(true);
 
       const voiceConfig = voicePayloadRecord(data, "config");
       const configuredVoiceId = voicePayloadText(voiceConfig, "willianVoiceId");
@@ -2349,7 +2354,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
         setBehavior({
           selectedVoiceId: configuredVoiceId,
           selectedVoiceLabel: configuredVoice?.name || "Voz Betel",
-          audioVoiceSource: "elevenlabs",
+          audioVoiceSource: "connectyhub_voice",
           audioModelId: config.audioModelId || defaultModelId,
           voiceCloneStatus: "active",
         });
@@ -2357,7 +2362,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
         setBehavior({ audioModelId: defaultModelId });
       }
     } catch (error) {
-      setVoiceError(error instanceof Error ? error.message : "Falha ao buscar vozes ElevenLabs.");
+      setVoiceError(error instanceof Error ? error.message : "Falha ao buscar vozes ConnectyHub Voz.");
     } finally {
       setVoiceLoading(false);
     }
@@ -2375,21 +2380,23 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
     return () => window.clearTimeout(timer);
   }, [loadVoices, voiceSectionOpen]);
 
-  async function selectVoice(voice: ElevenLabsVoice) {
+  async function selectVoice(voice: ConnectyHubVoice) {
+    setPreviewOperationId("");
+    setVoicePreviewUrl("");
     setVoiceAction(`select:${voice.voiceId}`);
     setVoiceError("");
     try {
-      setBehavior({
+      const selection: Partial<WillianBehaviorConfig> = {
         selectedVoiceId: voice.voiceId,
         selectedVoiceLabel: voice.name,
-        audioVoiceSource: "elevenlabs",
+        audioVoiceSource: "connectyhub_voice",
         voiceCloneConsent: true,
         voiceCloneConsentType: "company_authorization",
         voiceCloneConsentOwnerName: voice.name,
-        voiceCloneConsentEvidence: "Voz disponivel na biblioteca ElevenLabs da conta configurada.",
+        voiceCloneConsentEvidence: "Voz disponivel na biblioteca ConnectyHub Voz da conta configurada.",
         voiceCloneConsentAt: new Date().toISOString(),
         voiceCloneStatus: "active",
-      });
+      };
       const res = await fetch(WHATSAPP_AGENT_VOICE_ENDPOINT, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -2397,6 +2404,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
       });
       const data = await readVoiceEndpointPayload(res);
       if (!res.ok || !data.success) throw new Error(voicePayloadMessage(data, "Falha ao vincular voz."));
+      setBehavior(selection);
     } catch (error) {
       setVoiceError(error instanceof Error ? error.message : "Falha ao vincular voz.");
     } finally {
@@ -2404,16 +2412,22 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
     }
   }
 
-  async function previewVoice() {
+  async function previewVoice(newGeneration = false) {
     setVoiceAction("preview");
     setVoiceError("");
     setVoicePreviewUrl("");
+    setVoicePreviewCredits(null);
     try {
+      const storageKey = `betel-voice-preview:${config.selectedVoiceId}:${config.audioModelId || "eleven_multilingual_v2"}`;
+      const operationId = (!newGeneration && window.localStorage.getItem(storageKey)) || crypto.randomUUID();
+      window.localStorage.setItem(storageKey, operationId);
+      setPreviewOperationId(operationId);
       const res = await fetch(WHATSAPP_AGENT_VOICE_ENDPOINT, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           action: "synthesize_preview",
+          operationId,
           voiceId: config.selectedVoiceId,
           modelId: config.audioModelId,
           text: "Ola, aqui e a Betel. Estou validando a voz de atendimento.",
@@ -2423,7 +2437,8 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
       if (!res.ok || !data.success) throw new Error(voicePayloadMessage(data, "Falha ao gerar preview."));
       const audio = voicePayloadRecord(data, "audio");
       const audioBase64 = voicePayloadText(audio, "audioBase64");
-      if (!audioBase64) throw new Error("Audio nao retornado pela ElevenLabs.");
+      if (!audioBase64) throw new Error("Audio nao retornado pela ConnectyHub Voz.");
+      setVoicePreviewCredits(typeof audio.chargedCredits === "number" ? audio.chargedCredits : null);
       setVoicePreviewUrl(`data:${voicePayloadText(audio, "contentType") || "audio/mpeg"};base64,${audioBase64}`);
     } catch (error) {
       setVoiceError(error instanceof Error ? error.message : "Falha ao gerar preview.");
@@ -2432,13 +2447,28 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
     }
   }
 
+  async function previewIncludedVoice() {
+    setVoiceAction("included-preview"); setVoiceError(""); setVoicePreviewUrl(""); setVoicePreviewCredits(null);
+    try {
+      const res = await fetch(WHATSAPP_AGENT_VOICE_ENDPOINT, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "included_clone_preview", voiceId: config.selectedVoiceId }) });
+      const data = await readVoiceEndpointPayload(res);
+      if (!res.ok || !data.success) throw new Error(voicePayloadMessage(data, "Previa incluida indisponivel."));
+      const audio = voicePayloadRecord(data, "audio");
+      const audioBase64 = voicePayloadText(audio, "audioBase64");
+      if (!audioBase64) throw new Error("Previa ainda nao disponivel.");
+      setVoicePreviewUrl(`data:${voicePayloadText(audio, "contentType") || "audio/mpeg"};base64,${audioBase64}`);
+      setVoicePreviewCredits(0);
+    } catch (error) { setVoiceError(error instanceof Error ? error.message : "Previa incluida indisponivel."); }
+    finally { setVoiceAction(null); }
+  }
+
   async function cloneVoice() {
     if (!cloneConsentReady) {
       setVoiceNotice({ type: "err", msg: "Confirme que voce tem direito e consentimento para clonar esta voz." });
       return;
     }
-    if (cloneFiles.length === 0) {
-      setVoiceNotice({ type: "err", msg: "Envie ao menos uma amostra de audio antes de clonar." });
+    if (cloneFiles.length === 0 || cloneFiles.length > 5) {
+      setVoiceNotice({ type: "err", msg: "Envie de uma a cinco amostras de audio antes de clonar." });
       return;
     }
     const totalUploadBytes = cloneFiles.reduce((total, file) => total + file.size, 0);
@@ -2452,12 +2482,18 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
 
     setVoiceAction("clone");
     setVoiceError("");
-    setVoiceNotice({ type: "info", msg: "Enviando amostras para a ElevenLabs. Aguarde o retorno da clonagem." });
+    setVoiceNotice({ type: "info", msg: "Enviando amostras para a ConnectyHub Voz. Aguarde o retorno da clonagem." });
     try {
+      const fingerprints = await Promise.all(cloneFiles.map(async file => ({ type: file.type, hash: Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await file.arrayBuffer()))).map(byte => byte.toString(16).padStart(2, "0")).join("") })));
+      const signature = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify({ name: cloneName.replace(/\s+/g, " ").trim(), files: fingerprints }))))).map(byte => byte.toString(16).padStart(2, "0")).join("");
+      const storageKey = `betel-voice-clone:${signature}`;
+      const operationId = window.localStorage.getItem(storageKey) || crypto.randomUUID();
+      window.localStorage.setItem(storageKey, operationId);
       const form = new FormData();
       form.set("action", "clone_willian");
+      form.set("operationId", operationId);
       form.set("name", cloneName);
-      form.set("description", cloneDescription);
+
       form.set("authorized", String(cloneConsentReady));
       form.set("consentType", "authorized_voice");
       cloneFiles.forEach((file) => form.append("files", file, file.name));
@@ -2481,12 +2517,12 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
         voiceCloneConsentEvidence: "Consentimento confirmado no painel antes do envio das amostras.",
         voiceCloneConsentAt: new Date().toISOString(),
         voiceCloneStatus: requiresVerification ? "testing" : "active",
-        audioVoiceSource: "elevenlabs_clone",
+        audioVoiceSource: "connectyhub_voice_clone",
         audioModelId: config.audioModelId || "eleven_multilingual_v2",
       });
       setVoiceNotice({
         type: "ok",
-        msg: `${voicePayloadMessage(data, "Voz criada na ElevenLabs.")} ${requiresVerification ? "Ela ficou em teste/verificacao." : "Ela ja ficou selecionada para o agente."}${nextVoiceId ? ` ID: ${nextVoiceId}` : ""}`,
+        msg: `${voicePayloadMessage(data, "Voz criada na ConnectyHub Voz.")} ${requiresVerification ? "Ela ficou em teste/verificacao." : "Ela ja ficou selecionada para o agente."}${nextVoiceId ? ` ID: ${nextVoiceId}` : ""}`,
       });
       setCloneFiles([]);
       await loadVoices(false);
@@ -2698,22 +2734,26 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
               <InfoBox label="Selecionada" value={selectedVoiceName} tone={config.selectedVoiceId ? "green" : "yellow"} />
               <div className="flex flex-wrap items-end gap-2">
                 <ActionButton icon={<RefreshCw size={14} />} label="Atualizar" loading={voiceLoading} onClick={() => void loadVoices(false)} />
+                {selectedVoice?.category === "private" && <ActionButton icon={<Radio size={14} />} label="Previa incluida" loading={voiceAction === "included-preview"} disabled={Boolean(voiceAction)} onClick={() => void previewIncludedVoice()} />}
                 <ActionButton
                   icon={<Radio size={14} />}
-                  label="Testar"
+                  label={previewOperationId ? "Consultar teste" : "Gerar teste (creditos)"}
                   loading={voiceAction === "preview"}
-                  disabled={!config.selectedVoiceId || config.selectedVoiceId === "clone-willian"}
+                  disabled={Boolean(voiceAction) || !config.selectedVoiceId || config.selectedVoiceId === "clone-willian" || (voiceCatalogLoaded && (!selectedVoice || !voiceModels.some(model => model.modelId === config.audioModelId && model.available)))}
                   onClick={() => void previewVoice()}
                 />
+                {previewOperationId && <ActionButton icon={<Radio size={14} />} label="Novo teste (usa creditos)" disabled={Boolean(voiceAction)} onClick={() => void previewVoice(true)} />}
               </div>
             </div>
 
+            <p className="mt-3 text-xs text-[var(--admin-muted)]">Cada novo teste usa creditos da conta Betel. Consultar um teste ja iniciado recupera o mesmo audio.</p>
             {voiceError && (
               <div className="mt-3 rounded-md border border-[rgba(239,68,68,0.28)] bg-[rgba(239,68,68,0.08)] px-3 py-2 text-xs text-[var(--admin-red)]">
                 {voiceError}
               </div>
             )}
 
+            {voiceCatalogLoaded && config.selectedVoiceId && !selectedVoice && <p className="mt-3 text-xs text-[var(--admin-red)]">A voz salva ainda nao esta disponivel no projeto ConnectyHub da Betel. A selecao foi preservada; confirme o vinculo da voz antes de gerar.</p>}
             <div className="mt-3 grid max-h-72 gap-2 overflow-y-auto pr-1">
               {filteredVoices.length ? (
                 filteredVoices.map((voice) => (
@@ -2723,7 +2763,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
                     detail={voice.description || [voice.category, Object.values(voice.labels || {}).join(" / ")].filter(Boolean).join(" / ") || voice.voiceId}
                     label={voice.name}
                     loading={voiceAction === `select:${voice.voiceId}`}
-                    status={config.selectedVoiceId === voice.voiceId ? "Selecionada" : voice.category || "ElevenLabs"}
+                    status={config.selectedVoiceId === voice.voiceId ? "Selecionada" : voice.category || "ConnectyHub Voz"}
                     onClick={() => void selectVoice(voice)}
                   />
                 ))
@@ -2736,6 +2776,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
 
             {voicePreviewUrl && (
               <div className="mt-3 rounded-md border border-[var(--admin-border)] bg-white px-3 py-2">
+                {voicePreviewCredits !== null && <p className="mb-2 text-xs text-[var(--admin-muted)]">Consumo desta geracao: {voicePreviewCredits.toLocaleString("pt-BR")} creditos Betel.</p>}
                 <audio controls src={voicePreviewUrl} className="h-10 w-full" />
               </div>
             )}
@@ -2745,7 +2786,6 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
             <ToggleTile title="Clone de voz" detail="Libera uso da voz clonada do agente." checked={config.voiceCloneEnabled} onChange={(voiceCloneEnabled) => setBehavior({ voiceCloneEnabled })} />
             <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(220px,0.8fr)_minmax(260px,1.2fr)]">
               <Field label="Nome da voz" value={cloneName} onChange={setCloneName} />
-              <TextAreaField label="Descricao opcional" rows={2} value={cloneDescription} onChange={setCloneDescription} />
             </div>
             <label className="mt-3 grid gap-1">
               <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-muted)]">Amostras de audio</span>
@@ -2817,7 +2857,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
               <p className="min-w-0 text-xs leading-5 text-[var(--admin-muted)]">
                 {cloneFiles.length
                   ? `${cloneFiles.length} arquivo(s): ${cloneFiles.map((file) => file.name).join(", ")}`
-                  : "Envie uma ou mais amostras de voz falada."}
+                  : "Envie de uma a cinco amostras, com ate 3 MB no total. A clonagem usa creditos Betel conforme a tarifa ConnectyHub."}
               </p>
               <ActionButton
                 icon={<Paperclip size={14} />}
@@ -2831,7 +2871,7 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
 
           <PromptDrawer title="Avancado de voz">
             <div className="grid gap-3 xl:grid-cols-4">
-              <Field label="Provedor de voz" value={config.voiceProvider} onChange={(voiceProvider) => setBehavior({ voiceProvider })} />
+              <InfoBox label="Provedor de voz" value="ConnectyHub Voz" tone="green" />
               <SelectField
                 label="Status do clone"
                 value={config.voiceCloneStatus}
@@ -2842,7 +2882,12 @@ function BehaviorTab({ config, setBehavior }: { config: WillianBehaviorConfig; s
                 ]}
                 onChange={(voiceCloneStatus) => setBehavior({ voiceCloneStatus: voiceCloneStatus as WillianBehaviorConfig["voiceCloneStatus"] })}
               />
-              <Field label="Modelo de audio" value={config.audioModelId} onChange={(audioModelId) => setBehavior({ audioModelId })} placeholder="eleven_multilingual_v2" />
+              <SelectField label="Modelo de audio" value={config.audioModelId}
+                options={[
+                  ...(!voiceModels.some(model => model.modelId === config.audioModelId && model.available) ? [[config.audioModelId, config.audioModelId || "Selecione um modelo"] as [string, string]] : []),
+                  ...voiceModels.filter(model => model.available).map(model => [model.modelId, model.name] as [string, string]),
+                ]}
+                onChange={(audioModelId) => { setBehavior({ audioModelId }); setPreviewOperationId(""); setVoicePreviewUrl(""); }} />
               <Field label="Owner publico" value={config.audioVoicePublicOwnerId} onChange={(audioVoicePublicOwnerId) => setBehavior({ audioVoicePublicOwnerId })} />
             </div>
             <div className="mt-3">

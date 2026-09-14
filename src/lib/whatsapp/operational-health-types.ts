@@ -44,7 +44,7 @@ export type WhatsAppOperationalHealth = {
     connectyHubWebhookSecretConfigured: boolean;
     whatsappProviderReleased: boolean;
     whatsappReady: boolean;
-    elevenLabsConfigured: boolean;
+    connectyHubVoiceConfigured: boolean;
     voiceReady: boolean;
   };
   agent: {

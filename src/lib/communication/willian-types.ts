@@ -563,7 +563,7 @@ export const DEFAULT_WILLIAN_AGENT_CONFIG: WillianAgentConfig = {
     conversationMode: "mirror",
     rapport: "suave",
     availability: "business_hours",
-    voiceProvider: "ElevenLabs",
+    voiceProvider: "ConnectyHub Voz",
     voiceCloneEnabled: false,
     voiceCloneConsent: false,
     voiceCloneConsentType: "authorized_voice",

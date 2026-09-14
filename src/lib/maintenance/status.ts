@@ -1,7 +1,7 @@
 import { HeadBucketCommand, S3Client } from "@aws-sdk/client-s3";
 import { getAIConfig, getGeminiApiKey, getGeminiModel } from "@/lib/ai/config";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
-import { getElevenLabsConfig } from "@/lib/voice/elevenlabs";
+import { getConnectyHubVoiceConfig } from "@/lib/voice/config";
 import {
   TRAFFIC_CONFIG_DEFAULTS,
   TRAFFIC_CONNECTION_DEFINITIONS,
@@ -303,31 +303,18 @@ async function checkGemini(): Promise<MaintenanceIntegration> {
   };
 }
 
-async function checkElevenLabs(): Promise<MaintenanceIntegration> {
-  const config = await getElevenLabsConfig();
-  const apiKeyConfigured = Boolean(config.apiKey.value);
-
-  const items: MaintenanceItem[] = [
-    {
-      name: "ELEVENLABS_API_KEY",
-      label: "API key",
-      configured: apiKeyConfigured,
-      value: "",
-      editable: true,
-      secret: true,
-      configKey: "elevenlabs_api_key",
-    },
-  ];
-
+async function checkConnectyHubVoice(): Promise<MaintenanceIntegration> {
+  const config = await getConnectyHubVoiceConfig();
+  const configured = Boolean(config.apiKey.value && config.projectId.value && config.billingOrganizationId.value);
   return {
-    id: "elevenlabs",
-    title: "ElevenLabs / Voz e clonagem",
-    status: apiKeyConfigured ? "ok" : "missing",
-    message: apiKeyConfigured ? "Token ElevenLabs configurado." : "API key pendente.",
-    items,
-    group: "Voz e Midia IA",
-    usedBy: "Willian e futuros agentes de voz",
-    site: "elevenlabs.io",
+    id: "connectyhub_voice", title: "ConnectyHub Voz", status: configured ? "ok" : "missing",
+    message: configured ? "Chave dedicada configurada. Testar conexao consulta o catalogo sem gerar audio." : "Configure a chave de Voz da conta Betel.",
+    group: "Voz e Midia IA", usedBy: "Evelyn e agentes de voz Betel", site: "www.connectyhub.com.br",
+    items: [
+      { name: "CONNECTYHUB_VOICE_API_KEY", label: "Chave de Voz da Betel", configured: Boolean(config.apiKey.value), value: "", editable: true, secret: true, configKey: "connectyhub_voice_api_key" },
+      { name: "CONNECTYHUB_VOICE_PROJECT_ID", label: "Projeto de Voz Betel", configured: Boolean(config.projectId.value), value: config.projectId.value, editable: true, secret: false, configKey: "connectyhub_voice_project_id" },
+      { name: "CONNECTYHUB_VOICE_BILLING_ORGANIZATION_ID", label: "Organizacao pagadora Betel", configured: Boolean(config.billingOrganizationId.value), value: config.billingOrganizationId.value, editable: true, secret: false, configKey: "connectyhub_voice_billing_organization_id" },
+    ],
   };
 }
 
@@ -488,11 +475,11 @@ function checkIbge(appConfig: MaintenanceAppConfig): MaintenanceIntegration {
 
 export async function getMaintenanceStatus(): Promise<MaintenancePayload> {
   const appConfig = await readMaintenanceAppConfig();
-  const [supabase, r2, gemini, elevenlabs] = await Promise.all([
+  const [supabase, r2, gemini, connectyhubVoice] = await Promise.all([
     checkSupabase(appConfig),
     checkR2(appConfig),
     checkGemini(),
-    checkElevenLabs(),
+    checkConnectyHubVoice(),
   ]);
 
   supabase.group = "Infraestrutura Base";
@@ -532,7 +519,7 @@ export async function getMaintenanceStatus(): Promise<MaintenancePayload> {
       "BETEL_EMAIL_FROM",
     ], { group: "Essenciais para Operacao", usedBy: "Willian (WhatsApp e Email)", site: "resend.com" }, appConfig),
 
-    elevenlabs,
+    connectyhubVoice,
 
     // --- Prioridade 3: Dados de mercado ---
     staticCheck("geckoapi", "GeckoAPI Imoveis", "Extracao estruturada de anuncios de venda e aluguel em portais imobiliarios.", [

@@ -162,7 +162,7 @@ export function normalizeWillianAgentConfig(input: unknown): WillianAgentConfig 
       ]),
       rapport: enumField(behavior.rapport, defaults.behavior.rapport, ["disabled", "suave", "forte"]),
       availability: enumField(behavior.availability, defaults.behavior.availability, ["business_hours", "always"]),
-      voiceProvider: stringField(behavior.voiceProvider, defaults.behavior.voiceProvider),
+      voiceProvider: "ConnectyHub Voz",
       voiceCloneEnabled: boolField(
         firstDefined(behavior.voiceCloneEnabled, behavior.audioVoiceId ? true : undefined),
         defaults.behavior.voiceCloneEnabled

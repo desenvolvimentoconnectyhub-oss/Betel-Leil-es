@@ -14,7 +14,6 @@ const SECRET_CONFIG_KEYS = new Set([
   "connectyhub_api_token",
   "connectyhub_webhook_secret",
   "resend_api_key",
-  "elevenlabs_api_key",
   "betel_geckoapi_api_key",
   "google_maps_api_key",
   "betel_google_maps_api_key",
@@ -34,7 +33,6 @@ const SECRET_CONFIG_KEYS = new Set([
 ]);
 
 const ENV_ALIASES: Record<string, string[]> = {
-  elevenlabs_api_key: ["ELEVENLABS_API_KEY", "ELEVEN_LABS_API_KEY"],
   google_maps_api_key: ["GOOGLE_MAPS_API_KEY", "BETEL_GOOGLE_MAPS_API_KEY", "GOOGLE_MAPS_PLATFORM_API_KEY"],
   betel_google_maps_api_key: ["BETEL_GOOGLE_MAPS_API_KEY", "GOOGLE_MAPS_API_KEY", "GOOGLE_MAPS_PLATFORM_API_KEY"],
   betel_brightdata_api_key: ["BETEL_BRIGHTDATA_API_KEY", "BRIGHTDATA_API_KEY"],

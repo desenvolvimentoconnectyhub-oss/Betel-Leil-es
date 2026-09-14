@@ -7,7 +7,7 @@ import { getWhatsAppAgentConfig } from "@/lib/communication/willian-agent-config
 import type { WillianAgentConfig, WillianInstanceState } from "@/lib/communication/willian-types";
 import type { ResourceTone } from "@/lib/admin/resources";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
-import { getElevenLabsConfig } from "@/lib/voice/elevenlabs";
+import { getConnectyHubVoiceConfig } from "@/lib/voice/config";
 import type {
   WhatsAppHealthCheck,
   WhatsAppHealthCheckStatus,
@@ -323,7 +323,7 @@ function buildFallbackHealth(input: {
   aiProvider: string;
   geminiKey: string | null;
   geminiModel: string;
-  elevenLabsConfigured: boolean;
+  connectyHubVoiceConfigured: boolean;
   voiceReady: boolean;
   checkRemote: boolean;
   reason: string;
@@ -370,7 +370,7 @@ function buildFallbackHealth(input: {
       connectyHubWebhookSecretConfigured: input.instanceState.webhookSecretConfigured,
       whatsappProviderReleased: input.instanceState.whatsappProviderReleased,
       whatsappReady: input.instanceState.whatsappReady,
-      elevenLabsConfigured: input.elevenLabsConfigured,
+      connectyHubVoiceConfigured: input.connectyHubVoiceConfigured,
       voiceReady: input.voiceReady,
     },
     agent: {
@@ -492,18 +492,18 @@ export async function getWhatsAppOperationalHealth(options: { agentKey?: string;
   const agentKey = cleanString(options.agentKey, WILLIAN_AGENT_KEY);
   const includeAllAgents = agentKey.toLowerCase() === "all";
   const targetAgentKey = includeAllAgents ? WILLIAN_AGENT_KEY : agentKey;
-  const [agentConfig, instanceState, aiProvider, geminiKey, geminiModel, elevenLabsConfig] = await Promise.all([
+  const [agentConfig, instanceState, aiProvider, geminiKey, geminiModel, connectyHubVoiceConfig] = await Promise.all([
     getWhatsAppAgentConfig(targetAgentKey),
     getWillianInstanceState({ checkRemote: Boolean(options.checkRemote) }),
     getActiveAIProvider(),
     getGeminiApiKey(),
     getGeminiModel(),
-    getElevenLabsConfig(),
+    getConnectyHubVoiceConfig(),
   ]);
   const supabase = getSupabaseAdminClient();
   const voiceReady = Boolean(
-    elevenLabsConfig.apiKey.value &&
-      (elevenLabsConfig.willianVoiceId.value || elevenLabsConfig.defaultVoiceId.value || agentConfig.behavior.selectedVoiceId)
+    connectyHubVoiceConfig.apiKey.value &&
+      (connectyHubVoiceConfig.willianVoiceId.value || connectyHubVoiceConfig.defaultVoiceId.value || agentConfig.behavior.selectedVoiceId)
   );
 
   if (!supabase) {
@@ -513,7 +513,7 @@ export async function getWhatsAppOperationalHealth(options: { agentKey?: string;
       aiProvider,
       geminiKey,
       geminiModel,
-      elevenLabsConfigured: Boolean(elevenLabsConfig.apiKey.value),
+      connectyHubVoiceConfigured: Boolean(connectyHubVoiceConfig.apiKey.value),
       voiceReady,
       checkRemote: Boolean(options.checkRemote),
       reason: "Supabase admin nao configurado.",
@@ -675,7 +675,7 @@ export async function getWhatsAppOperationalHealth(options: { agentKey?: string;
   }
   if (behavior.voiceCloneEnabled && !voiceReady) {
     pushUnique(blockers, "Voz clonada habilitada sem voz pronta.");
-    pushUnique(nextActions, "Selecionar ou criar uma voz ElevenLabs antes de responder em audio.");
+    pushUnique(nextActions, "Selecionar uma voz disponivel no catalogo ConnectyHub antes de responder em audio.");
   }
   if (behavior.turingBenchmark && quality.totalReviews >= 5 && !quality.benchmarkReady) {
     pushUnique(blockers, `Benchmark de qualidade abaixo do minimo: media ${quality.averageScore}/100.`);
@@ -828,7 +828,7 @@ export async function getWhatsAppOperationalHealth(options: { agentKey?: string;
       connectyHubWebhookSecretConfigured: instanceState.webhookSecretConfigured,
       whatsappProviderReleased: instanceState.whatsappProviderReleased,
       whatsappReady: instanceState.whatsappReady,
-      elevenLabsConfigured: Boolean(elevenLabsConfig.apiKey.value),
+      connectyHubVoiceConfigured: Boolean(connectyHubVoiceConfig.apiKey.value),
       voiceReady,
     },
     agent: {

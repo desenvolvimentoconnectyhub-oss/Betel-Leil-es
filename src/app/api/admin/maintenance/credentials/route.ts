@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAdminApi } from "@/lib/auth/admin-api";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
@@ -11,6 +12,8 @@ type CredentialInput = {
 };
 
 export async function POST(request: NextRequest) {
+  const authorization = await requireAdminApi();
+  if (authorization.response) return authorization.response;
   try {
     const body = (await request.json()) as { credentials: CredentialInput[] };
 
@@ -32,7 +35,7 @@ export async function POST(request: NextRequest) {
     const results: { key: string; ok: boolean; error?: string }[] = [];
 
     for (const cred of body.credentials) {
-      const key = String(cred.key || "").trim();
+      const key = String(cred.key || "").trim().toLowerCase();
       const value = String(cred.value || "").trim();
 
       if (!key || !value) {
@@ -46,6 +49,9 @@ export async function POST(request: NextRequest) {
       if (key === "connectyhub_llm_api_key" && !value.startsWith("chy_ai_")) {
         results.push({ key, ok: false, error: "Use a chave de IA do projeto Betel (chy_ai_)." }); continue;
       }
+      if (key === "connectyhub_voice_api_key" && !/^ch_voice_[a-f0-9]{64}$/.test(value)) {
+        results.push({ key, ok: false, error: "Use a chave dedicada ConnectyHub Voz da Betel (ch_voice_)." }); continue;
+      }
       const { error } = await supabase
         .from("app_config")
         .upsert(
@@ -53,7 +59,7 @@ export async function POST(request: NextRequest) {
             key,
             value,
             description: `Credencial administrativa ${key}.`,
-            is_secret: key === "connectyhub_llm_api_key" || Boolean(cred.secret),
+            is_secret: ["connectyhub_llm_api_key", "connectyhub_voice_api_key"].includes(key) || Boolean(cred.secret),
             updated_at: new Date().toISOString(),
           },
           { onConflict: "key" }

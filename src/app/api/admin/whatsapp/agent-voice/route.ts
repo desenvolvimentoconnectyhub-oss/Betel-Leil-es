@@ -1,17 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdminApi } from "@/lib/auth/admin-api";
-import {
-  createElevenLabsVoiceClone,
-  getElevenLabsConfig,
-  listElevenLabsVoices,
-  synthesizeElevenLabsPreview,
-  upsertElevenLabsConfigValue,
-} from "@/lib/voice/elevenlabs";
+import { createConnectyHubVoiceClone } from "@/lib/voice/clones";
+import { getConnectyHubVoiceConfig, saveConnectyHubVoiceSelection } from "@/lib/voice/config";
+import { listConnectyHubVoices, listConnectyHubVoiceModels, synthesizeConnectyHubVoice, previewConnectyHubClone } from "@/lib/voice/connectyhub";
+import { ConnectyHubVoiceError } from "@/lib/voice/transport";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+export const maxDuration = 120;
 
-const MAX_VOICE_CLONE_UPLOAD_BYTES = 4 * 1024 * 1024;
+const MAX_VOICE_CLONE_UPLOAD_BYTES = 3 * 1024 * 1024;
 
 function cleanString(value: unknown, fallback = "") {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
@@ -24,7 +22,7 @@ function formatFileSize(bytes: number) {
 }
 
 function getErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : "Erro inesperado na ElevenLabs.";
+  return error instanceof Error ? error.message : "Erro inesperado na ConnectyHub Voz.";
 }
 
 function isAudioFile(value: FormDataEntryValue): value is File {
@@ -47,11 +45,12 @@ export async function GET() {
   if (authorization.response) return authorization.response;
 
   try {
-    const [config, voices] = await Promise.all([getElevenLabsConfig(), listElevenLabsVoices()]);
+    const [config, voices, models] = await Promise.all([getConnectyHubVoiceConfig(), listConnectyHubVoices(), listConnectyHubVoiceModels()]);
 
     return NextResponse.json({
       success: true,
       voices,
+      models,
       config: {
         defaultModelId: config.defaultModelId.value,
         defaultVoiceId: config.defaultVoiceId.value,
@@ -66,7 +65,7 @@ export async function GET() {
         message: getErrorMessage(error),
         voices: [],
       },
-      { status: 500 }
+      { status: error instanceof ConnectyHubVoiceError ? error.status : 500 }
     );
   }
 }
@@ -74,6 +73,8 @@ export async function GET() {
 async function handleMultipart(request: NextRequest) {
   const form = await request.formData();
   const action = cleanString(form.get("action"));
+  const operationId = cleanString(form.get("operationId"));
+  if (!/^[a-zA-Z0-9_-]{8,120}$/.test(operationId)) return NextResponse.json({ success: false, message: "Identificador da clonagem obrigatorio." }, { status: 400 });
 
   if (action !== "clone_willian") {
     return NextResponse.json(
@@ -118,34 +119,23 @@ async function handleMultipart(request: NextRequest) {
   }
 
   const voiceName = cleanString(form.get("name"), "Agente Betel");
-  const result = await (async () => {
-    try {
-      return await createElevenLabsVoiceClone({
-        name: voiceName,
-        description: cleanString(form.get("description")),
-        consentType,
-        files,
-      });
-    } catch (error: unknown) {
-      const samples = files
-        .map((file) => `${cleanString(file.name, "audio")} (${formatFileSize(file.size)})`)
-        .join(", ");
-      throw new Error(`${getErrorMessage(error)} Amostra recebida pelo servidor: ${samples}.`);
-    }
-  })();
+  const result = await createConnectyHubVoiceClone({ operationId, name: voiceName, authorized: consentAccepted, files });
 
   return NextResponse.json({
     success: true,
-    message: "Voz do agente criada na ElevenLabs.",
+    message: "Voz do agente criada na ConnectyHub Voz.",
     fileCount: files.length,
     voiceName,
     voiceId: result.voiceId,
     requiresVerification: result.requiresVerification,
+    chargedCredits: result.chargedCredits,
+    generationId: result.generationId,
   });
 }
 
 async function handleJson(request: NextRequest) {
   const body = (await request.json()) as {
+    operationId?: string;
     action?: string;
     voiceId?: string;
     text?: string;
@@ -162,7 +152,9 @@ async function handleJson(request: NextRequest) {
       );
     }
 
-    await upsertElevenLabsConfigValue("elevenlabs_willian_voice_id", voiceId);
+    const voices = await listConnectyHubVoices();
+    if (!voices.some(voice => voice.voiceId === voiceId)) return NextResponse.json({ success: false, message: "Voz indisponivel no projeto Betel." }, { status: 404 });
+    await saveConnectyHubVoiceSelection(voiceId);
 
     return NextResponse.json({
       success: true,
@@ -171,10 +163,17 @@ async function handleJson(request: NextRequest) {
     });
   }
 
+  if (action === "included_clone_preview") {
+    const audio = await previewConnectyHubClone(cleanString(body.voiceId));
+    return NextResponse.json({ success: true, message: "Previa incluida do clone.", audio });
+  }
+
   if (action === "synthesize_preview") {
-    const audio = await synthesizeElevenLabsPreview({
+    if (!/^[a-zA-Z0-9_-]{8,120}$/.test(cleanString(body.operationId))) return NextResponse.json({ success: false, message: "Identificador do teste de voz obrigatorio." }, { status: 400 });
+    const audio = await synthesizeConnectyHubVoice({
+      operationId: cleanString(body.operationId),
       voiceId: body.voiceId,
-      text: body.text,
+      text: cleanString(body.text),
       modelId: body.modelId,
     });
 
@@ -209,7 +208,7 @@ export async function POST(request: NextRequest) {
         success: false,
         message: getErrorMessage(error),
       },
-      { status: 500 }
+      { status: error instanceof ConnectyHubVoiceError ? error.status : 500 }
     );
   }
 }

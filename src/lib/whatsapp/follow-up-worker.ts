@@ -772,7 +772,7 @@ export async function processWhatsAppFollowUps(input: {
         agent_key: agentKey,
         lead_id: leadId,
         conversation_id: conversationId,
-        provider: "elevenlabs/connectyhub",
+        provider: "connectyhub_voice",
         media_type: "audio",
         transcript: generated.text,
         metadata: {

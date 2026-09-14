@@ -21,7 +21,7 @@ import {
 } from "@/lib/apify/client";
 import { testMetaWhatsAppConnection } from "@/lib/meta-whatsapp/official";
 import { TRAFFIC_CONFIG_DEFAULTS } from "@/lib/traffic-ai/dashboard";
-import { testElevenLabsConnection } from "@/lib/voice/elevenlabs";
+import { testConnectyHubVoiceConnection } from "@/lib/voice/connectyhub";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -427,29 +427,13 @@ function testTrafficGovernance(): () => Promise<TestResult> {
   };
 }
 
-async function testElevenLabs(): Promise<TestResult> {
+async function testConnectyHubVoice(): Promise<TestResult> {
   const start = Date.now();
   try {
-    const subscription = await testElevenLabsConnection();
-    const latencyMs = Date.now() - start;
-    const usage =
-      subscription.characterLimit === null
-        ? `${subscription.characterCount} caracteres usados`
-        : `${subscription.characterCount}/${subscription.characterLimit} caracteres`;
-
-    return {
-      success: true,
-      integration: "elevenlabs",
-      message: `ElevenLabs respondeu. Plano ${subscription.tier}; ${usage}.`,
-      latencyMs,
-    };
+    const catalog = await testConnectyHubVoiceConnection();
+    return { success: true, integration: "connectyhub_voice", message: `ConnectyHub Voz respondeu: ${catalog.voiceCount} vozes e ${catalog.modelCount} modelos disponiveis. Consulta sem geracao de audio.`, latencyMs: Date.now() - start };
   } catch (error: unknown) {
-    return {
-      success: false,
-      integration: "elevenlabs",
-      message: error instanceof Error ? error.message : "Falha ao conectar ElevenLabs.",
-      latencyMs: Date.now() - start,
-    };
+    return { success: false, integration: "connectyhub_voice", message: error instanceof Error ? error.message : "Falha ao conectar ConnectyHub Voz.", latencyMs: Date.now() - start };
   }
 }
 
@@ -616,7 +600,7 @@ const testMap: Record<string, () => Promise<TestResult>> = {
   traffic_ai_governance: testTrafficGovernance(),
   connectyhub_llm: testGemini,
   resend: testResend,
-  elevenlabs: testElevenLabs,
+  connectyhub_voice: testConnectyHubVoice,
   geckoapi: testGeckoApiConnection,
   google_maps: testGoogleMapsConnection,
   brightdata: testBrightDataConnection,
