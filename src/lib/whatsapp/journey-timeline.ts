@@ -16,10 +16,18 @@ export function interactiveReplyFromPayload(value: unknown): { id: string; label
     const row = queue[index];
     if (!row || typeof row !== 'object') continue;
     for (const [key, child] of Object.entries(row)) {
+      // Quoted messages and chat snapshots describe earlier events, never this reply.
+      if (/quoted|contextinfo|lastmessage|history|^chat$|^chats$|metadata/i.test(key)) continue;
       if (['buttonsResponseMessage', 'templateButtonReplyMessage', 'listResponseMessage', 'interactiveResponseMessage'].includes(key) && child && typeof child === 'object') {
         const reply = child as Row;
         const single = reply.singleSelectReply as Row | undefined;
-        return { id: String(reply.selectedButtonId || reply.selectedId || single?.selectedRowId || '').slice(0, 250), label: String(reply.selectedDisplayText || reply.title || '').slice(0, 500), kind: key };
+        const flow = reply.nativeFlowResponseMessage as Row | undefined;
+        let params: Row = {};
+        if (typeof flow?.paramsJson === 'string' && flow.paramsJson.length < 4096) {
+          try { const parsed = JSON.parse(flow.paramsJson); if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) params = parsed; } catch { /* Preserve message text if provider params are malformed. */ }
+        }
+        const body = reply.body as Row | undefined;
+        return { id: String(reply.selectedButtonId || reply.selectedId || single?.selectedRowId || params.id || '').slice(0, 250), label: String(reply.selectedDisplayText || reply.title || params.display_text || body?.text || '').slice(0, 500), kind: key };
       }
       if (child && typeof child === 'object') queue.push(child);
     }

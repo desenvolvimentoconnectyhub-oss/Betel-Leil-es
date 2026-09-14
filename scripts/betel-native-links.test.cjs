@@ -49,6 +49,9 @@ async function main(){
  const timeline=loadSource('src/lib/whatsapp/journey-timeline.ts');
  const reply=timeline.interactiveReplyFromPayload({data:{message:{buttonsResponseMessage:{selectedButtonId:'visit',selectedDisplayText:'Quero visitar'}}}});
  assert.equal(reply.id,'visit');assert.equal(reply.label,'Quero visitar');
+ assert.equal(timeline.interactiveReplyFromPayload({data:{message:{text:'Uma resposta normal',contextInfo:{quotedMessage:{buttonsResponseMessage:{selectedButtonId:'old'}}}}},chat:{lastMessage:{buttonsResponseMessage:{selectedButtonId:'snapshot'}}}}),null,'quoted and snapshot buttons are not new responses');
+ const flow=timeline.interactiveReplyFromPayload({message:{interactiveResponseMessage:{nativeFlowResponseMessage:{paramsJson:'{"id":"continue","display_text":"Continuar"}'}}}});
+ assert.equal(flow.id,'continue');assert.equal(flow.label,'Continuar');
  console.log('PASS native links: text/buttons, durable retry, group anonymity, local redirect, HEAD/preview exclusion, explicit consent, CSRF, privacy and quick replies. Network disabled; no campaign sends.');
 }
 main().catch(error=>{console.error(error);process.exitCode=1;});
