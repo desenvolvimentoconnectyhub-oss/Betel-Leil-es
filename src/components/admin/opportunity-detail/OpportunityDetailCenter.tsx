@@ -1,5 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 import Link from "next/link";
+import { canonicalReferenceUrl } from "@/lib/domain/market-quality";
+import { selectMarketReferences } from "@/lib/domain/market-publication";
 import { rentalEconomics, selectRentalReferences } from "@/lib/domain/rental-references";
 import type { ReactNode } from "react";
 import {
@@ -1000,27 +1002,12 @@ function comparableViewsFromAnalysis(analysis: PropertyMarketAnalysis | null) {
   const rawSales = jsonArray<Record<string, unknown>>(marketResearch.saleComparables);
   const rawRentals = jsonArray<Record<string, unknown>>(marketResearch.rentalComparables);
   const rawComparables = [...rawSales.map((item) => ({ ...item, listingType: jsonText(item.listingType, "sale") })), ...rawRentals.map((item) => ({ ...item, listingType: jsonText(item.listingType, "rent") }))];
-  const sourceRows = rawComparables.length
-    ? rawComparables
-    : analysis.comparables.map((item) => ({
-        sourceLabel: item.sourceLabel,
-        sourceUrl: item.sourceUrl,
-        listingType: item.listingType,
-        propertyType: item.propertyType,
-        address: item.address,
-        neighborhood: item.neighborhood,
-        city: item.city,
-        state: item.state,
-        areaM2: item.areaM2,
-        askingPrice: item.askingPrice,
-        soldPrice: item.soldPrice,
-        pricePerM2: item.pricePerM2,
-        distanceKm: item.distanceKm,
-        similarityScore: item.similarityScore,
-        quality: item.quality,
-        notes: item.notes,
-        collectedAt: item.collectedAt,
-      }));
+  const rawByUrl = new Map(rawComparables.map(item => [canonicalReferenceUrl(jsonText(item.sourceUrl)), item]));
+  const sourceRows = analysis.comparables.map(item => ({
+    ...rawByUrl.get(canonicalReferenceUrl(item.sourceUrl)),
+    ...item,
+    monthlyRent: /rent|alug/i.test(item.listingType) ? item.askingPrice : 0,
+  }));
   const seen = new Set<string>();
   return sourceRows
     .map((item, index) => normalizeComparableView(item, index))
@@ -2601,7 +2588,8 @@ function ComparableCard({ comparable }: { comparable: ComparableView }) {
 
 function MarketComparablesPanel({ analysis }: { analysis: PropertyMarketAnalysis | null }) {
   const comparables = comparableViewsFromAnalysis(analysis);
-  const usedSales = comparables.filter((item) => listingLabel(item.listingType) === "Venda" && !item.discarded).slice(0, 3);
+  const selectedSaleUrls = new Set(analysis ? selectMarketReferences(analysis).map(ref => ref.url) : []);
+  const usedSales = comparables.filter(item => selectedSaleUrls.has(canonicalReferenceUrl(item.sourceUrl)));
   const selectedRentUrls = new Set(analysis ? selectRentalReferences(analysis).map(ref => ref.url.replace(/\/+$/, "")) : []);
   const usedRentals = comparables.filter(item => selectedRentUrls.has(item.sourceUrl.replace(/\/+$/, "")));
   const discarded = comparables.filter((item) => item.discarded);
