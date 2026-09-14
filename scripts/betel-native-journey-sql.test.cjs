@@ -12,6 +12,8 @@ async function main(){
  create table whatsapp_conversation_messages(id uuid primary key,lead_id uuid,conversation_id uuid,direction text,author_type text,payload jsonb,text text,created_at timestamptz default now());
  create table whatsapp_lead_files(id uuid primary key default gen_random_uuid(),lead_id uuid,conversation_id uuid,message_id uuid,source text,file_url text,mime_type text,metadata jsonb,created_at timestamptz default now());`);
  await db.exec(fs.readFileSync('supabase/migrations/20260914220000_betel_native_journey.sql','utf8'));
+ await db.exec('create table whatsapp_sdr_appointments(id uuid primary key,lead_id uuid,status text,lead_confirmation_status text,scheduled_for timestamptz);create table whatsapp_lead_profiles(id uuid primary key,lead_id uuid,crm_stage text,classification text);');
+ await db.exec(fs.readFileSync('supabase/migrations/20260914224000_betel_process_journey.sql','utf8'));
  const recipient=randomUUID(),actor=randomUUID(),visitor=randomUUID(),otherVisitor=randomUUID(),link=randomUUID(),group=randomUUID(),event=randomUUID(),claim=randomUUID(),message=randomUUID();
  await db.query('insert into whatsapp_leads(id,phone) values($1,$2),($3,$4)',[recipient,'5511999000001',actor,'5511999000002']);
  await db.query("insert into betel_visitors(id,token_hash,expires_at) values($1,'fixture',now()+interval '30 days'),($2,'other',now()+interval '30 days')",[visitor,otherVisitor]);
@@ -49,6 +51,15 @@ async function main(){
  await db.query('select prune_betel_journey()');
  assert.equal((await db.query('select count(*)::int n from whatsapp_lead_files')).rows[0].n,1,'expiry deletes only expired journey files');
  assert.equal((await db.query('select count(*)::int n from whatsapp_leads')).rows[0].n,2,'no contacts duplicated or deleted');
+ const appointment=randomUUID();
+ await db.query("insert into whatsapp_sdr_appointments values($1,$2,'scheduled','pending',now())",[appointment,recipient]);
+ await db.query("update whatsapp_sdr_appointments set status='scheduled' where id=$1",[appointment]);
+ await db.query("update whatsapp_sdr_appointments set status='completed' where id=$1",[appointment]);
+ await db.query("insert into whatsapp_lead_profiles values($1,$2,'qualificando','morno')",[randomUUID(),recipient]);
+ const stages=(await db.query("select * from whatsapp_lead_files where source='betel_process_stage'")).rows;
+ assert.equal(stages.length,3,'insert and actual stage changes preserved; repeated state not duplicated');
+ const completed=stages.find(row=>row.metadata.after.status==='completed');
+ assert.equal(completed.metadata.before.status,'scheduled');assert.match(timeline.journeyTimelineMessage(completed,recipient).text,/Registro operacional/);
  await db.exec('set role anon');
  await assert.rejects(()=>click(link,randomUUID()),/permission denied/);
  await assert.rejects(()=>db.query('select * from betel_visitors'),/permission denied/);

@@ -1,6 +1,10 @@
 type Row = Record<string, unknown>;
 export function journeyTimelineMessage(row: Row, viewingLeadId: string): Row {
   const metadata = (row.metadata || {}) as Row;
+  if (row.source === 'betel_process_stage') {
+    const state = (value: unknown) => Object.entries((value || {}) as Row).filter(([,v]) => v !== null && v !== '').map(([key,value]) => `${key}: ${value}`).join('; ');
+    return { id: row.id, direction: 'system', author_type: 'system', author_label: 'Processo Betel', message_type: 'event', text: `${metadata.process || 'Processo'} ${metadata.operation === 'insert' ? 'registrado' : 'atualizado'}.\n${metadata.before ? `Antes: ${state(metadata.before)}\n` : ''}Agora: ${state(metadata.after)}\nRegistro operacional da Betel.`, created_at: row.created_at, payload: { source: 'betel_process', sourceLabel: 'Processo Betel' } };
+  }
   const confirmed = row.lead_id === viewingLeadId && metadata.actorConfirmed === true;
   const differentActor = Boolean(row.lead_id) && row.lead_id !== viewingLeadId;
   const action = row.source === 'betel_page_view' ? `Visitou a pagina ${metadata.path || '/'}` : `Abriu ${metadata.label || 'um link'}`;

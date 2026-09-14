@@ -22,7 +22,7 @@ Implementação de 14/09/2026. A Betel é proprietária do cadastro, arquivo, ba
 - Novos convites usam o mesmo fluxo nativo. Convites assinados antigos continuam válidos, mas seus novos cliques passam ao arquivo com atribuição cautelosa e sem coleta de IP/geolocalização. Abrir convite não confirma ingresso no grupo.
 - Respostas rápidas recebidas continuam na mensagem original do webhook; o painel mostra texto e identificador da opção. Não há evento de clique URL fornecido pelo WhatsApp: ele é observado na rota da Betel.
 - Com consentimento, home, oportunidades, detalhe, blog e planos registram passagem (`betel_page_view`). Apenas o caminho é salvo, sem parâmetros, formulário ou referrer.
-- Agenda, qualificação, mensagens/mídias e convites já instrumentados continuam nos registros próprios, sem criar outro CRM.
+- Agenda, qualificação, mensagens/mídias e convites continuam nos registros próprios, sem criar outro CRM. Novas criações e mudanças de status/confirmação/horário da agenda e etapa/classificação do perfil geram `betel_process_stage` no mesmo arquivo. A transação salva o estado anterior e novo; atualização sem mudança de estado não duplica evento. São registros operacionais, sem afirmar que o lead realizou a mudança. Não há preenchimento retroativo.
 
 ## Identidade e destinatário
 
@@ -36,6 +36,7 @@ O arquivo do destinatário conserva a referência à mensagem, mas descreve auto
 
 - `BETEL_VISITOR_RETENTION_DAYS`: padrão 30, limite 1–90 dias. Cookie guarda token aleatório; banco guarda seu hash.
 - `BETEL_JOURNEY_RETENTION_DAYS`: padrão 90, limite 1–365 dias para os novos eventos de cliques/páginas.
+- Transições operacionais de agenda/qualificação têm retenção de 90 dias definida na rotina SQL; os próprios agendamentos e perfis originais permanecem sob suas regras existentes.
 - Código de associação vence em 15 minutos. GPC/DNT e recusa de reconhecimento são respeitados; ainda é possível abrir links sem um visitante persistente.
 - Desativar remove a associação do navegador e bloqueia novos reconhecimentos. Não apaga automaticamente mensagens comerciais anteriores.
 - `prune_betel_journey` remove eventos expirados, códigos e visitantes. Integra a rotina Inngest de limpeza já existente, a cada 30 minutos. Consultas excluem eventos expirados mesmo se o agendador estiver indisponível. Links permanecem resolvíveis.
