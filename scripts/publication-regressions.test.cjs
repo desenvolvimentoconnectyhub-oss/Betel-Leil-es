@@ -132,6 +132,22 @@ async function main() {
   assert.equal((await dispatcher.dispatchMarketPublication(uncertainInput)).deliveryUnconfirmed, true);
   assert.equal(sends.length, count, 'uncertain receipt blocks blind retry and buttons');
 
+  const copyDb = memoryDb(); const copyCalls = [];
+  const copyTransport = { checkWhatsAppSenderConnection: async () => ({ connected: true }),
+    sendWhatsAppDestinationMedia: async input => { copyCalls.push({ kind: 'media', ...input }); return { ok: true, externalDeliveryId: input.trackId }; },
+    sendWhatsAppDestinationText: async input => { copyCalls.push({ kind: 'text', ...input }); return { ok: true, externalDeliveryId: input.trackId }; },
+  };
+  const copyDispatcher = loadSource('src/lib/whatsapp/publication-delivery.ts', { '@/lib/supabase/admin': { getSupabaseAdminClient: () => copyDb }, '@/lib/communication/connectyhub-client': copyTransport });
+  const explicitAuction = { ...deliveryInput, targetId: 'new-template', auctionButtonText: 'Link do leilão', auctionActionButton: { choices: [{ label: 'Ver leilão', url: 'https://auction.example/property' }] } };
+  assert.equal((await copyDispatcher.dispatchMarketPublication(explicitAuction)).ok, true);
+  assert.equal(copyCalls.length,3);assert.equal(copyCalls[0].kind,'media');
+  assert.equal(copyCalls[1].text,'Link do leilão');assert.equal(copyCalls[1].actionButton.choices[0].label,'Ver leilão');
+  assert.equal(copyCalls[2].text,'Referencias');assert.equal(copyCalls[2].actionButton.choices.length,3);
+  assert.equal(new Set(copyCalls.map(call=>call.trackId)).size,3,'auction and rental blocks have distinct stable native tracking');
+  await copyDispatcher.dispatchMarketPublication(explicitAuction);assert.equal(copyCalls.length,3,'new explicit blocks remain idempotent');
+  await copyDispatcher.dispatchMarketPublication({...explicitAuction,targetId:'without-image',mediaUrl:''});
+  assert.equal(copyCalls.length,5);assert.match(copyCalls[3].text,/Fixture\n\nLink do leilão/);assert.equal(copyCalls[4].actionButton.choices.length,3);
+
   const llmDb = memoryDb(); let requests = [], responseMode = 'ok';
   const llm = loadSource('src/lib/ai/connectyhub-llm.ts', { './config': { getGeminiModel: async () => 'flash-3.5', getAIConfig: async () => 'betel-project' }, '@/lib/supabase/admin': { getSupabaseAdminClient: () => llmDb } }, {
     fetch: async (url, options) => { requests.push({ url, ...options }); if (responseMode === 'network') throw Error('response lost'); return { ok: true, headers: new Headers(), json: async () => ({ connectyhub: { request_id: 'receipt', project_id: 'betel-project', credits: 1 }, candidates: [{ finishReason: responseMode === 'limit' ? 'MAX_TOKENS' : 'STOP', content: { parts: responseMode === 'limit' ? [] : [{ text: 'OK', thoughtSignature: 'preserved' }] }, groundingMetadata: { sources: ['source'] } }] }) }; },

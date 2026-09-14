@@ -7,11 +7,16 @@ export async function dispatchMarketPublication(input: {
   campaignId: string; targetId: string; agentKey: string; instanceId: string;
   destinationJid: string; caption: string; mediaUrl: string; mediaType: string;
   buttonText: string; actionButton?: WhatsAppActionButtonInput;
+  auctionButtonText?: string; auctionActionButton?: WhatsAppActionButtonInput;
 }) {
   const db = getSupabaseAdminClient();
   if (!db) return { ok: false, errorMessage: "Registro de entrega indisponivel." };
   if (!input.instanceId) return { ok: false, errorMessage: "Campanha sem instancia verificada; revise a publicacao." };
-  const kinds = input.mediaUrl ? ["media", ...(input.actionButton ? ["buttons"] : [])] : ["text"];
+  // New templates explicitly own the auction block. Legacy campaigns lack
+  // auctionActionButton and retain their original part plan and content hash.
+  const kinds = input.auctionActionButton
+    ? [...(input.mediaUrl ? ["media"] : []), "text", ...(input.actionButton ? ["buttons"] : [])]
+    : input.mediaUrl ? ["media", ...(input.actionButton ? ["buttons"] : [])] : ["text"];
   const results: Record<string, unknown> = {};
   for (const kind of kinds) {
     const id = createHash("sha256").update(`${input.campaignId}:${input.targetId}:${kind}`).digest("hex");
@@ -33,9 +38,12 @@ export async function dispatchMarketPublication(input: {
     let delivery: ConnectyHubDeliveryResult;
     try {
       const base = { agentKey: input.agentKey, instanceId: input.instanceId, destinationJid: input.destinationJid, trackId: `betel-pub-${id}`, sendOptions: { readChat: true } };
+      const auctionPart = kind === "text" && Boolean(input.auctionActionButton);
       delivery = kind === "media"
         ? await sendWhatsAppDestinationMedia({ ...base, fileUrl: input.mediaUrl, mediaType: input.mediaType, text: input.caption })
-        : await sendWhatsAppDestinationText({ ...base, text: kind === "buttons" ? input.buttonText : input.caption, actionButton: input.actionButton, inferActionButtonFromText: false });
+        : await sendWhatsAppDestinationText({ ...base,
+            text: auctionPart ? [input.mediaUrl ? "" : input.caption, input.auctionButtonText || "Link do leilão"].filter(Boolean).join("\n\n") : kind === "buttons" ? input.buttonText : input.caption,
+            actionButton: auctionPart ? input.auctionActionButton : input.actionButton, inferActionButtonFromText: false });
     } catch {
       await db.from("whatsapp_publication_parts").update({ status: "uncertain" }).eq("id", id);
       return { ok: false, deliveryUnconfirmed: true, errorMessage: "Resposta de envio desconhecida; parte preservada para conciliacao." };

@@ -1026,7 +1026,8 @@ export async function processWhatsAppCommunityCampaigns(input: { limit?: number;
 
       if (!input.dryRun) {
         if (humanOpportunityPublication) {
-          const delivery = await dispatchMarketPublication({ campaignId, targetId, agentKey, instanceId: cleanString(campaignMetadata.senderProviderInstanceId), destinationJid, caption: bodyText, mediaUrl, mediaType, buttonText, actionButton });
+          const delivery = await dispatchMarketPublication({ campaignId, targetId, agentKey, instanceId: cleanString(campaignMetadata.senderProviderInstanceId), destinationJid, caption: bodyText, mediaUrl, mediaType, buttonText, actionButton,
+            ...(campaignMetadata.auctionActionButton ? { auctionActionButton: campaignMetadata.auctionActionButton as WhatsAppActionButtonInput, auctionButtonText: cleanString(campaignMetadata.auctionButtonText) } : {}) });
           deliveryPayload = delivery as unknown as Record<string, unknown>;
           deliveryStatus = delivery.ok ? "sent" : "failed";
           errorMessage = delivery.ok ? "" : delivery.errorMessage || "Entrega pendente de conciliacao.";

@@ -81,6 +81,8 @@ export type OpportunityWhatsAppPost = {
   auctionUrl: string;
   sourceLinks: OpportunityWhatsAppSourceLink[];
   actionButton?: WhatsAppActionButtonInput;
+  auctionActionButton?: WhatsAppActionButtonInput;
+  auctionButtonText?: string;
 };
 
 type ImmediateWhatsAppProcessingResult = {
@@ -410,7 +412,7 @@ function appendSourceLinksToCaption(caption: string, auctionUrl: string, links: 
   if (!auctionUrl && !links.length) return caption;
 
   const suffixLines = [
-    ...(auctionUrl ? [`Link leilao: ${auctionUrl}`] : []),
+    ...(auctionUrl ? [`Link do leilão: ${auctionUrl}`] : []),
     ...(auctionUrl && links.length ? [""] : []),
     ...(links.length ? ["Referencias:", ...links.map((link, index) => `${index + 1}. ${link.label}: ${link.url}`)] : []),
   ];
@@ -447,7 +449,7 @@ function actionButtonForPost(input: {
 
 function buttonTextForPost(linkFormat: OpportunityWhatsAppLinkFormat, hasSourceLinks: boolean) {
   if (linkFormat === "source_buttons" && hasSourceLinks) {
-    return "👇 Consulte os tres anuncios de aluguel usados na analise. Valores anunciados; renda nao garantida.";
+    return "🏠 Quanto este imóvel pode render em aluguel? Estes três anúncios de imóveis comparáveis ajudam a estimar essa renda e avaliar a oportunidade.";
   }
   if (linkFormat === "source_buttons") return "";
   if (linkFormat === "source_links") return "";
@@ -500,7 +502,10 @@ export async function buildOpportunityWhatsAppPost(
     "",
     `👉 ${publicSignal}`,
   ]);
-  const caption = appendSourceLinksToCaption(baseCaption, auctionUrl, linkFormat === "source_links" ? sourceLinks : []);
+  const auctionActionButton = linkFormat === "source_buttons" && auctionUrl
+    ? { footerText: "Betel Leiloes", choices: [{ label: "Ver leilão", url: auctionUrl }] } satisfies WhatsAppActionButtonInput
+    : undefined;
+  const caption = appendSourceLinksToCaption(baseCaption, auctionActionButton ? "" : auctionUrl, linkFormat === "source_links" ? sourceLinks : []);
 
   return {
     data: {
@@ -515,6 +520,8 @@ export async function buildOpportunityWhatsAppPost(
       auctionUrl,
       sourceLinks,
       actionButton,
+      auctionActionButton,
+      auctionButtonText: auctionActionButton ? "Link do leilão" : undefined,
     },
     source: "supabase",
   };
@@ -882,6 +889,8 @@ export async function scheduleOpportunityWhatsAppPublication(input: {
       imageUrl: post.imageUrl,
       linkFormat: post.linkFormat,
       auctionUrl: post.auctionUrl,
+      auctionActionButton: post.auctionActionButton,
+      auctionButtonText: post.auctionButtonText,
       sourceLinks: post.sourceLinks,
       approvedByAdminUserId: cleanString(input.approvedByAdminUserId),
       approvedByName: cleanString(input.approvedByName),
