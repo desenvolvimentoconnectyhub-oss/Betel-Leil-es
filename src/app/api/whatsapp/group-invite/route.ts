@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
+import { createHash, randomUUID } from "node:crypto";
+import { getSupabaseAdminClient } from "@/lib/supabase/admin";
+import { getBetelVisitor, recordNativeClick } from "@/lib/whatsapp/visitor-journey";
+import { isLinkPreview } from "@/lib/whatsapp/native-links";
 import {
-  buildBetelGroupInviteClickFromRequest,
-  recordBetelGroupInviteClick,
   safeBetelGroupDestination,
   verifyBetelGroupInvitePayload,
 } from "@/lib/whatsapp/group-invite-tracking";
@@ -64,15 +66,22 @@ export async function GET(request: Request) {
   }
 
   const destination = safeBetelGroupDestination(payload.groupUrl) || DEFAULT_BETEL_GROUP_URL;
-  await recordBetelGroupInviteClick({
-    payload: {
-      ...payload,
-      groupUrl: destination,
-    },
-    click: buildBetelGroupInviteClickFromRequest(request),
-  }).catch(() => undefined);
+  if (!isLinkPreview(request)) {
+    try {
+      const db = getSupabaseAdminClient();
+      if (!db) throw new Error("Unavailable");
+      const key = createHash("sha256").update(`legacy-invite:${payload.trackId}`).digest("hex");
+      const saved = await db.from("betel_tracked_links").upsert({ dedup_key: key, target_url: destination, label: "Convite para grupo", source: "legacy_group_invite", intended_lead_id: payload.leadId, conversation_id: payload.conversationId, recipient_kind: "direct", context: { trackId: payload.trackId, appointmentId: payload.appointmentId, agentKey: payload.agentKey } }, { onConflict: "dedup_key", ignoreDuplicates: true });
+      if (saved.error) throw new Error("Unavailable");
+      const link = await db.from("betel_tracked_links").select("id").eq("dedup_key", key).single();
+      if (link.error) throw new Error("Unavailable");
+      const visitor = await getBetelVisitor(request);
+      await recordNativeClick(link.data.id, randomUUID(), visitor?.id);
+    } catch { return htmlResponse({ title: "Link temporariamente indisponivel", body: "Tente abrir o convite novamente em instantes.", tone: "error" }, 503); }
+  }
 
   const response = NextResponse.redirect(destination, 302);
   response.headers.set("cache-control", "no-store");
   return response;
 }
+export const HEAD = GET;

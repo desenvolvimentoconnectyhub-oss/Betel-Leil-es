@@ -1,4 +1,5 @@
 import type { ResourceTone } from "../resources";
+import { journeyTimelineMessage, interactiveReplyFromPayload } from "@/lib/whatsapp/journey-timeline";
 import { fetchWhatsAppLeadProfileImage } from "@/lib/communication/connectyhub-client";
 import type { WhatsAppSdrAppointmentSummary } from "@/lib/whatsapp/sdr-appointment-types";
 import {
@@ -725,6 +726,7 @@ function isEffectiveOutboundMessage(message: DbRow) {
 }
 
 function timelineItem(message: DbRow): WhatsAppCrmTimelineItem {
+  const reply = asString(message.direction) === "inbound" ? interactiveReplyFromPayload(message.payload) : null;
   const direction = asString(message.direction, "system");
   const origin = messageOrigin(message);
   const authorType = asString(message.author_type, direction === "inbound" ? "lead" : "ai");
@@ -737,7 +739,7 @@ function timelineItem(message: DbRow): WhatsAppCrmTimelineItem {
     originSource: origin.source,
     originLabel: origin.label,
     messageType: asString(message.message_type, "text"),
-    text: messageBody(message),
+    text: reply ? `Resposta ao botao: ${reply.label || messageBody(message)}${reply.id ? ` (opcao: ${reply.id})` : ""}` : messageBody(message),
     transcript: asString(message.transcript),
     mediaUrl: asString(message.media_url),
     mediaMimeType: asString(message.media_mime_type),
@@ -774,8 +776,8 @@ function whatsappUrl(phone: string) {
   return digits ? `https://wa.me/${digits}` : "";
 }
 
-function recentTimeline(messages: DbRow[]) {
-  return messages.filter(isDbRow).slice(0, 40).map(timelineItem).reverse();
+function recentTimeline(messages: DbRow[], journeyFiles: DbRow[] = [], leadId = "") {
+  return [...messages.filter(isDbRow).slice(0, 40).map(timelineItem), ...journeyFiles.filter(row => row.lead_id === leadId || row.intended_lead_id === leadId).map(row => timelineItem(journeyTimelineMessage(row, leadId)))].sort((a,b) => timestamp(a.createdAt) - timestamp(b.createdAt)).slice(-70);
 }
 
 const activeSdrAppointmentStatuses = new Set(["pending_confirmation", "scheduled", "notified"]);
@@ -1237,6 +1239,7 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
   }
 
   const leadRows = ((leadsResult.data || []) as unknown[]).filter(isDbRow).filter((row) => asString(row.id));
+  const journeyFilesResult = await supabase.rpc("betel_recent_journey", { p_leads: leadRows.map(row => row.id), p_limit: 40 });
   const conversationRows = ((conversationsResult.data || []) as unknown[]).filter(isDbRow).filter((row) => asString(row.id));
   const messageRows = ((messagesResult.data || []) as unknown[]).filter(isDbRow).filter((row) => asString(row.id));
   const instanceRows = ((instancesResult.data || []) as unknown[])
@@ -1249,6 +1252,7 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
   const appointmentRows = appointmentsResult.error ? [] : ((appointmentsResult.data || []) as unknown[]).filter(isDbRow);
   const adminUserRows = adminUsersResult.error ? [] : ((adminUsersResult.data || []) as unknown[]).filter(isDbRow);
   const groupInviteFileRows = groupInviteFilesResult.error ? [] : ((groupInviteFilesResult.data || []) as unknown[]).filter(isDbRow);
+  const journeyFileRows = journeyFilesResult.error ? [] : ((journeyFilesResult.data || []) as unknown[]).filter(isDbRow);
 
   const leadsById = new Map(leadRows.map((row) => [asString(row.id), row]));
   const conversationsById = new Map(conversationRows.map((row) => [asString(row.id), row]));
@@ -1437,7 +1441,7 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
       internalNotes: context.internalNotes,
       whatsappUrl: whatsappUrl(phone),
       qualification,
-      timeline: recentTimeline(messages),
+      timeline: recentTimeline(messages, journeyFileRows, leadId),
     });
   }
 
@@ -1551,7 +1555,7 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
       internalNotes: context.internalNotes,
       whatsappUrl: whatsappUrl(phone),
       qualification,
-      timeline: recentTimeline(messages),
+      timeline: recentTimeline(messages, journeyFileRows, leadId),
     });
   }
 
@@ -1676,6 +1680,7 @@ export async function getWhatsAppCrmData(): Promise<DataResult<WhatsAppCrmData>>
     appointmentsResult.error,
     adminUsersResult.error,
     groupInviteFilesResult.error,
+    journeyFilesResult.error,
     instancesResult.error,
     agentsResult.error,
   ]

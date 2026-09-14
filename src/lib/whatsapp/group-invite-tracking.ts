@@ -1,4 +1,5 @@
 import "server-only";
+import { getBetelPublicOrigin } from "@/lib/public-origin";
 
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { revalidatePath } from "next/cache";
@@ -103,14 +104,7 @@ function leadFirstName(name: string) {
 }
 
 function publicAppUrl() {
-  const vercelUrl = process.env.VERCEL_URL?.trim();
-  const fallbackVercel = vercelUrl ? `https://${vercelUrl.replace(/^https?:\/\//i, "")}` : "";
-  return (
-    process.env.NEXT_PUBLIC_APP_URL?.trim() ||
-    process.env.BETEL_PUBLIC_APP_URL?.trim() ||
-    process.env.NEXT_PUBLIC_SITE_URL?.trim() ||
-    fallbackVercel
-  ).replace(/\/+$/g, "");
+  return getBetelPublicOrigin();
 }
 
 function trackingSecret() {
@@ -483,7 +477,9 @@ export async function sendBetelGroupInvite(input: BetelGroupInviteSendInput): Pr
     outcome: input.outcome,
     groupUrl,
   });
-  const trackingUrl = input.settings.groupInvite.trackingEnabled ? tracking.trackingUrl : groupUrl;
+  // The shared Betel transport now creates the native tracked URL. Keep the
+  // signed legacy resolver available for messages that have already been sent.
+  const trackingUrl = groupUrl;
   const actionButton: WhatsAppActionButtonInput = {
     footerText: input.settings.groupInvite.footerText,
     choices: [

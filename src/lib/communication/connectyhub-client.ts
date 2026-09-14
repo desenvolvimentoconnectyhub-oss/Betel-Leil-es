@@ -1,5 +1,6 @@
 import { assertLeadWorkActive } from "@/lib/whatsapp/lead-reset";
 import "server-only";
+import { prepareBetelNativeLinks } from "@/lib/whatsapp/native-links";
 import { freshConnection, normalizedConnectionState, resolveConnectionRecords } from "./connection-state";
 
 import { createHash } from "node:crypto";
@@ -1022,6 +1023,21 @@ async function connectyhubRequestWithIdempotencyFallback(
   path: string,
   options: ConnectyHubRequestOptions & { idempotencyKey?: string }
 ) {
+  if (["/provider/send/text", "/provider/send/menu", "/provider/send/media", "/messages/text", "/messages/media"].includes(path) && options.body) {
+    const body = options.body as Record<string, unknown>;
+    const original = (body.payload || body) as Record<string, unknown>;
+    const choices = Array.isArray(original.choices) ? original.choices.filter((v): v is string => typeof v === "string").map(value => {
+      const split = value.indexOf("|");
+      return { label: value.slice(0, split), url: value.slice(split + 1) };
+    }).filter(choice => /^https?:\/\//.test(choice.url)) : [];
+    const prepared = await prepareBetelNativeLinks({ instanceId: cleanString(body.instanceId), number: cleanString(original.number), trackId: cleanString(original.track_id || original.trackId || options.idempotencyKey), text: cleanString(original.text), ...(choices.length ? { actionButton: { choices } } : {}) });
+    const rewritten = { ...original, text: prepared.text, ...(choices.length ? { choices: (original.choices as string[]).map(value => {
+      const index = choices.findIndex(choice => `${choice.label}|${choice.url}` === value);
+      const choice = prepared.actionButton?.choices?.[index];
+      return choice ? `${choice.label}|${choice.url}` : value;
+    }) } : {}) };
+    options = { ...options, body: body.payload ? { ...body, payload: rewritten } : rewritten };
+  }
   const idempotencyKey = cleanString(options.idempotencyKey);
   const baseOptions: ConnectyHubRequestOptions = {
     ...(options.body ? { body: options.body } : {}),
