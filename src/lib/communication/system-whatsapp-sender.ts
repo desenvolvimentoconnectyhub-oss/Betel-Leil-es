@@ -99,18 +99,19 @@ async function findSenderByIdOrProviderId(instanceId: string) {
 
   const select = "id,agent_key,instance_name,phone,status,connected_at,last_seen_at,provider_instance_id,updated_at";
   const byId = isUuidLike(cleanId)
-    ? await supabase.from("whatsapp_instances").select(select).eq("id", cleanId).maybeSingle()
+    ? await supabase.from("whatsapp_instances").select(select).eq("provider", "connectyhub").neq("status", "archived").neq("status", "deleted").eq("id", cleanId).maybeSingle()
     : { data: null, error: null };
 
-  if (byId.data && !byId.error) return normalizeSender(byId.data as DbRow);
+  if (byId.data && !byId.error) return isUuidLike(cleanString(byId.data.provider_instance_id)) ? normalizeSender(byId.data as DbRow) : null;
 
   const { data } = await supabase
     .from("whatsapp_instances")
     .select(select)
+    .eq("provider", "connectyhub").neq("status", "archived").neq("status", "deleted")
     .eq("provider_instance_id", cleanId)
     .maybeSingle();
 
-  return data ? normalizeSender(data as DbRow) : null;
+  return data && isUuidLike(cleanString(data.provider_instance_id)) ? normalizeSender(data as DbRow) : null;
 }
 
 async function findSenderByAgentKey(agentKey: string) {
@@ -122,22 +123,25 @@ async function findSenderByAgentKey(agentKey: string) {
     .from("whatsapp_instances")
     .select("id,agent_key,instance_name,phone,status,connected_at,last_seen_at,provider_instance_id,updated_at")
     .eq("agent_key", cleanKey)
+    .eq("provider", "connectyhub").neq("status", "archived")
     .neq("status", "deleted")
     .not("provider_instance_id", "is", null)
     .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(2);
 
-  return data ? normalizeSender(data as DbRow) : null;
+  return data?.length === 1 && isUuidLike(cleanString(data[0].provider_instance_id)) ? normalizeSender(data[0] as DbRow) : null;
 }
 
 export async function listSystemWhatsAppSenderOptions(): Promise<SystemWhatsAppSenderOption[]> {
   const supabase = getSupabaseAdminClient();
   if (!supabase) return [];
+  const { reconcileWhatsAppInstanceLifecycle } = await import("./connectyhub-client");
+  await reconcileWhatsAppInstanceLifecycle();
 
   const { data, error } = await supabase
     .from("whatsapp_instances")
     .select("id,agent_key,instance_name,phone,status,connected_at,last_seen_at,provider_instance_id,updated_at")
+    .eq("provider", "connectyhub").neq("status", "archived")
     .neq("status", "deleted")
     .not("provider_instance_id", "is", null)
     .order("updated_at", { ascending: false })
@@ -146,14 +150,14 @@ export async function listSystemWhatsAppSenderOptions(): Promise<SystemWhatsAppS
   if (error) return [];
   return ((data || []) as DbRow[])
     .map(normalizeSender)
-    .filter((sender) => sender.id && sender.providerInstanceId);
+    .filter((sender) => sender.id && isUuidLike(sender.providerInstanceId));
 }
 
 export async function getSystemWhatsAppSenderConfig(): Promise<SystemWhatsAppSenderConfig> {
   const config = await readConfigValues();
   const instanceId = cleanString(config.get(SYSTEM_WHATSAPP_INSTANCE_ID_CONFIG_KEY));
   const agentKey = cleanString(config.get(SYSTEM_WHATSAPP_AGENT_KEY_CONFIG_KEY));
-  const selected = instanceId ? await findSenderByIdOrProviderId(instanceId) : agentKey ? await findSenderByAgentKey(agentKey) : null;
+  const selected = instanceId ? await findSenderByIdOrProviderId(instanceId) : null;
 
   return {
     instanceId,
@@ -218,7 +222,7 @@ export async function resolveSystemWhatsAppSender(input?: {
   const explicitAgentKey = cleanString(input?.senderAgentKey);
   const config = explicitInstanceId || explicitAgentKey ? null : await readConfigValues();
   const configuredInstanceId = explicitInstanceId || cleanString(config?.get(SYSTEM_WHATSAPP_INSTANCE_ID_CONFIG_KEY));
-  const configuredAgentKey = explicitAgentKey || cleanString(config?.get(SYSTEM_WHATSAPP_AGENT_KEY_CONFIG_KEY));
+  const configuredAgentKey = explicitAgentKey || (configuredInstanceId ? cleanString(config?.get(SYSTEM_WHATSAPP_AGENT_KEY_CONFIG_KEY)) : "");
   const configured = Boolean(configuredInstanceId || configuredAgentKey);
 
   if (!configured) {

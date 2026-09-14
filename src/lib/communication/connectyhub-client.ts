@@ -4,6 +4,7 @@ import { freshConnection, normalizedConnectionState, resolveConnectionRecords } 
 import { createHash } from "node:crypto";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { resolveSystemWhatsAppSender } from "./system-whatsapp-sender";
+import { ConnectyHubRequestError, isMissingInstanceError, locallyArchivedInstance, observeInstance, validProviderInstanceId } from "./instance-lifecycle";
 import type { WhatsAppAgentInstanceSummary, WillianConnectionInfo, WillianInstanceState } from "./willian-types";
 
 export const WILLIAN_AGENT_KEY = "multichannel-dispatch";
@@ -13,7 +14,7 @@ export const GLOBAL_WHATSAPP_AGENT_KEY = WILLIAN_AGENT_KEY;
 export const GLOBAL_WHATSAPP_AGENT_NAME = "WhatsApp Global";
 export const GLOBAL_WHATSAPP_DEFAULT_INSTANCE_NAME = WILLIAN_DEFAULT_INSTANCE_NAME;
 export const CONNECTYHUB_PROVIDER = "connectyhub";
-const CONNECTYHUB_CONNECT_SYSTEM_NAME = "ViralCheck";
+const CONNECTYHUB_CONNECT_SYSTEM_NAME = "ConnectyHub";
 const CONNECTYHUB_TEXT_SEND_TIMEOUT_MS = 30000;
 const CONNECTYHUB_PRESENCE_TIMEOUT_MS = 3000;
 export const CONNECTYHUB_WEBHOOK_EVENTS = [
@@ -44,6 +45,7 @@ type ConfigValue = {
 };
 
 type ConnectyHubRequestOptions = {
+  dailyCleanup?: boolean;
   body?: Record<string, unknown>;
   headers?: Record<string, string>;
   method?: "GET" | "POST" | "DELETE" | "PATCH" | "PUT";
@@ -309,7 +311,7 @@ async function readAppConfig(keys: string[]) {
   for (const row of data || []) {
     const key = cleanString((row as Record<string, unknown>).key);
     const value = cleanString((row as Record<string, unknown>).value);
-    if (key && value) values.set(key, value);
+    if (key) values.set(key, value);
   }
 
   return values;
@@ -338,8 +340,9 @@ async function deleteAppConfig(keys: string[]) {
   await supabase.from("app_config").delete().in("key", configAliases(keys));
 }
 
-function configFrom(keys: string[], appConfig: Map<string, string>, fallback = ""): ConfigValue {
+function configFrom(keys: string[], appConfig: Map<string, string>, fallback = "", preserveEmpty = false): ConfigValue {
   for (const key of configAliases(keys)) {
+    if (preserveEmpty && appConfig.has(key) && !cleanString(appConfig.get(key))) return { value: "", source: "missing" };
     const value = cleanString(appConfig.get(key));
     if (value) return { value, source: "app_config" };
   }
@@ -472,8 +475,8 @@ async function getWillianConfig() {
   const apiToken = configFrom(["CONNECTYHUB_API_TOKEN"], appConfig);
   const webhookSecret = configFrom(["CONNECTYHUB_WEBHOOK_SECRET"], appConfig);
   const webhookUrl = configFrom(["CONNECTYHUB_WEBHOOK_URL"], appConfig);
-  const instanceName = configFrom(globalWhatsappInstanceNameKeys, appConfig, GLOBAL_WHATSAPP_DEFAULT_INSTANCE_NAME);
-  const instanceId = configFrom(globalWhatsappInstanceIdKeys, appConfig);
+  const instanceName = configFrom(globalWhatsappInstanceNameKeys, appConfig, GLOBAL_WHATSAPP_DEFAULT_INSTANCE_NAME, true);
+  const instanceId = configFrom(globalWhatsappInstanceIdKeys, appConfig, "", true);
   const phoneNumber = configFrom(globalWhatsappPhoneKeys, appConfig);
   const displayName = configFrom(globalWhatsappDisplayNameKeys, appConfig);
   const profileImageUrl = configFrom(globalWhatsappProfileImageKeys, appConfig);
@@ -499,6 +502,7 @@ async function getWillianConfig() {
     webhookUrl: normalizePublicUrl(webhookUrl.value),
     instanceName: normalizePrimaryWhatsappInstanceName(instanceName.value),
     instanceId: instanceId.value,
+    instanceBindingCleared: !instanceId.value && configAliases(globalWhatsappInstanceIdKeys).some(key => appConfig.has(key) && !appConfig.get(key)),
     phoneNumber: normalizeWhatsAppNumber(phoneNumber.value),
     displayName: displayName.value,
     profileImageUrl: normalizeProfileImageUrl(profileImageUrl.value),
@@ -580,7 +584,14 @@ function firstRecordValue(records: Array<Record<string, unknown>>, keys: string[
 
 function normalizeStatusPayload(payload: unknown) {
   const records = collectStatusRecords(payload);
-  const { state, connected, loggedIn } = resolveConnectionRecords(records);
+  const instance = asRecord(asRecord(payload).instance);
+  const providerStatus = asRecord(asRecord(instance.provider).status);
+  // /instances/:id/status returns the current provider booleans separately
+  // from the stored instance summary. The live signal takes precedence.
+  const explicitProviderStatus = typeof providerStatus.connected === "boolean" && typeof providerStatus.loggedIn === "boolean"
+    ? { ...providerStatus, state: providerStatus.connected && providerStatus.loggedIn ? "connected" : cleanString(instance.status) }
+    : null;
+  const { state, connected, loggedIn } = resolveConnectionRecords(explicitProviderStatus ? [explicitProviderStatus, ...records] : records);
   const jid =
     firstRecordValue(records, [
       "jid",
@@ -890,6 +901,34 @@ function sanitizePayload(payload: unknown): unknown {
 }
 
 async function connectyhubRequest(path: string, options: ConnectyHubRequestOptions = {}) {
+  const statusMatch = /^\/instances\/([^/]+)\/status$/.exec(path);
+  const providerInstanceId = statusMatch ? decodeURIComponent(statusMatch[1]) : "";
+  const observedAt = new Date().toISOString();
+  try {
+    const payload = await rawConnectyhubRequest(path, options);
+    if (providerInstanceId) {
+      const instance = asRecord(asRecord(payload).instance);
+      if (cleanString(instance.id) !== providerInstanceId) {
+        await observeInstance({ providerInstanceId, observation: "unknown", observedAt });
+        throw new Error("Resposta de status sem identidade de instancia correspondente.");
+      }
+      const status = normalizeStatusPayload(payload);
+      const remoteArchived = ["archived", "deleted"].includes(cleanString(instance.status));
+      const result = await observeInstance({ providerInstanceId, observedAt, dailyCleanup: options.dailyCleanup,
+        observation: remoteArchived ? "missing" : status.connected && status.loggedIn ? "connected" : status.state === "disconnected" ? "disconnected" : "unknown" });
+      if (result.archived) throw new ConnectyHubRequestError("Instancia arquivada; conecte uma nova instancia no painel.", 410, "instance_archived");
+    }
+    return payload;
+  } catch (error) {
+    if (providerInstanceId) {
+      await observeInstance({ providerInstanceId, observedAt,
+        observation: isMissingInstanceError(error) ? "missing" : "unknown" });
+    }
+    throw error;
+  }
+}
+
+async function rawConnectyhubRequest(path: string, options: ConnectyHubRequestOptions = {}) {
   const config = await getWillianConfig();
   const method = options.method || (options.body ? "POST" : "GET");
   const endpoint = `${config.baseUrl}${path}`;
@@ -925,7 +964,7 @@ async function connectyhubRequest(path: string, options: ConnectyHubRequestOptio
     const error = asRecord(data.error);
     const code = cleanString(error.code || data.code);
     const message = cleanString(error.message || data.message || data.error || data.response, `ConnectyHub retornou HTTP ${response.status}.`);
-    throw new Error(explainConnectyHubError({ code, message, path, status: response.status }));
+    throw new ConnectyHubRequestError(explainConnectyHubError({ code, message, path, status: response.status }), response.status, code);
   }
 
   return payload;
@@ -1603,7 +1642,7 @@ export async function fetchWhatsAppLeadProfileImage(input: {
 async function resolveAgentProviderInstanceId(agentKey: string, explicitInstanceId = "") {
   const config = await getWillianConfig();
   const cleanExplicit = cleanString(explicitInstanceId);
-  if (cleanExplicit) return { config, instanceId: cleanExplicit };
+  if (cleanExplicit) return { config, instanceId: await locallyArchivedInstance(cleanExplicit) ? "" : cleanExplicit };
 
   if (!agentKey || agentKey === WILLIAN_AGENT_KEY) {
     return {
@@ -1848,23 +1887,27 @@ async function listConnectyHubInstances() {
 async function findConnectyHubInstanceByName(instanceName: string) {
   const instances = await listConnectyHubInstances().catch(() => []);
   const normalizedName = normalizedLookupText(instanceName);
-  return instances.find((item) => extractInstanceName(item).toLowerCase() === normalizedName) || null;
+  const matched = instances.find((item) => extractInstanceName(item).toLowerCase() === normalizedName);
+  return matched && !await locallyArchivedInstance(extractInstanceId(matched)) ? matched : null;
 }
 
 async function findPrimaryConnectyHubInstanceByName(instanceName: string) {
   const instances = await listConnectyHubInstances().catch(() => []);
   const candidateNames = new Set(primaryWhatsappInstanceLookupNames(instanceName));
-  return instances.find((item) => candidateNames.has(extractInstanceName(item).toLowerCase())) || null;
+  const matched = instances.find((item) => candidateNames.has(extractInstanceName(item).toLowerCase()));
+  return matched && !await locallyArchivedInstance(extractInstanceId(matched)) ? matched : null;
 }
 
 async function resolveConnectyHubInstanceId(config?: Awaited<ReturnType<typeof getWillianConfig>>) {
   const resolvedConfig = config || await getWillianConfig();
-  if (resolvedConfig.instanceId) return resolvedConfig.instanceId;
+  if (resolvedConfig.instanceId) return await locallyArchivedInstance(resolvedConfig.instanceId) ? "" : resolvedConfig.instanceId;
+  if (resolvedConfig.instanceBindingCleared) return "";
 
   const instances = await listConnectyHubInstances().catch(() => []);
   const candidateNames = new Set(primaryWhatsappInstanceLookupNames(resolvedConfig.instanceName));
   const matched = instances.find((item) => candidateNames.has(extractInstanceName(item).toLowerCase()));
   const instanceId = extractInstanceId(matched);
+  if (await locallyArchivedInstance(instanceId)) return "";
   const instanceName = extractInstanceName(matched, resolvedConfig.instanceName);
 
   if (instanceId) {
@@ -1880,7 +1923,8 @@ async function resolveConnectyHubInstanceId(config?: Awaited<ReturnType<typeof g
 }
 
 async function findConfiguredWillianInstanceId(config: Awaited<ReturnType<typeof getWillianConfig>>) {
-  if (config.instanceId) return config.instanceId;
+  if (config.instanceId) return await locallyArchivedInstance(config.instanceId) ? "" : config.instanceId;
+  if (config.instanceBindingCleared) return "";
   const matched = await findPrimaryConnectyHubInstanceByName(config.instanceName).catch(() => null);
   return extractInstanceId(matched);
 }
@@ -1895,6 +1939,7 @@ async function persistConnectyHubInstance(input: {
   persistWillianConfig?: boolean;
 }) {
   const agentKey = cleanString(input.agentKey, WILLIAN_AGENT_KEY);
+  if (await locallyArchivedInstance(input.instanceId)) throw new ConnectyHubRequestError("Instancia arquivada; crie um novo vinculo.", 410, "instance_archived");
   const persistWillianConfig = agentKey === WILLIAN_AGENT_KEY && input.persistWillianConfig !== false;
   const instanceName = persistWillianConfig
     ? normalizePrimaryWhatsappInstanceName(input.instanceName)
@@ -1939,14 +1984,8 @@ async function persistConnectyHubInstance(input: {
 
   const status = normalizeStatusPayload(input.statusPayload || {});
   const phone = extractWhatsappPhoneNumber(input.statusPayload);
-  const profileImageUrl = extractProfileImageUrl(input.statusPayload);
-  const displayName =
-    extractWhatsappProfileDisplayName(input.statusPayload) || extractWhatsappDisplayName(input.statusPayload);
-  const hasRemoteIdentity = Boolean(phone && (profileImageUrl || displayName || status.jid));
   const connectedAt =
-    status.connected ||
-    status.loggedIn ||
-    (!connectionStateIsTerminallyDisconnected(status.state) && hasRemoteIdentity)
+    status.connected && status.loggedIn
       ? new Date().toISOString()
       : null;
   await supabase.from("whatsapp_instances").upsert(
@@ -2122,15 +2161,16 @@ async function listWhatsappAgentInstances(options: { checkRemote?: boolean } = {
 
   const { data, error } = await supabase
     .from("whatsapp_instances")
-    .select("agent_key, instance_name, provider_instance_id, phone, status, connected_at, last_seen_at, updated_at, ai_agents(agent_key, name, status, metadata)")
+    .select("id, agent_key, instance_name, provider_instance_id, phone, status, connected_at, last_seen_at, updated_at, ai_agents(agent_key, name, status, metadata)")
     .eq("provider", CONNECTYHUB_PROVIDER)
     .neq("status", "deleted")
+    .neq("status", "archived")
     .order("updated_at", { ascending: false })
     .limit(30);
 
   if (error) return [] as WhatsAppAgentInstanceSummary[];
 
-  const rows = ((data || []) as Array<Record<string, unknown>>).filter((row) => cleanString(row.instance_name));
+  const rows = ((data || []) as Array<Record<string, unknown>>).filter((row) => cleanString(row.instance_name) && validProviderInstanceId(cleanString(row.provider_instance_id)));
   const localAgents = await listLocalWhatsappAgents(supabase).catch(() => [] as WhatsAppAgentInstanceSummary[]);
   if (!options.checkRemote) return mergeWhatsappAgentSummaries(rows.map(whatsappInstanceSummaryFromRow), localAgents);
 
@@ -2148,11 +2188,8 @@ async function listWhatsappAgentInstances(options: { checkRemote?: boolean } = {
         const phone = extractWhatsappPhoneNumber(payload, status.jid) || cleanString(row.phone);
         const profileImageUrl = extractProfileImageUrl(payload);
         const displayName = extractWhatsappProfileDisplayName(payload) || extractWhatsappDisplayName(payload);
-        const remoteHasProfile = Boolean(phone && (profileImageUrl || displayName));
         const connectedAt =
-          status.connected ||
-          status.loggedIn ||
-          (!connectionStateIsTerminallyDisconnected(status.state) && remoteHasProfile)
+          status.connected && status.loggedIn
             ? cleanString(row.connected_at) || new Date().toISOString()
             : null;
         const patch = {
@@ -2165,7 +2202,7 @@ async function listWhatsappAgentInstances(options: { checkRemote?: boolean } = {
           .from("whatsapp_instances")
           .update(patch)
           .eq("provider", CONNECTYHUB_PROVIDER)
-          .eq("instance_name", cleanString(row.instance_name));
+          .eq("id", cleanString(row.id));
 
         const agentKey = cleanString(row.agent_key);
         const agentRow = asRecord(Array.isArray(row.ai_agents) ? row.ai_agents[0] : row.ai_agents);
@@ -2192,15 +2229,46 @@ async function listWhatsappAgentInstances(options: { checkRemote?: boolean } = {
           phone: patch.phone,
           status: patch.status,
           connected_at: patch.connected_at,
+          last_seen_at: patch.last_seen_at,
           updated_at: new Date().toISOString(),
         };
-      } catch {
-        return row;
+      } catch (error) {
+        return { ...row, status: isMissingInstanceError(error) ? "archived" : "unknown", connected_at: null, last_seen_at: null };
       }
     })
   );
 
-  return mergeWhatsappAgentSummaries(updatedRows.map(whatsappInstanceSummaryFromRow), localAgents);
+  return mergeWhatsappAgentSummaries(updatedRows.filter(row => row.status !== "archived").map(whatsappInstanceSummaryFromRow), localAgents);
+}
+
+export async function reconcileWhatsAppInstanceLifecycle(options: { scheduled?: boolean } = {}) {
+  const db = getSupabaseAdminClient();
+  if (!db) throw new Error("Supabase admin nao configurado.");
+  let dailyCleanup = false;
+  if (options.scheduled) {
+    const claim = await db.rpc("claim_betel_whatsapp_daily_cleanup");
+    if (claim.error) throw new Error(claim.error.message);
+    dailyCleanup = claim.data === true;
+  }
+  const { data, error } = await db.from("whatsapp_instances")
+    .select("provider_instance_id").eq("provider", CONNECTYHUB_PROVIDER)
+    .neq("status", "archived").neq("status", "deleted")
+    .not("provider_instance_id", "is", null)
+    .order("connection_observed_at", { ascending: true, nullsFirst: true }).limit(80);
+  if (error) throw new Error(error.message);
+  const ids = [...new Set((data || []).map(row => cleanString(row.provider_instance_id)).filter(Boolean))];
+  const results: Array<{ instanceId: string; status: string }> = [];
+  for (let i = 0; i < ids.length; i += 5) {
+    results.push(...await Promise.all(ids.slice(i, i + 5).map(async instanceId => {
+      try {
+        const payload = await connectyhubRequest(`/instances/${encodeURIComponent(instanceId)}/status`, { method: "GET", timeoutMs: 10000, dailyCleanup });
+        return { instanceId, status: normalizeStatusPayload(payload).state };
+      } catch (error) {
+        return { instanceId, status: isMissingInstanceError(error) ? "archived" : "unknown" };
+      }
+    })));
+  }
+  return { dailyCleanup, checked: results.length, archived: results.filter(row => row.status === "archived").length, unknown: results.filter(row => row.status === "unknown").length };
 }
 
 async function listLocalWhatsappAgents(supabase: NonNullable<ReturnType<typeof getSupabaseAdminClient>>) {
@@ -2657,6 +2725,7 @@ async function findPersistedWhatsappInstance(agentKey: string) {
     .eq("provider", CONNECTYHUB_PROVIDER)
     .eq("agent_key", agentKey)
     .neq("status", "deleted")
+    .neq("status", "archived")
     .order("updated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -2940,6 +3009,7 @@ export async function disconnectConnectyHubWhatsappAgent(input: { agentKey: stri
     .eq("provider", CONNECTYHUB_PROVIDER)
     .eq("agent_key", agentKey)
     .neq("status", "deleted")
+    .neq("status", "archived")
     .order("updated_at", { ascending: false })
     .limit(1);
 
