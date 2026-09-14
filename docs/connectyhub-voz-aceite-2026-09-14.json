@@ -1,0 +1,71 @@
+{
+  "at": "2026-09-14T18:13:35.926Z",
+  "operationId": "betel_voice_evelyn_acceptance_20260914",
+  "generationId": "4b04635f-1aab-4dbc-b1fb-b1b3a71ae923",
+  "projectId": "db9ec5c3-458b-451e-aad3-d42f0a6bbc34",
+  "billingOrganizationId": "66cb4c5a-35f2-4c08-9982-38bd72d2b9be",
+  "voiceId": "v4Ba7ds7g0yakj4WPoDW",
+  "modelId": "eleven_multilingual_v2",
+  "chargedCredits": 5,
+  "estimatedCredits": 5,
+  "audio": {
+    "contentType": "audio/mpeg",
+    "bytes": 119162,
+    "sha256": "18c95db854659bae1960c2feec0240e77a2ff12f2aeb5f6498475626f678e3f5"
+  },
+  "recoveredSameAudio": true,
+  "publicReplaySameGeneration": true,
+  "receipt": {
+    "id": "betel_voice_evelyn_acceptance_20260914",
+    "project_id": "db9ec5c3-458b-451e-aad3-d42f0a6bbc34",
+    "billing_organization_id": "66cb4c5a-35f2-4c08-9982-38bd72d2b9be",
+    "voice_id": "v4Ba7ds7g0yakj4WPoDW",
+    "model_id": "eleven_multilingual_v2",
+    "generation_id": "4b04635f-1aab-4dbc-b1fb-b1b3a71ae923",
+    "status": "completed",
+    "charged_credits": 5
+  },
+  "calls": [
+    {
+      "method": "GET",
+      "path": "/api/v1/voice/models",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/voice/voices",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/voice/models",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/voice/generations",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/voice/generations/4b04635f-1aab-4dbc-b1fb-b1b3a71ae923/audio",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/voice/generations/4b04635f-1aab-4dbc-b1fb-b1b3a71ae923",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/voice/generations/4b04635f-1aab-4dbc-b1fb-b1b3a71ae923/audio",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/voice/generations",
+      "status": 200
+    }
+  ],
+  "whatsappSends": 0
+}
