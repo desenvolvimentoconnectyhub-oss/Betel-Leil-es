@@ -516,6 +516,11 @@ async function getWillianConfig() {
   };
 }
 
+export async function getConnectyHubLinkConnection() {
+  const config = await getWillianConfig();
+  return { baseUrl: config.baseUrl, apiToken: config.apiToken };
+}
+
 function normalizeConnectionState(value: unknown, connected: boolean) {
   return normalizedConnectionState(value, connected);
 }

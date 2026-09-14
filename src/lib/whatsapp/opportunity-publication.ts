@@ -1,4 +1,5 @@
 import "server-only";
+import { getBetelPublicOrigin } from "@/lib/public-origin";
 import { canonicalReferenceUrl, marketPropertyGroup as propertyGroup } from "@/lib/domain/market-quality";
 import { createHash } from "node:crypto";
 import { checkWhatsAppSenderConnection } from "@/lib/communication/connectyhub-client";
@@ -105,15 +106,7 @@ function asNumber(value: unknown, fallback = 0) {
 }
 
 function appUrl() {
-  const vercelUrl = process.env.VERCEL_URL?.trim();
-  const fallbackVercel = vercelUrl ? `https://${vercelUrl.replace(/^https?:\/\//i, "")}` : "";
-  return (
-    process.env.NEXT_PUBLIC_APP_URL?.trim() ||
-    process.env.BETEL_PUBLIC_APP_URL?.trim() ||
-    process.env.NEXT_PUBLIC_SITE_URL?.trim() ||
-    fallbackVercel ||
-    "http://localhost:3000"
-  ).replace(/\/+$/g, "");
+  return getBetelPublicOrigin();
 }
 
 function publicOpportunityUrl(code: string) {
