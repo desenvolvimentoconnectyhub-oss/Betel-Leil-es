@@ -82,8 +82,14 @@ async function main() {
   const comparable = { propertyType: 'Apartamento', city: 'Londrina', state: 'PR', areaM2: 67, askingPrice: 450000, soldPrice: 0, listingType: 'sale', quality: 'strong', similarityScore: 90 };
   const analysis = { subject: { ...subject, privateAreaM2: 64.8 }, comparables: [1,2,3].map(i => ({ ...comparable, sourceUrl: `https://portal.com/imovel/apartamento-${12340+i}` })) };
   assert.equal(publication.selectMarketReferences(analysis).length, 3);
-  const creative = loadSource('src/lib/whatsapp/opportunity-publication.ts', { '@/inngest/client': {}, './group-campaigns': {}, '@/lib/communication/connectyhub-client': {}, '@/lib/communication/system-whatsapp-sender': {} }, {}, ['actionButtonForPost', 'appendSourceLinksToCaption']);
+  const creative = loadSource('src/lib/whatsapp/opportunity-publication.ts', { '@/inngest/client': {}, './group-campaigns': {}, '@/lib/communication/connectyhub-client': {}, '@/lib/communication/system-whatsapp-sender': {} }, {}, ['actionButtonForPost', 'appendSourceLinksToCaption', 'marketSummaryLine']);
   const references = publication.selectMarketReferences(analysis);
+  const revised = {...analysis,summary:'14 anuncios Zapimoveis: aluguel medio R$ 1.874/mes; R$ 6.744/m2.',comparables:analysis.comparables.map((c,i)=>({...c,listingType:'rent',askingPrice:[1650,1500,1450][i]}))};
+  const coherentSummary=creative.marketSummaryLine(revised,'R$ 340.741,00',references);
+  assert.match(coherentSummary,/1\.450/);
+  assert.match(coherentSummary,/1\.650/);
+  assert.doesNotMatch(coherentSummary,/1\.874|6\.744|Zapimoveis/,'historical provider narrative must not contradict the approved rental estimate');
+  assert.doesNotMatch(creative.marketSummaryLine({...revised,comparables:[...revised.comparables,{...revised.comparables[0],sourceUrl:'https://portal.com/imovel/99999',askingPrice:9999}]},'R$ 340.741,00',references),/9\.999/,'only the approved references contribute to the published rental range');
   const buttons = creative.actionButtonForPost({ linkFormat: 'source_buttons', publicUrl: 'https://betel.example/fixture', sourceLinks: references });
   assert.equal(buttons.choices.length, 3, 'button format has exactly three source buttons');
   assert.equal(creative.actionButtonForPost({ linkFormat: 'source_links', sourceLinks: references }), undefined);

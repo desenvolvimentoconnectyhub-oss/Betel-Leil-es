@@ -1,5 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 import Link from "next/link";
+import { marketReviewNotices } from "@/lib/domain/market-review-feedback";
+import { ReviewSubmissionProgress, ReviewSubmitButton } from "./ReviewSubmitButton";
 import { canonicalReferenceUrl } from "@/lib/domain/market-quality";
 import { selectMarketReferences } from "@/lib/domain/market-publication";
 import { rentalEconomics, selectRentalReferences } from "@/lib/domain/rental-references";
@@ -1347,9 +1349,9 @@ function HeaderActionButton({
             : "border-[var(--admin-border)] bg-white text-[var(--admin-foreground)] hover:bg-[var(--admin-card-2)]";
 
   return (
-    <Button className={cn("h-9", className)} disabled={disabled} name="submitStatus" type="submit" value={value}>
+    <ReviewSubmitButton className={cn("h-9", className)} disabled={disabled} name="submitStatus" type="submit" value={value}>
       {children}
-    </Button>
+    </ReviewSubmitButton>
   );
 }
 
@@ -1383,6 +1385,7 @@ function OpportunityActionNotice({
   }
 
   const notices: Record<string, { title: string; detail: string; tone: ResourceTone }> = {
+    ...marketReviewNotices,
     "whatsapp-grupos-atualizados": {
       title: "Grupos WhatsApp atualizados",
       detail: `${remoteGroups || "0"} grupo(s) encontrados na ConnectyHub; ${syncedGroups || "0"} destino(s) salvos no sistema.`,
@@ -1437,7 +1440,7 @@ function OpportunityActionNotice({
   const NoticeIcon = notice.tone === "red" ? XCircle : notice.tone === "yellow" ? Info : CheckCircle2;
 
   return (
-    <div className={cn("mt-3 flex items-start gap-2 rounded-lg border px-3 py-2 text-sm", toneBorder[notice.tone], toneBg[notice.tone])}>
+    <div role="status" aria-live="polite" className={cn("mt-3 flex items-start gap-2 rounded-lg border px-3 py-2 text-sm", toneBorder[notice.tone], toneBg[notice.tone])}>
       <NoticeIcon size={16} className={cn("mt-0.5 shrink-0", toneText[notice.tone])} />
       <div className="min-w-0">
         <p className="font-semibold text-[var(--admin-foreground)]">{notice.title}</p>
@@ -1857,6 +1860,8 @@ function OpportunityActionsPanel({
 
   return (
     <aside className="grid content-start gap-2 xl:sticky xl:top-20">
+      {whatsappReferenceStatus.ready ? <p role="status" className="rounded-lg border border-[var(--admin-green)] bg-white p-3 text-sm text-[var(--admin-green)]">Analise aprovada com tres referencias de aluguel verificadas. Para testar, selecione Teste e confira seu numero antes de enviar.</p> : null}
+      <ReviewSubmissionProgress />
       {analysis ? (
         <OpportunityWhatsAppSendPanel
           canSubmit={canSubmit}

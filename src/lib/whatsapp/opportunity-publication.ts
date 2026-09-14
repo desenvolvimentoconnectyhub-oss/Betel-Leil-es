@@ -332,11 +332,17 @@ function legalSignalLine(analysis: PropertyMarketAnalysis | null) {
   return `👨🏻‍⚖️${signal.replace(/\.$/, "")}.`;
 }
 
-function marketSummaryLine(analysis: PropertyMarketAnalysis | null, marketValue: string) {
-  const summary = cleanString(analysis?.summary);
-  if (!summary) return "";
-  const prefix = /^valor de mercado/i.test(summary) ? "" : marketValue ? `Valor de mercado calculado: ${marketValue}. ` : "";
-  return `📝 *${prefix}${summary}*`;
+function marketSummaryLine(analysis: PropertyMarketAnalysis | null, marketValue: string, references: Array<{ url: string }>) {
+  if (!analysis) return "";
+  // Free-form summaries can describe the original provider sample even after a
+  // human revises the estimate. Render only the approved snapshot's current data.
+  const urls = new Set(references.map(ref => canonicalReferenceUrl(ref.url)));
+  const rents = analysis.comparables.filter(c => urls.has(canonicalReferenceUrl(c.sourceUrl)) && /rent|alug/i.test(c.listingType) && c.askingPrice > 0).map(c => c.askingPrice);
+  const lines = [marketValue ? `Valor de mercado adotado na revisao: ${marketValue}.` : ""];
+  if (rents.length === 3 && urls.size === 3) {
+    lines.push(`Base do aluguel: tres anuncios vinculados a esta versao, entre ${formatCurrency(Math.min(...rents))} e ${formatCurrency(Math.max(...rents))}/mes. Valores anunciados, sem garantia de renda; condominio e IPTU devem ser conferidos separadamente.`);
+  }
+  return `📝 *${lines.filter(Boolean).join(" ")}*`;
 }
 
 function compactCaption(lines: string[]) {
@@ -497,7 +503,7 @@ export async function buildOpportunityWhatsAppPost(
     "",
     rent ? `💵 Aluguel estimado: ${rent}/mês, por anuncios. Renda nao garantida.` : "",
     "",
-    marketSummaryLine(analysis, marketValue),
+    marketSummaryLine(analysis, marketValue, sourceLinks),
     "",
     `👉 ${publicSignal}`,
   ]);
