@@ -1,3 +1,4 @@
+import { withLeadWork, providerMessageTime } from "@/lib/whatsapp/lead-reset";
 import "server-only";
 
 import { fetchConnectyHubWhatsappMessages, normalizeWhatsAppNumber } from "@/lib/communication/connectyhub-client";
@@ -840,7 +841,7 @@ function shouldPatchLastMessage(row: DbRow, occurredAt: string) {
   return !Number.isFinite(previousMs) || (Number.isFinite(nextMs) && nextMs >= previousMs);
 }
 
-async function persistHistoryMessage(
+async function persistHistoryMessageWork(
   supabase: SupabaseAdminClient,
   input: {
     message: DbRow;
@@ -1122,4 +1123,17 @@ export async function reconcileWhatsAppConversationHistoryFromConnectyHub(input:
     importedByOrigin,
     errors: [...new Set(errors)].slice(0, 8),
   };
+}
+
+async function persistHistoryMessage(supabase: SupabaseAdminClient, input: Parameters<typeof persistHistoryMessageWork>[1]) {
+  const phone = leadPhoneForMessage(input.message);
+  if (!phone || isGroupOrStatusMessage(input.message)) return { imported: false, reason: "missing_phone_or_group" };
+  try {
+    return await withLeadWork({ phone, providerInstanceId: cleanString(input.instance.provider_instance_id), mode: "history",
+      occurredAt: providerMessageTime(input.message), messageId: providerMessageIdCandidates(input.message)[0] },
+      () => persistHistoryMessageWork(supabase, input));
+  } catch (error) {
+    if (/RESET_OLD_MESSAGE|RESET_WAIT_NEW_CONTACT/.test(error instanceof Error ? error.message : "")) return { imported: false, reason: "before_reset_cutoff" };
+    throw error;
+  }
 }

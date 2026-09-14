@@ -1,3 +1,4 @@
+import { withOutboxLeadWork } from "@/lib/whatsapp/lead-reset";
 import "server-only";
 
 import { getAgentSystemPrompt } from "@/lib/ai/agent-prompts";
@@ -2090,6 +2091,7 @@ export async function processCommunicationOutboxRecord(
   if (outboxError) return { ok: false, error: outboxError.message };
   if (!outboxData) return { ok: false, error: "Mensagem de outbox nao encontrada para entrega." };
 
+  try { return await withOutboxLeadWork(asString((outboxData as CommunicationOutboxDbRow).message_code), async () => {
   const outbox = outboxData as CommunicationOutboxDbRow;
   const messageCode = asString(outbox.message_code, input.messageCode);
   const runCode = asString(outbox.run_code, "RUN-COMM");
@@ -2380,6 +2382,8 @@ export async function processCommunicationOutboxRecord(
     ok: true,
     data,
   };
+  }); } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Atendimento indisponível." }; }
+
 }
 
 export async function processCommunicationOutboxBatchRecord(

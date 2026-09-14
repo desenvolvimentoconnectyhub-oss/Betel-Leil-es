@@ -1,3 +1,4 @@
+import { retryLeadResetAssets } from "@/lib/whatsapp/lead-reset";
 import "server-only";
 
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -116,6 +117,8 @@ export async function cleanupExpiredWhatsAppLeadMedia(input: {
       processedAt: nowIso,
     };
   }
+
+  if (!input.dryRun) await retryLeadResetAssets();
 
   let deleted = 0;
   let failed = 0;

@@ -1,3 +1,4 @@
+import { assertLeadWorkActive } from "@/lib/whatsapp/lead-reset";
 import "server-only";
 import { freshConnection, normalizedConnectionState, resolveConnectionRecords } from "./connection-state";
 
@@ -941,6 +942,7 @@ async function rawConnectyhubRequest(path: string, options: ConnectyHubRequestOp
   if (!config.apiToken) throw new Error("CONNECTYHUB_API_TOKEN ausente.");
   if (options.body) headers["content-type"] = "application/json";
 
+  if (/\/send\//.test(path)) await assertLeadWorkActive();
   const response = await fetch(endpoint, {
     body: options.body ? JSON.stringify(options.body) : undefined,
     cache: "no-store",

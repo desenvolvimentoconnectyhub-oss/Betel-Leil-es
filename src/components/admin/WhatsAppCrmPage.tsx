@@ -1,4 +1,5 @@
 "use client";
+import { WhatsAppLeadResetDialog } from "./WhatsAppLeadResetDialog";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -952,6 +953,7 @@ function LiveChatPanel({
   onSendManualReply,
   onLeadAction,
   onOpenLeadFile,
+  onResetLead,
   nowMs,
 }: {
   lead?: WhatsAppCrmLeadCard;
@@ -961,6 +963,7 @@ function LiveChatPanel({
   onSendManualReply: (lead: WhatsAppCrmLeadCard) => void;
   onLeadAction: (action: LeadActionKey, lead: WhatsAppCrmLeadCard) => void;
   onOpenLeadFile: () => void;
+  onResetLead?: (lead: WhatsAppCrmLeadCard) => void;
   nowMs: number;
 }) {
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
@@ -1016,6 +1019,7 @@ function LiveChatPanel({
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {onResetLead && lead.leadId && lead.conversationId && <button type="button" onClick={() => onResetLead(lead)} className="rounded-full border border-red-300 px-3 py-1.5 text-[11px] font-semibold text-red-700 hover:bg-red-50">Resetar lead</button>}
           <HandoffCountdown lead={lead} nowMs={nowMs} />
           <button
             type="button"
@@ -1622,10 +1626,12 @@ function LeadFileModal({
   );
 }
 
-export function WhatsAppCrmPage({ crmData }: { crmData: DataResult<WhatsAppCrmData> }) {
+export function WhatsAppCrmPage({ crmData, canResetLead = false }: { crmData: DataResult<WhatsAppCrmData>; canResetLead?: boolean }) {
   const router = useRouter();
   const [liveCrmData, setLiveCrmData] = useState<DataResult<WhatsAppCrmData>>(crmData);
-  const data = liveCrmData.data;
+  const [resetTarget, setResetTarget] = useState<WhatsAppCrmLeadCard | null>(null);
+  const [deletedLeadIds, setDeletedLeadIds] = useState<string[]>([]);
+  const data = { ...liveCrmData.data, leads: liveCrmData.data.leads.filter(lead => !deletedLeadIds.includes(lead.leadId)) };
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<FilterKey>("todos");
   const [selectedId, setSelectedId] = useState<string | null>(crmData.data.leads[0]?.id || null);
@@ -2210,6 +2216,7 @@ export function WhatsAppCrmPage({ crmData }: { crmData: DataResult<WhatsAppCrmDa
           onManualReplyChange={setManualReply}
           onSendManualReply={(lead) => void sendManualReply(lead)}
           onLeadAction={(action, lead) => void runLeadAction(action, lead)}
+          onResetLead={canResetLead ? setResetTarget : undefined}
           onOpenLeadFile={() => setLeadFileOpen(true)}
           nowMs={nowMs}
         />
@@ -2217,6 +2224,10 @@ export function WhatsAppCrmPage({ crmData }: { crmData: DataResult<WhatsAppCrmDa
         <LeadSidePanel lead={selectedLead} nowMs={nowMs} />
       </section>
 
+      {resetTarget && canResetLead && <WhatsAppLeadResetDialog lead={resetTarget} onClose={() => setResetTarget(null)} onDeleted={leadId => {
+        setDeletedLeadIds(ids => [...ids, leadId]); setManualReply(""); setLeadFileOpen(false); setSelectedId(null);
+        setFeedback({ type: "ok", msg: "Lead resetado. O próximo contato começará do zero." }); router.refresh();
+      }} />}
       <LeadFileModal
         open={leadFileOpen}
         lead={selectedLead}

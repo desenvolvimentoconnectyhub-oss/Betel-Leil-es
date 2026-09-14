@@ -1,3 +1,4 @@
+import { withLeadWork } from "@/lib/whatsapp/lead-reset";
 import "server-only";
 import { messageUsableForRuntime } from "./webhook-message-policy";
 
@@ -449,6 +450,8 @@ export async function processWhatsAppFollowUps(input: {
     const followUpId = cleanString(followUp.id);
     const conversationId = cleanString(followUp.conversation_id);
     const leadId = cleanString(followUp.lead_id);
+    try {
+      await withLeadWork({ leadId, conversationId }, async () => {
     const agentKey = cleanString(followUp.agent_key, "multichannel-dispatch");
     const attemptCount = asNumber(followUp.attempt_count, 0) + 1;
     const maxAttempts = asNumber(followUp.max_attempts, 3);
@@ -494,19 +497,19 @@ export async function processWhatsAppFollowUps(input: {
         })
         .eq("id", followUpId);
       failed.push({ ...skippedItem(followUp, "load_failed"), error: message });
-      continue;
+      return;
     }
 
     if (!leadId || !conversationId || !cleanString(lead.phone)) {
       await supabase.from("whatsapp_follow_ups").update({ status: "skipped", error_message: "missing_lead_or_phone" }).eq("id", followUpId);
       skipped.push(skippedItem(followUp, "missing_lead_or_phone"));
-      continue;
+      return;
     }
 
     if (asBoolean(lead.opt_out)) {
       await supabase.from("whatsapp_follow_ups").update({ status: "skipped", error_message: "lead_opt_out" }).eq("id", followUpId);
       skipped.push(skippedItem(followUp, "lead_opt_out"));
-      continue;
+      return;
     }
 
     if (manualAutoResume) {
@@ -524,7 +527,7 @@ export async function processWhatsAppFollowUps(input: {
           .update({ status: "skipped", error_message: manualAutoResumeDecision.reason })
           .eq("id", followUpId);
         skipped.push(skippedItem(followUp, manualAutoResumeDecision.reason));
-        continue;
+        return;
       }
 
       if (manualAutoResumeDecision.action === "reschedule") {
@@ -548,12 +551,12 @@ export async function processWhatsAppFollowUps(input: {
           ...skippedItem(followUp, manualAutoResumeDecision.reason),
           error: `Reagendado para ${manualAutoResumeDecision.scheduledFor}.`,
         });
-        continue;
+        return;
       }
     } else if (asBoolean(lead.human_intervention_active) || asBoolean(conversation.human_intervention_active)) {
       await supabase.from("whatsapp_follow_ups").update({ status: "skipped", error_message: "lead_paused_or_handoff" }).eq("id", followUpId);
       skipped.push(skippedItem(followUp, "lead_paused_or_handoff"));
-      continue;
+      return;
     }
 
     const config = await getWhatsAppAgentConfig(agentKey);
@@ -563,14 +566,14 @@ export async function processWhatsAppFollowUps(input: {
     if (disabledReason) {
       await supabase.from("whatsapp_follow_ups").update({ status: "skipped", error_message: disabledReason }).eq("id", followUpId);
       skipped.push(skippedItem(followUp, disabledReason));
-      continue;
+      return;
     }
 
     const controlStatus = await getConnectyHubWhatsappAgentControlStatus({ agentKey });
     if (controlStatus === "paused") {
       await supabase.from("whatsapp_follow_ups").update({ status: "skipped", error_message: "agent_paused" }).eq("id", followUpId);
       skipped.push(skippedItem(followUp, "agent_paused"));
-      continue;
+      return;
     }
 
     if (manualAutoResume && manualAutoResumeDecision?.action === "proceed") {
@@ -590,7 +593,7 @@ export async function processWhatsAppFollowUps(input: {
     if (!manualAutoResume && lastMessage && cleanString(lastMessage.direction) === "inbound") {
       await supabase.from("whatsapp_follow_ups").update({ status: "skipped", error_message: "lead_already_replied" }).eq("id", followUpId);
       skipped.push(skippedItem(followUp, "lead_already_replied"));
-      continue;
+      return;
     }
 
     const followUpWindow = describeFollowUpWindow({
@@ -613,7 +616,7 @@ export async function processWhatsAppFollowUps(input: {
         ...skippedItem(followUp, "outside_followup_window"),
         error: `Reagendado para ${nextScheduledFor}; janela ${followUpWindow.start}-${followUpWindow.end} ${followUpWindow.timezone}.`,
       });
-      continue;
+      return;
     }
 
     const score = asNumber(profile.lead_score, asNumber(lead.qualification_score, 0));
@@ -648,7 +651,7 @@ export async function processWhatsAppFollowUps(input: {
         ...skippedItem(followUp, "generated_non_send_notice"),
         textPreview: clampText(generated.text, 180),
       });
-      continue;
+      return;
     }
 
     if (dryRun) {
@@ -661,7 +664,7 @@ export async function processWhatsAppFollowUps(input: {
         providerStatus: "not_sent",
         textPreview: clampText(generated.text, 180),
       });
-      continue;
+      return;
     }
 
     await supabase
@@ -866,6 +869,11 @@ export async function processWhatsAppFollowUps(input: {
         error: delivery.errorMessage || delivery.providerStatus,
       });
     }
+      });
+    } catch (error) {
+      failed.push({ ...skippedItem(followUp, "lead_unavailable"), error: error instanceof Error ? error.message : "lead_unavailable" });
+    }
+
   }
 
   return {

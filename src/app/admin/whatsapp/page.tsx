@@ -1,3 +1,5 @@
+import { getCurrentAdmin } from "@/lib/auth/admin";
+import { canResetBetelLead } from "@/lib/whatsapp/lead-reset";
 import { WhatsAppCrmPage } from "@/components/admin/WhatsAppCrmPage";
 import { getWhatsAppCrmData } from "@/lib/admin/repository";
 import { WILLIAN_AGENT_KEY, WILLIAN_DEFAULT_INSTANCE_NAME } from "@/lib/communication/connectyhub-client";
@@ -53,5 +55,6 @@ async function loadWhatsAppCrmData() {
 export default async function WhatsAppAdminPage() {
   const crmData = await loadWhatsAppCrmData();
 
-  return <WhatsAppCrmPage crmData={crmData} />;
+  const canResetLead = await canResetBetelLead(await getCurrentAdmin()).catch(() => false);
+  return <WhatsAppCrmPage crmData={crmData} canResetLead={canResetLead} />;
 }

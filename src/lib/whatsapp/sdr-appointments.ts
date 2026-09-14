@@ -1,3 +1,4 @@
+import { withLeadWork } from "@/lib/whatsapp/lead-reset";
 import "server-only";
 
 import { createHmac, timingSafeEqual } from "node:crypto";
@@ -1312,7 +1313,7 @@ function appointmentActionButton(appointment: WhatsAppSdrAppointmentSummary) {
   };
 }
 
-async function notifyAppointmentRecipient(input: {
+async function notifyAppointmentRecipientWork(input: {
   appointment: WhatsAppSdrAppointmentSummary;
   agentKey: string;
   providerInstanceId: string | null;
@@ -1333,7 +1334,7 @@ async function notifyAppointmentRecipient(input: {
   });
 }
 
-async function sendAppointmentLeadMessage(input: {
+async function sendAppointmentLeadMessageWork(input: {
   appointment: WhatsAppSdrAppointmentSummary;
   agentKey: string;
   providerInstanceId: string | null;
@@ -2092,11 +2093,11 @@ export async function respondToSdrAppointmentLeadAction(input: {
     } satisfies SdrAppointmentLeadActionResult;
   }
 
-  return markAppointmentLeadAction({
+  return withLeadWork({ leadId: appointment.leadId, conversationId: appointment.conversationId || undefined }, () => markAppointmentLeadAction({
     appointment,
     action: input.action,
     source: input.source || "lead_action",
-  });
+  }));
 }
 
 function detectLeadAppointmentAction(text: string): SdrAppointmentLeadAction | null {
@@ -2354,7 +2355,7 @@ export async function runWhatsAppSdrAppointmentAutomation(input: { now?: string;
   ) => {
     for (const row of rows || []) {
       const appointment = await summarizeAppointmentData(supabase, row);
-      const processed = await handler(appointment).catch((error: unknown) => ({
+      const processed = await withLeadWork({ leadId: appointment.leadId, conversationId: appointment.conversationId || undefined }, () => handler(appointment)).catch((error: unknown) => ({
         ok: false,
         error: error instanceof Error ? error.message : String(error),
       }));
@@ -2447,4 +2448,12 @@ export async function updateWhatsAppSdrAppointmentStatus(input: {
 
 export function formatSdrAppointmentDate(iso: string) {
   return `${shortDateFormatter.format(new Date(iso))} ${shortTimeFormatter.format(new Date(iso))}`;
+}
+
+async function notifyAppointmentRecipient(input: Parameters<typeof notifyAppointmentRecipientWork>[0]) {
+  return withLeadWork({ leadId: input.appointment.leadId, conversationId: input.appointment.conversationId || undefined }, () => notifyAppointmentRecipientWork(input));
+}
+
+async function sendAppointmentLeadMessage(input: Parameters<typeof sendAppointmentLeadMessageWork>[0]) {
+  return withLeadWork({ leadId: input.appointment.leadId, conversationId: input.appointment.conversationId || undefined }, () => sendAppointmentLeadMessageWork(input));
 }

@@ -1,3 +1,4 @@
+import { withLeadWork, providerMessageTime } from "@/lib/whatsapp/lead-reset";
 import { reconcilePublicationEvent } from "@/lib/whatsapp/publication-events";
 import { currentMessageContent, messageUsableForRuntime, webhookMessagePolicy } from "@/lib/whatsapp/webhook-message-policy";
 import { NextResponse } from "next/server";
@@ -6998,6 +6999,23 @@ export async function POST(request: Request) {
     payload = {};
   }
 
+  const extracted = extractWebhookMessage(payload);
+  const policy = webhookMessagePolicy(payload);
+  if (["inbound", "outbound"].includes(policy.kind) && extracted.phone && !extracted.isGroup) {
+    try {
+      return await withLeadWork({ phone: extracted.phone, providerInstanceId: extractInstanceIdentity(payload).instanceId,
+        mode: policy.kind as "inbound" | "outbound", occurredAt: providerMessageTime(providerMessageRecord(eventPayload(payload))),
+        messageId: extracted.providerMessageId }, () => processWebhookPayload(payload));
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "RESET_WORK_UNAVAILABLE";
+      const old = /RESET_OLD_MESSAGE|RESET_WAIT_NEW_CONTACT/.test(reason);
+      return NextResponse.json({ success: old, skipped: old, reason }, { status: old ? 200 : 503 });
+    }
+  }
+  return processWebhookPayload(payload);
+}
+
+async function processWebhookPayload(payload: Record<string, unknown>) {
   const supabase = getSupabaseAdminClient();
   const eventType = eventName(payload);
   const crmResult = supabase ? await persistWebhookCrm(supabase, payload).catch((error) => ({

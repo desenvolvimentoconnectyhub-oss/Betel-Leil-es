@@ -1,3 +1,4 @@
+import { withLeadWork } from "@/lib/whatsapp/lead-reset";
 import "server-only";
 
 import { sendWhatsAppAgentReply } from "@/lib/communication/connectyhub-client";
@@ -52,7 +53,7 @@ async function insertRuntimeEvent(input: {
   });
 }
 
-export async function sendWhatsAppManualReply(input: {
+async function sendWhatsAppManualReplyWork(input: {
   conversationId: string;
   leadId?: string;
   agentKey?: string;
@@ -104,7 +105,8 @@ export async function sendWhatsAppManualReply(input: {
   }
 
   const conversation = asRecord(conversationData);
-  const leadId = cleanString(input.leadId, cleanString(conversation.lead_id));
+  const leadId = cleanString(conversation.lead_id);
+  if (input.leadId && input.leadId !== leadId) throw new Error("RESET_SCOPE_MISMATCH");
   const agentKey = cleanString(input.agentKey, cleanString(conversation.agent_key, "multichannel-dispatch"));
   const instanceId = cleanString(conversation.instance_id);
 
@@ -182,4 +184,12 @@ export async function sendWhatsAppManualReply(input: {
     providerStatus: delivery.providerStatus,
     error: delivery.errorMessage || handoff.errors.join(" | ") || undefined,
   };
+}
+
+export async function sendWhatsAppManualReply(input: Parameters<typeof sendWhatsAppManualReplyWork>[0]): Promise<WhatsAppManualReplyResult> {
+  try {
+    const db = getSupabaseAdminClient();
+    const { data } = await db!.from("whatsapp_conversations").select("lead_id").eq("id", input.conversationId).single();
+    return await withLeadWork({ leadId: input.leadId || data?.lead_id, conversationId: input.conversationId }, () => sendWhatsAppManualReplyWork(input));
+  } catch { return { ok: false, leadId: input.leadId || "", conversationId: input.conversationId, agentKey: input.agentKey || "", providerStatus: "lead_unavailable", error: "O atendimento não está mais disponível. Atualize o painel." }; }
 }

@@ -628,6 +628,13 @@ export async function listAdminUsers(limit = 80): Promise<DataResult<AdminUserLi
   };
 }
 
+async function mayManageOwner(actorId: string | null | undefined, nextRole: string, currentRole?: unknown) {
+  if (nextRole !== "owner" && currentRole !== "owner") return true;
+  if (!actorId) return false;
+  const { data, error } = await getSupabaseAdminClient()!.from("admin_users").select("role,status").eq("id", actorId).single();
+  return !error && data?.role === "owner" && data.status === "active";
+}
+
 export async function createAdminUserRecord(
   input: CreateAdminUserInput
 ): Promise<
@@ -659,13 +666,14 @@ export async function createAdminUserRecord(
 
   const { data: existing, error: existingError } = await supabase
     .from("admin_users")
-    .select("id,auth_user_id")
+    .select("id,auth_user_id,role")
     .ilike("email", email)
     .limit(1)
     .maybeSingle();
 
   if (existingError) return { ok: false, error: existingError.message };
 
+  if (!await mayManageOwner(input.invitedByAdminId, role, existing?.role)) return { ok: false, error: "Somente o Super admin pode conceder ou alterar acesso MASTER." };
   const now = new Date().toISOString();
   let authUserId = typeof existing?.auth_user_id === "string" ? existing.auth_user_id : null;
   const inviteDelivery = await deliverAdminPasswordInvite(supabase, {
@@ -759,7 +767,7 @@ export async function updateAdminUserRecord(
 
   const { data: current, error: currentError } = await supabase
     .from("admin_users")
-    .select("id,auth_user_id,email")
+    .select("id,auth_user_id,email,role")
     .eq("id", adminUserId)
     .maybeSingle();
 
@@ -782,6 +790,7 @@ export async function updateAdminUserRecord(
     return { ok: false, error: organization.error || "Organizacao administrativa indisponivel." };
   }
 
+  if (!await mayManageOwner(input.invitedByAdminId, role, current.role)) return { ok: false, error: "Somente o Super admin pode conceder ou alterar acesso MASTER." };
   const currentAuthUserId = typeof current.auth_user_id === "string" ? current.auth_user_id : null;
   if (currentAuthUserId) {
     const { error: updateAuthError } = await supabase.auth.admin.updateUserById(currentAuthUserId, {
