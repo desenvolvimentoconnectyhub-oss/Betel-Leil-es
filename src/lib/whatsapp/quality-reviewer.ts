@@ -1,6 +1,6 @@
 import "server-only";
 
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenerativeAI } from "@/lib/ai/connectyhub-llm";
 import { getGeminiApiKey, getGeminiModel } from "@/lib/ai/config";
 import { getWhatsAppAgentConfig, saveWhatsAppAgentConfig } from "@/lib/communication/willian-agent-config";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -352,7 +352,7 @@ async function applyQualityLearning(input: {
     agent_key: input.agentKey || null,
     event_type: "whatsapp_quality_learning_applied",
     status: "ok",
-    provider: "gemini",
+    provider: "connectyhub",
     model: "quality-reviewer",
     attempt: 1,
     message: "Auditoria aplicada na memoria do agente WhatsApp.",
@@ -411,7 +411,7 @@ async function markHandoff(input: {
       agent_key: input.agentKey || null,
       event_type: "whatsapp_quality_handoff",
       status: "handoff",
-      provider: "gemini",
+      provider: "connectyhub",
       model: "quality-reviewer",
       attempt: 1,
       message: "Auditoria automatica colocou conversa WhatsApp em handoff humano.",

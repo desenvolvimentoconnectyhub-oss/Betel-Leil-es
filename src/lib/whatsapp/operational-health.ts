@@ -1,4 +1,5 @@
 import "server-only";
+import { freshConnection } from "@/lib/communication/connection-state";
 
 import { getActiveAIProvider, getGeminiApiKey, getGeminiModel } from "@/lib/ai/config";
 import { WILLIAN_AGENT_KEY, getWillianInstanceState } from "@/lib/communication/connectyhub-client";
@@ -127,15 +128,7 @@ function normalizeRuntimeStatus(value: unknown) {
 }
 
 function instanceIsConnected(row: DbRow) {
-  const status = normalizeRuntimeStatus(row.status);
-  return (
-    status === "connected" ||
-    status === "open" ||
-    status === "online" ||
-    status === "ready" ||
-    asBoolean(row.connected) ||
-    Boolean(cleanString(row.connected_at))
-  );
+  return freshConnection(row.status, row.last_seen_at);
 }
 
 function stageFromLead(row: DbRow) {
@@ -633,7 +626,7 @@ export async function getWhatsAppOperationalHealth(options: { agentKey?: string;
     connectedAt: instance.connectedAt || "",
     updatedAt: instance.updatedAt || "",
   }));
-  const dbConnectedInstances = targetInstances.filter(instanceIsConnected).length;
+  const dbConnectedInstances = instanceState.lastError ? 0 : targetInstances.filter((row,index,rows) => rows.findIndex(candidate => candidate.agent_key === row.agent_key) === index).filter(instanceIsConnected).length;
   const stateConnectedInstances = runtimeInstanceSummaries.filter((instance) => instance.connected).length;
   const connectedInstances = Math.max(dbConnectedInstances, stateConnectedInstances);
   const primaryConnected = Boolean(instanceState.status?.connected || instanceState.status?.loggedIn || connectedInstances > 0);
@@ -653,8 +646,8 @@ export async function getWhatsAppOperationalHealth(options: { agentKey?: string;
   const nextActions: string[] = [];
 
   if (!geminiKey) {
-    pushUnique(blockers, "Gemini sem API key configurada.");
-    pushUnique(nextActions, "Configurar gemini_api_key ou GEMINI_API_KEY.");
+    pushUnique(blockers, "ConnectyHub IA sem chave configurada.");
+    pushUnique(nextActions, "Configurar CONNECTYHUB_LLM_API_KEY da conta Betel.");
   }
   if (!instanceState.adminTokenConfigured || !instanceState.adminTokenLooksValid) {
     pushUnique(blockers, "Token administrativo da ConnectyHub ausente ou incompleto.");
@@ -760,8 +753,8 @@ export async function getWhatsAppOperationalHealth(options: { agentKey?: string;
       id: "ai",
       label: "IA",
       status: checkStatus(Boolean(geminiKey)),
-      summary: geminiKey ? `${aiProvider} / ${geminiModel}` : "Gemini nao configurado.",
-      action: geminiKey ? "Sem acao." : "Configurar chave Gemini.",
+      summary: geminiKey ? `${aiProvider} / ${geminiModel}` : "ConnectyHub IA nao configurada.",
+      action: geminiKey ? "Sem acao." : "Configurar chave ConnectyHub IA.",
     },
     {
       id: "connectyhub",

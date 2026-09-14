@@ -1,5 +1,5 @@
 import { HeadBucketCommand, S3Client } from "@aws-sdk/client-s3";
-import { getGeminiApiKey, getGeminiModel } from "@/lib/ai/config";
+import { getAIConfig, getGeminiApiKey, getGeminiModel } from "@/lib/ai/config";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getElevenLabsConfig } from "@/lib/voice/elevenlabs";
 import {
@@ -273,39 +273,32 @@ async function checkGemini(): Promise<MaintenanceIntegration> {
   const [apiKey, model] = await Promise.all([getGeminiApiKey(), getGeminiModel()]);
   const items: MaintenanceItem[] = [
     {
-      name: "AI_PROVIDER",
-      label: "Provider",
-      configured: true,
-      value: process.env.AI_PROVIDER || "gemini",
-      editable: true,
-      secret: false,
-      configKey: "ai_provider",
-    },
-    {
-      name: "GEMINI_MODEL",
+      name: "CONNECTYHUB_LLM_MODEL",
       label: "Modelo",
       configured: true,
       value: model,
       editable: true,
       secret: false,
-      configKey: "gemini_model",
+      configKey: "connectyhub_llm_model",
     },
     {
-      name: "GEMINI_API_KEY",
+      name: "CONNECTYHUB_LLM_API_KEY",
       label: "API key",
       configured: Boolean(apiKey),
       value: "",
       editable: true,
       secret: true,
-      configKey: "gemini_api_key",
+      configKey: "connectyhub_llm_api_key",
     },
+    { name: "CONNECTYHUB_LLM_PROJECT_ID", label: "Projeto IA da Betel", configured: Boolean(await getAIConfig("connectyhub_llm_project_id")), value: (await getAIConfig("connectyhub_llm_project_id")) || "", editable: true, secret: false, configKey: "connectyhub_llm_project_id" },
+    { name: "CONNECTYHUB_LLM_BILLING_ORGANIZATION_ID", label: "Organizacao pagadora Betel", configured: Boolean(await getAIConfig("connectyhub_llm_billing_organization_id")), value: (await getAIConfig("connectyhub_llm_billing_organization_id")) || "", editable: true, secret: false, configKey: "connectyhub_llm_billing_organization_id" },
   ];
 
   return {
-    id: "gemini",
-    title: "Gemini",
+    id: "connectyhub_llm",
+    title: "ConnectyHub IA",
     status: apiKey ? "ok" : "missing",
-    message: apiKey ? "Provider padrao configurado." : "Chave Gemini pendente.",
+    message: apiKey ? "Chave de IA configurada; acesso e consumo dependem do contrato Betel." : "Chave de IA ConnectyHub pendente.",
     items,
   };
 }

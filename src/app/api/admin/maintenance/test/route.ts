@@ -1,7 +1,7 @@
+import { readConnectyHubAI } from "@/lib/ai/connectyhub-llm";
 import { NextRequest, NextResponse } from "next/server";
 import { HeadBucketCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
-import { getGeminiApiKey, getGeminiModel } from "@/lib/ai/config";
 import { GECKO_API_DEFAULT_BASE_URL, testGeckoApiConnection } from "@/lib/geckoapi/client";
 import {
   GOOGLE_MAPS_API_DEFAULT_BASE_URL,
@@ -212,36 +212,10 @@ async function testConnectyHub(): Promise<TestResult> {
 
 async function testGemini(): Promise<TestResult> {
   const start = Date.now();
-  const [apiKey, model] = await Promise.all([getGeminiApiKey(), getGeminiModel()]);
-
-  if (!apiKey) {
-    return { success: false, integration: "gemini", message: "API key Gemini nao configurada.", latencyMs: Date.now() - start };
-  }
-
   try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts: [{ text: "Responda apenas OK" }] }],
-          generationConfig: { temperature: 0, maxOutputTokens: 5 },
-        }),
-        signal: AbortSignal.timeout(15000),
-      }
-    );
-    const latencyMs = Date.now() - start;
-
-    if (res.ok) {
-      return { success: true, integration: "gemini", message: `Gemini "${model}" respondeu OK. Resposta em ${latencyMs}ms.`, latencyMs };
-    }
-
-    const data = await res.json().catch(() => ({})) as { error?: { message?: string } };
-    return { success: false, integration: "gemini", message: data?.error?.message || `Gemini retornou ${res.status}.`, latencyMs };
-  } catch (error: unknown) {
-    return { success: false, integration: "gemini", message: error instanceof Error ? error.message : "Falha ao conectar Gemini.", latencyMs: Date.now() - start };
-  }
+    const response = await readConnectyHubAI("/models");
+    return { success: response.ok, integration: "connectyhub_llm", message: response.ok ? "Catalogo ConnectyHub acessivel. Este teste nao consome geracao." : "ConnectyHub IA HTTP " + response.status, latencyMs: Date.now()-start };
+  } catch (error) { return { success: false, integration: "connectyhub_llm", message: error instanceof Error ? error.message : "Falha no catalogo IA.", latencyMs: Date.now()-start }; }
 }
 
 async function testResend(): Promise<TestResult> {
@@ -640,7 +614,7 @@ const testMap: Record<string, () => Promise<TestResult>> = {
     "GOOGLE_BUSINESS_PROFILE_LOCATION_ID",
   ]),
   traffic_ai_governance: testTrafficGovernance(),
-  gemini: testGemini,
+  connectyhub_llm: testGemini,
   resend: testResend,
   elevenlabs: testElevenLabs,
   geckoapi: testGeckoApiConnection,

@@ -1,4 +1,5 @@
 "use client";
+import { freshConnection } from "@/lib/communication/connection-state";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
@@ -417,35 +418,6 @@ function normalizedConnectionStatus(value: unknown) {
   return cleanFormValue(value).toLowerCase().replace(/\s+/g, "_");
 }
 
-function statusLooksConnected(value: unknown) {
-  const status = normalizedConnectionStatus(value);
-  if (!status || statusLooksDisconnected(status)) return false;
-  return (
-    status.includes("connect") ||
-    ["open", "online", "ready", "logged", "loggedin", "logged_in", "authenticated"].includes(status)
-  );
-}
-
-function statusLooksDisconnected(value: unknown) {
-  const status = normalizedConnectionStatus(value);
-  return Boolean(
-      status.includes("disconnect") ||
-      status.includes("not_connected") ||
-      status.includes("notconnected") ||
-      status.includes("not_logged") ||
-      status.includes("notlogged") ||
-      status.includes("logout") ||
-      status.includes("qr") ||
-      status.includes("scan") ||
-      status.includes("pair") ||
-      status === "close" ||
-      status === "closed" ||
-      status === "offline" ||
-      status === "deleted" ||
-      status === "archived"
-  );
-}
-
 function statusLooksTerminallyDisconnected(value: unknown) {
   const status = normalizedConnectionStatus(value);
   return Boolean(
@@ -465,48 +437,11 @@ function statusLooksTerminallyDisconnected(value: unknown) {
 
 function whatsappAgentLooksConnected(agent?: WhatsAppAgentInstanceSummary | null) {
   if (!agent || isWhatsappAgentPaused(agent)) return false;
-  const explicitStatus = agent.status;
-  if (statusLooksTerminallyDisconnected(explicitStatus)) return false;
-
-  const hasSyncedProfile = Boolean(
-    cleanFormValue(agent.phoneNumber) &&
-      (cleanFormValue(agent.profileImageSyncedAt) ||
-        cleanFormValue(agent.profileImageUrl) ||
-        cleanFormValue(agent.displayName))
-  );
-
-  return Boolean(
-    agent.connected ||
-      cleanFormValue(agent.connectedAt) ||
-      statusLooksConnected(explicitStatus) ||
-      (!cleanFormValue(explicitStatus) && hasSyncedProfile)
-  );
+  return agent.connected && freshConnection(agent.status, agent.checkedAt);
 }
 
 function whatsappStateLooksConnected(state: WillianInstanceState) {
-  const explicitStatus = state.status?.state || state.finalStatus || state.connection?.finalStatus || state.connection?.status;
-  if (statusLooksTerminallyDisconnected(explicitStatus)) return false;
-
-  const hasActivePairingChallenge = Boolean(
-    cleanFormValue(state.connection?.qrCode) ||
-      cleanFormValue(state.connection?.qrCodeDataUrl) ||
-      cleanFormValue(state.connection?.pairingCode)
-  );
-  const hasSyncedProfile = Boolean(
-    cleanFormValue(state.phoneNumber) &&
-      (cleanFormValue(state.profileImageSyncedAt) ||
-        cleanFormValue(state.profileImageUrl) ||
-        cleanFormValue(state.displayName))
-  );
-  const hasPhoneIdentity = Boolean(cleanFormValue(state.phoneNumber));
-
-  return Boolean(
-    state.status?.connected ||
-      state.status?.loggedIn ||
-      statusLooksConnected(explicitStatus) ||
-      (!cleanFormValue(explicitStatus) && !hasActivePairingChallenge && hasSyncedProfile) ||
-      (!cleanFormValue(explicitStatus) && !hasActivePairingChallenge && hasPhoneIdentity)
-  );
+  return !state.lastError && state.status?.connected === true && freshConnection(state.status.state, state.checkedAt);
 }
 
 function displayWhatsappProfileName(value: unknown, fallback: string) {
@@ -643,7 +578,7 @@ export function WillianAgentPanel({
           }
         }
       } catch {
-        // The server render still shows the local state if remote status is temporarily unavailable.
+        if (!cancelled) applyInstanceState({ ...(initialState || defaultWillianState), status: { state: "unknown", connected: false, loggedIn: false, jid: null }, agentInstances: (initialState?.agentInstances || []).map(agent => ({ ...agent, status: "unknown", connected: false })) });
       }
     }
 
@@ -652,7 +587,7 @@ export function WillianAgentPanel({
     return () => {
       cancelled = true;
     };
-  }, [applyInstanceState, openPasskeyBlockedDialog]);
+  }, [applyInstanceState, openPasskeyBlockedDialog, initialState]);
 
   const pairingPollActive = Boolean(connection && !connection.passkeyBlocked);
 
@@ -740,7 +675,8 @@ export function WillianAgentPanel({
       agentName: PRIMARY_WHATSAPP_AGENT_LABEL,
       companyName: config.companyName,
       connected,
-      connectedAt: connected ? state.profileImageSyncedAt : undefined,
+      checkedAt: state.checkedAt,
+      connectedAt: connected ? state.checkedAt : undefined,
       displayName: state.displayName,
       instanceName: state.instanceName,
       phoneNumber: state.phoneNumber,
@@ -756,12 +692,13 @@ export function WillianAgentPanel({
     const enrichedAgents = agentInstances.map((agent) => {
       if (agent.agentKey !== state.agentKey && agent.agentKey !== PRIMARY_WHATSAPP_AGENT_KEY) return agent;
       const agentDisconnected = primaryStateDisconnected || statusLooksTerminallyDisconnected(agent.status);
-      const agentConnected = agentDisconnected ? false : agent.connected || connected || whatsappAgentLooksConnected(agent);
+      const agentConnected = agentDisconnected ? false : connected || whatsappAgentLooksConnected(agent);
       return {
         ...agent,
         agentName: agent.agentName || primarySummary.agentName,
         companyName: agent.companyName || primarySummary.companyName,
         connected: agentConnected,
+        checkedAt: connected ? state.checkedAt : agent.checkedAt,
         connectedAt: agentDisconnected ? undefined : agent.connectedAt || (agentConnected ? primarySummary.connectedAt : undefined),
         displayName: agent.displayName || primarySummary.displayName,
         phoneNumber: agent.phoneNumber || primarySummary.phoneNumber,
@@ -786,6 +723,7 @@ export function WillianAgentPanel({
     state.instanceName,
     state.phoneNumber,
     state.profileImageSyncedAt,
+    state.checkedAt,
     state.profileImageUrl,
     state.primaryAgentArchived,
     state.status?.state,
@@ -1887,25 +1825,16 @@ function ConnectionTab({
     ? state.status?.state || state.finalStatus || state.connection?.finalStatus || state.connection?.status
     : "";
   const selectedConnectionStatus = selectedAgent?.status || "";
-  const hasExplicitConnectionStatus = Boolean(
-    cleanFormValue(selectedConnectionStatus) ||
-      cleanFormValue(primaryConnectionStatus)
-  );
   const terminallyDisconnected = Boolean(
     statusLooksTerminallyDisconnected(selectedConnectionStatus) ||
       statusLooksTerminallyDisconnected(primaryConnectionStatus)
   );
-  const visibleConnectionSignal = Boolean(
-    !terminallyDisconnected &&
-      cleanFormValue(phoneNumber) &&
-      !hasExplicitConnectionStatus
-  );
   const connected = terminallyDisconnected
     ? false
     : !paused && canUsePrimaryState
-      ? whatsappStateLooksConnected(state) || whatsappAgentLooksConnected(selectedAgent) || visibleConnectionSignal
+      ? whatsappStateLooksConnected(state) || whatsappAgentLooksConnected(selectedAgent)
       : !paused && whatsappAgentLooksConnected(selectedAgent);
-  const statusLabel = paused ? "Pausado" : connected ? "Online" : "Aguardando leitura";
+  const statusLabel = paused ? "Pausado" : connected ? "Online" : /reconnecting|connecting/.test(selectedConnectionStatus || primaryConnectionStatus || "") ? "Conectando" : "Conexao nao confirmada";
   const pairingConnection = connection;
   const pairingLabel = pairingTarget?.agentName || "WhatsApp";
   const profileImageSyncedAt = selectedAgent?.profileImageSyncedAt || (canUsePrimaryState ? state.profileImageSyncedAt : undefined);
@@ -1968,7 +1897,7 @@ function ConnectionTab({
                   )}
                   {profileImageSyncedAt && (
                     <p className="truncate">
-                      <span className="font-semibold text-[var(--admin-foreground)]">Ultima leitura:</span> {formatDateTime(profileImageSyncedAt)}
+                      <span className="font-semibold text-[var(--admin-foreground)]">Perfil atualizado:</span> {formatDateTime(profileImageSyncedAt)}
                     </p>
                   )}
                 </div>

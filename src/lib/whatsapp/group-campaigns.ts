@@ -1,4 +1,5 @@
 import "server-only";
+import { dispatchMarketPublication } from "./publication-delivery";
 
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
@@ -1024,7 +1025,12 @@ export async function processWhatsAppCommunityCampaigns(input: { limit?: number;
       let errorMessage = "";
 
       if (!input.dryRun) {
-        if (mediaUrl) {
+        if (humanOpportunityPublication) {
+          const delivery = await dispatchMarketPublication({ campaignId, targetId, agentKey, instanceId: cleanString(campaignMetadata.senderProviderInstanceId), destinationJid, caption: bodyText, mediaUrl, mediaType, buttonText, actionButton });
+          deliveryPayload = delivery as unknown as Record<string, unknown>;
+          deliveryStatus = delivery.ok ? "sent" : "failed";
+          errorMessage = delivery.ok ? "" : delivery.errorMessage || "Entrega pendente de conciliacao.";
+        } else if (mediaUrl) {
           const mediaDelivery = await sendWhatsAppDestinationMedia({
             agentKey,
             destinationJid,
@@ -1034,7 +1040,7 @@ export async function processWhatsAppCommunityCampaigns(input: { limit?: number;
             trackId: `${trackId}-media`,
             sendOptions: mediaSendOptions,
           });
-          const buttonDelivery = actionButton
+          const buttonDelivery = mediaDelivery.ok && actionButton
             ? await sendWhatsAppDestinationText({
                 agentKey,
                 destinationJid,
@@ -1108,12 +1114,14 @@ export async function processWhatsAppCommunityCampaigns(input: { limit?: number;
       .eq("campaign_id", campaignId)
       .in("status", ["scheduled", "pending"]);
     const hasPendingTargets = (pendingTargetsResult.count || 0) > 0;
-    const status = campaignFailed > 0
+    const retryAttempt = Number(campaignMetadata.processingAttempts || 0) + 1;
+    const retryMarket = humanOpportunityPublication && campaignFailed > 0 && retryAttempt < 3;
+    const status = retryMarket ? "scheduled" : campaignFailed > 0
       ? "failed"
       : hasPendingTargets || nextRunAt
         ? "scheduled"
         : "completed";
-    const nextScheduledRun = hasPendingTargets
+    const nextScheduledRun = retryMarket ? new Date(Date.now() + 60000 * 2 ** retryAttempt).toISOString() : hasPendingTargets
       ? new Date(Date.now() + 60 * 1000).toISOString()
       : nextRunAt || null;
 
@@ -1125,6 +1133,7 @@ export async function processWhatsAppCommunityCampaigns(input: { limit?: number;
         next_run_at: nextScheduledRun,
         metadata: {
           ...campaignMetadata,
+          processingAttempts: retryAttempt,
           lastProcessingResult: {
             sent: campaignSent,
             failed: campaignFailed,

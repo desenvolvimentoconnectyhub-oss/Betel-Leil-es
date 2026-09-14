@@ -86,10 +86,8 @@ async function resolveRuntimeTarget(input: AgentRuntimeExecutionInput): Promise<
     };
   }
 
-  const provider = asString(input.provider, await getActiveAIProvider()).toLowerCase();
-  const model =
-    asString(input.model) ||
-    (provider === "gemini" ? await getGeminiModel() : "provider-configurado");
+  const provider = await getActiveAIProvider();
+  const model = await getGeminiModel();
 
   return {
     runtimeMode,
@@ -147,7 +145,7 @@ async function executeGeminiRuntime(
   }
 
   try {
-    const { GoogleGenerativeAI } = await import("@google/generative-ai");
+    const { GoogleGenerativeAI } = await import("@/lib/ai/connectyhub-llm");
     const client = new GoogleGenerativeAI(apiKey);
     const model = client.getGenerativeModel({ model: target.model });
     const result = await model.generateContent(buildRuntimePrompt(input));
@@ -186,7 +184,7 @@ export async function executeAgentRuntime(
     };
   }
 
-  if (target.provider === "gemini") {
+  if (target.provider === "connectyhub") {
     return executeGeminiRuntime(input, target);
   }
 

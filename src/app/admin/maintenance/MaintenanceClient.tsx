@@ -78,7 +78,7 @@ type LlmCheck = {
   success: boolean;
   checked_at: string;
   active_provider: string;
-  gemini: {
+  connectyhub: {
     configured: boolean;
     model: string;
     status: Status | "no_credits" | "invalid_key" | "missing_key";
@@ -111,7 +111,7 @@ const icons: Record<string, typeof Database> = {
   brightdata: Search,
   apify: Globe2,
   traffic_ai_governance: Shield,
-  gemini: Sparkles,
+  connectyhub_llm: Sparkles,
   resend: Mail,
   elevenlabs: Sparkles,
   geckoapi: Search,
@@ -149,7 +149,7 @@ const integrationDescriptions: Record<string, string> = {
   brightdata: "SERP API para buscar resultados reais do Google e reforcar links publicos de mercado.",
   apify: "Actors para busca web e captura de conteudo quando os portais bloqueiam leitura direta.",
   traffic_ai_governance: "Travas internas: modo leitura, aprovacao humana e sincronizacao por Inngest.",
-  gemini: "Google Gemini para analise IA, diagnosticos e agentes.",
+  connectyhub_llm: "ConnectyHub para analise IA e agentes, usando o projeto e a carteira da Betel.",
   resend: "Email transacional. Gratis ate 3k emails/mes.",
   elevenlabs: "Token da conta ElevenLabs usado pelos agentes para voz IA.",
   geckoapi: "Extrai anuncios estruturados de venda e aluguel em portais imobiliarios para referencias de mercado.",
@@ -320,7 +320,7 @@ function FieldInput({
   const configKey = item.configKey || item.name.toLowerCase();
   const configuredSecret = Boolean(item.secret && item.configured);
   const displayValue = item.secret ? value || revealedValue || "" : value;
-  const canToggleSecret = Boolean(item.secret && (displayValue || item.configured || revealing));
+  const canToggleSecret = Boolean(item.secret && (displayValue || (configKey !== "connectyhub_llm_api_key" && item.configured) || revealing));
   const placeholder = configuredSecret && !displayValue
     ? SECRET_MASK
     : item.configured
@@ -375,7 +375,7 @@ function FieldInput({
       </div>
       {configuredSecret && (
         <p className="mt-1.5 text-[11px] leading-5 text-[var(--muted)]">
-          A credencial fica mascarada por padrao. Clique no olho para revelar e clique novamente para ocultar.
+          {configKey === "connectyhub_llm_api_key" ? "Chave protegida no servidor. Para substituir, cole uma nova chave do projeto Betel." : "A credencial fica mascarada por padrao. Clique no olho para revelar e clique novamente para ocultar."}
         </p>
       )}
     </div>
@@ -454,7 +454,7 @@ function IntegrationCard({
           const configKey = item.configKey || item.name.toLowerCase();
           const currentValue = fieldValues[configKey] ?? item.value;
 
-          if (configKey === "gemini_model") {
+          if (configKey === "connectyhub_llm_model") {
             return (
               <ModelSelect
                 key={configKey}
@@ -570,7 +570,7 @@ export default function MaintenanceClient({
   useEffect(() => {
     async function fetchModels() {
       try {
-        const res = await fetch("/api/admin/maintenance/gemini-models", { cache: "no-store" });
+        const res = await fetch("/api/admin/maintenance/llm-models", { cache: "no-store" });
         const data = await res.json();
         if (data.success && Array.isArray(data.models)) {
           setGeminiModels(data.models);
@@ -612,9 +612,9 @@ export default function MaintenanceClient({
     setLoadingLlm(true);
     setError("");
     try {
-      const res = await fetch("/api/admin/llm-credits", { cache: "no-store" });
+      const res = await fetch("/api/admin/llm-credits", { method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ operationId: crypto.randomUUID() }) });
       const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.message || "Falha no Gemini.");
+      if (!res.ok || !data.success) throw new Error(data.message || "Falha na ConnectyHub IA.");
       setLlmCheck(data);
     } catch (err: unknown) {
       setError(getErrorMessage(err));
@@ -826,10 +826,10 @@ export default function MaintenanceClient({
         ))}
       </section>
 
-      {/* Gemini LLM deep test */}
+      {/* ConnectyHub IA deep test */}
       <section className="mt-8 pb-6">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-base font-semibold text-white">Teste profundo — Gemini LLM</h2>
+          <h2 className="text-base font-semibold text-white">Teste profundo — ConnectyHub IA</h2>
           <button
             type="button"
             onClick={runLlmCheck}
@@ -848,7 +848,7 @@ export default function MaintenanceClient({
             </div>
             <div>
               <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">Provider ativo</div>
-              <div className="mt-1 text-2xl font-semibold text-white">{llmCheck?.active_provider || "gemini"}</div>
+              <div className="mt-1 text-2xl font-semibold text-white">{llmCheck?.active_provider || "connectyhub"}</div>
             </div>
           </div>
 
@@ -857,7 +857,7 @@ export default function MaintenanceClient({
               <GeminiResult check={llmCheck} />
             ) : (
               <div className="text-sm leading-6 text-[var(--muted)]">
-                Envia uma mensagem de teste real ao Gemini para verificar chave, modelo e quota.
+                Envia uma mensagem de teste real a ConnectyHub IA para verificar resposta e recibo de creditos da conta Betel. O teste consome creditos do plano.
                 Clique em &quot;Verificar&quot; para executar.
               </div>
             )}
@@ -869,23 +869,23 @@ export default function MaintenanceClient({
 }
 
 function GeminiResult({ check }: { check: LlmCheck }) {
-  const tone = statusTone(check.gemini.status);
+  const tone = statusTone(check.connectyhub.status);
   const Icon = tone.Icon;
 
   return (
     <div className="grid gap-4">
       <div className={`inline-flex w-fit items-center gap-2 rounded-full border px-3 py-2 text-sm font-semibold ${tone.bg} ${tone.border} ${tone.text}`}>
         <Icon size={16} />
-        {statusCopy[check.gemini.status]}
+        {statusCopy[check.connectyhub.status]}
       </div>
       <div className="grid gap-3 text-sm">
         <div className="flex items-center justify-between border-b border-[var(--line)] pb-3">
           <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">Modelo</span>
-          <span className="font-mono text-[#d7d1c6]">{check.gemini.model}</span>
+          <span className="font-mono text-[#d7d1c6]">{check.connectyhub.model}</span>
         </div>
         <div className="flex items-start justify-between gap-4 border-b border-[var(--line)] pb-3">
           <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">Retorno</span>
-          <span className="text-right leading-6 text-[#d7d1c6]">{check.gemini.message}</span>
+          <span className="text-right leading-6 text-[#d7d1c6]">{check.connectyhub.message}</span>
         </div>
         <div className="text-xs text-[var(--muted)]">Verificado em {formatDate(check.checked_at)}</div>
       </div>

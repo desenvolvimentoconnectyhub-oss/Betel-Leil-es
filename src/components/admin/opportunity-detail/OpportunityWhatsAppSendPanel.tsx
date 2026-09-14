@@ -30,7 +30,7 @@ import { cn } from "@/lib/utils";
 
 type Destination = OpportunityWhatsAppPublicationOptions["destinations"][number];
 type SendMode = "test" | "group" | "channel" | "broadcast";
-type LinkFormat = "source_buttons" | "source_links" | "betel_button";
+type LinkFormat = "source_buttons" | "source_links";
 
 type WhatsAppPreview = {
   title: string;
@@ -71,18 +71,13 @@ const modeCopy: Record<SendMode, { title: string; detail: string; icon: typeof S
 const linkFormatCopy: Record<LinkFormat, { title: string; detail: string; icon: typeof Send }> = {
   source_buttons: {
     title: "3 botoes",
-    detail: "Botoes e links no texto.",
+    detail: "Tres botoes para as referencias de mercado.",
     icon: ExternalLink,
   },
   source_links: {
     title: "3 links",
     detail: "Inclui leilao e referencias no texto.",
     icon: ListChecks,
-  },
-  betel_button: {
-    title: "Ficha Betel",
-    detail: "Mantem somente o botao da ficha interna.",
-    icon: Eye,
   },
 };
 
@@ -333,8 +328,8 @@ export function OpportunityWhatsAppSendPanel({
       ? "Nenhum agente WhatsApp conectado para enviar."
       : !selectedAgent
         ? "Selecione um agente WhatsApp conectado para enviar."
-        : selectedAgent.connected === false || !selectedAgent.instanceId
-          ? "A instancia WhatsApp selecionada nao esta conectada."
+        : !selectedAgent.instanceId
+          ? "A instancia WhatsApp selecionada nao esta configurada."
           : !modeReady
             ? "Selecione um destino valido para enviar."
             : !canSubmit
@@ -344,11 +339,11 @@ export function OpportunityWhatsAppSendPanel({
   const destinationName = currentMode === "test" ? testNumber.trim() || "numero de teste" : selectedDestination?.name || "destino selecionado";
   const referenceSummary = linkFormatNeedsReferences
     ? `${activeReferenceStatus.validCount}/${activeReferenceStatus.requiredCount} referencias validas`
-    : linkFormatCopy[linkFormat].title;
+    : "3 referencias";
   const sendButtonHint =
     blockedReason ||
     (referencesBlocked
-      ? `Vai buscar referencias antes de enviar | Fontes atuais: ${referenceSummary}`
+      ? `Revise as referencias antes de aprovar | Fontes atuais: ${referenceSummary}`
       : `Destino: ${destinationName} | Fontes: ${referenceSummary}`);
   const processingDetail = linkFormatNeedsReferences
     ? "O sistema esta validando referencias publicas antes de enviar. Se nao encontrar links suficientes, nada sera disparado e a tela volta com o motivo."
@@ -681,8 +676,8 @@ export function OpportunityWhatsAppSendPanel({
 
         <div>
           <p className={labelClass}>Links do criativo</p>
-          <div className="mt-1 grid gap-2 sm:grid-cols-3">
-            {(["source_buttons", "source_links", "betel_button"] as LinkFormat[]).map((item) => {
+          <div className="mt-1 grid gap-2 sm:grid-cols-2">
+            {(["source_buttons", "source_links"] as LinkFormat[]).map((item) => {
               const Icon = linkFormatCopy[item].icon;
               const selected = linkFormat === item;
               return (

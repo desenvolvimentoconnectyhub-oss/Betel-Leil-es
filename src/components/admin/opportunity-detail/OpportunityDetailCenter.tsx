@@ -1413,10 +1413,10 @@ function OpportunityActionNotice({
       tone: "green",
     },
     "whatsapp-enviado": {
-      title: "Envio WhatsApp enviado",
+      title: "Envio aceito pela ConnectyHub",
       detail: campaignId
-        ? `Campanha ${campaignId} processada agora e aceita pela ConnectyHub.`
-        : "A campanha foi processada agora e aceita pela ConnectyHub.",
+        ? `Campanha ${campaignId} processada agora e aceita pela ConnectyHub. Entrega e leitura dependem da confirmacao do WhatsApp.`
+        : "A campanha foi processada agora e aceita pela ConnectyHub. Entrega e leitura dependem da confirmacao do WhatsApp.",
       tone: "green",
     },
     "whatsapp-teste-agendado": {
@@ -1427,10 +1427,10 @@ function OpportunityActionNotice({
       tone: "green",
     },
     "whatsapp-teste-enviado": {
-      title: "Teste WhatsApp enviado",
+      title: "Teste aceito pela ConnectyHub",
       detail: campaignId
-        ? `Campanha de teste ${campaignId} processada agora e aceita pela ConnectyHub.`
-        : "O teste foi processado agora e aceito pela ConnectyHub.",
+        ? `Campanha de teste ${campaignId} processada agora e aceita pela ConnectyHub. Entrega e leitura dependem da confirmacao do WhatsApp.`
+        : "O teste foi aceito pela ConnectyHub. Entrega e leitura dependem da confirmacao do WhatsApp.",
       tone: "green",
     },
     "whatsapp-ja-agendado": {
@@ -1440,7 +1440,7 @@ function OpportunityActionNotice({
     },
     "whatsapp-referencias-bloqueado": {
       title: "WhatsApp nao enviado: referencias pendentes",
-      detail: message || "A busca automatica terminou sem o minimo de referencias publicas validas. Nenhuma campanha foi criada.",
+      detail: message || "Revise e aprove a analise com tres referencias publicas validas. Nenhuma campanha foi criada.",
       tone: "red",
     },
   };

@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+import { marketPublicationIssues, selectMarketReferences, type ApprovedMarketPublication } from "@/lib/domain/market-publication";
+import { verifyMarketReference } from "@/lib/market/reference-access";
+import { getAuctionOpportunityByCode } from "./data";
 import "server-only";
 
 import {
@@ -777,7 +781,7 @@ export async function savePropertyMarketAnalysisRecord(
       {
         opportunity_id: opportunityId,
         analysis_code: analysisCode,
-        status: normalizedStatus,
+        status: ["approved", "approved_with_notes"].includes(normalizedStatus) ? "human_review" : normalizedStatus,
         analyst_name: input.analystName || "Analise Betel",
         payment_condition: input.paymentCondition || "A vista",
         subject_property_snapshot: {
@@ -811,6 +815,7 @@ export async function savePropertyMarketAnalysisRecord(
         source_links: sourceLinks,
         raw_payload: {
           ...existingRawPayload,
+          approvedPublicationId: null,
           savedFrom: "admin_market_analysis_human_review",
           rentalEstimate,
           paymentSimulation,
@@ -873,14 +878,34 @@ export async function savePropertyMarketAnalysisRecord(
 
     if (comparableError) {
       return {
-        data: {
-          analysisId,
-          analysisCode: asString((analysisRow as Record<string, unknown>).analysis_code, analysisCode),
-        },
+        data: null,
         source: "supabase",
         reason: `Analise salva, mas o comparavel nao foi registrado: ${comparableError.message}`,
       };
     }
+  }
+
+  if (["approved", "approved_with_notes"].includes(normalizedStatus)) {
+    const [analysisResult, opportunityResult] = await Promise.all([
+      getPropertyMarketAnalysisByOpportunityCode(input.opportunityCode), getAuctionOpportunityByCode(input.opportunityCode),
+    ]);
+    const analysis = analysisResult.data;
+    const approvedOpportunity = opportunityResult.data;
+    if (!analysis || !approvedOpportunity || analysisResult.source !== "supabase" || opportunityResult.source !== "supabase") {
+      return { data: null, source: "supabase", reason: "Analise salva para revisao; nao foi possivel criar a versao aprovada." };
+    }
+    const issues = marketPublicationIssues(analysis, approvedOpportunity);
+    if (issues.length) return { data: null, source: "supabase", reason: issues.join(" ") };
+    const references = selectMarketReferences(analysis);
+    const verificationUrls = [...new Set([...references.map(ref => ref.url), ...(analysis.rentalEstimate.monthlyRent > 0 ? [analysis.rentalEstimate.referenceUrl] : [])])];
+    const checks = await Promise.all(verificationUrls.map(async url => ({url,...await verifyMarketReference(url)})));
+    if (checks.some(check => !check.ok)) return {data:null,source:"supabase",reason:"Analise salva para revisao. As tres referencias precisam abrir antes de aprovar: "+checks.filter(c=>!c.ok).map(c=>c.error).join(" ")};
+    const snapshot: ApprovedMarketPublication = {version:1,analysis:{...analysis,status:normalizedStatus,rawPayload:{}},opportunity:approvedOpportunity,references};
+    const hash = createHash("sha256").update(JSON.stringify(snapshot)).digest("hex");
+    const saved = await supabase.from("property_market_publication_versions").insert({analysis_id:analysisId,opportunity_code:input.opportunityCode,content_hash:hash,snapshot,reference_checks:checks,approved_by:input.analystName || "Analise Betel"}).select("id").single();
+    if (saved.error || !saved.data) return {data:null,source:"supabase",reason:"Revisao salva, mas versao aprovada nao foi registrada. Verifique a migration de publicacoes."};
+    const finalized = await supabase.from("property_market_analyses").update({status:normalizedStatus,raw_payload:{...analysis.rawPayload,approvedPublicationId:saved.data.id}}).eq("id",analysisId).eq("updated_at",analysis.updatedAt).select("id").maybeSingle();
+    if (finalized.error || !finalized.data) return {data:null,source:"supabase",reason:"A analise mudou durante a aprovacao. Revise novamente; publicacao nao liberada."};
   }
 
   await supabase.from("audit_logs").insert({

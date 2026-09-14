@@ -1,9 +1,7 @@
+import "server-only";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 
 const ENV_FALLBACKS: Record<string, string[]> = {
-  ai_provider: ["AI_PROVIDER"],
-  gemini_api_key: ["GEMINI_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"],
-  gemini_model: ["GEMINI_MODEL", "GOOGLE_GENERATIVE_AI_MODEL"],
   openai_api_key: ["OPENAI_API_KEY"],
 };
 
@@ -50,13 +48,14 @@ export async function getAIConfig(key: string) {
 }
 
 export async function getGeminiApiKey() {
-  return getAIConfig("gemini_api_key");
+  const key = await getAIConfig("connectyhub_llm_api_key");
+  return key?.startsWith("chy_ai_") ? key : null;
 }
 
 export async function getGeminiModel() {
-  return normalizeGeminiModel(await getAIConfig("gemini_model")) || "gemini-2.5-flash";
+  return normalizeGeminiModel(await getAIConfig("connectyhub_llm_model")) || "flash-3.5";
 }
 
 export async function getActiveAIProvider() {
-  return (await getAIConfig("ai_provider")) || "gemini";
+  return "connectyhub";
 }

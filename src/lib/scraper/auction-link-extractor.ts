@@ -1,3 +1,4 @@
+import { cleanMarketText } from "@/lib/domain/market-quality";
 import "server-only";
 
 import { getGeminiApiKey, getGeminiModel, normalizeGeminiModel } from "@/lib/ai/config";
@@ -108,7 +109,7 @@ function normalizeExtraction(value: unknown): AuctionLinkExtraction {
     : {};
 
   return {
-    title: cleanString(row.title),
+    title: cleanMarketText(cleanString(row.title), 180),
     propertyType: cleanString(row.propertyType || row.property_type),
     address: cleanString(row.address || row.endereco),
     city: normalizeLocationName(row.city || row.cidade),
@@ -124,8 +125,8 @@ function normalizeExtraction(value: unknown): AuctionLinkExtraction {
     auctionDate: cleanString(row.auctionDate || row.auction_date || row.dataLeilao),
     paymentCondition: cleanString(row.paymentCondition || row.payment_condition || row.pagamento),
     occupancy: cleanString(row.occupancy || row.ocupacao),
-    legalSignal: cleanString(row.legalSignal || row.legal_signal || row.juridico),
-    summary: cleanString(row.summary || row.resumo),
+    legalSignal: cleanMarketText(cleanString(row.legalSignal || row.legal_signal || row.juridico)),
+    summary: cleanMarketText(cleanString(row.summary || row.resumo)),
     cautionNotes: cleanString(row.cautionNotes || row.caution_notes || row.ressalvas),
     confidenceScore: normalizeScore(row.confidenceScore || row.confidence_score),
     missingFields: asStringArray(row.missingFields || row.missing_fields),
@@ -151,8 +152,7 @@ function uniqueStrings(values: string[], limit = 6) {
 function groundedModelCandidates(configuredModel: string) {
   return uniqueStrings([
     normalizeGeminiModel(configuredModel),
-    "gemini-2.5-flash",
-    "gemini-2.0-flash",
+
   ]);
 }
 
@@ -179,7 +179,7 @@ export async function extractAuctionLinkWithGemini(input: {
   const htmlText = input.htmlText.slice(0, input.maxInputChars || (deepMode ? 60_000 : 30_000));
 
   try {
-    const { GoogleGenerativeAI } = await import("@google/generative-ai");
+    const { GoogleGenerativeAI } = await import("@/lib/ai/connectyhub-llm");
     const client = new GoogleGenerativeAI(apiKey);
     const genModel = client.getGenerativeModel({
       model,
@@ -258,7 +258,7 @@ export async function extractAuctionLinkWithGeminiGrounded(input: {
   let lastError = "";
 
   try {
-    const { GoogleGenerativeAI } = await import("@google/generative-ai");
+    const { GoogleGenerativeAI } = await import("@/lib/ai/connectyhub-llm");
     const client = new GoogleGenerativeAI(apiKey);
     const prompt = [
       "Use Google Search para encontrar a pagina do lote de leilao abaixo e extrair dados do imovel.",

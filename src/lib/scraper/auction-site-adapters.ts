@@ -1,3 +1,4 @@
+import { cleanMarketText } from "@/lib/domain/market-quality";
 import "server-only";
 
 import { extractImageUrlsFromHtml } from "./scraper-strategies";
@@ -892,7 +893,7 @@ function extractCentralSulTextContext(textInput: string, domain: string) {
 
   const extraction = compactExtractionPatch({
     title,
-    propertyType: inferPropertyType(`${title} ${text}`),
+    propertyType: inferPropertyType(title),
     address,
     city: cityState.city,
     state: cityState.state,
@@ -957,7 +958,7 @@ function extractPortalZukTextContext(textInput: string, domain: string) {
 
   const extraction = compactExtractionPatch({
     title,
-    propertyType: inferPropertyType(`${title} ${text}`),
+    propertyType: inferPropertyType(title),
     address: extractStreetAddress(text),
     city: cityState.city,
     state: cityState.state,
@@ -1310,8 +1311,8 @@ export function extractAuctionSiteContext(input: {
   const cityState = inferCityState(`${title} ${text.slice(0, 1200)}`);
   const extraction: AuctionSiteExtractionPatch = {
     ...structuredOutput.extraction,
-    title: structuredOutput.extraction.title || title,
-    propertyType: structuredOutput.extraction.propertyType || inferPropertyType(`${title} ${text.slice(0, 2000)}`),
+    title: cleanMarketText(structuredOutput.extraction.title || title, 180),
+    propertyType: structuredOutput.extraction.propertyType || inferPropertyType(title),
     address: structuredOutput.extraction.address || extractStreetAddress(text),
     city: structuredOutput.extraction.city || cityState.city,
     state: structuredOutput.extraction.state || cityState.state,
@@ -1321,7 +1322,7 @@ export function extractAuctionSiteContext(input: {
     auctionDate: structuredOutput.extraction.auctionDate || findDateAfterLabels(text, activeProfile.auctionDateLabels),
     paymentCondition: structuredOutput.extraction.paymentCondition || findSentenceAfterLabels(text, activeProfile.paymentLabels),
     occupancy: structuredOutput.extraction.occupancy || findSentenceAfterLabels(text, activeProfile.occupancyLabels),
-    legalSignal: structuredOutput.extraction.legalSignal || findSentenceAfterLabels(text, activeProfile.legalLabels),
+    legalSignal: cleanMarketText(structuredOutput.extraction.legalSignal || findSentenceAfterLabels(text, activeProfile.legalLabels)),
     privateAreaM2: structuredOutput.extraction.privateAreaM2 || findAreaAfterLabels(text, activeProfile.areaLabels.privateAreaM2),
     builtAreaM2: structuredOutput.extraction.builtAreaM2 || findAreaAfterLabels(text, activeProfile.areaLabels.builtAreaM2),
     landAreaM2: structuredOutput.extraction.landAreaM2 || findAreaAfterLabels(text, activeProfile.areaLabels.landAreaM2),

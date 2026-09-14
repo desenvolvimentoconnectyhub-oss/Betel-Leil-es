@@ -1,6 +1,6 @@
 import "server-only";
 
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenerativeAI } from "@/lib/ai/connectyhub-llm";
 import { getGeminiApiKey, getGeminiModel } from "@/lib/ai/config";
 import {
   getConnectyHubWhatsappAgentControlStatus,

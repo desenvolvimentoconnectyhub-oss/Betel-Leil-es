@@ -1,4 +1,5 @@
 import "server-only";
+import { freshConnection, normalizedConnectionState, resolveConnectionRecords } from "./connection-state";
 
 import { createHash } from "node:crypto";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -510,39 +511,8 @@ async function getWillianConfig() {
   };
 }
 
-function readBooleanLike(value: unknown) {
-  if (typeof value === "boolean") return value;
-  if (typeof value === "number") return value === 1;
-
-  const clean = cleanString(value).toLowerCase();
-  if (!clean) return false;
-  return ["1", "true", "yes", "sim", "on", "connected", "open", "online", "ready", "logged", "loggedin"].includes(clean);
-}
-
 function normalizeConnectionState(value: unknown, connected: boolean) {
-  const clean = cleanString(value);
-  const normalized = clean.toLowerCase().replace(/\s+/g, "_");
-  if (!normalized) return connected ? "connected" : "disconnected";
-
-  if (
-    normalized.includes("disconnect") ||
-    normalized.includes("not_connected") ||
-    normalized.includes("notconnected") ||
-    normalized.includes("not_logged") ||
-    normalized.includes("notlogged") ||
-    normalized.includes("logout") ||
-    normalized === "close" ||
-    normalized === "closed" ||
-    normalized === "offline"
-  ) {
-    return "disconnected";
-  }
-
-  if (normalized.includes("qr") || normalized.includes("scan") || normalized.includes("pair")) return "qr_pending";
-  if (normalized.includes("hibernated")) return "hibernated";
-  if (normalized.includes("connect") && !normalized.includes("disconnect")) return "connected";
-  if (["open", "online", "ready", "logged", "loggedin"].includes(normalized)) return "connected";
-  return clean;
+  return normalizedConnectionState(value, connected);
 }
 
 function connectionStateIsTerminallyDisconnected(value: unknown) {
@@ -610,43 +580,7 @@ function firstRecordValue(records: Array<Record<string, unknown>>, keys: string[
 
 function normalizeStatusPayload(payload: unknown) {
   const records = collectStatusRecords(payload);
-  const rawState = firstRecordValue(records, [
-    "connectionStatus",
-    "connection_status",
-    "instanceStatus",
-    "instance_status",
-    "sessionStatus",
-    "session_status",
-    "whatsappStatus",
-    "whatsapp_status",
-    "state",
-    "status",
-  ]);
-  const preliminaryState = normalizeConnectionState(rawState, false);
-  const connectedKeys = [
-    "connected",
-    "isConnected",
-    "is_connected",
-    "loggedIn",
-    "logged_in",
-    "isLogged",
-    "is_logged",
-    "authenticated",
-    "ready",
-    "online",
-    "open",
-  ];
-  const connected =
-    preliminaryState === "connected" ||
-    records.some((record) => connectedKeys.some((key) => readBooleanLike(record[key]))) ||
-    records.some((record) => {
-      const recordState = normalizeConnectionState(firstRecordValue([record], ["state", "status", "connectionStatus", "connection_status"]), false);
-      return recordState === "connected";
-    });
-  const loggedIn =
-    connected ||
-    records.some((record) => ["loggedIn", "logged_in", "isLogged", "is_logged"].some((key) => readBooleanLike(record[key])));
-  const state = normalizeConnectionState(rawState, connected);
+  const { state, connected, loggedIn } = resolveConnectionRecords(records);
   const jid =
     firstRecordValue(records, [
       "jid",
@@ -1167,7 +1101,7 @@ async function sendConnectyHubWhatsAppMessage(input: {
 
       return { payload, usedIdempotencyKey, sentAsButton: true, endpoint: "provider" };
     } catch (error) {
-      if (!shouldFallbackToLegacySend(error)) throw error;
+      if (button.explicit || !shouldFallbackToLegacySend(error)) throw error;
 
       return sendConnectyHubWhatsAppTextMessage({
         instanceId: input.instanceId,
@@ -1682,6 +1616,16 @@ async function resolveAgentProviderInstanceId(agentKey: string, explicitInstance
   return { config, instanceId: cleanString(persisted?.provider_instance_id) };
 }
 
+export async function checkWhatsAppSenderConnection(agentKey: string, explicitInstanceId = "") {
+  try {
+    const { config, instanceId } = await resolveAgentProviderInstanceId(agentKey, explicitInstanceId);
+    if (!config.apiToken || !instanceId) return { connected: false, instanceId, state: "unknown", error: "Instancia ou credencial ausente." };
+    const payload = await connectyhubRequest("/instances/" + encodeURIComponent(instanceId) + "/status", { method: "GET", timeoutMs: 10000 });
+    const status = normalizeStatusPayload(payload);
+    return { ...status, instanceId, checkedAt: new Date().toISOString(), error: status.connected ? "" : "Conexao WhatsApp nao confirmada: " + status.state };
+  } catch (error) { return { connected: false, instanceId: explicitInstanceId, state: "unknown", error: error instanceof Error ? error.message : "Consulta WhatsApp indisponivel." }; }
+}
+
 export async function sendWhatsAppAgentChatPresence(input: {
   agentKey: string;
   instanceId?: string;
@@ -1919,7 +1863,7 @@ async function resolveConnectyHubInstanceId(config?: Awaited<ReturnType<typeof g
 
   const instances = await listConnectyHubInstances().catch(() => []);
   const candidateNames = new Set(primaryWhatsappInstanceLookupNames(resolvedConfig.instanceName));
-  const matched = instances.find((item) => candidateNames.has(extractInstanceName(item).toLowerCase())) || instances[0];
+  const matched = instances.find((item) => candidateNames.has(extractInstanceName(item).toLowerCase()));
   const instanceId = extractInstanceId(matched);
   const instanceName = extractInstanceName(matched, resolvedConfig.instanceName);
 
@@ -2149,18 +2093,8 @@ function whatsappInstanceSummaryFromRow(row: Record<string, unknown>): WhatsAppA
   const status = normalizeConnectionState(row.status, Boolean(row.connected_at));
   const runtimeStatus = cleanString(agentRow.status, "draft");
   const phoneNumber = cleanString(row.phone);
-  const hasSyncedProfile = Boolean(
-    phoneNumber &&
-      (cleanString(whatsappProfile.syncedAt) ||
-        cleanString(whatsappProfile.profileImageUrl) ||
-        cleanString(whatsappProfile.displayName))
-  );
   const terminallyDisconnected = connectionStateIsTerminallyDisconnected(status);
-  const connected =
-    !terminallyDisconnected &&
-    (status === "connected" ||
-      Boolean(row.connected_at) ||
-      hasSyncedProfile);
+  const connected = freshConnection(status, row.last_seen_at);
 
   return {
     agentKey,
@@ -2176,6 +2110,7 @@ function whatsappInstanceSummaryFromRow(row: Record<string, unknown>): WhatsAppA
     status,
     runtimeStatus,
     connected,
+    checkedAt: cleanString(row.last_seen_at) || undefined,
     connectedAt: terminallyDisconnected ? undefined : cleanString(row.connected_at) || undefined,
     updatedAt: cleanString(row.updated_at) || undefined,
   };
@@ -2187,7 +2122,7 @@ async function listWhatsappAgentInstances(options: { checkRemote?: boolean } = {
 
   const { data, error } = await supabase
     .from("whatsapp_instances")
-    .select("agent_key, instance_name, provider_instance_id, phone, status, connected_at, updated_at, ai_agents(agent_key, name, status, metadata)")
+    .select("agent_key, instance_name, provider_instance_id, phone, status, connected_at, last_seen_at, updated_at, ai_agents(agent_key, name, status, metadata)")
     .eq("provider", CONNECTYHUB_PROVIDER)
     .neq("status", "deleted")
     .order("updated_at", { ascending: false })
@@ -2309,7 +2244,10 @@ function mergeWhatsappAgentSummaries(
   const byAgentKey = new Map<string, WhatsAppAgentInstanceSummary>();
 
   for (const localAgent of localAgents) byAgentKey.set(localAgent.agentKey, localAgent);
-  for (const summary of instanceSummaries) {
+  const matched = new Set<string>();
+  for (const summary of [...instanceSummaries].sort((a,b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""))) {
+    if (matched.has(summary.agentKey)) continue;
+    matched.add(summary.agentKey);
     byAgentKey.set(summary.agentKey, {
       ...byAgentKey.get(summary.agentKey),
       ...summary,
@@ -2333,13 +2271,7 @@ function willianStateLooksConnected(state: WillianInstanceState) {
     state.finalStatus ||
     state.connection?.finalStatus ||
     state.connection?.status;
-  if (connectionStateIsTerminallyDisconnected(status)) return false;
-
-  return Boolean(
-    state.status?.connected ||
-      state.status?.loggedIn ||
-      normalizeConnectionState(status, false) === "connected"
-  );
+  return state.status?.connected === true && freshConnection(status, state.checkedAt);
 }
 
 function ensureWillianSummary(
@@ -2385,7 +2317,8 @@ function ensureWillianSummary(
         profileImageSyncedAt: summary.profileImageSyncedAt || state.profileImageSyncedAt,
         status: disconnected ? "disconnected" : summaryConnected ? "connected" : summary.status || state.status?.state || "draft",
         connected: summaryConnected,
-        connectedAt: disconnected ? undefined : summary.connectedAt || (summaryConnected ? state.profileImageSyncedAt : undefined),
+        checkedAt: connected ? state.checkedAt : summary.checkedAt,
+        connectedAt: disconnected ? undefined : summary.connectedAt || (summaryConnected ? state.checkedAt : undefined),
         updatedAt: summary.updatedAt || state.profileImageSyncedAt,
       };
     });
@@ -2406,7 +2339,8 @@ function ensureWillianSummary(
       status: connected ? "connected" : state.status?.state || "draft",
       runtimeStatus: options.primaryRuntimeStatus || "active",
       connected,
-      connectedAt: connected ? state.profileImageSyncedAt : undefined,
+      checkedAt: state.checkedAt,
+      connectedAt: connected ? state.checkedAt : undefined,
       updatedAt: state.profileImageSyncedAt,
     },
     ...summaries,
@@ -2601,6 +2535,7 @@ export async function getWillianInstanceState(options: { checkRemote?: boolean }
         : Promise.resolve({}),
       connectyhubRequest("/webhooks", { method: "GET", timeoutMs: 10000 }).catch(() => []),
     ]);
+    state.checkedAt = new Date().toISOString();
     state.status = normalizeStatusPayload(statusPayload);
     state.connection = extractConnectionInfo(statusPayload);
     state.finalStatus = state.connection.finalStatus;
@@ -2623,6 +2558,9 @@ export async function getWillianInstanceState(options: { checkRemote?: boolean }
     );
   } catch (error) {
     state.lastError = error instanceof Error ? error.message : "Falha ao consultar ConnectyHub.";
+    state.checkedAt = new Date().toISOString();
+    state.status = { state: "unknown", connected: false, loggedIn: false, jid: null };
+    state.agentInstances = (state.agentInstances || []).map(agent => ({ ...agent, status: "unknown", connected: false, checkedAt: undefined }));
   }
 
   return state;

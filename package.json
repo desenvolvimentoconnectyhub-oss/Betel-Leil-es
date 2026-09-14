@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:opportunity-evaluation": "tsc --target ES2022 --module commonjs --moduleResolution node --esModuleInterop --skipLibCheck --outDir tmp/opportunity-evaluation-test scripts/opportunity-evaluation.test.ts src/lib/domain/opportunity-evaluation.ts && node tmp/opportunity-evaluation-test/scripts/opportunity-evaluation.test.js"
+    "test:opportunity-evaluation": "tsc --target ES2022 --module commonjs --moduleResolution node --esModuleInterop --skipLibCheck --outDir tmp/opportunity-evaluation-test scripts/opportunity-evaluation.test.ts src/lib/domain/opportunity-evaluation.ts && node tmp/opportunity-evaluation-test/scripts/opportunity-evaluation.test.js",
+    "test:publication-regressions": "node scripts/publication-regressions.test.cjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1064.0",

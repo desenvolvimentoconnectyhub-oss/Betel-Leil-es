@@ -1,4 +1,5 @@
 import "server-only";
+import { listApprovedMarketPublications } from "@/lib/market/approved-publication";
 
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { ResourceTone } from "@/lib/admin/resources";
@@ -329,50 +330,14 @@ export async function getPublicOpportunities(
   planKey: SubscriberPlan = "explorer"
 ): Promise<DataResult<PublicOpportunitiesData>> {
   const level = accessLevelForPlan(planKey);
-
-  try {
-    const supabase = getSupabaseAdminClient();
-    if (!supabase) {
-      return {
-        data: { opportunities: buildMockOpportunities(level), total: 6, planKey },
-        source: "mock",
-        reason: "Supabase nao configurado. Exibindo mock.",
-      };
-    }
-
-    const { data: rows, error, count } = await supabase
-      .from("auction_opportunities")
-      .select("*", { count: "exact" })
-      .order("created_at", { ascending: false })
-      .limit(planKey === "explorer" ? 5 : 50);
-
-    if (error || !rows || rows.length === 0) {
-      return {
-        data: { opportunities: buildMockOpportunities(level), total: 6, planKey },
-        source: "mock",
-        reason: error
-          ? `Tabela auction_opportunities: ${error.message}. Exibindo mock.`
-          : "Tabela sem registros. Exibindo mock de demonstracao.",
-      };
-    }
-
-    return {
-      data: {
-        opportunities: rows.map((r) =>
-          normalizePublicOpportunity(r as Record<string, unknown>, level)
-        ),
-        total: count || rows.length,
-        planKey,
-      },
-      source: "supabase",
-    };
-  } catch {
-    return {
-      data: { opportunities: buildMockOpportunities(level), total: 6, planKey },
-      source: "mock",
-      reason: "Supabase indisponivel. Exibindo mock.",
-    };
-  }
+  const publications = await listApprovedMarketPublications(planKey === "explorer" ? 5 : 50);
+  const opportunities = publications.map(({ opportunity: o, analysis: a }) => normalizePublicOpportunity({
+    id:o.id, code:o.id, title:o.title, property_type:o.propertyType, city:o.city, state:o.state,
+    discount_pct:a.realDiscountPct, opportunity_score:o.opportunityScore, auction_date:o.auctionDate,
+    stage:o.stage, initial_bid:a.initialBid, appraisal_value:a.marketValueBase, address:o.address,
+    summary:a.summary, risk_score:o.riskScore, source_name:o.sourceName,
+  }, level));
+  return { data: { opportunities, total: opportunities.length, planKey }, source: "supabase" };
 }
 
 export async function checkSubscriberAccess(
@@ -435,36 +400,4 @@ export async function grantOpportunityAccess(
   } catch (err) {
     return { ok: false, error: String(err) };
   }
-}
-
-function buildMockOpportunities(level: AccessLevel): PublicOpportunity[] {
-  const cities = [
-    ["Balneario Camboriu", "SC"],
-    ["Sao Paulo", "SP"],
-    ["Rio de Janeiro", "RJ"],
-    ["Curitiba", "PR"],
-    ["Belo Horizonte", "MG"],
-    ["Florianopolis", "SC"],
-  ];
-
-  return cities.map(([city, state], i) => ({
-    id: `mock-${i + 1}`,
-    code: `OPP-${2024 + i}`,
-    title: `${["Apartamento", "Casa", "Terreno", "Sala comercial", "Cobertura", "Sobrado"][i]} em leilao`,
-    propertyType: ["Apartamento", "Casa", "Terreno", "Sala comercial", "Cobertura", "Sobrado"][i],
-    city,
-    state,
-    discountPct: 25 + i * 7,
-    opportunityScore: 55 + i * 6,
-    auctionDate: `2026-07-${10 + i * 3}`,
-    stage: "Aprovado",
-    accessLevel: level,
-    initialBid: level !== "teaser" ? 280000 + i * 85000 : null,
-    appraisalValue: level !== "teaser" ? 420000 + i * 120000 : null,
-    address: level !== "teaser" ? `Rua Exemplo ${100 + i}, ${city}` : null,
-    summary: level !== "teaser" ? "Oportunidade com desconto significativo e risco controlado." : null,
-    riskScore: level !== "teaser" ? 30 + i * 5 : null,
-    sourceName: ["Zukerman", "Mega Leiloes", "Caixa", "Vip Leiloes", "Superbid", "Resale"][i],
-    tone: (55 + i * 6) >= 75 ? "green" : (55 + i * 6) >= 50 ? "yellow" : "red" as ResourceTone,
-  }));
 }

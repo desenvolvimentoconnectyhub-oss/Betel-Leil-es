@@ -1,3 +1,4 @@
+import { reconcilePublicationEvent } from "@/lib/whatsapp/publication-events";
 import { NextResponse } from "next/server";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { getGeminiApiKey, getGeminiModel } from "@/lib/ai/config";
@@ -2693,7 +2694,7 @@ async function transcribeAudioBufferWithGemini(input: {
   const modelName = await getGeminiModel();
   if (!apiKey || !input.buffer.length || input.buffer.length > 12 * 1024 * 1024) return "";
 
-  const { GoogleGenerativeAI } = await import("@google/generative-ai");
+  const { GoogleGenerativeAI } = await import("@/lib/ai/connectyhub-llm");
   const client = new GoogleGenerativeAI(apiKey);
   const model = client.getGenerativeModel({ model: modelName });
   const result = await model.generateContent([
@@ -3381,6 +3382,9 @@ async function persistWebhookCrm(
   const eventType = eventName(payload);
   const message = extractWebhookMessage(payload);
   const instanceIdentity = extractInstanceIdentity(payload);
+  if (["connection", "messages_update"].includes(eventType)) {
+    return reconcilePublicationEvent({ eventType, instanceId: instanceIdentity.instanceId, messageId: message.providerMessageId, payload });
+  }
   const instanceRow = await resolveInstanceRow(supabase, payload);
   const instanceId = cleanString(instanceRow?.id);
   const providerInstanceId = cleanString(instanceRow?.provider_instance_id || instanceIdentity.instanceId);
@@ -5778,7 +5782,7 @@ async function generateWhatsappAgentReply(
   }
 
   try {
-    const { GoogleGenerativeAI } = await import("@google/generative-ai");
+    const { GoogleGenerativeAI } = await import("@/lib/ai/connectyhub-llm");
     const client = new GoogleGenerativeAI(apiKey);
     const model = client.getGenerativeModel({ model: modelName });
     const cloneProfileLines = config.cloneProfile.enabled

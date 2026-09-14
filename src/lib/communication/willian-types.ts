@@ -10,6 +10,7 @@ export type WillianConnectionInfo = {
 };
 
 export type WhatsAppAgentInstanceSummary = {
+  checkedAt?: string;
   agentKey: string;
   agentName: string;
   companyName?: string;
@@ -28,6 +29,7 @@ export type WhatsAppAgentInstanceSummary = {
 };
 
 export type WillianInstanceState = {
+  checkedAt?: string;
   agentKey: string;
   agentName: string;
   baseUrl: string;

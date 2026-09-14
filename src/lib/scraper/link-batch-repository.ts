@@ -1,3 +1,4 @@
+import { cleanMarketText } from "@/lib/domain/market-quality";
 import "server-only";
 
 import { createHash } from "node:crypto";
@@ -1981,7 +1982,7 @@ function mergeAuctionExtraction(gemini: AuctionLinkExtraction, adapter: AuctionS
     trustedAdapter ? firstPositive(adapterValue || 0, geminiValue) : firstPositive(geminiValue, adapterValue || 0);
   const merged: AuctionLinkExtraction = {
     ...gemini,
-    title: pickText(gemini.title, adapter.title),
+    title: cleanMarketText(pickText(gemini.title, adapter.title), 180),
     propertyType: pickText(gemini.propertyType, adapter.propertyType),
     address: pickText(gemini.address, adapter.address),
     city: normalizeLocationName(pickText(gemini.city, adapter.city)),
@@ -1997,7 +1998,7 @@ function mergeAuctionExtraction(gemini: AuctionLinkExtraction, adapter: AuctionS
     auctionDate: pickText(gemini.auctionDate, adapter.auctionDate),
     paymentCondition: pickText(gemini.paymentCondition, adapter.paymentCondition),
     occupancy: pickText(gemini.occupancy, adapter.occupancy),
-    legalSignal: pickText(gemini.legalSignal, adapter.legalSignal),
+    legalSignal: cleanMarketText(pickText(gemini.legalSignal, adapter.legalSignal)),
     summary: firstText(gemini.summary, adapter.summary || ""),
     cautionNotes: firstText(gemini.cautionNotes, adapter.cautionNotes || ""),
     confidenceScore: Math.max(gemini.confidenceScore || 0, adapter.confidenceScore || 0),
@@ -2432,7 +2433,7 @@ function buildMarketResearchCommunicationSummary(input: {
 
   const lines = [
     marketValue
-      ? `Valor de mercado calculado: ${marketValue}, pela media proporcional por m2 dos comparaveis aceitos.`
+      ? `Valor de mercado calculado: ${marketValue}, com base nos comparaveis aceitos; consulte as areas e valores na analise.`
       : "Valor de mercado ainda pendente de comparaveis suficientes.",
     geocodedAddress
       ? `Google Maps confirmou a localizacao do alvo em ${geocodedAddress}.`

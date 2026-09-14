@@ -137,7 +137,7 @@ export async function extractCandidatesWithLlm(
   const auctionWindow = getAuctionWindow();
 
   try {
-    const { GoogleGenerativeAI } = await import("@google/generative-ai");
+    const { GoogleGenerativeAI } = await import("@/lib/ai/connectyhub-llm");
     const client = new GoogleGenerativeAI(apiKey);
     const genModel = client.getGenerativeModel({
       model,

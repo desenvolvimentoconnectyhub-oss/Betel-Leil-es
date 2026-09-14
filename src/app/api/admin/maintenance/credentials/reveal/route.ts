@@ -9,7 +9,6 @@ const SECRET_CONFIG_KEYS = new Set([
   "supabase_service_role_key",
   "r2_access_key_id",
   "r2_secret_access_key",
-  "gemini_api_key",
   "inngest_event_key",
   "inngest_signing_key",
   "connectyhub_api_token",
@@ -36,7 +35,6 @@ const SECRET_CONFIG_KEYS = new Set([
 
 const ENV_ALIASES: Record<string, string[]> = {
   elevenlabs_api_key: ["ELEVENLABS_API_KEY", "ELEVEN_LABS_API_KEY"],
-  gemini_api_key: ["GEMINI_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"],
   google_maps_api_key: ["GOOGLE_MAPS_API_KEY", "BETEL_GOOGLE_MAPS_API_KEY", "GOOGLE_MAPS_PLATFORM_API_KEY"],
   betel_google_maps_api_key: ["BETEL_GOOGLE_MAPS_API_KEY", "GOOGLE_MAPS_API_KEY", "GOOGLE_MAPS_PLATFORM_API_KEY"],
   betel_brightdata_api_key: ["BETEL_BRIGHTDATA_API_KEY", "BRIGHTDATA_API_KEY"],

@@ -18,10 +18,7 @@ import {
   Sparkles,
   TrendingUp,
 } from "lucide-react";
-import {
-  getAuctionOpportunityByCode,
-  getPropertyMarketAnalysisByOpportunityCode,
-} from "@/lib/admin/repository";
+import { getApprovedMarketPublication } from "@/lib/market/approved-publication";
 import type { PropertyMarketAnalysis } from "@/lib/admin/market-analysis";
 import type { AuctionOpportunity, PropertyImageAsset } from "@/lib/admin/resources";
 
@@ -182,25 +179,11 @@ function factItems(opportunity: AuctionOpportunity, analysis: PropertyMarketAnal
   ];
 }
 
-export async function generateMetadata({
-  params,
-}: {
-  params: Promise<{ codigo: string }>;
-}) {
+export async function generateMetadata({ params }: { params: Promise<{ codigo: string }> }) {
   const { codigo } = await params;
-  const [opportunityResult, analysisResult] = await Promise.all([
-    getAuctionOpportunityByCode(codigo),
-    getPropertyMarketAnalysisByOpportunityCode(codigo),
-  ]);
-  const opportunity = opportunityResult.data;
-  const analysis = analysisResult.data;
-
-  return {
-    title: opportunity ? `${opportunity.title} | Betel Leiloes` : "Oportunidade | Betel Leiloes",
-    description: opportunity
-      ? shortText(buildLeadSummary(opportunity, analysis), 155)
-      : "Ficha publica de oportunidade imobiliaria avaliada pela Betel.",
-  };
+  const publication = await getApprovedMarketPublication(codigo);
+  if (!publication) return { title: "Oportunidade | Betel Leiloes" };
+  return { title: publication.opportunity.title + " | Betel Leiloes", description: shortText(buildLeadSummary(publication.opportunity, publication.analysis), 155) };
 }
 
 export default async function PublicOpportunityDetailPage({
@@ -209,15 +192,9 @@ export default async function PublicOpportunityDetailPage({
   params: Promise<{ codigo: string }>;
 }) {
   const { codigo } = await params;
-  const [opportunityResult, analysisResult] = await Promise.all([
-    getAuctionOpportunityByCode(codigo),
-    getPropertyMarketAnalysisByOpportunityCode(codigo),
-  ]);
-
-  const opportunity = opportunityResult.data;
-  if (!opportunity) notFound();
-
-  const analysis = analysisResult.data;
+  const publication = await getApprovedMarketPublication(codigo);
+  if (!publication) notFound();
+  const { opportunity, analysis } = publication;
   const images = publicImages(opportunity);
   const imageUrl = primaryImage(images);
   const thumbnailImages = images.slice(1, 11);

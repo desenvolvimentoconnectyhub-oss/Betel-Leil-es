@@ -417,7 +417,7 @@ async function analyzeWithGemini(input: {
     throw new Error("GEMINI_API_KEY ausente para analisar midia.");
   }
 
-  const { GoogleGenerativeAI } = await import("@google/generative-ai");
+  const { GoogleGenerativeAI } = await import("@/lib/ai/connectyhub-llm");
   const client = new GoogleGenerativeAI(apiKey);
   const model = client.getGenerativeModel({
     model: modelName,

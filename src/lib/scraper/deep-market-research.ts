@@ -1,4 +1,6 @@
 import "server-only";
+import { isGoogleGroundingRedirect, resolveGroundedMarketReference } from "@/lib/market/reference-access";
+import { compatibleMarketTypes, canonicalReferenceUrl, readMonthlyRent, plausibleMonthlyRent } from "@/lib/domain/market-quality";
 
 import {
   calculatePricePerM2,
@@ -660,11 +662,7 @@ function propertyGroup(value: string) {
 }
 
 function propertyTypeCompatible(subjectType: string, comparableType: string, comparableTitle = "") {
-  const subjectGroup = propertyGroup(subjectType);
-  if (subjectGroup === "unknown") return true;
-  const comparableGroup = propertyGroup(`${comparableType} ${comparableTitle}`);
-  if (comparableGroup === "unknown") return true;
-  return subjectGroup === comparableGroup;
+  return compatibleMarketTypes(subjectType, comparableType, comparableTitle);
 }
 
 function extractCondoName(input: string) {
@@ -1166,7 +1164,7 @@ function normalizeGeckoApiComparable(
     ["unitTypes"],
     ["type"],
     ["category"],
-  ]) || subject.propertyType;
+  ]) || inferPropertyType(title);
   const neighborhood = normalizeLocationName(firstTextPath(item, [
     ["address", "neighborhood"],
     ["address", "bairro"],
@@ -1180,7 +1178,7 @@ function normalizeGeckoApiComparable(
     ["city"],
     ["cidade"],
     ["location", "city"],
-  ]) || subject.city);
+  ]));
   const state = normalizeStateUf(firstTextPath(item, [
     ["address", "state"],
     ["address", "uf"],
@@ -1188,7 +1186,7 @@ function normalizeGeckoApiComparable(
     ["state"],
     ["uf"],
     ["location", "state"],
-  ]) || subject.state);
+  ]));
   const address = firstTextPath(item, [
     ["address", "formattedAddress"],
     ["address", "street"],
@@ -1198,6 +1196,8 @@ function normalizeGeckoApiComparable(
     ["address"],
   ]);
   const areaM2 = firstNumberPath(item, [
+    ["attributes", "usableAreas"],
+    ["attributes", "usableArea"],
     ["areaM2"],
     ["area_m2"],
     ["usableArea"],
@@ -1220,7 +1220,9 @@ function normalizeGeckoApiComparable(
     ["amount"],
   ]);
   const askingPrice = kind === "sale" ? price : 0;
-  const monthlyRent = kind === "rent" ? price : 0;
+  const monthlyRent = kind === "rent" ? readMonthlyRent(asRecord(item.prices), item.business) : 0;
+  const business = normalizeText(item.business);
+  if ((kind === "sale" && ["rental", "rent"].includes(business)) || (kind === "rent" && ["sale", "sell"].includes(business))) return null;
   const latitude = firstCoordinatePath(item, [["address", "latitude"], ["latitude"], ["location", "latitude"], ["location", "lat"]], -90, 90);
   const longitude = firstCoordinatePath(item, [["address", "longitude"], ["longitude"], ["location", "longitude"], ["location", "lng"]], -180, 180);
   const distanceKm = distanceKmBetween(subject, { latitude, longitude });
@@ -1238,8 +1240,8 @@ function normalizeGeckoApiComparable(
     askingPrice,
     monthlyRent,
     pricePerM2: kind === "sale" ? calculatePricePerM2(askingPrice, areaM2) : 0,
-    bedrooms: firstNumberPath(item, [["bedrooms"], ["rooms"], ["dormitories"], ["details", "bedrooms"]]),
-    parkingSpaces: firstNumberPath(item, [["parkingSpaces"], ["parkingSpots"], ["garages"], ["garage"], ["details", "parkingSpaces"]]),
+    bedrooms: firstNumberPath(item, [["attributes", "bedrooms"], ["bedrooms"], ["rooms"], ["dormitories"], ["details", "bedrooms"]]),
+    parkingSpaces: firstNumberPath(item, [["attributes", "parkingSpaces"], ["parkingSpaces"], ["parkingSpots"], ["garages"], ["garage"], ["details", "parkingSpaces"]]),
     distanceKm: distanceKm || undefined,
     latitude: Number.isFinite(latitude) && latitude ? latitude : undefined,
     longitude: Number.isFinite(longitude) && longitude ? longitude : undefined,
@@ -1725,7 +1727,7 @@ function hasLocationEvidence(subject: SubjectProfile, comparable: Pick<DeepMarke
 }
 
 function areaLooksComparable(subject: SubjectProfile, comparable: Pick<DeepMarketComparable, "areaM2">) {
-  if (!subject.areaM2 || !comparable.areaM2) return true;
+  if (!subject.areaM2 || !comparable.areaM2) return false;
   const ratio = comparable.areaM2 / subject.areaM2;
   return ratio >= 0.35 && ratio <= 2.2;
 }
@@ -1739,9 +1741,10 @@ function isRelevantComparable(
   comparable: Omit<DeepMarketComparable, "similarityScore" | "quality" | "notes" | "collectedAt">,
   score: number
 ) {
-  if (!isAcceptableGroundedMarketSource(comparable.sourceUrl)) return false;
+  if (!isAcceptableGroundedMarketSource(comparable.sourceUrl) || !canonicalReferenceUrl(comparable.sourceUrl)) return false;
   if (!comparableHasListingValue(comparable)) return false;
   if (!propertyTypeCompatible(subject.propertyType, comparable.propertyType, comparable.title)) return false;
+  if (!subject.city || !subject.state || normalizeText(comparable.city) !== normalizeText(subject.city) || normalizeText(comparable.state) !== normalizeText(subject.state)) return false;
   if (!hasLocationEvidence(subject, comparable)) return false;
   if (!areaLooksComparable(subject, comparable)) return false;
   return score >= 45;
@@ -1900,7 +1903,7 @@ function calculateMarketValue(subject: SubjectProfile, saleComparables: DeepMark
 
 function calculateRental(subject: SubjectProfile, rentalComparables: DeepMarketComparable[], marketValueBase: number) {
   const valid = rentalComparables
-    .filter((item) => item.quality !== "discarded" && item.similarityScore >= 45 && item.monthlyRent > 0)
+    .filter((item) => item.quality !== "discarded" && item.similarityScore >= 45 && item.monthlyRent > 0 && plausibleMonthlyRent(item.monthlyRent, marketValueBase, item.areaM2))
     .sort((a, b) => b.similarityScore - a.similarityScore)
     .slice(0, 5);
 
@@ -1912,15 +1915,6 @@ function calculateRental(subject: SubjectProfile, rentalComparables: DeepMarketC
     };
   }
 
-  if (marketValueBase) {
-    const type = normalizeText(subject.propertyType);
-    const monthlyYield = type.includes("terreno") ? 0 : type.includes("comercial") ? 0.005 : 0.0042;
-    return {
-      monthlyRent: monthlyYield ? Math.round(marketValueBase * monthlyYield) : 0,
-      referenceUrl: "",
-      note: "Aluguel estimado por yield conservador interno; exige validacao manual com anuncio de locacao.",
-    };
-  }
 
   return { monthlyRent: 0, referenceUrl: "", note: "Sem base suficiente para estimar aluguel." };
 }
@@ -2045,7 +2039,7 @@ function collectGroundingLinks(response: unknown) {
     .reduce<MarketSearchUrl[]>((links, chunk) => {
       const web = asRecord(asRecord(chunk).web);
       const url = cleanString(web.uri || web.url);
-      if (!isAcceptableGroundedMarketSource(url)) return links;
+      if (!isAcceptableGroundedMarketSource(url) && !isGoogleGroundingRedirect(url)) return links;
       const label = cleanString(web.title, sourceLabel(url));
       links.push({
         label,
@@ -2085,26 +2079,12 @@ function normalizeGroundedMarketResearch(
   if (!saleComparables.length && !rentalComparables.length) return null;
 
   const calculatedMarket = calculateMarketValue(subject, saleComparables);
-  const marketValueBase = firstPositive(
-    asNumber(row.marketValueBase ?? row.market_value_base ?? row.valorMercadoBase ?? row.valor_mercado_base),
-    calculatedMarket.base
-  );
-  const marketValueLow = firstPositive(
-    asNumber(row.marketValueLow ?? row.market_value_low ?? row.valorMercadoConservador),
-    calculatedMarket.low,
-    marketValueBase ? Math.round(marketValueBase * 0.92) : 0
-  );
-  const marketValueHigh = firstPositive(
-    asNumber(row.marketValueHigh ?? row.market_value_high ?? row.valorMercadoOtimista),
-    calculatedMarket.high,
-    marketValueBase ? Math.round(marketValueBase * 1.08) : 0
-  );
+  const marketValueBase = calculatedMarket.base;
+  const marketValueLow = calculatedMarket.low;
+  const marketValueHigh = calculatedMarket.high;
   const rental = calculateRental(subject, rentalComparables, marketValueBase);
-  const rentalMonthlyRent = firstPositive(
-    asNumber(row.rentalMonthlyRent ?? row.rental_monthly_rent ?? row.aluguelMensal),
-    rental.monthlyRent
-  );
-  const rentalReferenceUrl = cleanString(row.rentalReferenceUrl || row.rental_reference_url, rental.referenceUrl);
+  const rentalMonthlyRent = rental.monthlyRent;
+  const rentalReferenceUrl = rental.referenceUrl;
   const missingFields = new Set(asStringArray(row.missingFields || row.missing_fields || row.pendencias));
   const cautionNotes = new Set(asStringArray(row.cautionNotes || row.caution_notes || row.ressalvas));
   const rawComparableCount =
@@ -2162,33 +2142,14 @@ async function generateGeminiGroundedContent(input: {
   prompt: string;
   systemInstruction: string;
 }) {
-  const { DynamicRetrievalMode, GoogleGenerativeAI } = await import("@google/generative-ai");
+  const { GoogleGenerativeAI } = await import("@/lib/ai/connectyhub-llm");
   const client = new GoogleGenerativeAI(input.apiKey);
-  const toolAttempts = [
-    {
-      label: "googleSearch",
-      tools: [{ googleSearch: {} }],
-    },
-    {
-      label: "googleSearchRetrieval",
-      tools: [
-        {
-          googleSearchRetrieval: {
-            dynamicRetrievalConfig: {
-              mode: DynamicRetrievalMode.MODE_DYNAMIC,
-              dynamicThreshold: 0,
-            },
-          },
-        },
-      ],
-    },
-  ];
+  const toolAttempts = [{ label: "googleSearch", tools: [{ googleSearch: {} }] }];
 
   let lastError = "";
   const modelCandidates = uniqueStrings([
     normalizeGeminiModel(input.model),
-    "gemini-2.5-flash",
-    "gemini-2.0-flash",
+
   ], 4);
   for (const model of modelCandidates) {
     for (const attempt of toolAttempts) {
@@ -2331,6 +2292,7 @@ async function runGeminiGroundedMarketResearch(input: {
 
     const grounded = await generateGeminiGroundedContent({ apiKey, model, prompt, systemInstruction });
     const grounding = collectGroundingLinks(grounded.response);
+    grounding.sourceLinks = (await Promise.all(grounding.sourceLinks.slice(0, 16).map(async source => ({ ...source, url: await resolveGroundedMarketReference(source.url) })))).filter(source => source.url && isAcceptableGroundedMarketSource(source.url));
     const parsed = pickJsonObject(grounded.rawText);
     if (!parsed) {
       return {

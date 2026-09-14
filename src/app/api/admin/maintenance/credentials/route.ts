@@ -40,6 +40,12 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
+      if (["gemini_api_key", "gemini_model", "ai_provider"].includes(key.toLowerCase())) {
+        results.push({ key, ok: false, error: "A integracao de IA ativa e ConnectyHub." }); continue;
+      }
+      if (key === "connectyhub_llm_api_key" && !value.startsWith("chy_ai_")) {
+        results.push({ key, ok: false, error: "Use a chave de IA do projeto Betel (chy_ai_)." }); continue;
+      }
       const { error } = await supabase
         .from("app_config")
         .upsert(
@@ -47,7 +53,7 @@ export async function POST(request: NextRequest) {
             key,
             value,
             description: `Credencial administrativa ${key}.`,
-            is_secret: Boolean(cred.secret),
+            is_secret: key === "connectyhub_llm_api_key" || Boolean(cred.secret),
             updated_at: new Date().toISOString(),
           },
           { onConflict: "key" }

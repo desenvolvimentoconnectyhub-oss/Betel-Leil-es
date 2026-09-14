@@ -120,7 +120,7 @@ function publicationModeFromSubmitStatus(value: string): OpportunityWhatsAppPubl
 
 function publicationLinkFormatFromForm(formData: FormData): OpportunityWhatsAppLinkFormat {
   const value = field(formData, "whatsappLinkFormat", "source_buttons");
-  if (value === "source_links" || value === "betel_button") return value;
+  if (value === "source_links") return value;
   return "source_buttons";
 }
 

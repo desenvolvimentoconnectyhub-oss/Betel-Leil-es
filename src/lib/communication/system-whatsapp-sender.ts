@@ -1,4 +1,5 @@
 import "server-only";
+import { freshConnection } from "./connection-state";
 
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 
@@ -56,9 +57,7 @@ function isUuidLike(value: string) {
 }
 
 function isConnected(row: DbRow) {
-  const status = cleanString(row.status).toLowerCase();
-  if (["deleted", "archived", "inactive", "disabled"].includes(status)) return false;
-  return ["connected", "open", "online", "ready", "logged", "loggedin"].includes(status) || Boolean(row.connected_at);
+  return freshConnection(row.status, row.last_seen_at);
 }
 
 function normalizeSender(row: DbRow): SystemWhatsAppSenderOption {
@@ -98,7 +97,7 @@ async function findSenderByIdOrProviderId(instanceId: string) {
   const cleanId = cleanString(instanceId);
   if (!supabase || !cleanId) return null;
 
-  const select = "id,agent_key,instance_name,phone,status,connected_at,provider_instance_id,updated_at";
+  const select = "id,agent_key,instance_name,phone,status,connected_at,last_seen_at,provider_instance_id,updated_at";
   const byId = isUuidLike(cleanId)
     ? await supabase.from("whatsapp_instances").select(select).eq("id", cleanId).maybeSingle()
     : { data: null, error: null };
@@ -121,7 +120,7 @@ async function findSenderByAgentKey(agentKey: string) {
 
   const { data } = await supabase
     .from("whatsapp_instances")
-    .select("id,agent_key,instance_name,phone,status,connected_at,provider_instance_id,updated_at")
+    .select("id,agent_key,instance_name,phone,status,connected_at,last_seen_at,provider_instance_id,updated_at")
     .eq("agent_key", cleanKey)
     .neq("status", "deleted")
     .not("provider_instance_id", "is", null)
@@ -138,7 +137,7 @@ export async function listSystemWhatsAppSenderOptions(): Promise<SystemWhatsAppS
 
   const { data, error } = await supabase
     .from("whatsapp_instances")
-    .select("id,agent_key,instance_name,phone,status,connected_at,provider_instance_id,updated_at")
+    .select("id,agent_key,instance_name,phone,status,connected_at,last_seen_at,provider_instance_id,updated_at")
     .neq("status", "deleted")
     .not("provider_instance_id", "is", null)
     .order("updated_at", { ascending: false })
@@ -147,7 +146,7 @@ export async function listSystemWhatsAppSenderOptions(): Promise<SystemWhatsAppS
   if (error) return [];
   return ((data || []) as DbRow[])
     .map(normalizeSender)
-    .filter((sender) => sender.id && sender.providerInstanceId && sender.connected);
+    .filter((sender) => sender.id && sender.providerInstanceId);
 }
 
 export async function getSystemWhatsAppSenderConfig(): Promise<SystemWhatsAppSenderConfig> {
@@ -185,7 +184,9 @@ export async function saveSystemWhatsAppSenderConfig(input: {
   const selected = await findSenderByIdOrProviderId(instanceId);
   if (!selected) return { ok: false, error: "Agente WhatsApp nao encontrado." };
   if (!selected.providerInstanceId) return { ok: false, error: "Agente WhatsApp sem instancia ConnectyHub vinculada." };
-  if (!selected.connected) return { ok: false, error: "Selecione um agente WhatsApp conectado." };
+  const { checkWhatsAppSenderConnection } = await import("./connectyhub-client");
+  const connection = await checkWhatsAppSenderConnection(selected.agentKey, selected.providerInstanceId);
+  if (!connection.connected) return { ok: false, error: connection.error || "Conexao do remetente nao confirmada." };
 
   const { error } = await supabase.from("app_config").upsert(
     [
@@ -245,14 +246,16 @@ export async function resolveSystemWhatsAppSender(input?: {
     };
   }
 
-  if (!selected.providerInstanceId || !selected.connected) {
+  const { checkWhatsAppSenderConnection } = await import("./connectyhub-client");
+  const connection = selected.providerInstanceId ? await checkWhatsAppSenderConnection(selected.agentKey, selected.providerInstanceId) : null;
+  if (!selected.providerInstanceId || !connection?.connected) {
     return {
       configured: true,
       localInstanceId: selected.id,
       agentKey: selected.agentKey,
       providerInstanceId: "",
       label: senderLabel(selected),
-      error: "Agente WhatsApp configurado como remetente do sistema nao esta conectado.",
+      error: connection?.error || "Conexao do remetente do sistema nao confirmada.",
     };
   }
 
