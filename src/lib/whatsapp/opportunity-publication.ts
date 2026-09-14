@@ -1,9 +1,9 @@
 import "server-only";
-import { marketPropertyGroup as propertyGroup } from "@/lib/domain/market-quality";
+import { canonicalReferenceUrl, marketPropertyGroup as propertyGroup } from "@/lib/domain/market-quality";
 import { createHash } from "node:crypto";
 import { checkWhatsAppSenderConnection } from "@/lib/communication/connectyhub-client";
 import { getApprovedMarketPublication } from "@/lib/market/approved-publication";
-import { selectMarketReferences } from "@/lib/domain/market-publication";
+import { selectRentalReferences } from "@/lib/domain/rental-references";
 import { verifyMarketReference } from "@/lib/market/reference-access";
 
 import { inngest } from "@/inngest/client";
@@ -61,6 +61,7 @@ export type OpportunityWhatsAppPublicationOptions = {
 };
 
 export type OpportunityWhatsAppReferenceStatus = {
+  candidateCount?: number;
   requiredCount: number;
   validCount: number;
   ready: boolean;
@@ -382,7 +383,7 @@ function buildAuctionUrl(analysis: PropertyMarketAnalysis | null) {
 }
 
 function buildPublicationReferenceLinks(analysis: PropertyMarketAnalysis | null, publicUrl: string, auctionUrl: string) {
-  return analysis ? selectMarketReferences(analysis).filter(link => link.url !== publicUrl && link.url !== auctionUrl) : [];
+  return analysis ? selectRentalReferences(analysis).filter(link => link.url !== publicUrl && link.url !== auctionUrl) : [];
 }
 
 export function getOpportunityWhatsAppReferenceStatus(
@@ -390,15 +391,19 @@ export function getOpportunityWhatsAppReferenceStatus(
   publicUrl = "",
   auctionUrl = ""
 ): OpportunityWhatsAppReferenceStatus {
-  const validCount = buildPublicationReferenceLinks(analysis, publicUrl, auctionUrl).length;
-  const ready = validCount >= MIN_PUBLICATION_REFERENCE_LINKS;
+  const candidateCount = buildPublicationReferenceLinks(analysis, publicUrl, auctionUrl).length;
+  const approved = Boolean(analysis && ["approved","approved_with_notes"].includes(analysis.status) && analysis.rawPayload?.approvedPublicationId);
+  const approvedUrls = analysis?.rawPayload?.approvedReferenceUrls;
+  const validCount = approved && Array.isArray(approvedUrls) ? new Set(approvedUrls.filter((url): url is string => typeof url === "string").map(canonicalReferenceUrl).filter(Boolean)).size : 0;
+  const ready = approved && validCount === MIN_PUBLICATION_REFERENCE_LINKS;
   return {
+    candidateCount,
     requiredCount: MIN_PUBLICATION_REFERENCE_LINKS,
     validCount,
     ready,
     reason: ready
       ? ""
-      : `A analise ainda tem ${validCount}/${MIN_PUBLICATION_REFERENCE_LINKS} referencias validas de mercado para o criativo.`,
+      : `${candidateCount}/3 candidatos de aluguel. Verificacao de acesso e aprovacao humana pendentes.`,
   };
 }
 
@@ -443,7 +448,7 @@ function actionButtonForPost(input: {
 
 function buttonTextForPost(linkFormat: OpportunityWhatsAppLinkFormat, hasSourceLinks: boolean) {
   if (linkFormat === "source_buttons" && hasSourceLinks) {
-    return "👇 Abra abaixo os tres comparaveis de venda usados na analise.";
+    return "👇 Consulte os tres anuncios de aluguel usados na analise. Valores anunciados; renda nao garantida.";
   }
   if (linkFormat === "source_buttons") return "";
   if (linkFormat === "source_links") return "";
@@ -490,7 +495,7 @@ export async function buildOpportunityWhatsAppPost(
     "",
     legalSignalLine(analysis),
     "",
-    rent ? `💵 Aluguel: ${rent}/mês` : "",
+    rent ? `💵 Aluguel estimado: ${rent}/mês, por anuncios. Renda nao garantida.` : "",
     "",
     marketSummaryLine(analysis, marketValue),
     "",

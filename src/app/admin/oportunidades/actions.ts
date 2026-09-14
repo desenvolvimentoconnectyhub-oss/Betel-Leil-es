@@ -510,6 +510,9 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
   }
 
   if (sendTestOnly) {
+    if (!["approved", "approved_with_notes"].includes(payload.status)) {
+      errorRedirect(detailPath, "Rascunho salvo e referencias recuperadas. O teste tambem exige revisao humana: confira os anuncios de aluguel e aprove a analise antes de enviar.");
+    }
     const publicationResult = await scheduleOpportunityWhatsAppPublication({
       opportunityCode: currentCode,
       mode: "test_number",

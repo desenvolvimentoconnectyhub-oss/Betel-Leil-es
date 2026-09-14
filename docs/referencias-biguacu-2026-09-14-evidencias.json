@@ -1,0 +1,51 @@
+{
+  "at": "2026-09-14T18:11:16.502Z",
+  "code": "PORTALZUK-COM-BR-CA04632F80ECA054",
+  "status": "human_review",
+  "approvedPublicationId": null,
+  "occupancy": "Ocupado",
+  "neighborhood": "Vendaval",
+  "persistedComparables": 34,
+  "rentalCount": 17,
+  "monthlyRent": 1533,
+  "rentalChecks": [
+    {
+      "url": "https://ibagy.com.br/imovel/134353/apartamento-2-quartos-ilhas-do-atlantico-residence-vendaval-bigua%C3%A7u",
+      "ok": true,
+      "checkedAt": "2026-09-14T18:11:10.208Z"
+    },
+    {
+      "url": "https://ibagy.com.br/imovel/134151/apartamento-2-quartos-ilhas-do-atlantico-residence-vendaval-bigua%C3%A7u",
+      "ok": true,
+      "checkedAt": "2026-09-14T18:11:10.209Z"
+    },
+    {
+      "url": "https://imobiliariabiguacu.com.br/imovel/5424/apartamento-2-quartos-residencial-ilhas-do-atlantico-vendaval-bigua%C3%A7u",
+      "ok": true,
+      "checkedAt": "2026-09-14T18:11:10.209Z"
+    }
+  ],
+  "saleChecks": [
+    {
+      "label": "Referencia 1",
+      "url": "https://imobiliariabiguacu.com.br/imovel/8919/apartamento-2-quartos-residencial-ilhas-do-atlantico-vendaval-bigua%C3%A7u",
+      "ok": true,
+      "checkedAt": "2026-09-14T18:11:13.555Z"
+    },
+    {
+      "label": "Referencia 2",
+      "url": "https://imobiliariabiguacu.com.br/imovel/9042/apartamento-2-quartos-residencial-ilhas-do-atlantico-vendaval-bigua%C3%A7u",
+      "ok": true,
+      "checkedAt": "2026-09-14T18:11:13.555Z"
+    },
+    {
+      "label": "Referencia 3",
+      "url": "https://imobiliariabiguacu.com.br/imovel/9621/apartamento-2-quartos-residencial-portinari-vendaval-bigua%C3%A7u",
+      "ok": true,
+      "checkedAt": "2026-09-14T18:11:13.555Z"
+    }
+  ],
+  "issues": [],
+  "paidQueries": 0,
+  "whatsappSends": 0
+}

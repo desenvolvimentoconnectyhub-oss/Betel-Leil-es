@@ -13,6 +13,8 @@ export type MarketAnalysisDecision = "excellent" | "good" | "caution" | "review"
 export type MarketComparableQuality = "strong" | "medium" | "weak" | "discarded";
 
 export type PropertyMarketSubject = {
+  neighborhood?: string;
+  condoName?: string;
   propertyType: string;
   address: string;
   city: string;

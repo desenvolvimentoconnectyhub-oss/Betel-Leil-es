@@ -338,7 +338,7 @@ export function OpportunityWhatsAppSendPanel({
   const blockedReason = hardBlockedReason;
   const destinationName = currentMode === "test" ? testNumber.trim() || "numero de teste" : selectedDestination?.name || "destino selecionado";
   const referenceSummary = linkFormatNeedsReferences
-    ? `${activeReferenceStatus.validCount}/${activeReferenceStatus.requiredCount} referencias validas`
+    ? `${activeReferenceStatus.candidateCount ?? activeReferenceStatus.validCount}/3 candidatos de aluguel; ${activeReferenceStatus.validCount}/3 vinculados a versao aprovada`
     : "3 referencias";
   const sendButtonHint =
     blockedReason ||

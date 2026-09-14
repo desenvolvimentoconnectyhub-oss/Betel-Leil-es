@@ -1,5 +1,6 @@
 /* eslint-disable @next/next/no-img-element */
 import Link from "next/link";
+import { rentalEconomics, selectRentalReferences } from "@/lib/domain/rental-references";
 import type { ReactNode } from "react";
 import {
   ArrowLeft,
@@ -2601,14 +2602,15 @@ function ComparableCard({ comparable }: { comparable: ComparableView }) {
 function MarketComparablesPanel({ analysis }: { analysis: PropertyMarketAnalysis | null }) {
   const comparables = comparableViewsFromAnalysis(analysis);
   const usedSales = comparables.filter((item) => listingLabel(item.listingType) === "Venda" && !item.discarded).slice(0, 3);
-  const usedRentals = comparables.filter((item) => listingLabel(item.listingType) === "Aluguel" && !item.discarded).slice(0, 1);
+  const selectedRentUrls = new Set(analysis ? selectRentalReferences(analysis).map(ref => ref.url.replace(/\/+$/, "")) : []);
+  const usedRentals = comparables.filter(item => selectedRentUrls.has(item.sourceUrl.replace(/\/+$/, "")));
   const discarded = comparables.filter((item) => item.discarded);
   const used = [...usedSales, ...usedRentals];
 
   return (
-    <SectionCard title="Comparaveis usados na estimativa" eyebrow="mercado" contentClassName="grid gap-3">
+    <SectionCard title="Referencias para revisao da estimativa" eyebrow="mercado" contentClassName="grid gap-3">
       <p className="max-w-5xl text-sm leading-6 text-[var(--admin-soft)]">
-        Estes sao os imoveis parecidos que ficaram persistidos como base da pesquisa. A tela mostra apenas referencias salvas pelo sistema.
+        Anuncios recuperados da pesquisa, com origem e data de coleta. As tres referencias de aluguel priorizam predio, rua, bairro e proximidade, expandindo para a cidade quando necessario. Preco anunciado nao comprova contrato nem garante renda; o acesso e a aprovacao ainda precisam ser confirmados.
       </p>
 
       {used.length ? (
@@ -3486,7 +3488,10 @@ function FinancialTab({ analysis }: { analysis: PropertyMarketAnalysis | null })
         </SectionCard>
 
         <SectionCard title="Aluguel e rentabilidade" eyebrow="renda" contentClassName="grid gap-2">
-          <InfoValue label="Aluguel mensal" value={rental.monthlyRent ? formatCurrency(rental.monthlyRent) : "nao informado"} />
+          <InfoValue label="Aluguel mensal estimado por anuncios" value={rental.monthlyRent ? formatCurrency(rental.monthlyRent) : "nao informado"} />
+          <InfoValue label="Aquisicao: lance + custos cadastrados" value={formatCurrency(rentalEconomics(analysis).acquisitionCost)} />
+          <InfoValue label="Retorno bruto sobre aquisicao" value={rental.monthlyRent ? `${percent(rentalEconomics(analysis).grossAnnualYieldPct)} a.a.` : "inconclusivo"} />
+          <p className="text-sm text-[var(--admin-muted)]">Estimativa bruta, sem garantia de renda. Custos ausentes, vacancia, administracao, manutencao, tributos recorrentes e prazo de desocupacao ainda podem reduzir o retorno. A viabilidade liquida permanece inconclusiva sem essas premissas.</p>
           <InfoValue label="Yield mercado" value={rental.monthlyRent ? `${percent(rental.monthlyYieldOnMarketPct)} a.m. / ${percent(rental.annualYieldOnMarketPct)} a.a.` : "nao calculado"} />
           <InfoValue label="Yield lance" value={rental.monthlyRent ? `${percent(rental.monthlyYieldOnBidPct)} a.m. / ${percent(rental.annualYieldOnBidPct)} a.a.` : "nao calculado"} />
           <InfoValue label="Referencia" value={rental.referenceFound ? "encontrada" : "pendente"} />

@@ -1,4 +1,5 @@
 import { cleanMarketText } from "@/lib/domain/market-quality";
+import { confirmedOccupancy, occupancyFromListingText } from "@/lib/domain/property-occupancy";
 import "server-only";
 
 import { extractImageUrlsFromHtml } from "./scraper-strategies";
@@ -950,7 +951,7 @@ function extractPortalZukTextContext(textInput: string, domain: string) {
     findAreaAfterLabels(text, ["metragem total", "area real total", "area total"]),
     findAreaByPatterns(text, [/area\s+real\s+total\s+([\d.]+,\d{1,4})\s*m(?:2|\u00b2)/i])
   );
-  const occupancy = firstSentenceContaining(text, ["imovel ocupado", "imovel desocupado", "ocupado", "desocupado"]);
+  const occupancy = occupancyFromListingText(text);
   const paymentCondition = normalizeText(text).includes("a vista e sem desconto")
     ? "A vista e sem desconto."
     : firstSentenceContaining(text, ["formas de pagamento", "pagamento", "a vista"]);
@@ -1308,6 +1309,11 @@ export function extractAuctionSiteContext(input: {
   ].filter(Boolean).join("\n\n")) || htmlToText(input.html);
 
   const title = titleFromHtml(input.html, structuredOutput.extraction.title || "");
+  // Zuk's canonical property route scopes the location to this listing. Page-wide
+  // neighborhood extraction can otherwise pick a card from related properties.
+  const zukNeighborhood = isProfileDomain(input.sourceDomain, ["portalzuk.com.br"])
+    ? decodeURIComponent(new URL(input.sourceUrl).pathname.match(/^\/imovel\/[a-z]{2}\/[^/]+\/([^/]+)\//i)?.[1] || "").replace(/-/g, " ")
+    : "";
   const cityState = inferCityState(`${title} ${text.slice(0, 1200)}`);
   const extraction: AuctionSiteExtractionPatch = {
     ...structuredOutput.extraction,
@@ -1316,12 +1322,12 @@ export function extractAuctionSiteContext(input: {
     address: structuredOutput.extraction.address || extractStreetAddress(text),
     city: structuredOutput.extraction.city || cityState.city,
     state: structuredOutput.extraction.state || cityState.state,
-    neighborhood: structuredOutput.extraction.neighborhood || extractNeighborhood(text),
+    neighborhood: zukNeighborhood || structuredOutput.extraction.neighborhood || extractNeighborhood(text),
     initialBid: structuredOutput.extraction.initialBid || findMoneyAfterLabels(text, activeProfile.initialBidLabels),
     appraisalValue: structuredOutput.extraction.appraisalValue || findMoneyAfterLabels(text, activeProfile.appraisalLabels),
     auctionDate: structuredOutput.extraction.auctionDate || findDateAfterLabels(text, activeProfile.auctionDateLabels),
     paymentCondition: structuredOutput.extraction.paymentCondition || findSentenceAfterLabels(text, activeProfile.paymentLabels),
-    occupancy: structuredOutput.extraction.occupancy || findSentenceAfterLabels(text, activeProfile.occupancyLabels),
+    occupancy: confirmedOccupancy(structuredOutput.extraction.occupancy) || occupancyFromListingText(text),
     legalSignal: cleanMarketText(structuredOutput.extraction.legalSignal || findSentenceAfterLabels(text, activeProfile.legalLabels)),
     privateAreaM2: structuredOutput.extraction.privateAreaM2 || findAreaAfterLabels(text, activeProfile.areaLabels.privateAreaM2),
     builtAreaM2: structuredOutput.extraction.builtAreaM2 || findAreaAfterLabels(text, activeProfile.areaLabels.builtAreaM2),

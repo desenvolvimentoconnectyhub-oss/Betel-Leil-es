@@ -1,4 +1,5 @@
 import { cleanMarketText } from "@/lib/domain/market-quality";
+import { confirmedOccupancy } from "@/lib/domain/property-occupancy";
 import "server-only";
 
 import { getGeminiApiKey, getGeminiModel, normalizeGeminiModel } from "@/lib/ai/config";
@@ -124,7 +125,7 @@ function normalizeExtraction(value: unknown): AuctionLinkExtraction {
     appraisalValue: asNumber(row.appraisalValue || row.appraisal_value || row.avaliacao || row.valorAvaliacao),
     auctionDate: cleanString(row.auctionDate || row.auction_date || row.dataLeilao),
     paymentCondition: cleanString(row.paymentCondition || row.payment_condition || row.pagamento),
-    occupancy: cleanString(row.occupancy || row.ocupacao),
+    occupancy: confirmedOccupancy(row.occupancy || row.ocupacao),
     legalSignal: cleanMarketText(cleanString(row.legalSignal || row.legal_signal || row.juridico)),
     summary: cleanMarketText(cleanString(row.summary || row.resumo)),
     cautionNotes: cleanString(row.cautionNotes || row.caution_notes || row.ressalvas),

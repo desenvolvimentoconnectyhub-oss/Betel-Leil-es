@@ -2492,7 +2492,6 @@ async function replaceDeepMarketComparables(input: {
 
   const rows = input.comparables
     .filter((comparable) => comparable.quality !== "discarded")
-    .slice(0, 12)
     .map((comparable) => {
       const referenceValue = firstPositive(comparable.askingPrice, comparable.monthlyRent);
       return {
@@ -2528,7 +2527,10 @@ async function replaceDeepMarketComparables(input: {
       };
     });
 
-  if (rows.length) await supabase.from("property_market_comparables").insert(rows);
+  if (rows.length) {
+    const { error } = await supabase.from("property_market_comparables").insert(rows);
+    if (error) throw new Error(`Nao foi possivel persistir os comparaveis de venda e aluguel: ${error.message}`);
+  }
 }
 
 async function upsertPreliminaryMarketAnalysis(input: {
@@ -2807,6 +2809,9 @@ async function processImportRow(row: LinkScraperRow, options: { analysisDepth?: 
       }
     }
     const title = firstText(extraction.title, titleCandidateFromUrl(row.auctionUrl), pageTitle);
+    if ((domain === "portalzuk.com.br" || domain.endsWith(".portalzuk.com.br")) && siteContext.extraction.neighborhood) {
+      extraction.neighborhood = siteContext.extraction.neighborhood;
+    }
     const initialBid = firstPositive(
       extraction.initialBid,
       findMoneyAfter(visibleText, ["lance", "valor minimo", "valor do lance", "preco minimo"])

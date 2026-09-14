@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 import { marketPublicationIssues, selectMarketReferences, type ApprovedMarketPublication } from "@/lib/domain/market-publication";
 import { verifyMarketReference } from "@/lib/market/reference-access";
+import { prepareRentalReferences } from "@/lib/market/prepare-rental-references";
+import { selectRentalReferences } from "@/lib/domain/rental-references";
+import { canonicalReferenceUrl } from "@/lib/domain/market-quality";
+import { findAdditionalRentalComparables } from "@/lib/scraper/deep-market-research";
 import { getAuctionOpportunityByCode } from "./data";
 import "server-only";
 
@@ -301,12 +305,13 @@ function buildSubject(opportunity: AuctionOpportunity, rawPayload: Record<string
 
 function normalizeComparable(row: Record<string, unknown>, opportunityId: string): PropertyMarketComparable {
   const areaM2 = asNumber(row.area_m2, asNumber(row.areaM2));
-  const askingPrice = asNumber(row.asking_price, asNumber(row.askingPrice));
+  const isRent = /rent|alug/i.test(asString(row.listing_type, asString(row.listingType)));
+  const askingPrice = asNumber(row.asking_price, isRent ? asNumber(row.monthlyRent) : asNumber(row.askingPrice));
   const soldPrice = asNumber(row.sold_price, asNumber(row.soldPrice));
   const price = soldPrice || askingPrice;
 
   return {
-    id: asString(row.id, `${opportunityId}-${asString(row.source_label, "comparavel")}`),
+    id: asString(row.id, `${opportunityId}-${asString(row.source_url, asString(row.sourceUrl, "comparavel"))}`),
     sourceLabel: asString(row.source_label, asString(row.sourceLabel, "Comparavel")),
     sourceUrl: asString(row.source_url, asString(row.sourceUrl)),
     listingType: asString(row.listing_type, asString(row.listingType, "Oferta")),
@@ -366,9 +371,9 @@ function buildRentalEstimate(input: {
     referenceFound,
     valueKnown,
     monthlyYieldOnMarketPct,
-    annualYieldOnMarketPct: Math.round(monthlyYieldOnMarketPct * 12 * 10) / 10,
+    annualYieldOnMarketPct: calculateYieldPct(monthlyRent * 12, input.marketValueBase),
     monthlyYieldOnBidPct,
-    annualYieldOnBidPct: Math.round(monthlyYieldOnBidPct * 12 * 10) / 10,
+    annualYieldOnBidPct: calculateYieldPct(monthlyRent * 12, input.initialBid),
     notes: asString(input.notes, asString(raw.notes)),
   };
 }
@@ -501,10 +506,22 @@ function normalizePersistedAnalysis(
   opportunity: AuctionOpportunity,
   opportunityUuid: string
 ): PropertyMarketAnalysis {
-  const comparables = asArray<Record<string, unknown>>(row.property_market_comparables, [])
-    .map((item) => normalizeComparable(item, opportunity.id))
-    .sort((a, b) => b.similarityScore - a.similarityScore);
   const rawPayload = asRecord(row.raw_payload);
+  const research = asRecord(rawPayload.marketResearch);
+  // Older imports truncated sale + rent to twelve rows. Recover retained evidence,
+  // giving persisted/manual decisions precedence, including discarded references.
+  const comparableMap = new Map<string, PropertyMarketComparable>();
+  for (const item of [
+    ...asArray<Record<string, unknown>>(research.saleComparables, []),
+    ...asArray<Record<string, unknown>>(research.rentalComparables, []),
+    ...asArray<Record<string, unknown>>(asRecord(rawPayload.referenceRecovery).comparables, []),
+    ...asArray<Record<string, unknown>>(row.property_market_comparables, []),
+  ]) {
+    const comparable = normalizeComparable(item, opportunity.id);
+    const key = canonicalReferenceUrl(comparable.sourceUrl);
+    if (key) comparableMap.set(key, comparable);
+  }
+  const comparables = [...comparableMap.values()].sort((a, b) => b.similarityScore - a.similarityScore);
   const rentalRaw = asRecord(rawPayload.rentalEstimate);
   const paymentRaw = asRecord(rawPayload.paymentSimulation);
   const subject = {
@@ -608,6 +625,25 @@ function normalizePersistedAnalysis(
   };
 }
 
+async function recoverAdditionalRentalEvidence(analysis: PropertyMarketAnalysis, title: string) {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return "";
+  const previous = asRecord(analysis.rawPayload?.referenceRecovery);
+  const lastAttempt = Date.parse(asString(previous.attemptedAt));
+  if (Number.isFinite(lastAttempt) && Date.now() - lastAttempt < 30 * 60_000) return "A busca publica complementar ja foi tentada recentemente; revise as fontes registradas.";
+  const subject = analysis.subject;
+  const found = await findAdditionalRentalComparables({
+    title, ...subject, neighborhood:subject.neighborhood || "", condoName:subject.condoName || "",
+    areaM2:subject.privateAreaM2 || subject.builtAreaM2 || subject.landAreaM2, initialBid:analysis.initialBid,
+  });
+  const existingUrls = new Set(analysis.comparables.map(c=>canonicalReferenceUrl(c.sourceUrl)));
+  const added = found.filter(c=>!existingUrls.has(canonicalReferenceUrl(c.sourceUrl)));
+  const recovery = {attemptedAt:new Date().toISOString(),source:"direct_public_search",paidQueries:0,comparables:[...asArray(previous.comparables,[]),...added]};
+  const saved = await supabase.from("property_market_analyses").update({raw_payload:{...analysis.rawPayload,referenceRecovery:recovery}}).eq("id",analysis.id).eq("updated_at",analysis.updatedAt).select("id").maybeSingle();
+  if (saved.error || !saved.data) return "A analise mudou durante a recuperacao; recarregue antes de revisar.";
+  return added.length ? `${added.length} novos candidatos de aluguel recuperados por busca publica gratuita. Revise-os e atualize a estimativa antes de aprovar novamente.` : "Busca publica gratuita concluida sem novos anuncios com dados suficientes; mantenha a revisao pendente.";
+}
+
 export async function getPropertyMarketAnalysisByOpportunityCode(
   code: string
 ): Promise<DataResult<PropertyMarketAnalysis | null>> {
@@ -706,7 +742,7 @@ export async function savePropertyMarketAnalysisRecord(
   const initialBid = asNumber(opportunity.initial_bid);
   const { data: existingAnalysisRow } = await supabase
     .from("property_market_analyses")
-    .select("id, source_links, raw_payload")
+    .select("id, source_links, raw_payload, subject_property_snapshot")
     .eq("opportunity_id", opportunityId)
     .maybeSingle();
   const existingAnalysis = asRecord(existingAnalysisRow);
@@ -785,10 +821,12 @@ export async function savePropertyMarketAnalysisRecord(
         analyst_name: input.analystName || "Analise Betel",
         payment_condition: input.paymentCondition || "A vista",
         subject_property_snapshot: {
+          ...asRecord(existingAnalysis.subject_property_snapshot),
           propertyType: asString(opportunity.property_type),
           address: asString(opportunity.address),
           city: normalizeLocationName(asString(opportunity.city)),
           state: normalizeStateUf(asString(opportunity.state)),
+          neighborhood: normalizeLocationName(asString(asRecord(existingAnalysis.subject_property_snapshot).neighborhood, asString(asRecord(existingRawPayload.extraction).neighborhood))),
           landAreaM2: input.landAreaM2,
           builtAreaM2: input.builtAreaM2,
           privateAreaM2: input.privateAreaM2,
@@ -895,16 +933,24 @@ export async function savePropertyMarketAnalysisRecord(
       return { data: null, source: "supabase", reason: "Analise salva para revisao; nao foi possivel criar a versao aprovada." };
     }
     const issues = marketPublicationIssues(analysis, approvedOpportunity);
-    if (issues.length) return { data: null, source: "supabase", reason: issues.join(" ") };
-    const references = selectMarketReferences(analysis);
-    const verificationUrls = [...new Set([...references.map(ref => ref.url), ...(analysis.rentalEstimate.monthlyRent > 0 ? [analysis.rentalEstimate.referenceUrl] : [])])];
-    const checks = await Promise.all(verificationUrls.map(async url => ({url,...await verifyMarketReference(url)})));
-    if (checks.some(check => !check.ok)) return {data:null,source:"supabase",reason:"Analise salva para revisao. As tres referencias precisam abrir antes de aprovar: "+checks.filter(c=>!c.ok).map(c=>c.error).join(" ")};
+    if (issues.length) {
+      const recovery = selectRentalReferences(analysis).length < 3 ? await recoverAdditionalRentalEvidence(analysis, approvedOpportunity.title) : "";
+      return { data: null, source: "supabase", reason: [issues.join(" "), recovery].filter(Boolean).join(" ") };
+    }
+    const {references,checks: rentalChecks} = await prepareRentalReferences(analysis);
+    const verificationUrls = [...new Set([...selectMarketReferences(analysis).map(ref => ref.url), ...(analysis.rentalEstimate.monthlyRent > 0 ? [analysis.rentalEstimate.referenceUrl] : [])])];
+    const checks = [...rentalChecks, ...await Promise.all(verificationUrls.filter(url => !rentalChecks.some(c => c.url === url)).map(async url => ({url,...await verifyMarketReference(url)})))];
+    const requiredChecks = checks.filter(check => verificationUrls.includes(check.url));
+    if (references.length !== 3 || requiredChecks.some(check => !check.ok)) {
+      const recovery = references.length < 3 ? await recoverAdditionalRentalEvidence(analysis, approvedOpportunity.title) : "";
+      await supabase.from("audit_logs").insert({opportunity_id:opportunityId,actor_name:input.analystName || "Analise Betel",event_type:"market_reference_verification_blocked",status:"blocked",payload:{rentalCandidates:analysis.comparables.filter(c=>/rent|alug/i.test(c.listingType)).length,verifiedRentals:references.length,checks}});
+      return {data:null,source:"supabase",reason:`Analise salva para revisao: ${references.length}/3 anuncios de aluguel com acesso confirmado. ${recovery} Falhas: `+[...new Set(checks.filter(c=>!c.ok).map(c=>c.error))].join(" ")};
+    }
     const snapshot: ApprovedMarketPublication = {version:1,analysis:{...analysis,status:normalizedStatus,rawPayload:{}},opportunity:approvedOpportunity,references};
     const hash = createHash("sha256").update(JSON.stringify(snapshot)).digest("hex");
     const saved = await supabase.from("property_market_publication_versions").insert({analysis_id:analysisId,opportunity_code:input.opportunityCode,content_hash:hash,snapshot,reference_checks:checks,approved_by:input.analystName || "Analise Betel"}).select("id").single();
     if (saved.error || !saved.data) return {data:null,source:"supabase",reason:"Revisao salva, mas versao aprovada nao foi registrada. Verifique a migration de publicacoes."};
-    const finalized = await supabase.from("property_market_analyses").update({status:normalizedStatus,raw_payload:{...analysis.rawPayload,approvedPublicationId:saved.data.id}}).eq("id",analysisId).eq("updated_at",analysis.updatedAt).select("id").maybeSingle();
+    const finalized = await supabase.from("property_market_analyses").update({status:normalizedStatus,raw_payload:{...analysis.rawPayload,approvedPublicationId:saved.data.id,approvedReferenceUrls:references.map(ref=>ref.url)}}).eq("id",analysisId).eq("updated_at",analysis.updatedAt).select("id").maybeSingle();
     if (finalized.error || !finalized.data) return {data:null,source:"supabase",reason:"A analise mudou durante a aprovacao. Revise novamente; publicacao nao liberada."};
   }
 

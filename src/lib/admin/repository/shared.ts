@@ -1,4 +1,5 @@
 import "server-only";
+import { confirmedOccupancy } from "@/lib/domain/property-occupancy";
 
 export { createHash } from "node:crypto";
 import { createHash } from "node:crypto";
@@ -1530,7 +1531,7 @@ export function normalizeOpportunity(row: OpportunityDbRow): AuctionOpportunity 
     nextAction: asString(row.next_action, fallback.nextAction),
     owner: asString(row.owner_name, fallback.owner),
     auctionDate: asString(row.auction_date, fallback.auctionDate),
-    occupancy: asString(row.occupancy, fallback.occupancy),
+    occupancy: confirmedOccupancy(asString(row.occupancy, fallback.occupancy)) || "Nao informado",
     summary: asString(row.summary, fallback.summary),
     financialSummary: asArray<AuctionOpportunity["financialSummary"][number]>(
       row.financial_summary,

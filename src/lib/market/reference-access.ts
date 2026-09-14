@@ -65,14 +65,19 @@ export async function verifyMarketReference(url: string): Promise<{ok:boolean; c
     for (let redirects = 0; redirects < 3; redirects++) {
       const res = await readPublicListing(target);
       if (res.status >= 300 && res.status < 400) {
-        target = canonicalReferenceUrl(new URL(res.location || "",target).toString());
-        if (!target) throw new Error("Referencia redireciona para pagina sem anuncio.");
+        const redirected = new URL(res.location || "",target).toString();
+        if (!canonicalReferenceUrl(redirected)) throw new Error("Referencia redireciona para pagina sem anuncio.");
+        // Canonical URLs are comparison keys. Preserve the server's trailing slash
+        // on the next request, otherwise /listing -> /listing/ loops forever.
+        target = redirected;
         continue;
       }
       if (res.status < 200 || res.status >= 300) throw new Error(`Referencia respondeu HTTP ${res.status}.`);
       if (!res.type.includes("text/html")) throw new Error("Referencia nao retornou uma pagina HTML.");
       const text = res.text;
       if (!text || /attention required|access denied|just a moment|anuncio (?:removido|indisponivel)|imovel nao encontrado/i.test(text)) throw new Error("Abertura do anuncio nao confirmada; revise a referencia.");
+      const normalized = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      if (/imovel desta pagina foi vendido|anuncio\s+(?:removido|indisponivel)|"availability"\s*:\s*"(?:https?:\/\/schema.org\/)?(?:OutOfStock|SoldOut|Discontinued)"/i.test(normalized)) throw new Error("A pagina sinaliza anuncio indisponivel; revise a referencia.");
       return {ok:true,checkedAt};
     }
     throw new Error("Redirecionamentos excessivos.");

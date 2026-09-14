@@ -1,5 +1,6 @@
 import type { PropertyMarketAnalysis } from "../admin/market-analysis";
 import type { AuctionOpportunity } from "../admin/resources";
+import { selectRentalReferences } from "./rental-references";
 import { canonicalReferenceUrl, compatibleMarketTypes, hasTechnicalMarketText, normalizedText, plausibleMonthlyRent } from "./market-quality";
 
 export type ApprovedMarketPublication = { version: 1; analysis: PropertyMarketAnalysis; opportunity: AuctionOpportunity; references: { label: string; url: string }[] };
@@ -41,5 +42,6 @@ export function marketPublicationIssues(analysis: PropertyMarketAnalysis, opport
     if (!rentReference) issues.push("A referencia do aluguel deve corresponder a um comparavel de locacao pertinente e com preco mensal confirmado.");
   }
   if (selectMarketReferences(analysis).length !== 3) issues.push("Selecione tres comparaveis de venda com tipo, cidade/UF, area e preco confirmados.");
+  if (selectRentalReferences(analysis).length !== 3) issues.push("A renda locaticia exige tres anuncios de aluguel pertinentes, com preco mensal, tipo, cidade/UF e area confirmados.");
   return issues;
 }

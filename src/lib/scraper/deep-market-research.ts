@@ -82,6 +82,7 @@ export type DeepMarketLocationContext = {
 };
 
 export type DeepMarketResearchResult = {
+  fallbackDecision?: { required: boolean; reason: string; saleCount: number; rentCount: number };
   status: "completed" | "partial" | "skipped";
   searchQueries: string[];
   searchedUrls: Array<{ label: string; url: string; kind: MarketSourceKind }>;
@@ -144,7 +145,7 @@ const PAGE_TIMEOUT_MS = 7_000;
 const PAGE_TEXT_LIMIT = 600_000;
 const MAX_SEARCH_RESULTS = 12;
 const MIN_SALE_REFERENCES = 3;
-const MIN_RENT_REFERENCES = 1;
+const MIN_RENT_REFERENCES = 3;
 const MAX_SALE_PAGES = 14;
 const MAX_RENT_PAGES = 8;
 const MAX_BRIGHTDATA_SERP_QUERIES = 6;
@@ -1158,10 +1159,10 @@ function normalizeGeckoApiComparable(
   ]) || description.slice(0, 140) || "Comparavel GeckoAPI";
   const evidence = `${title} ${description} ${JSON.stringify(item).slice(0, 5000)} ${sourceUrl}`;
   const propertyType = firstTextPath(item, [
-    ["propertyType"],
-    ["property_type"],
     ["unitType"],
     ["unitTypes"],
+    ["propertyType"],
+    ["property_type"],
     ["type"],
     ["category"],
   ]) || inferPropertyType(title);
@@ -1408,8 +1409,8 @@ async function runGeckoApiMarketResearch(
   };
 }
 
-async function searchMarketResults(subject: SubjectProfile) {
-  const searches = buildSearchQueries(subject);
+async function searchMarketResults(subject: SubjectProfile, rentalsOnly = false) {
+  const searches = rentalsOnly ? buildSearchQueries(subject).filter(q => q.kind === "rent").slice(0, 3) : buildSearchQueries(subject);
   const providers = [
     {
       id: "bing" as const,
@@ -1666,12 +1667,10 @@ function extractSalePrice(text: string) {
 }
 
 function extractRentPrice(text: string) {
-  const values = moneyMatches(text).filter((value) => value >= 400 && value <= 80_000);
-  const lower = normalizeText(text.slice(0, 18_000));
-  if (lower.includes("aluguel") || lower.includes("locacao") || lower.includes("alugar")) {
-    return values[0] || 0;
-  }
-  return values.find((value) => value <= 25_000) || 0;
+  const lower = normalizeText(text);
+  const match = lower.match(/\b(?:aluguel|locacao)\s*(?:mensal|liquido)?\s*[:\-]?\s*r\$\s*([\d.]+(?:,\d{2})?)/);
+  const value = match ? currencyFromText(match[1]) : 0;
+  return value >= 400 && value <= 80_000 ? value : 0;
 }
 
 function extractArea(text: string) {
@@ -1801,10 +1800,13 @@ async function hydrateSearchResult(
   const fetched = await fetchComparablePage(result.url, {
     allowExternalFallback: Boolean(options.allowExternalFallback),
   });
+  if (pageLooksBlocked(fetched) || fetched.status < 200 || fetched.status >= 300) return null;
   const sourceUrl = fetched.finalUrl || result.url;
   if (!isAcceptableGroundedMarketSource(sourceUrl)) return null;
   const html = fetched.text;
   const pageTitle = extractTitle(html, result.title);
+  const descriptionMeta = html.match(/<meta\b[^>]*(?:name|property)=["'](?:description|og:description)["'][^>]*content=["']([^"']*)/i)?.[1] || "";
+  if (result.kind === "rent" && !/aluguel|alugar|locacao/.test(normalizeText(`${pageTitle} ${descriptionMeta}`))) return null;
   const title = fetched.status >= 400 || /attention required|cloudflare|just a moment|access denied/i.test(pageTitle)
     ? result.title
     : pageTitle;
@@ -1907,11 +1909,11 @@ function calculateRental(subject: SubjectProfile, rentalComparables: DeepMarketC
     .sort((a, b) => b.similarityScore - a.similarityScore)
     .slice(0, 5);
 
-  if (valid.length) {
+  if (valid.length >= MIN_RENT_REFERENCES) {
     return {
       monthlyRent: weightedAverage(valid.map((item) => ({ value: item.monthlyRent, weight: Math.max(1, item.similarityScore) }))),
       referenceUrl: valid[0]?.sourceUrl || "",
-      note: "Aluguel calculado por referencias encontradas na pesquisa automatica.",
+      note: `Aluguel estimado a partir de ${valid.length} precos anunciados; nao representa renda contratada ou garantida.`,
     };
   }
 
@@ -2349,6 +2351,15 @@ function buildEstimatedCosts(initialBid: number, marketValueBase: number): Marke
   ];
 }
 
+/** Bounded, direct public search for review recovery. Never invokes paid providers. */
+export async function findAdditionalRentalComparables(subject: SubjectProfile) {
+  if (!subject.city || !subject.state || !(subject.areaM2 > 0)) return [];
+  const search = await searchMarketResults(subject, true);
+  const pages = search.results.filter(r => r.kind === "rent" && canonicalReferenceUrl(r.url)).slice(0, 6);
+  const results = await Promise.all(pages.map(r => hydrateSearchResult(subject, r, {allowExternalFallback:false})));
+  return results.filter((c): c is DeepMarketComparable => Boolean(c && c.listingType === "rent" && c.similarityScore >= 58));
+}
+
 export async function runDeepMarketResearch(input: {
   extraction: AuctionLinkExtraction;
   title: string;
@@ -2492,13 +2503,14 @@ export async function runDeepMarketResearch(input: {
   );
 
   return {
-    status: marketValue.base && saleComparables.length >= MIN_SALE_REFERENCES ? "completed" : "partial",
+    status: marketValue.base && saleComparables.length >= MIN_SALE_REFERENCES && rentalComparables.length >= MIN_RENT_REFERENCES ? "completed" : "partial",
+    fallbackDecision: {required:needsFallbackSearch,reason:needsFallbackSearch ? "Referencias insuficientes: pesquisar fontes complementares configuradas." : "Base estruturada/grounding atingiu o minimo; fallback Apify/Bright Data nao executado.",saleCount:baseSaleComparables.length,rentCount:baseRentalComparables.length},
     searchQueries: uniqueStrings([
       ...(geckoResearch?.searchQueries || []),
       ...(groundedResearch?.searchQueries || []),
       ...(groundedAttempt.grounding?.queries || []),
       ...search.searchQueries,
-    ], 18),
+    ], 60),
     searchedUrls: uniqueSearchedUrls([
       ...(geckoResearch?.searchedUrls || []),
       ...(groundedResearch?.searchedUrls || []),
@@ -2522,7 +2534,7 @@ export async function runDeepMarketResearch(input: {
     ),
     estimatedCosts: buildEstimatedCosts(input.initialBid, marketValue.base),
     missingFields: uniqueStrings(missingFields, 12),
-    cautionNotes: uniqueStrings(cautionNotes, 12),
+    cautionNotes: uniqueStrings(cautionNotes, 60),
     locationContext: locationAttempt.locationContext,
   } satisfies DeepMarketResearchResult;
 }
