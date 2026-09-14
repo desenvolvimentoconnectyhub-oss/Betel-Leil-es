@@ -1,4 +1,5 @@
 import { reconcilePublicationEvent } from "@/lib/whatsapp/publication-events";
+import { currentMessageContent, messageUsableForRuntime, webhookMessagePolicy } from "@/lib/whatsapp/webhook-message-policy";
 import { NextResponse } from "next/server";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { getGeminiApiKey, getGeminiModel } from "@/lib/ai/config";
@@ -1622,14 +1623,15 @@ function eventPayload(payload: Record<string, unknown>) {
 }
 
 function eventName(payload: Record<string, unknown>, fallback = "connectyhub_event") {
+  const data = eventPayload(payload);
   return cleanString(
     payload.event ||
       payload.EventType ||
       payload.eventType ||
       payload.type ||
-      payload.webhookType,
+      payload.webhookType || data.EventType || data.event || data.eventType,
     fallback
-  );
+  ).toLowerCase();
 }
 
 function isHistorySyncEvent(payload: Record<string, unknown>) {
@@ -1669,25 +1671,6 @@ function findFirstString(payload: unknown, keys: string[]): string {
   }
 
   return "";
-}
-
-function findFirstBoolean(payload: unknown, keys: string[]) {
-  if (!payload || typeof payload !== "object") return false;
-
-  const record = asRecord(payload);
-  const normalizedKeys = keys.map((key) => key.toLowerCase());
-  for (const key of keys) {
-    if (key in record && asBoolean(record[key])) return true;
-  }
-  for (const [key, value] of Object.entries(record)) {
-    if (normalizedKeys.includes(key.toLowerCase()) && asBoolean(value)) return true;
-  }
-
-  for (const value of Object.values(record)) {
-    if (value && typeof value === "object" && findFirstBoolean(value, keys)) return true;
-  }
-
-  return false;
 }
 
 const leadProfileImageKeys = [
@@ -1861,7 +1844,7 @@ function extractProviderMessageId(data: Record<string, unknown>) {
   );
   if (rootMessageId) return rootMessageId.replace(/^.+:/, "");
 
-  return findFirstString(data, ["messageid", "messageId", "messageID", "stanzaId", "keyId"]).replace(/^.+:/, "");
+  return "";
 }
 
 function eventHash(payload: Record<string, unknown>) {
@@ -2419,12 +2402,12 @@ function firstLeadName(...values: unknown[]) {
 
 function extractWebhookMessage(payload: Record<string, unknown>) {
   const data = eventPayload(payload);
-  const message = providerMessageRecord(data);
+  const message = currentMessageContent(providerMessageRecord(data));
   const chat = asRecord(data.chat);
   const content = asRecord(message.content);
   const providerMessageId = extractProviderMessageId(data);
-  const fromApi = findFirstBoolean(data, ["wasSentByApi", "fromMe", "isFromMe", "fromApi"]);
-  const isGroup = findFirstBoolean(data, ["isGroup", "isGroupYes", "wa_isGroup"]);
+  const fromApi = webhookMessagePolicy(payload).kind === "outbound";
+  const isGroup = asBoolean(message.isGroup) || asBoolean(chat.wa_isGroup) || asBoolean(data.isGroup);
   const chatId = firstCleanString(
     message.chatid,
     message.chatId,
@@ -2497,10 +2480,10 @@ function extractWebhookMessage(payload: Record<string, unknown>) {
     data.body,
     data.conversation,
     data.caption,
-    findFirstString(data, ["text", "body", "conversation", "caption"])
+    findFirstString(message, ["text", "body", "conversation", "caption"])
   );
   const messageType = normalizeMessageTypeName(
-    firstCleanString(message.messageType, message.mediaType, message.type, chat.wa_lastMessageType, data.messageType, data.mediaType, data.type) ||
+    firstCleanString(message.messageType, message.mediaType, message.type) ||
       extractMessageTypeFromMessageLike(content) ||
       extractMessageTypeFromMessageLike(message),
     text ? "text" : "unknown"
@@ -2516,7 +2499,7 @@ function extractWebhookMessage(payload: Record<string, unknown>) {
     content.url,
     content.fileUrl,
     content.file_url,
-    findFirstString(data, [
+    findFirstString(message, [
       "mediaUrl",
       "media_url",
       "downloadUrl",
@@ -2538,14 +2521,14 @@ function extractWebhookMessage(payload: Record<string, unknown>) {
     content.mimeType,
     data.mimeType,
     data.mimetype,
-    findFirstString(data, ["mimeType", "mimetype", "mediaMimeType", "media_mime_type", "contentType", "content_type"])
+    findFirstString(message, ["mimeType", "mimetype", "mediaMimeType", "media_mime_type", "contentType", "content_type"])
   );
   const transcript = firstCleanString(
     message.transcript,
     message.transcription,
     data.transcript,
     data.transcription,
-    findFirstString(data, ["transcript", "transcription", "audioTranscript", "audio_transcript"])
+    findFirstString(message, ["transcript", "transcription", "audioTranscript", "audio_transcript"])
   );
   const profileImageUrl = extractLeadProfileImageUrl(data);
   const participantJid = isGroup
@@ -2586,6 +2569,7 @@ function extractWebhookMessage(payload: Record<string, unknown>) {
     identitySource,
     identityReliable,
     identityWarnings,
+    accountPhone,
   };
 }
 
@@ -3014,11 +2998,11 @@ function externalOutboundPreview(message: ReturnType<typeof extractWebhookMessag
 
 function detectExternalOutboundTrace(payload: Record<string, unknown>) {
   const data = eventPayload(payload);
-  const fromPhoneDevice = findFirstBoolean(data, ["fromMe", "isFromMe"]);
-  const sentByApi = findFirstBoolean(data, ["wasSentByApi", "fromApi", "sentByApi"]);
+  const message = providerMessageRecord(data);
+  const fromPhoneDevice = [message.fromMe, message.isFromMe, asRecord(message.key).fromMe, data.fromMe, data.isFromMe].some(asBoolean);
+  const sentByApi = [message.wasSentByApi, message.fromApi, message.sentByApi, data.wasSentByApi, data.fromApi, data.sentByApi].some(asBoolean);
   const rawSource = firstCleanString(
-    findFirstString(data, ["source", "origin", "platform", "device", "senderDevice"]),
-    findFirstString(payload, ["source", "origin", "platform"])
+    message.source, message.origin, data.source, data.origin, payload.source, payload.origin
   );
 
   if (fromPhoneDevice && !sentByApi) {
@@ -3078,6 +3062,8 @@ async function findKnownBetelOutboundEcho(
     conversationId: string;
     eventId: string;
     providerMessageId: string;
+    instanceId: string;
+    accountPhone: string;
     text: string;
     receivedAt: string;
   }
@@ -3086,7 +3072,9 @@ async function findKnownBetelOutboundEcho(
     const { data } = await supabase
       .from("whatsapp_conversation_messages")
       .select("id,author_type,payload")
-      .eq("provider_message_id", input.providerMessageId)
+      .eq("instance_id", input.instanceId)
+      .eq("direction", "outbound")
+      .in("provider_message_id", [input.providerMessageId, `${input.accountPhone}:${input.providerMessageId}`])
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -3097,6 +3085,8 @@ async function findKnownBetelOutboundEcho(
     const { data } = await supabase
       .from("whatsapp_conversation_messages")
       .select("id,author_type,payload")
+      .eq("instance_id", input.instanceId)
+      .eq("direction", "outbound")
       .eq("webhook_event_id", input.eventId)
       .order("created_at", { ascending: false })
       .limit(1)
@@ -3145,6 +3135,12 @@ async function persistExternalOutboundMessage(
   const shouldPauseAiForHandoff = Boolean(trace.shouldPauseAiForHandoff);
   const providerMessageId = normalizeProviderMessageId(input.message.providerMessageId);
   const providerChatId = input.message.chatId || `${input.message.phone}@s.whatsapp.net`;
+  const earlyEcho = await findKnownBetelOutboundEcho(supabase, {
+    conversationId: "", eventId: input.eventId, providerMessageId,
+    instanceId: input.instanceId, accountPhone: input.message.accountPhone,
+    text: "", receivedAt: input.receivedAt,
+  });
+  if (earlyEcho) return { persisted: false, reason: earlyEcho.reason, knownMessageId: earlyEcho.id };
 
   if (input.message.isGroup) {
     return { persisted: false, reason: "external_group_outbound_ignored" };
@@ -3276,6 +3272,8 @@ async function persistExternalOutboundMessage(
 
   const knownEcho = await findKnownBetelOutboundEcho(supabase, {
     conversationId,
+    instanceId: input.instanceId,
+    accountPhone: input.message.accountPhone,
     eventId: input.eventId,
     providerMessageId,
     text: preview,
@@ -3413,6 +3411,11 @@ async function persistWebhookCrm(
   if (eventError) return { ok: false, reason: eventError.message };
 
   const eventId = cleanString(eventRow?.id);
+  const messagePolicy = webhookMessagePolicy(payload);
+  if (messagePolicy.kind === "control" || messagePolicy.kind === "unknown") {
+    await markEventProcessed(supabase, eventId, "skipped", messagePolicy.reason);
+    return { ok: true, eventId, skipped: true, reason: messagePolicy.reason, instanceId, providerInstanceId, agentKey };
+  }
   if (!agentKey) {
     await markEventProcessed(supabase, eventId, "skipped", "unbound_instance");
     return {
@@ -4498,7 +4501,7 @@ async function loadRecentInboundBatch(
 
   let query = supabase
     .from("whatsapp_conversation_messages")
-    .select("text,payload,webhook_event_id,occurred_at,created_at,message_type,media_mime_type")
+    .select("direction,text,payload,webhook_event_id,occurred_at,created_at,message_type,media_mime_type")
     .eq("conversation_id", input.conversationId)
     .eq("direction", "inbound")
     .order("occurred_at", { ascending: true })
@@ -4508,6 +4511,7 @@ async function loadRecentInboundBatch(
 
   const { data } = await query;
   let messages = ((data || []) as Record<string, unknown>[])
+    .filter(messageUsableForRuntime)
     .map((message): BatchedInboundMessage => ({
       text: cleanString(message.text),
       controlText: leadControlTextFromMessagePayload(message.payload, cleanString(message.text)),
@@ -4700,7 +4704,7 @@ async function loadRuntimePromptContext(
       .select("direction,author_type,author_label,message_type,text,transcript,media_url,media_mime_type,provider_message_id,payload,created_at")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
-      .limit(12),
+      .limit(120),
     supabase
       .from("whatsapp_leads")
       .select("name,status,temperature,qualification_score,metadata")
@@ -4714,6 +4718,8 @@ async function loadRuntimePromptContext(
   ]);
 
   let messages = ((messagesResult.data || []) as Record<string, unknown>[])
+    .filter(messageUsableForRuntime)
+    .slice(0, 12)
     .reverse()
     .map((message): RuntimeMessageContext => ({
       direction: cleanString(message.direction),
@@ -5967,6 +5973,7 @@ async function processWhatsappAgentRuntime(
   payload: Record<string, unknown>,
   crmResult: Record<string, unknown>
 ) {
+  if (webhookMessagePolicy(payload).kind !== "inbound") return { ok: true, skipped: true, reason: "not_an_inbound_message" };
   const inbound = asRecord(crmResult.inbound);
   const text = cleanString(inbound.runtimeText || inbound.text);
   const controlText = leadControlTextFromInbound(inbound, text);
@@ -6635,6 +6642,9 @@ async function processWhatsappAgentRuntime(
     conversationId,
     plan: humanizationPlan,
   });
+  if (await getConnectyHubWhatsappAgentControlStatus({ agentKey }) === "paused") {
+    return { ok: true, skipped: true, reason: "agent_paused_before_delivery" };
+  }
   const audioDeliveries = wantsAudio
     ? await Promise.all(
         plannedReplyParts.map((part, index) =>
@@ -6700,6 +6710,9 @@ async function processWhatsappAgentRuntime(
       });
     }
 
+    if (await getConnectyHubWhatsappAgentControlStatus({ agentKey }) === "paused") {
+      return { ok: true, skipped: true, reason: "agent_paused_before_delivery" };
+    }
     deliveries.push(
       ...(await Promise.all(
         replyParts.map((part, index) =>

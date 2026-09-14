@@ -1,4 +1,5 @@
 import "server-only";
+import { messageUsableForRuntime } from "./webhook-message-policy";
 
 import { GoogleGenerativeAI } from "@/lib/ai/connectyhub-llm";
 import { getGeminiApiKey, getGeminiModel } from "@/lib/ai/config";
@@ -134,6 +135,7 @@ function messageCreatedAt(message: DbRow) {
 
 function orderedRecentMessages(messages: DbRow[]) {
   return [...messages]
+    .filter(messageUsableForRuntime)
     .sort((left, right) => timestamp(messageCreatedAt(left)) - timestamp(messageCreatedAt(right)))
     .slice(-12);
 }
@@ -461,14 +463,14 @@ export async function processWhatsAppFollowUps(input: {
         .select("*")
         .eq("conversation_id", conversationId)
         .order("created_at", { ascending: false })
-        .limit(16),
+        .limit(120),
       supabase.from("whatsapp_lead_profiles").select("*").eq("lead_id", leadId).maybeSingle(),
     ]);
 
     const lead = asRecord(leadResult.data);
     const conversation = asRecord(conversationResult.data);
     const profile = asRecord(profileResult.data);
-    const messages = ((messagesResult.data || []) as DbRow[]).filter((row) => cleanString(row.id));
+    const messages = ((messagesResult.data || []) as DbRow[]).filter((row) => cleanString(row.id) && messageUsableForRuntime(row)).slice(0, 16);
     const instanceId = cleanString(followUp.instance_id, cleanString(conversation.instance_id));
     const instanceResult = instanceId
       ? await supabase.from("whatsapp_instances").select("provider_instance_id").eq("id", instanceId).maybeSingle()
