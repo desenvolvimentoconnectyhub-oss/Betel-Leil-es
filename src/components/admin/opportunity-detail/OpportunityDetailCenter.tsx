@@ -1002,7 +1002,7 @@ function comparableViewsFromAnalysis(analysis: PropertyMarketAnalysis | null) {
   const rawSales = jsonArray<Record<string, unknown>>(marketResearch.saleComparables);
   const rawRentals = jsonArray<Record<string, unknown>>(marketResearch.rentalComparables);
   const rawComparables = [...rawSales.map((item) => ({ ...item, listingType: jsonText(item.listingType, "sale") })), ...rawRentals.map((item) => ({ ...item, listingType: jsonText(item.listingType, "rent") }))];
-  const rawByUrl = new Map(rawComparables.map(item => [canonicalReferenceUrl(jsonText(item.sourceUrl)), item]));
+  const rawByUrl = new Map(rawComparables.map(item => [canonicalReferenceUrl(jsonText(jsonRecord(item).sourceUrl)), item]));
   const sourceRows = analysis.comparables.map(item => ({
     ...rawByUrl.get(canonicalReferenceUrl(item.sourceUrl)),
     ...item,
