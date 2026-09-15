@@ -1,3 +1,4 @@
+import { destinationScopeKey, destinationsInScope, type WhatsAppDestinationScope } from "@/lib/domain/whatsapp-destination-scope";
 import "server-only";
 import { dispatchMarketPublication } from "./publication-delivery";
 
@@ -376,42 +377,58 @@ function mapCampaign(row: Record<string, unknown>, targets: Record<string, Array
 }
 
 async function latestWhatsappInstance(supabase: SupabaseAdmin, agentKey: string) {
-  const baseSelect = "id,agent_key,provider_instance_id,instance_name,status";
+  const baseSelect = "id,agent_key,provider_instance_id,instance_name,status,phone";
   const byAgent = await supabase
     .from("whatsapp_instances")
     .select(baseSelect)
     .eq("provider", CONNECTYHUB_PROVIDER)
     .eq("agent_key", agentKey)
+    .neq("status", "archived")
     .neq("status", "deleted")
+    .not("provider_instance_id", "is", null)
     .order("updated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
-  if (byAgent.data) return byAgent.data as Record<string, unknown>;
-
-  const fallback = await supabase
-    .from("whatsapp_instances")
-    .select(baseSelect)
-    .eq("provider", CONNECTYHUB_PROVIDER)
-    .neq("status", "deleted")
-    .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  return fallback.data ? (fallback.data as Record<string, unknown>) : null;
+  if (byAgent.error) throw byAgent.error;
+  return byAgent.data ? (byAgent.data as Record<string, unknown>) : null;
 }
 
-export async function getWhatsAppCommunityData(agentKeyInput = WILLIAN_AGENT_KEY): Promise<WhatsAppCommunityData> {
+type CurrentGroupSnapshot = WhatsAppDestinationScope & { providerInstanceId: string; jids: string[] };
+
+export async function readCurrentWhatsAppGroups(agentKey: string, expected?: WhatsAppDestinationScope, noParticipants = true) {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) throw new Error("Supabase admin não configurado.");
+  const instance = await latestWhatsappInstance(supabase, agentKey);
+  const scope = { agentKey, instanceId: cleanString(instance?.id), phone: cleanString(instance?.phone) };
+  const providerInstanceId = cleanString(instance?.provider_instance_id);
+  if (!scope.instanceId || !providerInstanceId) throw new Error("Nenhuma instância atual encontrada para este agente.");
+  if (expected && destinationScopeKey(expected) !== destinationScopeKey(scope)) throw new Error("O número ou a instância mudou. Recarregue a página antes de continuar.");
+  const remote = await listConnectyHubWhatsAppGroups({ agentKey, instanceId: providerInstanceId, force: true, noParticipants, limit: 1000 });
+  if (!remote.ok || remote.instanceId !== providerInstanceId) throw new Error("Não foi possível confirmar os grupos da instância selecionada.");
+  const after = await latestWhatsappInstance(supabase, agentKey);
+  if (cleanString(after?.id) !== scope.instanceId || cleanString(after?.provider_instance_id) !== providerInstanceId || cleanString(after?.phone) !== scope.phone) throw new Error("A conexão mudou durante a consulta. Recarregue a página.");
+  return { ...scope, providerInstanceId, groups: remote.groups, jids: remote.groups.map(group => group.jid) };
+}
+
+export async function getWhatsAppCommunityData(agentKeyInput = WILLIAN_AGENT_KEY, snapshot?: CurrentGroupSnapshot): Promise<WhatsAppCommunityData> {
   const supabase = getSupabaseAdminClient();
   if (!supabase) return emptyData("Supabase service role nao configurado.");
 
   const agentKey = normalizeAgentKey(agentKeyInput);
 
   try {
+    const current = snapshot || await readCurrentWhatsAppGroups(agentKey);
+    if (snapshot) {
+      const instance = await latestWhatsappInstance(supabase, agentKey);
+      if (cleanString(instance?.id) !== snapshot.instanceId || cleanString(instance?.provider_instance_id) !== snapshot.providerInstanceId || cleanString(instance?.phone) !== snapshot.phone) throw new Error("A conexão mudou durante a atualização dos grupos.");
+    }
     const destinationsResult = await supabase
       .from("whatsapp_group_destinations")
       .select("*")
       .eq("agent_key", agentKey)
+      .eq("instance_id", current.instanceId)
+      .eq("provider", CONNECTYHUB_PROVIDER)
       .neq("status", "archived")
       .order("updated_at", { ascending: false })
       .limit(200);
@@ -449,7 +466,7 @@ export async function getWhatsAppCommunityData(agentKeyInput = WILLIAN_AGENT_KEY
       .limit(30);
     if (eventsResult.error) throw eventsResult.error;
 
-    const destinations = (destinationsResult.data || []).map((row) => mapDestination(row as Record<string, unknown>));
+    const destinations = destinationsInScope((destinationsResult.data || []).map((row) => mapDestination(row as Record<string, unknown>)), current, current.jids);
     const campaigns = (campaignsResult.data || []).map((row) => mapCampaign(row as Record<string, unknown>, targetsByCampaign));
     const recentEvents = (eventsResult.data || []).map((row) => mapEvent(row as Record<string, unknown>));
     const since24h = Date.now() - 24 * 60 * 60 * 1000;
@@ -513,10 +530,15 @@ async function upsertDestinationFromGroup(input: {
 
   const existing = await input.supabase
     .from("whatsapp_group_destinations")
-    .select("id")
+    .select("id,agent_key,instance_id")
     .eq("provider", CONNECTYHUB_PROVIDER)
     .eq("jid", input.group.jid)
     .maybeSingle();
+
+  if (existing.error) throw existing.error;
+  if (existing.data && (existing.data.agent_key !== input.agentKey || existing.data.instance_id !== input.instanceId)) {
+    throw new Error("Este grupo possui um cadastro de outra instância. O histórico foi preservado; o destino não foi liberado para envio.");
+  }
 
   const destinationResult = existing.data
     ? await input.supabase
@@ -571,6 +593,8 @@ async function upsertDestinationFromGroup(input: {
 
 export async function syncWhatsAppCommunityDestinations(input: {
   agentKey?: string;
+  instanceId?: string;
+  phone?: string;
   force?: boolean;
   noParticipants?: boolean;
 }) {
@@ -578,17 +602,8 @@ export async function syncWhatsAppCommunityDestinations(input: {
   if (!supabase) throw new Error("Supabase service role nao configurado.");
 
   const agentKey = normalizeAgentKey(input.agentKey);
-  const instance = await latestWhatsappInstance(supabase, agentKey);
-  const instanceId = cleanString(instance?.id);
-  const providerInstanceId = cleanString(instance?.provider_instance_id);
-
-  const remote = await listConnectyHubWhatsAppGroups({
-    agentKey,
-    instanceId: providerInstanceId,
-    force: input.force,
-    noParticipants: input.noParticipants,
-    limit: 1000,
-  });
+  const remote = await readCurrentWhatsAppGroups(agentKey, input.instanceId ? { agentKey, instanceId: input.instanceId, phone: input.phone || "" } : undefined, input.noParticipants !== false);
+  const instanceId = remote.instanceId;
 
   let synced = 0;
   for (const group of remote.groups) {
@@ -596,7 +611,7 @@ export async function syncWhatsAppCommunityDestinations(input: {
       supabase,
       agentKey,
       instanceId,
-      group,
+      group: input.noParticipants !== false ? { ...group, participants: [] } : group,
     });
     if (destinationId) synced += 1;
   }
@@ -605,10 +620,11 @@ export async function syncWhatsAppCommunityDestinations(input: {
     ok: true,
     agentKey,
     instanceId,
-    providerInstanceId: remote.instanceId,
+    providerInstanceId: remote.providerInstanceId,
+    phone: remote.phone,
     synced,
     groups: remote.groups.length,
-    data: await getWhatsAppCommunityData(agentKey),
+    data: await getWhatsAppCommunityData(agentKey, remote),
   };
 }
 

@@ -15,7 +15,7 @@ import type { PropertyMarketAnalysis } from "@/lib/admin/market-analysis";
 import { WILLIAN_AGENT_KEY, type WhatsAppActionButtonInput } from "@/lib/communication/connectyhub-client";
 import { listSystemWhatsAppSenderOptions } from "@/lib/communication/system-whatsapp-sender";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
-import { createWhatsAppCommunityCampaign, processWhatsAppCommunityCampaigns, type WhatsAppCommunityDestination } from "./group-campaigns";
+import { readCurrentWhatsAppGroups, getWhatsAppCommunityData, createWhatsAppCommunityCampaign, processWhatsAppCommunityCampaigns, type WhatsAppCommunityDestination } from "./group-campaigns";
 
 type DbRow = Record<string, unknown>;
 
@@ -47,6 +47,7 @@ export type OpportunityWhatsAppAgentOption = {
 
 export type OpportunityWhatsAppDestinationOption = {
   id: string;
+  instanceId: string;
   agentKey: string;
   destinationType: WhatsAppCommunityDestination["destinationType"];
   jid: string;
@@ -210,6 +211,7 @@ function normalizeAgentOption(row: Awaited<ReturnType<typeof listSystemWhatsAppS
 function normalizeDestinationOption(row: DbRow): OpportunityWhatsAppDestinationOption {
   return {
     id: cleanString(row.id),
+    instanceId: cleanString(row.instance_id),
     agentKey: cleanString(row.agent_key, WILLIAN_AGENT_KEY),
     destinationType: cleanString(row.destination_type, "group") as OpportunityWhatsAppDestinationOption["destinationType"],
     jid: cleanString(row.jid),
@@ -224,40 +226,9 @@ function canUseDestinationForManualPublication(destination: OpportunityWhatsAppD
 }
 
 export async function getOpportunityWhatsAppPublicationOptions(): Promise<OpportunityWhatsAppPublicationOptions> {
-  const supabase = getSupabaseAdminClient();
   const agents = (await listSystemWhatsAppSenderOptions()).map(normalizeAgentOption);
-  const agentKeys = [...new Set(agents.map((agent) => agent.agentKey).filter(Boolean))];
-
-  if (!supabase) {
-    return {
-      agents,
-      destinations: [],
-      defaultAgentKey: agents[0]?.agentKey || WILLIAN_AGENT_KEY,
-      defaultGroupId: "",
-    };
-  }
-
-  let query = supabase
-    .from("whatsapp_group_destinations")
-    .select("id,agent_key,destination_type,jid,name,status,participant_count,updated_at")
-    .neq("status", "archived")
-    .order("updated_at", { ascending: false })
-    .limit(300);
-
-  if (agentKeys.length) query = query.in("agent_key", agentKeys);
-
-  const { data, error } = await query;
-  const destinations = error ? [] : ((data || []) as DbRow[]).map(normalizeDestinationOption).filter((item) => item.id && item.jid);
-  const activeGroup = destinations.find(
-    (destination) => canUseDestinationForManualPublication(destination) && destination.destinationType === "group"
-  );
-
-  return {
-    agents,
-    destinations,
-    defaultAgentKey: activeGroup?.agentKey || agents[0]?.agentKey || WILLIAN_AGENT_KEY,
-    defaultGroupId: activeGroup?.id || "",
-  };
+  // Membership is loaded fresh when opening the modal; never seed it with historical rows.
+  return { agents, destinations: [], defaultAgentKey: agents[0]?.agentKey || WILLIAN_AGENT_KEY, defaultGroupId: "" };
 }
 
 function normalizeBroadcastTarget(value: unknown) {
@@ -268,37 +239,27 @@ function normalizeBroadcastTarget(value: unknown) {
   return digits.length >= 10 ? digits : "";
 }
 
-async function loadDestinationById(id: string): Promise<OpportunityWhatsAppDestinationOption | null> {
+async function loadDestinationById(id: string, agentKey: string): Promise<OpportunityWhatsAppDestinationOption | null> {
   const supabase = getSupabaseAdminClient();
   const destinationId = cleanString(id);
   if (!supabase || !destinationId) return null;
 
   const { data, error } = await supabase
     .from("whatsapp_group_destinations")
-    .select("id,agent_key,destination_type,jid,name,status,participant_count")
+    .select("id,agent_key,instance_id,destination_type,jid,name,status,participant_count")
     .eq("id", destinationId)
     .maybeSingle();
 
   if (error || !data) return null;
-  return normalizeDestinationOption(data as DbRow);
+  const destination = normalizeDestinationOption(data as DbRow);
+  if (destination.agentKey !== agentKey) return null;
+  const current = await readCurrentWhatsAppGroups(agentKey);
+  return destination.instanceId === current.instanceId && current.jids.includes(destination.jid) ? destination : null;
 }
 
 async function defaultGroupForAgent(agentKey: string) {
-  const supabase = getSupabaseAdminClient();
-  if (!supabase) return null;
-
-  const { data, error } = await supabase
-    .from("whatsapp_group_destinations")
-    .select("id,agent_key,destination_type,jid,name,status,participant_count")
-    .eq("agent_key", cleanString(agentKey, WILLIAN_AGENT_KEY))
-    .eq("destination_type", "group")
-    .in("status", ["active", "paused"])
-    .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (error || !data) return null;
-  return normalizeDestinationOption(data as DbRow);
+  const data = await getWhatsAppCommunityData(agentKey);
+  return data.ok ? data.destinations.find(item => item.destinationType === "group" && canUseDestinationForManualPublication(item)) || null : null;
 }
 
 async function broadcastTargetsFromGroup(destinationId: string) {
@@ -408,8 +369,8 @@ export async function scheduleOpportunityWhatsAppPublication(input: {
   let targetKey: string = input.mode;
 
   if (input.mode === "default_group") {
-    const explicitDestination = await loadDestinationById(cleanString(input.destinationId));
-    const destination = explicitDestination || (await defaultGroupForAgent(agentKey));
+    const explicitDestination = await loadDestinationById(cleanString(input.destinationId), agentKey);
+    const destination = input.destinationId ? explicitDestination : await defaultGroupForAgent(agentKey);
     if (!destination || destination.destinationType !== "group") {
       return { ok: false, error: "Nenhum grupo padrao ativo encontrado para este agente." };
     }
@@ -420,7 +381,7 @@ export async function scheduleOpportunityWhatsAppPublication(input: {
   }
 
   if (input.mode === "specific_group" || input.mode === "channel") {
-    const destination = await loadDestinationById(cleanString(input.destinationId));
+    const destination = await loadDestinationById(cleanString(input.destinationId), agentKey);
     const expectedType = input.mode === "channel" ? "channel" : "group";
     if (!destination || destination.destinationType !== expectedType) {
       return { ok: false, error: input.mode === "channel" ? "Canal WhatsApp invalido." : "Grupo WhatsApp invalido." };
@@ -435,7 +396,8 @@ export async function scheduleOpportunityWhatsAppPublication(input: {
   }
 
   if (input.mode === "broadcast_list" || input.mode === "test_number") {
-    const sourceDestination = await loadDestinationById(cleanString(input.broadcastSourceDestinationId));
+    const sourceDestination = await loadDestinationById(cleanString(input.broadcastSourceDestinationId), agentKey);
+    if (input.broadcastSourceDestinationId && !sourceDestination) return { ok: false, error: "O grupo de origem não pertence à conexão atual." };
     if (input.mode === "broadcast_list" && sourceDestination) {
       if (sourceDestination.destinationType !== "group") return { ok: false, error: "A lista so pode ser montada a partir de um grupo." };
       if (!canUseDestinationForManualPublication(sourceDestination)) return { ok: false, error: "O grupo de origem da lista nao esta disponivel para envio." };

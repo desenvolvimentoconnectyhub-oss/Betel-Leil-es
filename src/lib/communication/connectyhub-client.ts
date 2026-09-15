@@ -1,3 +1,4 @@
+import { groupListEntries } from "@/lib/domain/whatsapp-destination-scope";
 import { assertLeadWorkActive } from "@/lib/whatsapp/lead-reset";
 import "server-only";
 import { prepareBetelNativeLinks } from "@/lib/whatsapp/native-links";
@@ -1352,22 +1353,6 @@ function normalizeGroupPayload(payload: unknown, keys: string[]) {
     .filter((group) => Boolean(group.jid));
 }
 
-async function connectyhubRequestOrError(path: string, options: ConnectyHubRequestOptions = {}) {
-  try {
-    return {
-      ok: true,
-      path,
-      payload: await connectyhubRequest(path, options),
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      path,
-      error: error instanceof Error ? error.message : "Falha ao chamar ConnectyHub.",
-    };
-  }
-}
-
 export async function listConnectyHubWhatsAppGroups(input: {
   agentKey?: string;
   instanceId?: string;
@@ -1390,52 +1375,13 @@ export async function listConnectyHubWhatsAppGroups(input: {
   });
   if (input.search) query.set("search", input.search);
 
-  const attempts: unknown[] = [];
-  const providerGet = await connectyhubRequestOrError(`/provider/group/list?${query.toString()}`, {
-    method: "GET",
-    timeoutMs: 20000,
+  const payload = await connectyhubRequest(`/provider/group/list?${query.toString()}`, {
+    method: "GET", timeoutMs: 20000,
   });
-  attempts.push(providerGet);
-
-  let groups = providerGet.ok ? normalizeGroupPayload(providerGet.payload, ["groups", "data", "items", "result", "results"]) : [];
-
-  if (!groups.length) {
-    const providerPost = await connectyhubRequestOrError("/provider/group/list", {
-      body: {
-        instanceId,
-        payload: {
-          force: Boolean(input.force),
-          noParticipants: Boolean(input.noParticipants),
-          limit: input.limit || 1000,
-          ...(input.search ? { search: input.search } : {}),
-        },
-      },
-      timeoutMs: 20000,
-    });
-    attempts.push(providerPost);
-    if (providerPost.ok) groups = normalizeGroupPayload(providerPost.payload, ["groups", "data", "items", "result", "results"]);
-  }
-
-  if (!groups.length) {
-    const chatsQuery = new URLSearchParams({
-      instanceId,
-      limit: String(input.limit || 1000),
-      offset: "0",
-    });
-    const chats = await connectyhubRequestOrError(`/chats?${chatsQuery.toString()}`, {
-      method: "GET",
-      timeoutMs: 20000,
-    });
-    attempts.push(chats);
-    if (chats.ok) groups = normalizeGroupPayload(chats.payload, ["chats", "data", "items", "result", "results"]);
-  }
-
-  return {
-    ok: true,
-    instanceId,
-    groups,
-    raw: sanitizePayload({ attempts }),
-  };
+  const entries = groupListEntries(payload);
+  const groups = normalizeGroupPayload(entries, []);
+  if (groups.length !== entries.length) throw new Error("A lista de grupos recebida está incompleta ou inválida.");
+  return { ok: true, instanceId, groups, raw: sanitizePayload(payload) };
 }
 
 export async function sendWhatsAppDestinationText(input: {

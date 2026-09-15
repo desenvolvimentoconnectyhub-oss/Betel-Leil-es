@@ -24,6 +24,7 @@ import type {
   OpportunityWhatsAppReferenceStatus,
 } from "@/lib/whatsapp/opportunity-publication";
 import { cn } from "@/lib/utils";
+import { destinationScopeKey, destinationsInScope } from "@/lib/domain/whatsapp-destination-scope";
 import { useSendPanelOpen, useSendBusy } from "./OpportunityWorkspace";
 
 type Destination = OpportunityWhatsAppPublicationOptions["destinations"][number];
@@ -200,10 +201,12 @@ export function OpportunityWhatsAppSendPanel({
   const agents = options?.agents || [];
   const defaultAgentKey = options?.defaultAgentKey || agents[0]?.agentKey || "";
   const [agentKey, setAgentKey] = useState(defaultAgentKey);
-  const [freshDestinations, setFreshDestinations] = useState<{ agentKey: string; items: Destination[] } | null>(null);
+  const selectedAgent = agents.find((agent) => agent.agentKey === agentKey);
+  const scopeKey = destinationScopeKey(selectedAgent);
+  const [freshDestinations, setFreshDestinations] = useState<{ scopeKey: string; items: Destination[] } | null>(null);
   const destinations = useMemo(
-    () => (freshDestinations?.agentKey === agentKey ? freshDestinations.items : options?.destinations || []).filter((destination) => isSelectableDestination(destination)),
-    [options?.destinations, freshDestinations, agentKey]
+    () => (panelOpen && freshDestinations?.scopeKey === scopeKey ? freshDestinations.items : []).filter((destination) => isSelectableDestination(destination)),
+    [panelOpen, freshDestinations, scopeKey]
   );
   const destinationsForAgent = useMemo(
     () => destinations.filter((destination) => !agentKey || destination.agentKey === agentKey),
@@ -234,32 +237,37 @@ export function OpportunityWhatsAppSendPanel({
     return () => setSendBusy(false);
   }, [senderCheckPending, sendProcessingOpen, pending, setSendBusy]);
 
-  const selectedAgent = agents.find((agent) => agent.agentKey === agentKey);
   const currentGroupId = groups.some((group) => group.id === groupId) ? groupId : groups[0]?.id || "";
   const currentChannelId = channels.some((channel) => channel.id === channelId) ? channelId : channels[0]?.id || "";
   const currentBroadcastSourceId = groups.some((group) => group.id === broadcastSourceId) ? broadcastSourceId : "";
 
   useEffect(() => {
-    if (!agentKey || !panelOpen) return;
+    if (!agentKey || !panelOpen || !selectedAgent) {
+      const clear = window.setTimeout(() => setFreshDestinations(null), 0);
+      return () => window.clearTimeout(clear);
+    }
+    const requestedScope = { agentKey, instanceId: selectedAgent.instanceId, phone: selectedAgent.phone };
     const controller = new AbortController();
     let retryTimer: number | undefined;
     const load = async (attempt = 0) => {
       if (controller.signal.aborted) return;
+      setFreshDestinations(null);
       setAutoSyncState("syncing");
       setAutoSyncMessage("Atualizando grupos…");
       try {
         const response = await fetch("/api/admin/whatsapp/groups", {
           method: "POST", cache: "no-store", signal: controller.signal,
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ action: "sync", agentKey, force: true, noParticipants: true }),
+          body: JSON.stringify({ action: "sync", ...requestedScope, force: true, noParticipants: true }),
         });
-        const payload = await response.json() as { success?: boolean; error?: string; data?: { ok?: boolean; data?: { ok?: boolean; error?: string; destinations?: Destination[] } } };
+        const payload = await response.json() as { success?: boolean; error?: string; data?: { ok?: boolean; agentKey?: string; instanceId?: string; phone?: string; data?: { ok?: boolean; error?: string; destinations?: Destination[] } } };
         const result = payload.data?.data;
         if (!response.ok || !payload.success || !payload.data?.ok || !result?.ok || !Array.isArray(result.destinations)) {
           throw new Error(payload.error || result?.error || "Não foi possível atualizar os grupos.");
         }
         if (controller.signal.aborted) return;
-        setFreshDestinations({ agentKey, items: result.destinations.filter(item => item.agentKey === agentKey) });
+        if (payload.data.agentKey !== agentKey || payload.data.instanceId !== requestedScope.instanceId || destinationScopeKey({ ...requestedScope, phone: payload.data.phone || "" }) !== scopeKey) throw new Error("A conexão mudou durante a consulta. Recarregue a página.");
+        setFreshDestinations({ scopeKey, items: destinationsInScope(result.destinations, requestedScope) });
         setAutoSyncState("done");
         setAutoSyncMessage("Grupos atualizados automaticamente.");
       } catch (error) {
@@ -272,7 +280,7 @@ export function OpportunityWhatsAppSendPanel({
     // Coalesce mount effects; opening and sender changes each start a fresh request.
     const timer = window.setTimeout(() => void load(), 0);
     return () => { controller.abort(); window.clearTimeout(timer); window.clearTimeout(retryTimer); };
-  }, [agentKey, panelOpen]);
+  }, [agentKey, panelOpen, scopeKey, selectedAgent]);
 
   const selectedDestination =
     currentMode === "group"
@@ -312,7 +320,7 @@ export function OpportunityWhatsAppSendPanel({
             : !canSubmit
               ? submitBlockReason || "Complete a analise antes de aprovar ou enviar pelo WhatsApp."
               : "";
-  const blockedReason = hardBlockedReason || ((currentMode === "group" || currentMode === "channel" || Boolean(currentBroadcastSourceId)) && autoSyncState !== "done" ? autoSyncState === "error" ? "Não foi possível confirmar a lista de destinos. Feche e abra para tentar novamente." : "Aguarde a atualização dos destinos." : "");
+  const blockedReason = hardBlockedReason || ((currentMode === "group" || currentMode === "channel" || Boolean(currentBroadcastSourceId)) && (autoSyncState !== "done" || freshDestinations?.scopeKey !== scopeKey) ? autoSyncState === "error" ? "Não foi possível confirmar a lista de destinos. Feche e abra para tentar novamente." : "Aguarde a atualização dos destinos." : "");
   const destinationName = currentMode === "test" ? testNumber.trim() || "número de teste" : currentMode === "broadcast" ? `${broadcastNumberCount} contato(s)${selectedDestination ? ` + ${selectedDestination.name}` : ''}` : selectedDestination?.name || "selecione um destino";
   const sendButtonHint =
     blockedReason ||
@@ -473,6 +481,11 @@ export function OpportunityWhatsAppSendPanel({
             name="whatsappAgentKey"
             value={agentKey}
             onChange={(event) => {
+              setFreshDestinations(null);
+              setAutoSyncState("idle");
+              setGroupId("");
+              setChannelId("");
+              setBroadcastSourceId("");
               setAgentKey(event.target.value);
               setModeManuallySelected(false);
             }}

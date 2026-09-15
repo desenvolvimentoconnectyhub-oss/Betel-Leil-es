@@ -61,6 +61,8 @@ export async function POST(request: Request) {
     if (action === "sync") {
       result = await syncWhatsAppCommunityDestinations({
         agentKey,
+        instanceId: cleanString(body.instanceId) || undefined,
+        phone: cleanString(body.phone),
         force: body.force === true,
         noParticipants: body.noParticipants === true,
       });
