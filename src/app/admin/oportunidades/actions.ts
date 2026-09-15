@@ -1,4 +1,5 @@
 "use server";
+import { field, numberField } from "@/lib/domain/market-form-fields";
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
@@ -27,26 +28,6 @@ import {
   type OpportunityWhatsAppPublicationMode,
 } from "@/lib/whatsapp/opportunity-publication";
 import { syncWhatsAppCommunityDestinations } from "@/lib/whatsapp/group-campaigns";
-
-function field(formData: FormData, name: string, fallback = "") {
-  const value = formData.get(name);
-  return typeof value === "string" && value.trim() ? value.trim() : fallback;
-}
-
-function numberField(formData: FormData, name: string, fallback = 0) {
-  const raw = field(formData, name);
-  if (!raw) return fallback;
-
-  const compact = raw.replace(/\s/g, "").replace(/[^\d,.-]/g, "");
-  const normalized = compact.includes(",")
-    ? compact.replace(/\./g, "").replace(",", ".")
-    : /^-?\d{1,3}(?:\.\d{3})+$/.test(compact)
-      ? compact.replace(/\./g, "")
-      : compact;
-  const parsed = Number(normalized);
-
-  return Number.isFinite(parsed) ? parsed : fallback;
-}
 
 function booleanField(formData: FormData, name: string) {
   const value = formData.get(name);
@@ -446,6 +427,9 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
   const linkFormat = publicationLinkFormatFromForm(formData);
   const sendTestOnly = publicationMode === "test_number";
   const payload = parseMarketAnalysisForm(formData, detailPath);
+  if (payload.status === "approved_with_notes" && !payload.cautionNotes.trim()) {
+    errorRedirect(detailPath, "Descreva as ressalvas operacionais antes de aprovar com ressalvas.");
+  }
   const approvalStatus = payload.status === "approved" || payload.status === "approved_with_notes";
   const wasAlreadyApproved = previousMarketStatus === "approved" || previousMarketStatus === "approved_with_notes";
   let shouldAdvanceWorkflow = approvalStatus && !sendTestOnly;
@@ -563,8 +547,8 @@ export async function savePropertyMarketAnalysisAction(formData: FormData) {
     if (!publicationResult.ok || !publicationResult.data) {
       publicationErrorRedirect(
         detailPath,
-        publicationResult.error || "",
-        "Analise aprovada, mas nao foi possivel agendar a publicacao WhatsApp."
+        publicationResult.error ? `Análise aprovada, mas o envio não foi concluído. ${publicationResult.error}` : "",
+        "Análise aprovada, mas o envio não foi concluído. Confira o destino e tente novamente."
       );
     }
 

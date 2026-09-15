@@ -10,6 +10,8 @@ import "./opportunity-workspace.css";
 type Panel = { id: string; label: string; icon: ReactNode; content: ReactNode };
 const SendPanelContext = createContext(true);
 export function useSendPanelOpen() { return useContext(SendPanelContext); }
+const SendBusyContext = createContext<(busy: boolean) => void>(() => {});
+export function useSendBusy() { return useContext(SendBusyContext); }
 
 /** Panels stay mounted: navigation must not discard unsaved native form fields. */
 export function OpportunityWorkspace({ header, panels, initialTab, actions, sendPanel, reviewStatus, notices, revisionToken, saveSucceeded, sendAvailable }: {
@@ -19,6 +21,8 @@ export function OpportunityWorkspace({ header, panels, initialTab, actions, send
   const [tab, setTab] = useState(initialTab);
   const [dirty, setDirty] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
+  const [sendBusy, setSendBusy] = useState(false);
+  const [reviewError, setReviewError] = useState("");
   const dialog = useRef<HTMLDialogElement>(null);
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -73,6 +77,18 @@ export function OpportunityWorkspace({ header, panels, initialTab, actions, send
 
   function handleLink(event: MouseEvent<HTMLDivElement>) {
     if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const decision = (event.target as HTMLElement).closest<HTMLButtonElement>('button[name="submitStatus"]');
+    if (decision?.value === "approved_with_notes") {
+      const notes = root.current?.querySelector<HTMLTextAreaElement>('[name="cautionNotes"]');
+      if (!notes?.value.trim()) {
+        event.preventDefault(); event.stopPropagation();
+        setReviewError("Descreva as ressalvas antes de aprovar com ressalvas.");
+        navigate("revisao", "#ocupacao-desocupacao");
+        requestAnimationFrame(() => notes?.focus());
+        return;
+      }
+      setReviewError("");
+    }
     const anchor = (event.target as HTMLElement).closest<HTMLAnchorElement>("a[href]");
     if (!anchor || anchor.target || anchor.hasAttribute("download")) return;
     const url = new URL(anchor.href, window.location.href);
@@ -92,9 +108,14 @@ export function OpportunityWorkspace({ header, panels, initialTab, actions, send
 
   return (
     <div ref={root} id="topo-oportunidade" className="opportunity-workspace mx-auto w-full max-w-[1520px] px-3 py-4 lg:px-5" onClickCapture={handleLink}
-      onChangeCapture={event => { if ((event.target as HTMLElement).closest('[data-review-fields]')) setDirty(true); }}>
+      onChangeCapture={event => {
+        const field = event.target as HTMLInputElement;
+        if (field.closest('[data-review-fields]')) setDirty(true);
+        if (field.name === "cautionNotes" && field.value.trim()) setReviewError("");
+      }}>
       {header}
       {notices}
+      {reviewError ? <p role="alert" className="mt-3 rounded-lg border border-[var(--admin-red)] bg-white p-3 text-sm text-[var(--admin-red)]">{reviewError}</p> : null}
       <nav aria-label="Seções da oportunidade" className="opportunity-tabs my-4 flex flex-wrap gap-1 border-b border-[var(--admin-border)]" role="tablist">
         {panels.map(panel => <button key={panel.id} id={`tab-${panel.id}`} type="button" role="tab" aria-selected={tab === panel.id} aria-controls={`panel-${panel.id}`}
           tabIndex={tab === panel.id ? 0 : -1}
@@ -112,21 +133,31 @@ export function OpportunityWorkspace({ header, panels, initialTab, actions, send
       {panels.map(panel => <div key={panel.id} id={`panel-${panel.id}`} role="tabpanel" aria-labelledby={`tab-${panel.id}`} tabIndex={-1} hidden={tab !== panel.id} data-review-fields={panel.id === "revisao" ? "true" : undefined} className="scroll-mt-20">
         {panel.content}
       </div>)}
-      <div className="opportunity-toolbar sticky bottom-0 z-20 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--admin-border)] bg-white p-3 shadow-lg">
-        <div className="min-w-0 text-sm"><p className="font-semibold">Revisão humana: {reviewStatus}</p><p role="status" className="text-xs text-[var(--admin-muted)]">{dirty ? "Alterações não salvas" : "Versão carregada • revise antes de decidir"}</p></div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button type="button" variant="outline" onClick={() => navigate("revisao")}><Pencil size={15} />Editar revisão</Button>
+      <div className="opportunity-toolbar sticky bottom-0 z-20 mt-4 grid gap-2 rounded-xl border border-[var(--admin-border)] bg-white p-3 shadow-lg">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="min-w-0 text-sm"><p className="font-semibold">Revisão humana: {reviewStatus}</p><p role="status" className="text-xs text-[var(--admin-muted)]">{dirty ? "Alterações não salvas • confira antes de decidir" : "Confira a análise antes de decidir"}</p></div>
+          <Button type="button" variant="outline" onClick={() => navigate("revisao")}><Pencil size={15} />Revisar dados</Button>
+        </div>
+        <div className="opportunity-decision-grid">
           {actions}
-          <Button ref={trigger} type="button" disabled={pending || !sendAvailable} title={sendAvailable ? undefined : "A análise precisa existir antes de preparar o envio"} className="bg-[var(--admin-cyan)] text-white" onClick={() => { setSendOpen(true); dialog.current?.showModal(); }}><Send size={15} />Preparar envio</Button>
+          <Button ref={trigger} type="button" disabled={pending || !sendAvailable} title={sendAvailable ? undefined : "A análise precisa existir antes de preparar o envio"} className="opportunity-action-primary opportunity-decision-button bg-[var(--admin-cyan)] text-white" onClick={() => { setSendOpen(true); dialog.current?.showModal(); }}><Send size={16} />Aprovar e enviar</Button>
         </div>
       </div>
       {/* Native dialog stays inside the form, preserving form ownership and state. */}
-      <dialog ref={dialog} aria-labelledby="send-panel-title" aria-describedby="send-panel-description" className="opportunity-send-dialog" onClose={() => { setSendOpen(false); trigger.current?.focus(); }} onCancel={event => { if (pending) event.preventDefault(); }}>
-        <div className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-[var(--admin-border)] bg-white p-4">
-          <div><h2 id="send-panel-title" className="text-lg font-semibold">Preparar envio</h2><p id="send-panel-description" className="mt-1 text-sm text-[var(--admin-muted)]">Confira a revisão, o remetente e o destino. O envio exige a ação final abaixo.</p></div>
-          <Button type="button" variant="outline" size="icon" aria-label="Fechar preparação de envio" disabled={pending} onClick={() => dialog.current?.close()}><X size={18} /></Button>
+      <dialog ref={dialog} aria-labelledby="send-panel-title" aria-describedby="send-panel-description" className="opportunity-send-dialog" onClose={() => { setSendOpen(false); trigger.current?.focus(); }} onCancel={event => { if (pending || sendBusy) event.preventDefault(); }}
+        onKeyDown={event => {
+          if (event.key !== "Tab") return;
+          const controls = [...event.currentTarget.querySelectorAll<HTMLElement>('button, input, select, textarea, a[href], summary, [tabindex="0"]')]
+            .filter(element => element.tabIndex >= 0 && !element.matches(':disabled') && element.getClientRects().length);
+          const first = controls[0], last = controls.at(-1);
+          if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+          else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+        }}>
+        <div className="opportunity-send-heading flex items-start justify-between gap-3 border-b border-[var(--admin-border)] bg-white p-4">
+          <div><h2 id="send-panel-title" className="text-xl font-semibold">Aprovar e enviar</h2><p id="send-panel-description" className="mt-1 text-sm text-[var(--admin-muted)]">Escolha o destino e confira a prévia antes de confirmar.</p></div>
+          <Button type="button" variant="outline" size="icon" aria-label="Fechar preparação de envio" disabled={pending || sendBusy} onClick={() => dialog.current?.close()}><X size={18} /></Button>
         </div>
-        <div className="p-4"><SendPanelContext value={sendOpen}>{sendPanel}</SendPanelContext></div>
+        <div className="opportunity-send-body p-4"><SendPanelContext value={sendOpen}><SendBusyContext value={setSendBusy}>{sendPanel}</SendBusyContext></SendPanelContext></div>
       </dialog>
     </div>
   );

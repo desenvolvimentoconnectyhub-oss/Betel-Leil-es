@@ -1,3 +1,4 @@
+import { getApprovedMarketPublication } from "@/lib/market/approved-publication";
 import { notFound } from "next/navigation";
 import { OpportunityDetailCenter } from "@/components/admin/opportunity-detail/OpportunityDetailCenter";
 import {
@@ -29,10 +30,11 @@ export default async function OpportunityDetailPage({
     searchParams || Promise.resolve(emptyQuery),
   ]);
 
-  const [opportunityResult, marketAnalysisResult, whatsappPublicationOptions] = await Promise.all([
+  const [opportunityResult, marketAnalysisResult, whatsappPublicationOptions, approvedWhatsAppPublication] = await Promise.all([
     getAuctionOpportunityByCode(id),
     getPropertyMarketAnalysisByOpportunityCode(id),
     getOpportunityWhatsAppPublicationOptions(),
+    getApprovedMarketPublication(id),
   ]);
 
   const opportunity = opportunityResult.data;
@@ -42,6 +44,7 @@ export default async function OpportunityDetailPage({
 
   return (
     <OpportunityDetailCenter
+      approvedWhatsAppPublication={approvedWhatsAppPublication}
       opportunity={opportunity}
       analysis={marketAnalysisResult.data}
       reason={marketAnalysisResult.reason}

@@ -1,3 +1,4 @@
+import { reviewPaymentSimulation } from '@/lib/domain/review-payment';
 import { createHash } from "node:crypto";
 import { marketPublicationIssues, selectMarketReferences, type ApprovedMarketPublication } from "@/lib/domain/market-publication";
 import { verifyMarketReference } from "@/lib/market/reference-access";
@@ -781,22 +782,7 @@ export async function savePropertyMarketAnalysisRecord(
     marketValueBase,
     initialBid,
   });
-  const downPaymentAmount =
-    input.paymentSimulation.downPaymentAmount ||
-    (initialBid && input.paymentSimulation.downPaymentPct ? Math.round(initialBid * (input.paymentSimulation.downPaymentPct / 100)) : 0);
-  const installmentBalance =
-    input.paymentSimulation.installmentBalance ||
-    (initialBid && input.paymentSimulation.downPaymentPct ? Math.round(initialBid * (1 - input.paymentSimulation.downPaymentPct / 100)) : 0);
-  const paymentSimulation: MarketPaymentSimulation = {
-    ...input.paymentSimulation,
-    downPaymentAmount,
-    installmentBalance,
-    installmentAmount:
-      input.paymentSimulation.installmentAmount ||
-      (installmentBalance && input.paymentSimulation.installmentCount
-        ? Math.round(installmentBalance / input.paymentSimulation.installmentCount)
-        : 0),
-  };
+  const paymentSimulation = reviewPaymentSimulation(input.paymentSimulation, initialBid);
   const normalizedStatus =
     input.status === "approved" && input.cautionNotes ? "approved_with_notes" : input.status;
   const sourceLinks = mergeSourceLinks(

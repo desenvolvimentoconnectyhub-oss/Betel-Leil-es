@@ -53,6 +53,9 @@ for (const activeTab of ['visao-geral', 'mercado', 'revisao', 'documentos']) {
   assert.match(html, /Revisão humana:.*?Aprovada com ressalvas/);
   assert.match(html, /Recomendação da análise/);
   assert.match(html, /Salvar revisão/);
+  for (const label of ['Aprovar sem enviar', 'Aprovar com ressalvas sem envio', 'Reprovar', 'Aprovar e enviar']) assert.ok(html.includes(label));
+  assert.ok(!html.includes('Criar dossie'), 'no inert dossier button');
+  assert.ok(!html.includes('Mais acoes'), 'decisions are visible instead of hidden in a menu');
   assert.equal((html.match(/role="tabpanel"/g) || []).length, 8, 'all panels stay mounted for draft preservation');
   const formStart = html.indexOf('<form');
   const dialogStart = html.indexOf('<dialog');
@@ -61,4 +64,15 @@ for (const activeTab of ['visao-geral', 'mercado', 'revisao', 'documentos']) {
 const empty = render({ opportunity, analysis: null });
 assert.match(empty, /Sem foto real/);
 assert.match(empty, /disabled=""[^>]*title="A análise precisa existir antes de preparar o envio"/);
+const { OpportunityMessagePhone } = load('src/components/admin/opportunity-detail/OpportunityMessagePhone.tsx');
+const approved = { version: 1, opportunity, analysis: { ...analysis, legalSignal: 'Parecer aprovado preservado', rentalEstimate: { ...analysis.rentalEstimate, monthlyRent: 1700 } }, references: [1,2,3].map(i=>({label:`Aluguel ${i}`,url:`https://example.com/imovel/${12340+i}`})) };
+const phoneProps = { preview: { opportunity, analysis, approved, publicUrl: 'https://betel.example/fixture' }, sender: 'Remetente simulado', destination: 'Destino simulado', open: true, format: 'source_buttons', test: true };
+const testPhone = renderToStaticMarkup(React.createElement(OpportunityMessagePhone, phoneProps));
+assert.match(testPhone,/Parecer aprovado preservado/,'test preview uses the approved immutable snapshot');
+assert.doesNotMatch(testPhone,/Documentação pendente/,'test preview does not substitute current draft for approved content');
+assert.ok(!testPhone.includes('href='),'simulated reference links are inert');
+assert.ok(!testPhone.includes('type="submit"'),'preview cannot submit approval or send');
+const reviewPhone = renderToStaticMarkup(React.createElement(OpportunityMessagePhone, {...phoneProps,test:false}));
+assert.match(reviewPhone,/Documentação pendente/,'approval preview uses current review');
+assert.doesNotMatch(reviewPhone,/Parecer aprovado preservado/);
 console.log('PASS layout: one form field set across eight mounted panels; zero scores preserved; independent review/recommendation; dialog form ownership; empty state. No network or operations.');

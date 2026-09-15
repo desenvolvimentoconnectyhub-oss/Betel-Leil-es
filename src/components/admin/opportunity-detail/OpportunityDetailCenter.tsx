@@ -1,5 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 import Link from "next/link";
+import { getBetelPublicOrigin } from "@/lib/public-origin";
+import type { ApprovedMarketPublication } from "@/lib/domain/market-publication";
 import { OpportunityWorkspace, ReferenceGroups } from "./OpportunityWorkspace";
 import { marketReviewNotices } from "@/lib/domain/market-review-feedback";
 import { ReviewSubmissionProgress, ReviewSubmitButton } from "./ReviewSubmitButton";
@@ -23,7 +25,6 @@ import {
   ImageOff,
   Info,
   ListChecks,
-  MoreHorizontal,
   Pencil,
   RefreshCcw,
   Save,
@@ -102,6 +103,7 @@ type OpportunityDetailCenterProps = {
   remoteGroups?: string;
   publicationCampaign?: string;
   whatsappPublicationOptions?: OpportunityWhatsAppPublicationOptions;
+  approvedWhatsAppPublication?: ApprovedMarketPublication | null;
 };
 
 const tabs: Array<{ id: OpportunityTabId; label: string; icon: ReactNode }> = [
@@ -200,30 +202,6 @@ function numberValue(value: number) {
 
 function pricePerM2(value: number) {
   return value ? `${formatCurrency(value)}/m2` : "nao calculado";
-}
-
-function formatCurrencyOrBlank(value: number) {
-  return value ? formatCurrency(value) : "";
-}
-
-function primaryOpportunityImageUrl(images?: PropertyImageAsset[]) {
-  const usable = (images || []).filter((image) => image.url && image.status !== "failed");
-  return (
-    usable.find((image) => image.status === "mirrored")?.url ||
-    usable.find((image) => /^https?:\/\//i.test(image.url))?.url ||
-    ""
-  );
-}
-
-function buildWhatsAppPreview(opportunity: AuctionOpportunity, analysis: PropertyMarketAnalysis | null) {
-  return {
-    title: opportunity.title,
-    location: [opportunity.city, opportunity.state].filter(Boolean).join("/"),
-    imageUrl: primaryOpportunityImageUrl(opportunity.images),
-    marketValue: formatCurrencyOrBlank(analysis?.marketValueBase || opportunity.appraisalValue),
-    bid: formatCurrencyOrBlank(analysis?.initialBid || opportunity.initialBid),
-    discount: analysis?.realDiscountPct || opportunity.discountPct ? percent(analysis?.realDiscountPct || opportunity.discountPct) : "",
-  };
 }
 
 function safeDate(value?: string) {
@@ -1317,13 +1295,13 @@ function HeaderActionButton({
       : tone === "yellow"
         ? "bg-[var(--admin-yellow)] text-white hover:bg-[#975f0f]"
         : tone === "red"
-          ? "bg-[var(--admin-red)] text-white hover:bg-[#9f3024]"
+          ? ""
           : tone === "primary"
             ? "bg-[var(--admin-cyan)] text-white hover:bg-[#a54a18]"
             : "border-[var(--admin-border)] bg-white text-[var(--admin-foreground)] hover:bg-[var(--admin-card-2)]";
 
   return (
-    <ReviewSubmitButton className={cn("h-9", className)} disabled={disabled} name="submitStatus" type="submit" value={value}>
+    <ReviewSubmitButton className={cn("opportunity-decision-button min-h-10 h-auto py-2", `opportunity-action-${tone}`, className)} disabled={disabled} name="submitStatus" type="submit" value={value}>
       {children}
     </ReviewSubmitButton>
   );
@@ -1652,7 +1630,7 @@ function OpportunityHeader({ opportunity, analysis }: { opportunity: AuctionOppo
   return <header className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-[var(--admin-border)] bg-white p-4">
     <div className="min-w-0 flex-1">
       <Link className="text-sm text-[var(--admin-muted)] hover:underline" href="/admin/oportunidades">← Imóveis analisados</Link>
-      <h1 className="mt-2 text-xl font-semibold tracking-tight lg:text-2xl">{opportunity.title}</h1>
+      <h1 className="mt-2 text-[10px] leading-[14px] font-semibold tracking-tight lg:text-xs lg:leading-4">{opportunity.title}</h1>
       <p className="mt-2 flex flex-wrap gap-x-3 text-sm text-[var(--admin-muted)]"><span>{[opportunity.city, opportunity.state].filter(Boolean).join(" / ")}</span><span>{opportunity.sourceName}</span><span>Responsável: {opportunity.owner}</span></p>
       <p className="mt-1 text-xs text-[var(--admin-muted)]">{opportunity.id} • Atualizado: {formatDateTime(analysis?.updatedAt || opportunity.timeline.at(-1)?.time)}</p>
     </div>
@@ -1667,8 +1645,8 @@ function OpportunityHeader({ opportunity, analysis }: { opportunity: AuctionOppo
 function OpportunityActionsPanel({
   opportunity,
   analysis,
-  qualificationDossier,
   whatsappPublicationOptions,
+  approvedWhatsAppPublication,
   actionStatus,
   actionMessage,
   sendOnly = false,
@@ -1678,10 +1656,10 @@ function OpportunityActionsPanel({
   analysis: PropertyMarketAnalysis | null;
   qualificationDossier?: PropertyQualificationDossier | null;
   whatsappPublicationOptions?: OpportunityWhatsAppPublicationOptions;
+  approvedWhatsAppPublication?: ApprovedMarketPublication | null;
   actionStatus?: string;
   actionMessage?: string;
 }) {
-  const evaluation = buildDetailOpportunityEvaluation(opportunity, analysis, qualificationDossier);
   const canSubmit = Boolean(analysis?.marketValueBase);
   const submitBlockReason = !canSubmit
     ? "Informe o valor de mercado base antes de aprovar ou enviar pelo WhatsApp."
@@ -1691,14 +1669,11 @@ function OpportunityActionsPanel({
     "",
     analysis ? sourceUrlFor(analysis, ["leilao", "fonte"]) : ""
   );
-  const highlightedAction =
-    analysis && evaluation.finalRecommendation.status === "recomendado_para_avancar" ? "approved" : "human_review";
-  const whatsappPreview = buildWhatsAppPreview(opportunity, analysis);
+  const whatsappPreview = { opportunity, analysis, approved: approvedWhatsAppPublication, publicUrl: `${getBetelPublicOrigin()}/oportunidades/${encodeURIComponent(opportunity.id)}` };
 
   return (
-    <aside className="grid min-w-0 content-start gap-2">
+    <aside className={sendOnly ? "grid min-w-0 content-start gap-2" : "opportunity-decision-actions contents"}>
       {sendOnly ? <>
-      {whatsappReferenceStatus.ready ? <p role="status" className="rounded-lg border border-[var(--admin-green)] bg-white p-3 text-sm text-[var(--admin-green)]">Analise aprovada com tres referencias de aluguel verificadas. Para testar, selecione Teste e confira seu numero antes de enviar.</p> : null}
       {analysis ? (
         <OpportunityWhatsAppSendPanel
           canSubmit={canSubmit}
@@ -1712,55 +1687,11 @@ function OpportunityActionsPanel({
         />
       ) : null}
       </> : null}
-      {!sendOnly ? <div className="flex flex-wrap justify-end gap-2">
-        {analysis ? (
-          <>
-            <HeaderActionButton disabled={!canSubmit} tone={highlightedAction === "human_review" ? "primary" : "neutral"} value="human_review">
-              <Save size={14} />
-              Salvar revisão
-            </HeaderActionButton>
-            <details className="relative">
-              <summary className="inline-flex h-9 cursor-pointer list-none items-center gap-1.5 rounded-lg border border-[var(--admin-border)] bg-white px-2.5 text-sm font-medium text-[var(--admin-foreground)] transition hover:bg-[var(--admin-card-2)]">
-                <MoreHorizontal size={14} />
-                Mais acoes
-              </summary>
-              <div className="absolute bottom-full right-0 z-30 mb-2 grid w-64 max-w-[85vw] gap-2 rounded-lg border border-[var(--admin-border)] bg-white p-2 shadow-lg">
-        <Button
-          asChild
-          variant="outline"
-          className="h-9 border-[var(--admin-border)] bg-white text-[var(--admin-foreground)]"
-        >
-          <Link href={`/admin/oportunidades/${opportunity.id}/editar`}>
-            <Pencil size={14} />
-            Editar imovel
-          </Link>
-        </Button>
-            <HeaderActionButton disabled={!canSubmit} tone={highlightedAction === "approved" ? "green" : "neutral"} value="approved">
-              <CheckCircle2 size={14} />
-              Aprovar sem envio
-            </HeaderActionButton>
-            <HeaderActionButton disabled={!canSubmit} tone="red" value="rejected">
-              <XCircle size={14} />
-              Reprovar
-            </HeaderActionButton>
-                <HeaderActionButton disabled={!canSubmit} tone="yellow" value="approved_with_notes">
-                  <ShieldCheck size={14} />
-                  Aprovar ressalvas sem envio
-                </HeaderActionButton>
-                <Button className="h-9 border-[var(--admin-border)] bg-white text-[var(--admin-foreground)] hover:bg-[var(--admin-card-2)]" type="button">
-                  <FileCheck2 size={14} />
-                  Criar dossie
-                </Button>
-              </div>
-            </details>
-          </>
-        ) : (
-          <Button className="h-9 bg-[var(--admin-cyan)] text-white hover:bg-[#a54a18]" type="button">
-            <FileCheck2 size={14} />
-            Criar dossie
-          </Button>
-        )}
-      </div> : null}
+      {!sendOnly && analysis ? <>
+        <HeaderActionButton disabled={!canSubmit} tone="green" value="approved"><CheckCircle2 size={16} />Aprovar sem enviar</HeaderActionButton>
+        <HeaderActionButton disabled={!canSubmit} tone="yellow" value="approved_with_notes"><ShieldCheck size={16} />Aprovar com ressalvas sem envio</HeaderActionButton>
+        <HeaderActionButton disabled={!canSubmit} tone="red" value="rejected"><XCircle size={16} />Reprovar</HeaderActionButton>
+      </> : null}
     </aside>
   );
 }
@@ -1874,13 +1805,14 @@ function Gallery({
       action={<StatusBadge tone={heroImage ? "green" : "yellow"}>{images.length} foto(s)</StatusBadge>}
       className={cn(
         "scroll-mt-40 min-h-0 self-start h-fit",
+        compact && "opportunity-gallery-compact",
         stretchToSiblingColumn && "xl:flex xl:h-full xl:self-stretch xl:flex-col xl:overflow-hidden"
       )}
       contentClassName={cn("p-3", stretchToSiblingColumn && "xl:flex xl:min-h-0 xl:flex-1 xl:overflow-hidden")}
     >
       <div
         className={cn(
-          "grid w-full items-start gap-3",
+          "opportunity-gallery-grid grid w-full items-start gap-3",
           stretchToSiblingColumn && "xl:h-full xl:min-h-0 xl:items-stretch",
           hasThumbnails && (compact ? "lg:grid-cols-[minmax(0,1fr)_88px]" : "lg:grid-cols-[minmax(0,1fr)_140px]")
         )}
@@ -1899,10 +1831,10 @@ function Gallery({
             <img
               src={heroImage.url}
               alt={heroImage.alt || title}
-              className="h-full w-full object-contain transition duration-300 group-hover:scale-[1.015]"
+              className={cn("h-full w-full transition duration-300 group-hover:scale-[1.015]", compact ? "object-cover" : "object-contain")}
             />
-            <span className="absolute bottom-3 right-3 inline-flex h-8 items-center gap-1.5 rounded-full border border-white/60 bg-black/58 px-3 text-xs font-semibold text-white opacity-0 shadow-sm transition group-hover:opacity-100 group-focus-visible:opacity-100">
-              Abrir imagem
+            <span className="absolute bottom-2 right-2 inline-flex h-8 items-center gap-1.5 rounded-full border border-[var(--admin-border)] bg-white/95 px-3 text-xs font-semibold text-[var(--admin-foreground)] shadow-sm transition">
+              Ver foto inteira
               <ArrowUpRight size={13} />
             </span>
           </a>
@@ -1921,7 +1853,7 @@ function Gallery({
         {hasThumbnails ? (
           <div
             className={cn(
-              "grid content-start gap-2",
+              "opportunity-gallery-thumbnails grid content-start gap-2",
               compact
                 ? cn(
                     "grid-cols-5 lg:grid-cols-1 lg:overflow-y-auto lg:overscroll-contain lg:pr-1",
@@ -2076,7 +2008,7 @@ function ExecutiveSummary({
         thumbnailEntries={thumbnailEntries}
       />
 
-      <div className="grid min-w-0 content-start gap-3">
+      <div className="opportunity-hero-analysis grid min-w-0 content-start gap-2">
         <div className="opportunity-hero-values">
           <KpiCard
             label="Mercado"
@@ -2102,33 +2034,27 @@ function ExecutiveSummary({
             icon={<Target size={16} />}
           />
           <KpiCard label="Aluguel" value={analysis?.rentalEstimate.monthlyRent ? formatCurrency(analysis.rentalEstimate.monthlyRent) : "pendente"} detail={rentalDetail(analysis)} tone={analysis?.rentalEstimate.monthlyRent ? "cyan" : "muted"} />
-        </div>
-        <details className="rounded-lg border border-[var(--admin-border)] bg-white p-3"><summary className="cursor-pointer text-sm font-semibold">Teto, custos, investimento e margem</summary><div className="mt-3 grid grid-cols-2 gap-2">          <KpiCard label="Teto Betel" value={formatCurrency(primaryCeiling)} detail="investimento maximo sugerido" tone="green" />
+          <KpiCard label="Teto Betel" value={formatCurrency(primaryCeiling)} detail="investimento maximo sugerido" tone="green" />
           <KpiCard label="Custo total" value={formatCurrency(totalCosts)} detail={`${analysis?.estimatedCosts.length || 0} custo(s) mapeado(s)`} tone={totalCosts ? "yellow" : "muted"} />
           <KpiCard label="Investimento" value={formatCurrency(totalInvestment)} detail="lance + custos mapeados" tone="purple" />
           <KpiCard label="Margem" value={formatCurrency(analysis?.estimatedNetMargin || 0)} detail="potencial antes da decisao final" tone={(analysis?.estimatedNetMargin || 0) > 0 ? "green" : "yellow"} />
-</div></details>
-        <div className={cn("rounded-xl border p-4", toneBorder[evaluation.finalRecommendation.tone], toneBg[evaluation.finalRecommendation.tone])}>
+        </div>
+        <div className={cn("opportunity-recommendation rounded-lg border p-3", toneBorder[evaluation.finalRecommendation.tone], toneBg[evaluation.finalRecommendation.tone])}>
           <p className="text-xs font-semibold uppercase tracking-wide text-[var(--admin-muted)]">Recomendação da análise</p>
           <h2 className={cn("mt-1 text-lg font-semibold", toneText[evaluation.finalRecommendation.tone])}>{mainRecommendationTitle(evaluation)}</h2>
-          <p className="mt-2 text-sm leading-6">{evaluation.finalRecommendation.explanation} {recommendationComplement(evaluation)}</p>
-          <div className="mt-3 flex flex-wrap gap-2"><StatusBadge tone={evaluation.risk.tone}>Risco: {evaluation.risk.label}</StatusBadge><StatusBadge tone={evaluation.researchQuality.tone}>Pesquisa: {evaluation.researchQuality.label}</StatusBadge><StatusBadge tone={evaluation.financialPotential.tone}>Potencial: {evaluation.financialPotential.label}</StatusBadge></div>
+          <p className="mt-1 text-sm leading-5">{evaluation.finalRecommendation.explanation} {recommendationComplement(evaluation)}</p>
+          <div className="mt-2 flex flex-wrap gap-1.5"><StatusBadge tone={evaluation.risk.tone}>Risco: {evaluation.risk.label}</StatusBadge><StatusBadge tone={evaluation.researchQuality.tone}>Pesquisa: {evaluation.researchQuality.label}</StatusBadge><StatusBadge tone={evaluation.financialPotential.tone}>Potencial: {evaluation.financialPotential.label}</StatusBadge></div>
         </div>
-        <SectionCard title="Ficha do imóvel" contentClassName="p-3">
-          <div className="grid gap-3">
-            <div className="grid gap-2 md:grid-cols-2">
-              <InfoValue label="Endereco" value={opportunity.address || subject?.address || "nao informado"} className="md:col-span-2" />
-              <InfoValue label="Tipo" value={subject?.propertyType || opportunity.propertyType || "nao informado"} />
-              <InfoValue label="Ocupacao" value={opportunity.occupancy || "nao informado"} />
-              <InfoValue label="Area base" value={area(areaBase)} />
-
-            </div>
-            <details><summary className="cursor-pointer text-sm font-semibold">Matrícula, situação e data do leilão</summary><div className="mt-2 grid gap-2 sm:grid-cols-2">              <InfoValue label="Matricula" value={extractRegistration(opportunity.summary, analysis?.legalSignal)} />
-              <InfoValue label="Situacao do leilao" value={opportunity.aiStatus || "nao informado"} />
-              <InfoValue label="Data do leilao" value={safeDate(opportunity.auctionDate)} /></div></details>
-          </div>
-        </SectionCard>
       </div>
+      <section aria-label="Ficha do imóvel" className="opportunity-property-strip rounded-lg border border-[var(--admin-border)] bg-white p-3">
+        <InfoValue label="Endereco" value={opportunity.address || subject?.address || "nao informado"} className="opportunity-property-address" />
+        <InfoValue label="Tipo" value={subject?.propertyType || opportunity.propertyType || "nao informado"} />
+        <InfoValue label="Ocupacao" value={opportunity.occupancy || "nao informado"} />
+        <InfoValue label="Area base" value={area(areaBase)} />
+        <InfoValue label="Matricula" value={extractRegistration(opportunity.summary, analysis?.legalSignal)} />
+        <InfoValue label="Situacao do leilao" value={opportunity.aiStatus || "nao informado"} />
+        <InfoValue label="Data do leilao" value={safeDate(opportunity.auctionDate)} />
+      </section>
     </section>
   );
 }
@@ -2215,15 +2141,15 @@ function RecommendationReasonsPanel({
   const reasons = buildRecommendationReasons(opportunity, analysis, evaluation, qualificationDossier);
 
   return (
-    <SectionCard title="Motivos da recomendacao" eyebrow="evidencias" contentClassName="grid gap-3 lg:grid-cols-2">
+    <SectionCard title="Motivos da recomendacao" eyebrow="evidencias" className="opportunity-reasons" contentClassName="opportunity-reasons-grid grid items-start gap-3">
       <div className="rounded-lg border border-[rgba(19,122,69,0.24)] bg-[rgba(19,122,69,0.06)] p-3">
         <div className="mb-2 flex items-center gap-2">
           <CheckCircle2 size={16} className="text-[var(--admin-green)]" />
           <h3 className="text-sm font-semibold text-[var(--admin-foreground)]">O que favorece</h3>
         </div>
-        <ul className="grid gap-2">
+        <ul className="grid gap-1">
           {reasons.favorable.map((item) => (
-            <li key={item} className="text-sm leading-6 text-[var(--admin-soft)]">- {item}</li>
+            <li key={item} className="text-sm leading-5 text-[var(--admin-soft)]">- {item}</li>
           ))}
         </ul>
       </div>
@@ -2233,9 +2159,9 @@ function RecommendationReasonsPanel({
           <XCircle size={16} className="text-[var(--admin-red)]" />
           <h3 className="text-sm font-semibold text-[var(--admin-foreground)]">O que impede avancar</h3>
         </div>
-        <ul className="grid gap-2">
+        <ul className="grid gap-1">
           {reasons.blockers.map((item) => (
-            <li key={item} className="text-sm leading-6 text-[var(--admin-soft)]">- {item}</li>
+            <li key={item} className="text-sm leading-5 text-[var(--admin-soft)]">- {item}</li>
           ))}
         </ul>
       </div>
@@ -3556,12 +3482,15 @@ function PropertyTab({
           title="Cadastro do imovel"
           eyebrow="modo visualizacao"
           action={
+            <div className="flex flex-wrap gap-2">
+            <Button asChild variant="outline"><Link href={`/admin/oportunidades/${opportunity.id}/editar`}><Pencil size={15} />Editar cadastro</Link></Button>
             <Button asChild variant="outline" className="h-8 border-[var(--admin-border)] bg-white text-[var(--admin-foreground)]">
               <Link href={`${tabHref("revisao")}#cadastro-imovel`}>
                 <Pencil size={13} />
-                Editar dados
+                Revisar áreas
               </Link>
             </Button>
+            </div>
           }
         >
           <div className="grid gap-2 sm:grid-cols-2">
@@ -3745,7 +3674,7 @@ function ReviewTab({
       <SectionCard
         title="Revisao operacional"
         eyebrow="curadoria humana"
-        action={<StatusBadge tone={issues.length ? "yellow" : "green"}>{review.done} de {review.total}</StatusBadge>}
+        action={<div className="flex flex-wrap items-center gap-2"><StatusBadge tone={issues.length ? "yellow" : "green"}>{review.done} de {review.total}</StatusBadge><HeaderActionButton disabled={!analysis.marketValueBase} tone="primary" value="human_review"><Save size={15} />Salvar revisão</HeaderActionButton></div>}
       >
         <input name="opportunityCode" type="hidden" value={analysis.opportunityCode || opportunity.id} />
         <div className="grid gap-4">
@@ -3989,6 +3918,7 @@ export function OpportunityDetailCenter({
   remoteGroups,
   publicationCampaign,
   whatsappPublicationOptions,
+  approvedWhatsAppPublication,
 }: OpportunityDetailCenterProps) {
   const tab = normalizeTab(activeTab);
   const images = (opportunity.images || []).filter((image) => image.status !== "failed");
@@ -4008,7 +3938,7 @@ export function OpportunityDetailCenter({
     notices={<><ReviewSubmissionProgress /><OpportunityActionNotice message={actionMessage} status={actionStatus} /><OpportunityActionNotice campaignId={publicationCampaign} message={actionMessage} remoteGroups={remoteGroups} status={marketStatus} syncedGroups={syncedGroups} /></>}
     panels={tabs.map(item => ({ ...item, content: <TabContent activeTab={item.id} opportunity={opportunity} analysis={analysis} qualificationDossier={qualificationDossier} qualificationReason={qualificationReason} reason={reason} images={images} heroImage={heroImage} selectedImageIndex={selectedImageIndex >= 0 ? selectedImageIndex : undefined} marketFilter={marketFilter} marketSort={marketSort} /> }))}
     actions={<OpportunityActionsPanel opportunity={opportunity} analysis={analysis} qualificationDossier={qualificationDossier} />}
-    sendPanel={<OpportunityActionsPanel sendOnly opportunity={opportunity} analysis={analysis} qualificationDossier={qualificationDossier} whatsappPublicationOptions={whatsappPublicationOptions} actionStatus={actionStatus} actionMessage={actionMessage} />}
+    sendPanel={<OpportunityActionsPanel sendOnly approvedWhatsAppPublication={approvedWhatsAppPublication} opportunity={opportunity} analysis={analysis} qualificationDossier={qualificationDossier} whatsappPublicationOptions={whatsappPublicationOptions} actionStatus={actionStatus || marketStatus} actionMessage={actionMessage} />}
   />;
   if (!analysis && !qualificationDossier) return body;
   return <form action={savePropertyMarketAnalysisAction} className="contents">{body}</form>;

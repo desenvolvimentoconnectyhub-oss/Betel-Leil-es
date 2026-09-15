@@ -6,19 +6,16 @@ import { useRouter } from "next/navigation";
 import {
   AlertCircle,
   CheckCircle2,
-  Eye,
   ExternalLink,
   FileUp,
-  ImageOff,
   ListChecks,
   LoaderCircle,
   Radio,
-  RefreshCcw,
   Send,
   Smartphone,
   Users,
 } from "lucide-react";
-import { syncOpportunityWhatsAppGroupsAction } from "@/app/admin/oportunidades/actions";
+import { OpportunityMessagePhone, type OpportunityMessagePreview } from "./OpportunityMessagePhone";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -27,57 +24,48 @@ import type {
   OpportunityWhatsAppReferenceStatus,
 } from "@/lib/whatsapp/opportunity-publication";
 import { cn } from "@/lib/utils";
-import { useSendPanelOpen } from "./OpportunityWorkspace";
+import { useSendPanelOpen, useSendBusy } from "./OpportunityWorkspace";
 
 type Destination = OpportunityWhatsAppPublicationOptions["destinations"][number];
 type SendMode = "test" | "group" | "channel" | "broadcast";
 type LinkFormat = "source_buttons" | "source_links";
 
-type WhatsAppPreview = {
-  title: string;
-  location: string;
-  imageUrl: string;
-  marketValue: string;
-  bid: string;
-  discount: string;
-};
-
 const selectClass =
   "h-10 w-full rounded-lg border border-[var(--admin-border)] bg-white px-3 text-sm text-[var(--admin-foreground)] outline-none transition focus-visible:border-[var(--admin-cyan)] focus-visible:ring-3 focus-visible:ring-[rgba(200,90,31,0.16)]";
-const labelClass = "text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--admin-muted)]";
+const labelClass = "text-xs font-semibold text-[var(--admin-muted)]";
 
 const modeCopy: Record<SendMode, { title: string; detail: string; icon: typeof Send }> = {
   group: {
     title: "Grupo",
-    detail: "Aprova e agenda no grupo escolhido.",
+    detail: "Pessoas de um grupo.",
     icon: Users,
   },
   channel: {
     title: "Canal",
-    detail: "Aprova e publica no canal selecionado.",
+    detail: "Seguidores de um canal.",
     icon: Radio,
   },
   broadcast: {
     title: "Lista",
-    detail: "Aprova e envia para contatos da lista.",
+    detail: "Contatos de uma lista.",
     icon: ListChecks,
   },
   test: {
     title: "Teste",
-    detail: "Envia so para um numero.",
+    detail: "Somente um número para conferir.",
     icon: Smartphone,
   },
 };
 
 const linkFormatCopy: Record<LinkFormat, { title: string; detail: string; icon: typeof Send }> = {
   source_buttons: {
-    title: "3 botoes",
-    detail: "Tres botoes para as referencias de mercado.",
+    title: "Botões",
+    detail: "Cada anúncio aparece em um botão.",
     icon: ExternalLink,
   },
   source_links: {
-    title: "3 links",
-    detail: "Inclui leilao e referencias no texto.",
+    title: "Links no texto",
+    detail: "O link do leilão e os anúncios ficam no texto.",
     icon: ListChecks,
   },
 };
@@ -106,10 +94,10 @@ function submitValueForMode(mode: SendMode) {
 }
 
 function submitLabelForMode(mode: SendMode) {
-  if (mode === "test") return "Enviar teste";
-  if (mode === "channel") return "Aprovar e enviar canal";
-  if (mode === "broadcast") return "Aprovar e enviar lista";
-  return "Aprovar e enviar grupo";
+  if (mode === "test") return "Confirmar envio de teste";
+  if (mode === "channel") return "Confirmar aprovação e envio";
+  if (mode === "broadcast") return "Confirmar aprovação e envio";
+  return "Confirmar aprovação e envio";
 }
 
 function sendProcessingTitle(mode: SendMode, validatingReferences = false) {
@@ -181,13 +169,12 @@ function senderConnectionModalFromMessage(message?: string): SenderConnectionMod
     title: "WhatsApp desconectado",
     detail:
       message ||
-      "Nao foi possivel prosseguir porque a instancia WhatsApp selecionada nao esta conectada. Reconecte o numero ou escolha outro remetente conectado.",
+      "O número escolhido está desconectado. Reconecte o WhatsApp ou escolha outro número. Reconecte o numero ou escolha outro remetente conectado.",
   };
 }
 
 export function OpportunityWhatsAppSendPanel({
   canSubmit,
-  opportunityCode,
   options,
   preview,
   referenceStatus,
@@ -198,7 +185,7 @@ export function OpportunityWhatsAppSendPanel({
   canSubmit: boolean;
   opportunityCode: string;
   options?: OpportunityWhatsAppPublicationOptions;
-  preview: WhatsAppPreview;
+  preview: OpportunityMessagePreview;
   referenceStatus?: OpportunityWhatsAppReferenceStatus;
   submitBlockReason?: string;
   actionStatus?: string;
@@ -206,13 +193,17 @@ export function OpportunityWhatsAppSendPanel({
 }) {
   const router = useRouter();
   const panelOpen = useSendPanelOpen();
+  const setSendBusy = useSendBusy();
+  const sendInFlight = useRef(false);
+  const feedback = useRef<HTMLDivElement>(null);
   const { pending } = useFormStatus();
   const agents = options?.agents || [];
   const defaultAgentKey = options?.defaultAgentKey || agents[0]?.agentKey || "";
   const [agentKey, setAgentKey] = useState(defaultAgentKey);
+  const [freshDestinations, setFreshDestinations] = useState<{ agentKey: string; items: Destination[] } | null>(null);
   const destinations = useMemo(
-    () => (options?.destinations || []).filter((destination) => isSelectableDestination(destination)),
-    [options?.destinations]
+    () => (freshDestinations?.agentKey === agentKey ? freshDestinations.items : options?.destinations || []).filter((destination) => isSelectableDestination(destination)),
+    [options?.destinations, freshDestinations, agentKey]
   );
   const destinationsForAgent = useMemo(
     () => destinations.filter((destination) => !agentKey || destination.agentKey === agentKey),
@@ -220,9 +211,7 @@ export function OpportunityWhatsAppSendPanel({
   );
   const groups = destinationsForAgent.filter((destination) => destination.destinationType === "group");
   const channels = destinationsForAgent.filter((destination) => destination.destinationType === "channel");
-  const availableCount = destinationsForAgent.filter((destination) => destination.status === "active" || destination.status === "paused").length;
-  const syncedCount = destinationsForAgent.length;
-  const initialMode: SendMode = groups.length ? "group" : channels.length ? "channel" : "test";
+  const initialMode: SendMode = "group";
   const [mode, setMode] = useState<SendMode>(initialMode);
   const [linkFormat, setLinkFormat] = useState<LinkFormat>("source_buttons");
   const [groupId, setGroupId] = useState(groups[0]?.id || "");
@@ -240,6 +229,11 @@ export function OpportunityWhatsAppSendPanel({
   const [senderConnectionModal, setSenderConnectionModal] = useState<SenderConnectionModalState | null>(null);
   const sendPendingSeenRef = useRef(false);
   const currentMode = modeManuallySelected ? mode : initialMode;
+  useEffect(() => {
+    setSendBusy(senderCheckPending || sendProcessingOpen || pending);
+    return () => setSendBusy(false);
+  }, [senderCheckPending, sendProcessingOpen, pending, setSendBusy]);
+
   const selectedAgent = agents.find((agent) => agent.agentKey === agentKey);
   const currentGroupId = groups.some((group) => group.id === groupId) ? groupId : groups[0]?.id || "";
   const currentChannelId = channels.some((channel) => channel.id === channelId) ? channelId : channels[0]?.id || "";
@@ -247,57 +241,38 @@ export function OpportunityWhatsAppSendPanel({
 
   useEffect(() => {
     if (!agentKey || !panelOpen) return;
-
-    const storageKey = `betel-wa-auto-sync:${opportunityCode}:${agentKey}`;
-    const lastSync = Number(window.sessionStorage.getItem(storageKey) || "0");
-    if (Date.now() - lastSync < 15000) return;
-
-    let cancelled = false;
-    window.sessionStorage.setItem(storageKey, String(Date.now()));
-    const syncStateTimer = window.setTimeout(() => {
-      if (cancelled) return;
+    const controller = new AbortController();
+    let retryTimer: number | undefined;
+    const load = async (attempt = 0) => {
+      if (controller.signal.aborted) return;
       setAutoSyncState("syncing");
-      setAutoSyncMessage("Atualizando grupos automaticamente...");
-    }, 0);
-
-    fetch("/api/admin/whatsapp/groups", {
-      body: JSON.stringify({
-        action: "sync",
-        agentKey,
-        force: true,
-        noParticipants: false,
-      }),
-      cache: "no-store",
-      headers: { "content-type": "application/json" },
-      method: "POST",
-    })
-      .then(async (response) => {
-        const payload = (await response.json().catch(() => ({}))) as {
-          success?: boolean;
-          data?: { synced?: number; groups?: number };
-          error?: string;
-        };
-        if (!response.ok || !payload.success) {
-          throw new Error(payload.error || "Nao foi possivel atualizar os grupos.");
+      setAutoSyncMessage("Atualizando grupos…");
+      try {
+        const response = await fetch("/api/admin/whatsapp/groups", {
+          method: "POST", cache: "no-store", signal: controller.signal,
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ action: "sync", agentKey, force: true, noParticipants: true }),
+        });
+        const payload = await response.json() as { success?: boolean; error?: string; data?: { ok?: boolean; data?: { ok?: boolean; error?: string; destinations?: Destination[] } } };
+        const result = payload.data?.data;
+        if (!response.ok || !payload.success || !payload.data?.ok || !result?.ok || !Array.isArray(result.destinations)) {
+          throw new Error(payload.error || result?.error || "Não foi possível atualizar os grupos.");
         }
-        if (cancelled) return;
-        const groups = Number(payload.data?.groups || 0);
-        const synced = Number(payload.data?.synced || 0);
+        if (controller.signal.aborted) return;
+        setFreshDestinations({ agentKey, items: result.destinations.filter(item => item.agentKey === agentKey) });
         setAutoSyncState("done");
-        setAutoSyncMessage(`${groups} grupo(s) encontrados; ${synced} destino(s) sincronizado(s).`);
-        router.refresh();
-      })
-      .catch((error) => {
-        if (cancelled) return;
+        setAutoSyncMessage("Grupos atualizados automaticamente.");
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        if (attempt === 0) { retryTimer = window.setTimeout(() => void load(1), 750); return; }
         setAutoSyncState("error");
-        setAutoSyncMessage(error instanceof Error ? error.message : "Nao foi possivel atualizar os grupos automaticamente.");
-      });
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(syncStateTimer);
+        setAutoSyncMessage(error instanceof Error ? error.message : "Não foi possível atualizar os grupos.");
+      }
     };
-  }, [agentKey, opportunityCode, router, panelOpen]);
+    // Coalesce mount effects; opening and sender changes each start a fresh request.
+    const timer = window.setTimeout(() => void load(), 0);
+    return () => { controller.abort(); window.clearTimeout(timer); window.clearTimeout(retryTimer); };
+  }, [agentKey, panelOpen]);
 
   const selectedDestination =
     currentMode === "group"
@@ -327,38 +302,38 @@ export function OpportunityWhatsAppSendPanel({
   const referencesBlocked = linkFormatNeedsReferences && !activeReferenceStatus.ready;
   const hardBlockedReason =
     !agents.length
-      ? "Nenhum agente WhatsApp conectado para enviar."
+      ? "Nenhum número de WhatsApp está conectado."
       : !selectedAgent
-        ? "Selecione um agente WhatsApp conectado para enviar."
+        ? "Escolha um número de WhatsApp conectado."
         : !selectedAgent.instanceId
-          ? "A instancia WhatsApp selecionada nao esta configurada."
+          ? "O número escolhido ainda não está pronto para enviar."
           : !modeReady
             ? "Selecione um destino valido para enviar."
             : !canSubmit
               ? submitBlockReason || "Complete a analise antes de aprovar ou enviar pelo WhatsApp."
               : "";
-  const blockedReason = hardBlockedReason;
-  const destinationName = currentMode === "test" ? testNumber.trim() || "numero de teste" : selectedDestination?.name || "destino selecionado";
-  const referenceSummary = linkFormatNeedsReferences
-    ? `${activeReferenceStatus.candidateCount ?? activeReferenceStatus.validCount}/3 candidatos de aluguel; ${activeReferenceStatus.validCount}/3 vinculados a versao aprovada`
-    : "3 referencias";
+  const blockedReason = hardBlockedReason || ((currentMode === "group" || currentMode === "channel" || Boolean(currentBroadcastSourceId)) && autoSyncState !== "done" ? autoSyncState === "error" ? "Não foi possível confirmar a lista de destinos. Feche e abra para tentar novamente." : "Aguarde a atualização dos destinos." : "");
+  const destinationName = currentMode === "test" ? testNumber.trim() || "número de teste" : currentMode === "broadcast" ? `${broadcastNumberCount} contato(s)${selectedDestination ? ` + ${selectedDestination.name}` : ''}` : selectedDestination?.name || "selecione um destino";
   const sendButtonHint =
     blockedReason ||
     (referencesBlocked
-      ? `Revise as referencias antes de aprovar | Fontes atuais: ${referenceSummary}`
-      : `Destino: ${destinationName} | Fontes: ${referenceSummary}`);
+      ? "Os anúncios serão conferidos antes de enviar."
+      : `Destino: ${destinationName}`);
   const processingDetail = linkFormatNeedsReferences
     ? "O sistema esta validando referencias publicas antes de enviar. Se nao encontrar links suficientes, nada sera disparado e a tela volta com o motivo."
-    : "O criativo esta sendo montado e enviado pela ConnectyHub. Aguarde a confirmacao antes de mexer nesta revisao.";
-  const processingStatus = linkFormatNeedsReferences ? "validando fontes" : "processando";
+    : "Estamos preparando e enviando a mensagem. Aguarde o resultado antes de tentar novamente.";
 
   useEffect(() => {
-    if (actionStatus !== "error" || !isWhatsAppConnectionProblem(actionMessage)) return;
+    if (actionStatus !== "error" && actionStatus !== "whatsapp-referencias-bloqueado") return;
     const modalTimer = window.setTimeout(() => {
-      setSenderConnectionModal(senderConnectionModalFromMessage(actionMessage));
+      setSenderConnectionModal(isWhatsAppConnectionProblem(actionMessage) ? senderConnectionModalFromMessage(actionMessage) : { title: "Não foi possível concluir o envio", detail: actionMessage || "Confira os dados e tente novamente." });
     }, 0);
     return () => window.clearTimeout(modalTimer);
   }, [actionMessage, actionStatus]);
+
+  useEffect(() => {
+    if (panelOpen && (senderConnectionModal || sendProcessingOpen)) feedback.current?.focus();
+  }, [senderConnectionModal, sendProcessingOpen, panelOpen]);
 
   useEffect(() => {
     if (!sendProcessingOpen) {
@@ -373,6 +348,7 @@ export function OpportunityWhatsAppSendPanel({
       const closeTimer = window.setTimeout(() => {
         sendPendingSeenRef.current = false;
         setSendProcessingOpen(false);
+        sendInFlight.current = false;
       }, 0);
       return () => window.clearTimeout(closeTimer);
     }
@@ -453,7 +429,7 @@ export function OpportunityWhatsAppSendPanel({
   }
 
   async function handleSendClick(event: MouseEvent<HTMLButtonElement>) {
-    if (pending || senderCheckPending) {
+    if (pending || senderCheckPending || sendInFlight.current) {
       event.preventDefault();
       return;
     }
@@ -473,8 +449,10 @@ export function OpportunityWhatsAppSendPanel({
 
     const button = event.currentTarget;
     event.preventDefault();
+    sendInFlight.current = true;
+    setSendBusy(true);
     const connected = await checkSenderConnection();
-    if (!connected) return;
+    if (!connected) { sendInFlight.current = false; setSendBusy(false); return; }
 
     sendPendingSeenRef.current = false;
     setSendProcessingOpen(true);
@@ -483,122 +461,13 @@ export function OpportunityWhatsAppSendPanel({
 
   return (
     <>
-    {senderConnectionModal ? (
-      <div
-        aria-live="assertive"
-        aria-modal="true"
-        className="fixed inset-0 z-[90] grid place-items-center bg-black/35 px-4 backdrop-blur-[2px]"
-        role="alertdialog"
-      >
-        <div className="w-full max-w-md rounded-xl border border-[rgba(210,54,43,0.28)] bg-white p-5 text-left shadow-2xl">
-          <div className="flex items-start gap-3">
-            <div className="grid size-11 shrink-0 place-items-center rounded-lg bg-[rgba(210,54,43,0.08)] text-[var(--admin-red)]">
-              <AlertCircle size={22} />
-            </div>
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-[var(--admin-foreground)]">{senderConnectionModal.title}</p>
-              <p className="mt-1 text-xs leading-5 text-[var(--admin-muted)]">{senderConnectionModal.detail}</p>
-              {senderConnectionModal.status ? (
-                <p className="mt-2 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card-2)] px-3 py-2 text-xs font-medium text-[var(--admin-foreground)]">
-                  Status: {senderConnectionModal.status}
-                </p>
-              ) : null}
-            </div>
-          </div>
-          <div className="mt-4 flex flex-wrap justify-end gap-2">
-            <Button
-              className="h-9 border-[var(--admin-border)] bg-white text-[var(--admin-foreground)] hover:bg-[var(--admin-card-2)]"
-              type="button"
-              variant="outline"
-              onClick={() => {
-                setSenderConnectionModal(null);
-                router.refresh();
-              }}
-            >
-              Atualizar tela
-            </Button>
-            <Button
-              className="h-9 bg-[var(--admin-cyan)] text-white hover:brightness-95"
-              type="button"
-              onClick={() => setSenderConnectionModal(null)}
-            >
-              Entendi
-            </Button>
-          </div>
-        </div>
-      </div>
-    ) : null}
-
-    {sendProcessingOpen ? (
-      <div
-        aria-live="assertive"
-        aria-modal="true"
-        className="fixed inset-0 z-[80] grid place-items-center bg-black/25 px-4 backdrop-blur-[2px]"
-        role="alertdialog"
-      >
-        <div className="w-full max-w-md rounded-xl border border-[var(--admin-border)] bg-white p-5 text-left shadow-2xl">
-          <div className="flex items-start gap-3">
-            <div className="grid size-11 shrink-0 place-items-center rounded-lg bg-[rgba(200,90,31,0.1)] text-[var(--admin-cyan)]">
-              <LoaderCircle size={22} className="animate-spin" />
-            </div>
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-[var(--admin-foreground)]">{sendProcessingTitle(currentMode, linkFormatNeedsReferences)}</p>
-              <p className="mt-1 text-xs leading-5 text-[var(--admin-muted)]">
-                {processingDetail}
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-4 grid gap-2 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card-2)] p-3 text-xs leading-5">
-            <div className="flex items-center justify-between gap-3">
-              <span className="font-medium text-[var(--admin-muted)]">Destino</span>
-              <span className="max-w-[220px] truncate font-semibold text-[var(--admin-foreground)]">{destinationName}</span>
-            </div>
-            <div className="flex items-center justify-between gap-3">
-              <span className="font-medium text-[var(--admin-muted)]">Formato</span>
-              <span className="font-semibold text-[var(--admin-foreground)]">{linkFormatCopy[linkFormat].title}</span>
-            </div>
-            <div className="flex items-center justify-between gap-3">
-              <span className="font-medium text-[var(--admin-muted)]">Status</span>
-              <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--admin-cyan)]">
-                <LoaderCircle size={13} className="animate-spin" />
-                {processingStatus}
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
-    ) : null}
-
-    <section className="w-full rounded-lg border border-[var(--admin-border)] bg-white p-3 text-left">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <p className="flex items-center gap-2 text-xs font-semibold text-[var(--admin-foreground)]">
-            <Send size={14} className="text-[var(--admin-cyan)]" />
-            Aprovar e enviar pelo WhatsApp
-          </p>
-          <p className="mt-1 text-xs leading-5 text-[var(--admin-muted)]">
-            Escolha o modo, confirme o destino e envie. O Inngest processa a campanha em seguida.
-          </p>
-        </div>
-        <Button
-          className="h-9 border-[var(--admin-border)] bg-white text-[var(--admin-foreground)] hover:bg-[var(--admin-card-2)]"
-          disabled={!agents.length || autoSyncState === "syncing"}
-          formAction={syncOpportunityWhatsAppGroupsAction}
-          type="submit"
-          value="sync_whatsapp_groups"
-          variant="outline"
-        >
-          <RefreshCcw size={14} className={autoSyncState === "syncing" ? "animate-spin" : ""} />
-          {autoSyncState === "syncing" ? "Atualizando..." : "Atualizar grupos"}
-        </Button>
-      </div>
-
+    <section className="w-full text-left">
       <input name="whatsappLinkFormat" type="hidden" value={linkFormat} />
 
-      <div className="mt-3 grid gap-3">
+      <div className="opportunity-send-layout">
+      <div className="opportunity-send-controls grid gap-4">
         <label className="grid gap-1">
-          <span className={labelClass}>Agente remetente</span>
+          <span className={labelClass}>Número que vai enviar</span>
           <select
             className={selectClass}
             name="whatsappAgentKey"
@@ -617,44 +486,26 @@ export function OpportunityWhatsAppSendPanel({
           </select>
         </label>
 
-        <div className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card-2)] px-3 py-2 text-xs leading-5 text-[var(--admin-muted)]">
-          {autoSyncState === "syncing" ? (
-            <span className="inline-flex items-start gap-2" aria-live="polite">
-              <RefreshCcw size={14} className="mt-0.5 shrink-0 animate-spin text-[var(--admin-cyan)]" />
-              {autoSyncMessage}
-            </span>
-          ) : syncedCount ? (
-            <span>
-              {syncedCount} destino(s) sincronizado(s), {availableCount} disponivel(is) para envio manual.
-              {autoSyncState === "done" && autoSyncMessage ? ` Atualizacao automatica: ${autoSyncMessage}` : ""}
-            </span>
-          ) : (
-            <span className="inline-flex items-start gap-2">
-              <AlertCircle size={14} className="mt-0.5 shrink-0 text-[var(--admin-yellow)]" />
-              {autoSyncState === "error" && autoSyncMessage
-                ? `${autoSyncMessage} Use o botao Atualizar grupos para tentar novamente.`
-                : "Nenhum grupo ou canal apareceu para este agente. A pagina tenta atualizar automaticamente; se continuar 0, confira se a instancia acima e a mesma que esta nos grupos."}
-            </span>
-          )}
-        </div>
+
 
         <div>
-          <p className={labelClass}>Modo de envio</p>
-          <div className="mt-1 grid gap-2 sm:grid-cols-2">
+          <p className={labelClass}>Quem vai receber?</p>
+          <div className="opportunity-send-modes mt-1 grid grid-cols-4 gap-1">
             {(["group", "channel", "broadcast", "test"] as SendMode[]).map((item) => {
               const Icon = modeCopy[item].icon;
-              const disabled = item === "group" && !groups.length ? true : item === "channel" && !channels.length;
+              const disabled = !agents.length;
               const selected = currentMode === item;
               return (
                 <button
                   className={cn(
-                    "min-h-16 rounded-lg border px-3 py-2 text-left transition",
+                    "min-h-11 rounded-lg border px-2 py-2 text-left transition",
                     selected
                       ? "border-[rgba(200,90,31,0.42)] bg-[rgba(200,90,31,0.08)]"
                       : "border-[var(--admin-border)] bg-white hover:bg-[var(--admin-card-2)]",
                     disabled && "cursor-not-allowed opacity-50"
                   )}
-                  disabled={disabled}
+                  disabled={disabled || pending || senderCheckPending}
+                  aria-pressed={selected}
                   key={item}
                   type="button"
                   onClick={() => {
@@ -667,7 +518,6 @@ export function OpportunityWhatsAppSendPanel({
                     {modeCopy[item].title}
                     {selected ? <CheckCircle2 size={14} className="ml-auto text-[var(--admin-green)]" /> : null}
                   </span>
-                  <span className="mt-1 block text-xs leading-5 text-[var(--admin-muted)]">{modeCopy[item].detail}</span>
                 </button>
               );
             })}
@@ -675,20 +525,22 @@ export function OpportunityWhatsAppSendPanel({
         </div>
 
         <div>
-          <p className={labelClass}>Links do criativo</p>
-          <div className="mt-1 grid gap-2 sm:grid-cols-2">
+          <p className={labelClass}>Formato</p>
+          <div className="opportunity-send-format mt-1 grid grid-cols-2 gap-2">
             {(["source_buttons", "source_links"] as LinkFormat[]).map((item) => {
               const Icon = linkFormatCopy[item].icon;
               const selected = linkFormat === item;
               return (
                 <button
                   className={cn(
-                    "min-h-16 rounded-lg border px-3 py-2 text-left transition",
+                    "min-h-11 rounded-lg border px-3 py-2 text-left transition",
                     selected
                       ? "border-[rgba(200,90,31,0.42)] bg-[rgba(200,90,31,0.08)]"
                       : "border-[var(--admin-border)] bg-white hover:bg-[var(--admin-card-2)]"
                   )}
                   key={item}
+                  aria-pressed={selected}
+                  disabled={pending || senderCheckPending}
                   type="button"
                   onClick={() => setLinkFormat(item)}
                 >
@@ -697,19 +549,10 @@ export function OpportunityWhatsAppSendPanel({
                     {linkFormatCopy[item].title}
                     {selected ? <CheckCircle2 size={14} className="ml-auto text-[var(--admin-green)]" /> : null}
                   </span>
-                  <span className="mt-1 block text-xs leading-5 text-[var(--admin-muted)]">{linkFormatCopy[item].detail}</span>
                 </button>
               );
             })}
           </div>
-          {linkFormatNeedsReferences && !activeReferenceStatus.ready ? (
-            <div className="mt-2 flex items-start gap-2 rounded-lg border border-[rgba(210,54,43,0.28)] bg-[rgba(210,54,43,0.06)] px-3 py-2 text-xs leading-5 text-[var(--admin-red)]">
-              <AlertCircle size={14} className="mt-0.5 shrink-0" />
-              <span>
-                {activeReferenceStatus.reason} Ao clicar em enviar, o sistema tentara uma varredura ampliada e so dispara se encontrar links suficientes.
-              </span>
-            </div>
-          ) : null}
         </div>
 
         {currentMode === "test" ? (
@@ -730,7 +573,7 @@ export function OpportunityWhatsAppSendPanel({
           <label className="grid gap-1">
             <span className={labelClass}>Grupo de destino</span>
             <select className={selectClass} name="whatsappSpecificGroupId" value={currentGroupId} onChange={(event) => setGroupId(event.target.value)}>
-              {groups.length ? null : <option value="">Nenhum grupo sincronizado</option>}
+              {groups.length ? null : <option value="">{autoSyncState === 'done' ? 'Nenhum grupo encontrado' : autoSyncState === 'error' ? 'Lista de grupos indisponível' : 'Carregando grupos…'}</option>}
               {groups.map((destination) => (
                 <option key={destination.id} value={destination.id}>
                   {destinationLabel(destination)}
@@ -744,7 +587,7 @@ export function OpportunityWhatsAppSendPanel({
           <label className="grid gap-1">
             <span className={labelClass}>Canal WhatsApp</span>
             <select className={selectClass} name="whatsappChannelId" value={currentChannelId} onChange={(event) => setChannelId(event.target.value)}>
-              {channels.length ? null : <option value="">Nenhum canal sincronizado</option>}
+              {channels.length ? null : <option value="">{autoSyncState === 'done' ? 'Nenhum canal encontrado' : autoSyncState === 'error' ? 'Lista de canais indisponível' : 'Carregando canais…'}</option>}
               {channels.map((destination) => (
                 <option key={destination.id} value={destination.id}>
                   {destinationLabel(destination)}
@@ -812,56 +655,46 @@ export function OpportunityWhatsAppSendPanel({
           </div>
         ) : null}
 
-        <div className="grid gap-2 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-card)] p-2">
-          <div className="flex items-center gap-2 text-xs font-semibold text-[var(--admin-foreground)]">
-            <Eye size={14} className="text-[var(--admin-muted)]" />
-            Previa do envio
-          </div>
-          <div className="grid gap-2 sm:grid-cols-[92px_minmax(0,1fr)]">
-            <div className="grid aspect-[4/3] place-items-center overflow-hidden rounded-md border border-[var(--admin-border)] bg-white">
-              {preview.imageUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img alt="" className="h-full w-full object-cover" src={preview.imageUrl} />
-              ) : (
-                <ImageOff size={20} className="text-[var(--admin-muted)]" />
-              )}
+        <p role="status" className="flex items-start gap-2 text-xs leading-5 text-[var(--admin-muted)]">{autoSyncState === "syncing" ? <LoaderCircle size={14} className="mt-0.5 shrink-0 animate-spin" /> : autoSyncState === "error" ? <AlertCircle size={14} className="mt-0.5 shrink-0 text-[var(--admin-red)]" /> : <CheckCircle2 size={14} className="mt-0.5 shrink-0 text-[var(--admin-green)]" />}<span>{autoSyncMessage || "A lista será atualizada ao abrir."}{autoSyncState === "done" && !destinationsForAgent.length ? " Nenhum grupo ou canal encontrado para este número." : ""}</span></p>
+          {linkFormatNeedsReferences && !activeReferenceStatus.ready ? (
+            <div className="mt-2 flex items-start gap-2 rounded-lg border border-[rgba(210,54,43,0.28)] bg-[rgba(210,54,43,0.06)] px-3 py-2 text-xs leading-5 text-[var(--admin-red)]">
+              <AlertCircle size={14} className="mt-0.5 shrink-0" />
+              <span>
+                Os três anúncios serão validados antes do envio. Pendências impedem o disparo.
+              </span>
             </div>
-            <div className="min-w-0 text-xs leading-5">
-              <p className="line-clamp-2 font-semibold text-[var(--admin-foreground)]">{preview.title}</p>
-              <p className="text-[var(--admin-muted)]">{preview.location || "Local nao informado"}</p>
-              <p className="mt-1 text-[var(--admin-soft)]">
-                {preview.marketValue ? `Mercado: ${preview.marketValue}` : ""} {preview.bid ? ` | Lance: ${preview.bid}` : ""}
-              </p>
-              <p className="text-[var(--admin-muted)]">
-                {preview.discount ? `Desconto: ${preview.discount}` : "Texto completo e botao aparecem no WhatsApp."}
-              </p>
-              <p className="mt-1 font-medium text-[var(--admin-foreground)]">
-                Destino: {currentMode === "test" ? testNumber || "numero de teste" : selectedDestination?.name || "selecione um destino"}
-              </p>
-              <p className="text-[var(--admin-muted)]">Fontes: {referenceSummary}</p>
-            </div>
-          </div>
+          ) : null}
+
+      <div className="opportunity-send-confirmation grid gap-2 border-t border-[var(--admin-border)] pt-3">
+        <div ref={feedback} tabIndex={-1}>
+          {senderConnectionModal ? <div role="alert" className="rounded-xl border border-[var(--admin-red)] bg-[#fff4f2] p-4"><p className="font-semibold">{senderConnectionModal.title}</p><p className="mt-1 text-sm">{senderConnectionModal.detail}</p><Button type="button" variant="outline" className="mt-3" onClick={() => setSenderConnectionModal(null)}>Conferir os dados</Button></div> : null}
+          {sendProcessingOpen ? <div role="status" aria-live="polite" className="flex items-start gap-3 rounded-xl border border-[var(--admin-border)] bg-[#f0f8f7] p-4"><LoaderCircle size={20} className="shrink-0 animate-spin" /><div><p className="font-semibold">{sendProcessingTitle(currentMode, linkFormatNeedsReferences)}</p><p className="mt-1 text-sm">{processingDetail}</p><p className="mt-2 text-sm">Destino: {destinationName}</p></div></div> : null}
         </div>
+        <p className="text-sm"><strong>Destino:</strong> {currentMode === "test" ? testNumber || "informe o número de teste" : currentMode === "broadcast" ? broadcastNumberCount + " número(s) informado(s)" + (selectedDestination ? " + contatos de " + selectedDestination.name : "") : selectedDestination?.name || "selecione um destino"}</p>
+        <p className="text-sm text-[var(--admin-muted)]">{currentMode === "test" ? "O teste envia a versão aprovada somente para este número." : "Ao confirmar, você salva, aprova e envia esta revisão."}</p>
 
         <Button
-          className="h-auto min-h-14 w-full justify-start gap-3 whitespace-normal rounded-lg border border-[rgba(200,90,31,0.34)] bg-[var(--admin-cyan)] px-3 py-3 text-left text-white shadow-sm shadow-[rgba(200,90,31,0.18)] hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-55"
-          disabled={pending || senderCheckPending}
+          className="opportunity-action-primary min-h-11 w-fit max-w-full gap-2 rounded-lg px-4 py-2 text-sm text-white"
+          disabled={pending || senderCheckPending || sendProcessingOpen}
           name="submitStatus"
           type="submit"
           value={submitValueForMode(currentMode)}
           onClick={handleSendClick}
         >
-          <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-white/15">
+          <span className="shrink-0">
             {(pending && sendProcessingOpen) || senderCheckPending ? <LoaderCircle size={17} className="animate-spin" /> : <Send size={17} />}
           </span>
           <span className="min-w-0 flex-1">
             <span className="block text-sm font-semibold leading-5">
               {senderCheckPending ? "Verificando WhatsApp..." : pending && sendProcessingOpen ? "Enviando WhatsApp..." : submitLabelForMode(currentMode)}
             </span>
-            <span className="block truncate text-xs font-normal leading-5 text-white/80">{sendButtonHint}</span>
           </span>
-          <CheckCircle2 size={18} className="hidden text-white/80 sm:block" />
         </Button>
+        {blockedReason ? <p className="text-xs text-[var(--admin-muted)]">{sendButtonHint}</p> : null}
+      </div>
+
+      </div>
+      <OpportunityMessagePhone preview={preview} format={linkFormat} sender={selectedAgent?.label || "selecione o remetente"} destination={destinationName} open={panelOpen} test={currentMode === "test"} />
       </div>
     </section>
     </>
