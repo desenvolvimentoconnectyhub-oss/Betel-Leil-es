@@ -475,7 +475,7 @@ export function OpportunityWhatsAppSendPanel({
       <div className="opportunity-send-layout">
       <div className="opportunity-send-controls grid gap-4">
         <label className="grid gap-1">
-          <span className={labelClass}>Número que vai enviar</span>
+          <span className={labelClass}>Agente que vai enviar</span>
           <select
             className={selectClass}
             name="whatsappAgentKey"

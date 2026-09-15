@@ -14,6 +14,7 @@ const PRIMARY_WHATSAPP_LEGACY_NAMES = ["willian", "william", "willian-betel", "w
 export type SystemWhatsAppSenderOption = {
   id: string;
   agentKey: string;
+  agentName?: string;
   instanceName: string;
   phone: string;
   status: string;
@@ -61,9 +62,11 @@ function isConnected(row: DbRow) {
 }
 
 function normalizeSender(row: DbRow): SystemWhatsAppSenderOption {
+  const agent = (Array.isArray(row.ai_agents) ? row.ai_agents[0] : row.ai_agents) as DbRow | null | undefined;
   return {
     id: cleanString(row.id),
     agentKey: cleanString(row.agent_key),
+    agentName: cleanString(agent?.name),
     instanceName: cleanString(row.instance_name),
     phone: cleanString(row.phone),
     status: cleanString(row.status, "draft"),
@@ -140,7 +143,7 @@ export async function listSystemWhatsAppSenderOptions(): Promise<SystemWhatsAppS
 
   const { data, error } = await supabase
     .from("whatsapp_instances")
-    .select("id,agent_key,instance_name,phone,status,connected_at,last_seen_at,provider_instance_id,updated_at")
+    .select("id,agent_key,instance_name,phone,status,connected_at,last_seen_at,provider_instance_id,updated_at,ai_agents(name)")
     .eq("provider", "connectyhub").neq("status", "archived")
     .neq("status", "deleted")
     .not("provider_instance_id", "is", null)

@@ -1,4 +1,4 @@
-# Grupos por conexão atual — correção local
+# Grupos por conexão atual e identificação do agente
 
 O modal de publicação exibiu seis grupos históricos para uma instância nova que retornava `HTTP 200` com `groups: []`. A captura ocorreu no domínio de produção, não no ambiente local. A consulta de pertencimento à organização confirmou a instância e a credencial no cliente Betel correto.
 
@@ -25,4 +25,10 @@ A tabela ainda possui unicidade por `(provider, jid)`. Se um grupo realmente exi
 
 Na prévia isolada, o primeiro remetente apresentou seus grupos simulados. A troca para o segundo apagou imediatamente a lista e terminou em “Nenhum grupo encontrado”, após exatamente duas consultas simuladas e zero chamadas operacionais. A prévia e seus mocks ficam fora deste pacote.
 
-Status: preparado e validado localmente, sem publicação. Diagnóstico em produção usou somente leituras; não houve envio WhatsApp, aprovação/reprovação, mudança de conexão/credencial, exclusão de registros ou consulta de participantes.
+## Identificação humana do remetente
+
+O seletor usa o rótulo “Agente que vai enviar”. Cada opção apresenta o nome cadastrado em `ai_agents.name`, ligado à conexão atual, e o telefone dessa conexão formatado. Não usa o nome técnico da instância ou a chave do agente como texto alternativo. Dados ausentes aparecem como “Agente sem nome” ou “Telefone indisponível”; nenhum dígito é inventado. Identificadores e telefone bruto usados no isolamento permanecem intactos. O mesmo rótulo humano aparece na prévia da mensagem.
+
+Conferidos desktop e celular de 390 px, inclusive seleção da segunda opção sem grupos. Formatação de números brasileiros com oito e nove dígitos, ausência de dados e rejeição de nomes técnicos/UUID foram verificadas offline.
+
+Publicação do pacote completo autorizada em 15/09/2026 após os testes. Diagnóstico e validação em produção usam somente leituras; não houve envio WhatsApp, aprovação/reprovação, mudança de conexão/credencial, exclusão de registros ou consulta de participantes. Evidências operacionais ficam no diretório local `docs/layout-qa`, fora do pacote publicado.

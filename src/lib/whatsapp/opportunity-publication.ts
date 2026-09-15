@@ -1,4 +1,5 @@
 import { formatOpportunityWhatsAppMessage } from '@/lib/domain/opportunity-whatsapp-message';
+import { whatsappSenderLabel } from '@/lib/domain/whatsapp-sender-label';
 import "server-only";
 import { getBetelPublicOrigin } from "@/lib/public-origin";
 import { canonicalReferenceUrl } from "@/lib/domain/market-quality";
@@ -197,10 +198,9 @@ export async function buildOpportunityWhatsAppPost(
 }
 
 function normalizeAgentOption(row: Awaited<ReturnType<typeof listSystemWhatsAppSenderOptions>>[number]): OpportunityWhatsAppAgentOption {
-  const label = [row.instanceName || row.agentKey, row.phone].filter(Boolean).join(" - ");
   return {
     agentKey: cleanString(row.agentKey, WILLIAN_AGENT_KEY),
-    label: cleanString(label, row.agentKey || "Agente WhatsApp"),
+    label: whatsappSenderLabel(row),
     instanceId: row.id,
     phone: row.phone,
     status: row.status,
