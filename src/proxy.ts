@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { cutoverAction, legacyProxyUrl } from "@/lib/maintenance/cutover";
 
 const adminMatcher = /^\/admin(?:\/.*)?$/;
 const adminApiMatcher = /^\/api\/admin(?:\/.*)?$/;
@@ -43,6 +44,15 @@ function jsonUnauthorized(status: 401 | 403, message: string) {
 
 export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
+  const cutover = cutoverAction(pathname);
+  if (cutover === "maintenance") {
+    return NextResponse.json({ error: "Betel em transicao. Tente novamente em instantes." }, {
+      status: 503, headers: { "Retry-After": "60", "Cache-Control": "no-store" },
+    });
+  }
+  if (cutover === "legacy-proxy") {
+    return NextResponse.rewrite(legacyProxyUrl(pathname, request.nextUrl.search));
+  }
   const isAdminPage = adminMatcher.test(pathname);
   const isAdminApi = adminApiMatcher.test(pathname);
 
@@ -109,5 +119,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/admin/:path*", "/api/admin/:path*"],
+  matcher: ["/:path*"],
 };
