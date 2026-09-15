@@ -44,13 +44,13 @@ function jsonUnauthorized(status: 401 | 403, message: string) {
 
 export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
-  const cutover = cutoverAction(pathname);
+  const cutover = cutoverAction(pathname, request.method);
   if (cutover === "maintenance") {
     return NextResponse.json({ error: "Betel em transicao. Tente novamente em instantes." }, {
       status: 503, headers: { "Retry-After": "60", "Cache-Control": "no-store" },
     });
   }
-  if (cutover === "legacy-proxy") {
+  if (cutover === "legacy-proxy" || cutover === "webhook-hold") {
     return NextResponse.rewrite(legacyProxyUrl(pathname, request.nextUrl.search));
   }
   const isAdminPage = adminMatcher.test(pathname);
